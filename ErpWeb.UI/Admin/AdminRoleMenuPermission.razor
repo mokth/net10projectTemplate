@@ -70,6 +70,14 @@
         justify-content: center;
         align-items: center;
     }
+
+    .role-perm-grid {
+        width: 100%;
+    }
+
+    .role-perm-grid.dxbl-grid {
+        width: 100%;
+    }
 </style>
 
 <MenuAuthorize MenuCode="@MenuCodes.AdminRolePermissions">
@@ -157,6 +165,7 @@ else
                 PageSize="50"
                 PagerVisible="true"
                 TextWrapEnabled="false"
+                ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                 CssClass="role-perm-grid">
             <Columns>
                 <DxGridDataColumn Caption="Actions"
@@ -185,10 +194,11 @@ else
                 </DxGridDataColumn>
                 <DxGridDataColumn FieldName="@nameof(RolePermissionMatrixRow.MenuCode)"
                                   Caption="Menu"
-                                  Width="160px" />
+                                  Width="170px" />
                 <DxGridDataColumn FieldName="@nameof(RolePermissionMatrixRow.MenuName)"
                                   Caption="Name"
-                                  MinWidth="180">
+                                  Width="200px"
+                                  MinWidth="160">
                     <CellDisplayTemplate>
                         @{
                             var row = (RolePermissionMatrixRow)context.DataItem;
@@ -202,7 +212,7 @@ else
                     <DxGridDataColumn Caption="@col.PermissionCode"
                                       CaptionAlignment="GridTextAlignment.Center"
                                       TextAlignment="GridTextAlignment.Center"
-                                      Width="90px">
+                                      MinWidth="80">
                         <HeaderCaptionTemplate>
                             <span title="@col.PermissionName">@col.PermissionCode</span>
                         </HeaderCaptionTemplate>

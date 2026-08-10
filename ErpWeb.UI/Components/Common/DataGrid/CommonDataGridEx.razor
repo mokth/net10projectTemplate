@@ -7,8 +7,13 @@
         text-decoration-color: red;
     }
 
-    .toolbar {
-        width: 500px;
+    .common-datagrid-ex {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .common-datagrid-ex .dxbl-grid {
+        width: 100%;
     }
 
     .common-datagrid-ex-loading {
@@ -30,46 +35,44 @@
     }
 </style>
 
-<div class="@(IsLoading ? "common-datagrid-ex-loading" : null)">
-    <div class="row" style="padding-bottom:5px;padding-right:15px">
-        <div class="col-12">
-            <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
-                <TitleTemplate>
-                    @if (ShowColChoose)
-                    {
-                        <h5 class="page-toolbar-title"><i class="fa-solid fa-caret-right"></i><span style="padding-left:10px"> @Title</span></h5>
-                    }
-                    else
-                    {
-                        <h6 class="page-toolbar-title card-title"><strong style="padding-top:10px"> @Title</strong></h6>
-                    }
-                </TitleTemplate>
-                <Items>
-                    @foreach (var btn in Buttons)
-                    {
-                        <DxToolbarItem IconCssClass="@btn.IConClass"
-                                       Tooltip="@(btn.ToolTip ?? btn.Text)"
-                                       Enabled="@btn.Enabled"
-                                       Alignment="ToolbarItemAlignment.Left"
-                                       Click="@(() => OnButtonClick(btn))"
-                                       BeginGroup="true" />
-                    }
-                    <DxToolbarItem IconCssClass="fa-solid fa-arrows-rotate"
-                                   Tooltip="Refresh List"
+<div class="common-datagrid-ex @(IsLoading ? "common-datagrid-ex-loading" : null)">
+    <div class="common-datagrid-ex-toolbar" style="padding-bottom:5px">
+        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+            <TitleTemplate>
+                @if (ShowColChoose)
+                {
+                    <h5 class="page-toolbar-title"><i class="fa-solid fa-caret-right"></i><span style="padding-left:10px"> @Title</span></h5>
+                }
+                else
+                {
+                    <h6 class="page-toolbar-title card-title"><strong style="padding-top:10px"> @Title</strong></h6>
+                }
+            </TitleTemplate>
+            <Items>
+                @foreach (var btn in Buttons)
+                {
+                    <DxToolbarItem IconCssClass="@btn.IConClass"
+                                   Tooltip="@(btn.ToolTip ?? btn.Text)"
+                                   Enabled="@btn.Enabled"
                                    Alignment="ToolbarItemAlignment.Left"
-                                   Click="@OnRefreshClick"
+                                   Click="@(() => OnButtonClick(btn))"
                                    BeginGroup="true" />
-                    @if (ShowColChoose)
-                    {
-                        <DxToolbarItem IconCssClass="fa-solid fa-table-columns"
-                                       Tooltip="COLUMN CHOOSER"
-                                       Alignment="ToolbarItemAlignment.Right"
-                                       Click="@OnColChoose"
-                                       BeginGroup="true" />
-                    }
-                </Items>
-            </DxToolbar>
-        </div>
+                }
+                <DxToolbarItem IconCssClass="fa-solid fa-arrows-rotate"
+                               Tooltip="Refresh List"
+                               Alignment="ToolbarItemAlignment.Left"
+                               Click="@OnRefreshClick"
+                               BeginGroup="true" />
+                @if (ShowColChoose)
+                {
+                    <DxToolbarItem IconCssClass="fa-solid fa-table-columns"
+                                   Tooltip="COLUMN CHOOSER"
+                                   Alignment="ToolbarItemAlignment.Right"
+                                   Click="@OnColChoose"
+                                   BeginGroup="true" />
+                }
+            </Items>
+        </DxToolbar>
     </div>
 
     @if (PreRendered)
@@ -86,6 +89,7 @@
                 FocusedRowEnabled="true"
                 SearchTextParseMode="GridSearchTextParseMode.GroupWordsByAnd"
                 ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                TextWrapEnabled="false"
                 GroupFooterDisplayMode="@GroupFooterDisplayMode"
                 AllowSelectRowByClick="true"
                 CustomizeCellDisplayText="@OnCustomizeCellDisplayTextHandle"
@@ -95,7 +99,8 @@
                 SelectedDataItemChanged="OnSelectionChanged"
                 SelectedDataItemsChanged="OnSelectedDataItemsChanged"
                 LayoutAutoLoading="Grid_LayoutAutoLoading"
-                LayoutAutoSaving="Grid_LayoutAutoSaving">
+                LayoutAutoSaving="Grid_LayoutAutoSaving"
+                CssClass="common-datagrid-ex-grid">
             <Columns>
                 @if (allowSelect)
                 {

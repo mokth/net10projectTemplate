@@ -40,7 +40,7 @@ public partial class AdminPermission : PageBase
             SortIndex = 0,
             SortOrder = GridColumnSortOrder.Ascending,
             VisibleIndex = 1,
-            Width = "130px"
+            Width = "140px"
         },
         new()
         {
@@ -48,7 +48,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.PermissionName),
             DataType = "string",
             VisibleIndex = 2,
-            Width = "150px"
+            Width = "160px"
         },
         new()
         {
@@ -56,7 +56,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.PermissionType),
             DataType = "string",
             VisibleIndex = 3,
-            Width = "110px"
+            Width = "120px"
         },
         new()
         {
@@ -64,7 +64,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.SortOrder),
             DataType = "int",
             VisibleIndex = 4,
-            Width = "70px"
+            Width = "80px"
         },
         new()
         {
@@ -72,7 +72,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.IsActive),
             DataType = "bool",
             VisibleIndex = 5,
-            Width = "80px"
+            Width = "90px"
         },
         new()
         {
@@ -87,7 +87,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.CreatedBy),
             DataType = "string",
             VisibleIndex = 7,
-            Width = "100px"
+            Width = "120px"
         },
         new()
         {
@@ -95,7 +95,7 @@ public partial class AdminPermission : PageBase
             FieldName = nameof(Permission.ModifiedBy),
             DataType = "string",
             VisibleIndex = 8,
-            Width = "100px"
+            Width = "120px"
         }
     ];
 

@@ -24,15 +24,7 @@ try
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
         .Enrich.WithEnvironmentName()
-        .Enrich.WithMachineName()
-        .WriteTo.Console()
-        .WriteTo.File(
-            path: Path.Combine("Logs", "erpweb-.log"),
-            rollingInterval: RollingInterval.Day,
-            fileSizeLimitBytes: 10 * 1024 * 1024,
-            retainedFileCountLimit: 30,
-            shared: true,
-            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}"));
+        .Enrich.WithMachineName());
 
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
@@ -94,7 +86,7 @@ try
         options.GetLevel = (httpContext, elapsed, ex) =>
             ex is not null || httpContext.Response.StatusCode >= 500
                 ? Serilog.Events.LogEventLevel.Error
-                : Serilog.Events.LogEventLevel.Information;
+                : Serilog.Events.LogEventLevel.Verbose;
     });
 
     app.UseHttpsRedirection();

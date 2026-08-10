@@ -335,7 +335,9 @@ public class CommonDataGridExBase<T> : ComponentBase
             var layout = await LayoutStorage.LoadAsync(LayoutKey);
             if (layout is not null)
             {
-                e.Layout = layout;
+                // Keep sort/visibility/order, but ignore saved widths so a stale layout
+                // cannot shrink the grid to a fraction of the page.
+                e.Layout = StripColumnWidths(layout);
             }
         }
         catch (Exception ex)
@@ -403,6 +405,25 @@ public class CommonDataGridExBase<T> : ComponentBase
         }
 
         node["FilterCriteria"] = null;
+        return JsonSerializer.Deserialize<GridPersistentLayout>(node.ToJsonString()) ?? layout;
+    }
+
+    private static GridPersistentLayout StripColumnWidths(GridPersistentLayout layout)
+    {
+        var node = JsonNode.Parse(JsonSerializer.Serialize(layout));
+        if (node is null)
+        {
+            return layout;
+        }
+
+        if (node["Columns"] is JsonArray columns)
+        {
+            foreach (var column in columns.OfType<JsonObject>())
+            {
+                column.Remove("Width");
+            }
+        }
+
         return JsonSerializer.Deserialize<GridPersistentLayout>(node.ToJsonString()) ?? layout;
     }
 }

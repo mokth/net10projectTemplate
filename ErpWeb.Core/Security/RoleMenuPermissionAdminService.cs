@@ -214,30 +214,9 @@ public sealed class RoleMenuPermissionAdminService : IRoleMenuPermissionAdminSer
 
         Walk(moduleMenuId, 0);
 
-        var menuIds = matrixRows.Select(r => r.MenuId).ToHashSet();
-
-        var menuPermissionIds = await db.MenuPermissions
-            .AsNoTracking()
-            .Where(mp => menuIds.Contains(mp.MenuId) && mp.IsActive)
-            .Select(mp => mp.PermissionId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        var coreCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            PermissionCodes.Access,
-            PermissionCodes.Add,
-            PermissionCodes.Edit,
-            PermissionCodes.Delete,
-            PermissionCodes.Print,
-            PermissionCodes.Post,
-            PermissionCodes.Rollback
-        };
-
         var columns = await db.Permissions
             .AsNoTracking()
-            .Where(p => p.IsActive &&
-                        (coreCodes.Contains(p.PermissionCode) || menuPermissionIds.Contains(p.PermissionId)))
+            .Where(p => p.IsActive)
             .OrderBy(p => p.SortOrder)
             .ThenBy(p => p.PermissionCode)
             .Select(p => new RolePermissionMatrixColumn
