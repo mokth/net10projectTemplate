@@ -207,6 +207,10 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'ADMIN_COMPANY')
     INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
     VALUES (N'ADMIN_COMPANY', N'Company Info', @adminId, N'/admin/company', 6, 0, 1, SYSUTCDATETIME(), N'SEED');
 
+IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'ADMIN_BRANCH')
+    INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+    VALUES (N'ADMIN_BRANCH', N'Branches', @adminId, N'/admin/branch', 7, 0, 1, SYSUTCDATETIME(), N'SEED');
+
 IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'CHANGE_PASSWORD')
     INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
     VALUES (N'CHANGE_PASSWORD', N'Change password', NULL, N'/change-password', 4, 1, 1, SYSUTCDATETIME(), N'SEED');
@@ -224,6 +228,7 @@ UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/roles', SortOrder 
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/permissions', SortOrder = 4 WHERE MenuCode = N'ADMIN_PERMISSIONS';
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/role-permissions', SortOrder = 5 WHERE MenuCode = N'ADMIN_ROLE_PERMISSIONS';
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/company', SortOrder = 6, MenuName = N'Company Info', IsActive = 1 WHERE MenuCode = N'ADMIN_COMPANY';
+UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/branch', SortOrder = 7, MenuName = N'Branches', IsActive = 1 WHERE MenuCode = N'ADMIN_BRANCH';
 UPDATE dbo.Menu SET SortOrder = 2, Route = NULL WHERE MenuCode = N'OPERATIONS';
 UPDATE dbo.Menu SET SortOrder = 3, Route = NULL WHERE MenuCode = N'SECURITY';
 UPDATE dbo.Menu SET SortOrder = 4 WHERE MenuCode = N'CHANGE_PASSWORD';
@@ -255,7 +260,7 @@ INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE')
-WHERE m.MenuCode IN (N'ADMIN_USERS', N'ADMIN_ROLES', N'ADMIN_PERMISSIONS', N'ADMIN_ROLE_PERMISSIONS', N'ADMIN_COMPANY')
+WHERE m.MenuCode IN (N'ADMIN_USERS', N'ADMIN_ROLES', N'ADMIN_PERMISSIONS', N'ADMIN_ROLE_PERMISSIONS', N'ADMIN_COMPANY', N'ADMIN_BRANCH')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
@@ -317,6 +322,20 @@ CROSS JOIN dbo.Permission p
 WHERE r.CompanyCode = N'DEMO' AND r.RoleCode = N'USER'
   AND m.MenuCode = N'ADMIN_COMPANY'
   AND p.PermissionCode IN (N'ACCESS', N'EDIT')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.RoleMenuPermission x
+      WHERE x.RoleId = r.RoleId AND x.MenuId = m.MenuId AND x.PermissionId = p.PermissionId);
+GO
+
+-- ADMIN role: full CRUD on Branches
+INSERT INTO dbo.RoleMenuPermission (RoleId, MenuId, PermissionId, IsAllowed, CreatedDate, CreatedBy)
+SELECT r.RoleId, m.MenuId, p.PermissionId, 1, SYSUTCDATETIME(), N'SEED'
+FROM dbo.Role r
+CROSS JOIN dbo.Menu m
+CROSS JOIN dbo.Permission p
+WHERE r.CompanyCode = N'DEMO' AND r.RoleCode = N'ADMIN'
+  AND m.MenuCode = N'ADMIN_BRANCH'
+  AND p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.RoleMenuPermission x
       WHERE x.RoleId = r.RoleId AND x.MenuId = m.MenuId AND x.PermissionId = p.PermissionId);

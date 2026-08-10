@@ -1,0 +1,47 @@
+@page "/inventory/reason-codes"
+@inherits PageBase
+
+<PageTitle>Reason Codes</PageTitle>
+<style>.code-style { text-transform: uppercase !important; }</style>
+
+<MenuAuthorize MenuCode="@MenuCodes.InvReasonCodes">
+@if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="alert alert-info">@StatusMessage</div> }
+@if (IsLoading) { <p>Loading…</p> }
+
+<CommonDataGridEx Columns="@Columns()" Buttons="@Buttons" ActionButtons="@ActionButtons"
+                  KeyName="@nameof(ReasonCode.Id)" GridKey="inv-reason-list" Title="Reason Codes" T="ReasonCode"
+                  OnGridInstance="@OnGridInstance" GridData="@Data" allowSelect="true"
+                  OnSelectionsEventHandle="@OnSelectionsEvent" OnButtonEventHandle="@OnButtonClick"
+                  OnActionEventHandle="@OnActionClick" />
+
+<DxPopup HeaderText="Reason Code" CloseOnOutsideClick="false" Width="40vw" CssClass="common-popup" @bind-Visible="@PopupVisible">
+    <Content>
+        <EditForm Model="@selectedRow" Context="formCtx" OnValidSubmit="@HandleValidSubmit">
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Code" ColSpanMd="6">
+                    <Template><DxTextBox @bind-Text="@selectedRow.ReasonCodeValue" maxlength="20" ReadOnly="@IsEditMode" InputCssClass="required-field code-style" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Active" ColSpanMd="3">
+                    <Template><DxCheckBox @bind-Checked="@selectedRow.IsActive" AllowIndeterminateState="false" ReadOnly="@(!editEnable)" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Name" ColSpanMd="12" BeginRow="true">
+                    <Template><DxTextBox @bind-Text="@selectedRow.ReasonName" maxlength="100" ReadOnly="@(!editEnable)" InputCssClass="required-field" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Applies To" ColSpanMd="6" BeginRow="true">
+                    <Template><DxTextBox @bind-Text="@selectedRow.AppliesTo" maxlength="50" ReadOnly="@(!editEnable)" InputCssClass="required-field code-style" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <div class="d-flex gap-2">
+                            @if (editEnable) { <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsSubmitting ? "Saving…" : "Save")" SubmitFormOnClick="true" Enabled="@(!IsSubmitting)" /> }
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancel" />
+                        </div>
+                        <div class="text-muted mt-2">Applies To examples: SA, STK, GI</div>
+                        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="text-danger mt-2">@ErrorMessage</div> }
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </EditForm>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

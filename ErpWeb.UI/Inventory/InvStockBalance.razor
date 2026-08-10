@@ -1,0 +1,26 @@
+@page "/inventory/stock-balance"
+@inherits PageBase
+
+<PageTitle>Stock Balance</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.InvStockBalance">
+@if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="alert alert-info">@StatusMessage</div> }
+<div class="mb-3"><h4>Stock Balance</h4></div>
+@if (Rows.Count == 0) { <p class="text-muted">No balances.</p> }
+else
+{
+    <table class="table table-sm">
+        <thead><tr><th>WH</th><th>Loc</th><th>SKU</th><th class="text-end">Qty</th><th class="text-end">Avg Cost</th><th class="text-end">Value</th></tr></thead>
+        <tbody>
+        @foreach (var r in Rows)
+        {
+            <tr>
+                <td>@r.WarehouseCode</td><td>@r.LocationCode</td><td>@r.SKU</td>
+                <td class="text-end">@r.QtyOnHand</td>
+                <td class="text-end">@(r.AverageCost?.ToString("N4") ?? "—")</td>
+                <td class="text-end">@(r.Value?.ToString("N2") ?? "—")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+</MenuAuthorize>

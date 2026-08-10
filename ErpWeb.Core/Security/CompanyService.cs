@@ -186,6 +186,18 @@ public sealed class CompanyService : ICompanyService
             var entity = MapNewEntity(company, companyCode, context.UserId!);
             db.Companies.Add(entity);
             await db.SaveChangesAsync(cancellationToken);
+            db.Branches.Add(new Branch
+            {
+                CompanyId = entity.CompanyId,
+                BranchCode = branchCode,
+                BranchName = string.Equals(branchCode, DefaultBranchCode, StringComparison.OrdinalIgnoreCase)
+                    ? "Head Office"
+                    : branchCode,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = Truncate(context.UserId!, 50)
+            });
+            await db.SaveChangesAsync(cancellationToken);
             var adminRole = new Role
             {
                 CompanyCode = companyCode,

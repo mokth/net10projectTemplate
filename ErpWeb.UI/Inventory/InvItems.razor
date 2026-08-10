@@ -1,0 +1,55 @@
+@page "/inventory/items"
+@inherits PageBase
+
+<PageTitle>Items</PageTitle>
+<style>.code-style { text-transform: uppercase !important; }</style>
+
+<MenuAuthorize MenuCode="@MenuCodes.InvItems">
+@if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="alert alert-info">@StatusMessage</div> }
+@if (IsLoading) { <p>Loading…</p> }
+
+<CommonDataGridEx Columns="@Columns()" Buttons="@Buttons" ActionButtons="@ActionButtons"
+                  KeyName="@nameof(Item.Id)" GridKey="inv-item-list" Title="Items" T="Item"
+                  OnGridInstance="@OnGridInstance" GridData="@Data" allowSelect="true"
+                  OnSelectionsEventHandle="@OnSelectionsEvent" OnButtonEventHandle="@OnButtonClick"
+                  OnActionEventHandle="@OnActionClick" />
+
+<DxPopup HeaderText="Item" CloseOnOutsideClick="false" Width="50vw" CssClass="common-popup" @bind-Visible="@PopupVisible">
+    <Content>
+        <EditForm Model="@selectedRow" Context="formCtx" OnValidSubmit="@HandleValidSubmit">
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Item Code" ColSpanMd="6">
+                    <Template><DxTextBox @bind-Text="@selectedRow.ItemCode" maxlength="30" ReadOnly="@IsEditMode" InputCssClass="required-field code-style" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Active" ColSpanMd="3">
+                    <Template><DxCheckBox @bind-Checked="@selectedRow.IsActive" AllowIndeterminateState="false" ReadOnly="@(!editEnable)" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <Template><DxTextBox @bind-Text="@selectedRow.ItemDescription" maxlength="200" ReadOnly="@(!editEnable)" InputCssClass="required-field" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Base UOM" ColSpanMd="6" BeginRow="true">
+                    <Template>
+                        <DxComboBox Data="@UomOptions" TextFieldName="@nameof(UOM.UOMCode)" ValueFieldName="@nameof(UOM.Id)"
+                                    @bind-Value="@selectedRow.BaseUOMId" ReadOnly="@(!editEnable)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Stock Item" ColSpanMd="3">
+                    <Template><DxCheckBox @bind-Checked="@selectedRow.IsStockItem" AllowIndeterminateState="false" ReadOnly="@(!editEnable)" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Batch Item" ColSpanMd="3">
+                    <Template><DxCheckBox @bind-Checked="@selectedRow.IsBatchItem" AllowIndeterminateState="false" ReadOnly="@(!editEnable)" /></Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <div class="d-flex gap-2">
+                            @if (editEnable) { <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsSubmitting ? "Saving…" : "Save")" SubmitFormOnClick="true" Enabled="@(!IsSubmitting)" /> }
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancel" />
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="text-danger mt-2">@ErrorMessage</div> }
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </EditForm>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

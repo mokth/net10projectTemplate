@@ -1,0 +1,77 @@
+@page "/inventory/period"
+@inherits PageBase
+
+<PageTitle>Inventory Period</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InvPeriod">
+@if (!string.IsNullOrWhiteSpace(StatusMessage))
+{
+    <div class="alert alert-info">@StatusMessage</div>
+}
+
+<div class="mb-3">
+    <h4 class="mb-1">Inventory Period</h4>
+    <p class="text-muted mb-0">Ensure / close periods. Snapshots are built from StockLedger as-of period end — never live StockBalance.</p>
+</div>
+
+<EditForm Model="@Model" Context="formCtx">
+    <DxFormLayout SizeMode="SizeMode.Small">
+        <DxFormLayoutItem Caption="Fiscal Year" ColSpanMd="3">
+            <Template><DxSpinEdit @bind-Value="@Model.FiscalYear" /></Template>
+        </DxFormLayoutItem>
+        <DxFormLayoutItem Caption="Fiscal Month" ColSpanMd="3">
+            <Template><DxSpinEdit @bind-Value="@Model.FiscalMonth" MinValue="1" MaxValue="12" /></Template>
+        </DxFormLayoutItem>
+        <DxFormLayoutItem Caption="As-Of Date" ColSpanMd="3">
+            <Template><DxDateEdit @bind-Date="@Model.AsOfDate" /></Template>
+        </DxFormLayoutItem>
+        <DxFormLayoutItem ColSpanMd="12" BeginRow="true">
+            <Template>
+                <div class="d-flex gap-2 flex-wrap">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Ensure Period" Click="@EnsureAsync" Enabled="@(!IsBusy)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Close Period" Click="@CloseAsync" Enabled="@(!IsBusy)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="As-Of Valuation" Click="@AsOfAsync" Enabled="@(!IsBusy)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Refresh" Click="@RefreshAsync" Enabled="@(!IsBusy)" />
+                </div>
+                @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+                {
+                    <div class="text-danger mt-2">@ErrorMessage</div>
+                }
+            </Template>
+        </DxFormLayoutItem>
+    </DxFormLayout>
+</EditForm>
+
+@if (Periods.Count > 0)
+{
+    <h5 class="mt-4">Periods</h5>
+    <ul>
+        @foreach (var p in Periods)
+        {
+            <li>
+                @p.FiscalYear-@p.FiscalMonth.ToString("00")
+                (@p.StartDate:d – @p.EndDate:d)
+                — @(p.IsClosed ? $"CLOSED by {p.ClosedBy}" : "OPEN")
+                @if (p.Id == Model.SelectedPeriodId) { <strong> (selected)</strong> }
+                <button type="button" class="btn btn-link btn-sm" @onclick="() => SelectPeriod(p.Id)">Select</button>
+            </li>
+        }
+    </ul>
+}
+
+@if (Snapshots.Count > 0)
+{
+    <h5 class="mt-3">Snapshots (@Snapshots.Count)</h5>
+    <ul>
+        @foreach (var s in Snapshots.Take(50))
+        {
+            <li>WH @s.WarehouseId / Variant @s.ItemVariantId — Qty @s.ClosingQty, Cost @s.ClosingCost, Value @s.ClosingValue</li>
+        }
+    </ul>
+}
+
+@if (Valuation is not null)
+{
+    <h5 class="mt-3">As-Of @Valuation.AsOfDate:d — Qty @Valuation.TotalQty / Value @Valuation.TotalValue</h5>
+}
+</MenuAuthorize>
