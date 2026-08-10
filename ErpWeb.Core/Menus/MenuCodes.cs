@@ -14,5 +14,6 @@ public static class MenuCodes
     public const string AdminRoles = "ADMIN_ROLES";
     public const string AdminPermissions = "ADMIN_PERMISSIONS";
     public const string AdminRolePermissions = "ADMIN_ROLE_PERMISSIONS";
+    public const string AdminCompany = "ADMIN_COMPANY";
     public const string ChangePassword = "CHANGE_PASSWORD";
 }

@@ -1,0 +1,43 @@
+<header class="app-header">
+    <div class="app-header-start">
+        <button type="button"
+                class="nav-toggle"
+                @onclick="ToggleAsync"
+                aria-label="@(SidebarOpen ? "Hide menu" : "Show menu")"
+                aria-expanded="@SidebarOpen">
+            <span></span><span></span><span></span>
+        </button>
+
+        <div class="app-header-brand">
+            <span class="shell-brand-mark" aria-hidden="true">ERP</span>
+            <div class="app-header-brand-text">
+                <strong>Wincom ERP</strong>
+                @if (!string.IsNullOrWhiteSpace(CenterTitle))
+                {
+                    <small>@CenterTitle</small>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="app-header-center">
+        @CenterContent
+    </div>
+
+    <div class="app-header-end">
+        @TrailingContent
+
+        <div class="shell-user" title="@CurrentUser.LoginId">
+            <span class="shell-user-avatar" aria-hidden="true">@UserInitials</span>
+            <div class="shell-user-meta">
+                <span class="shell-user-name">@CurrentUser.FullName</span>
+                <small class="shell-user-scope">
+                    @CurrentUser.CompanyCode · @CurrentUser.BranchCode
+                </small>
+            </div>
+        </div>
+
+        <ThemeSwitcher />
+        <a class="shell-logout" href="/account/logout">Sign out</a>
+    </div>
+</header>

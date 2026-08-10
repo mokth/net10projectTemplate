@@ -66,6 +66,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IRoleMenuPermissionAdminService, RoleMenuPermissionAdminService>();
 
+        services.AddScoped<ICompanyService, CompanyService>();
+
         services.AddScoped<IUserRoleSyncService, UserRoleSyncService>();
 
         services.AddScoped<IMenuService, MenuService>();

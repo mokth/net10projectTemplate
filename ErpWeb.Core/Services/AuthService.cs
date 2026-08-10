@@ -3,9 +3,11 @@ using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.Library.Security;
+using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Repositories;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Services;
@@ -41,6 +43,7 @@ public class AuthService : IAuthService
     public const string GenericLoginFailure = "Invalid company code, username, or password.";
 
     private readonly IUserLoginRepository _users;
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly ICurrentUserService _currentUser;
     private readonly IPasswordPolicy _passwordPolicy;
     private readonly IUserRoleSyncService _userRoleSync;
@@ -48,12 +51,14 @@ public class AuthService : IAuthService
 
     public AuthService(
         IUserLoginRepository users,
+        IDbContextFactory<AppDbContext> dbFactory,
         ICurrentUserService currentUser,
         IPasswordPolicy passwordPolicy,
         IUserRoleSyncService userRoleSync,
         ILogger<AuthService> logger)
     {
         _users = users;
+        _dbFactory = dbFactory;
         _currentUser = currentUser;
         _passwordPolicy = passwordPolicy;
         _userRoleSync = userRoleSync;
@@ -70,6 +75,15 @@ public class AuthService : IAuthService
             string.IsNullOrWhiteSpace(username) ||
             string.IsNullOrWhiteSpace(password))
         {
+            return AuthOperationResult.Fail(GenericLoginFailure);
+        }
+
+        companyCode = companyCode.Trim().ToUpperInvariant();
+        username = username.Trim();
+
+        if (!await IsCompanyActiveAsync(companyCode, cancellationToken))
+        {
+            _logger.LogWarning("Login rejected for inactive or missing company {CompanyCode}", companyCode);
             return AuthOperationResult.Fail(GenericLoginFailure);
         }
 
@@ -99,6 +113,18 @@ public class AuthService : IAuthService
             cancellationToken);
 
         return AuthOperationResult.Ok(user);
+    }
+
+    private async Task<bool> IsCompanyActiveAsync(string companyCode, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = await db.Companies
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyCode == companyCode, cancellationToken);
+
+        // Legacy installs may have users before a Company row exists — allow login only when
+        // the company row is missing; block when it exists and is inactive.
+        return company is null || company.IsActive;
     }
 
     public ClaimsPrincipal CreatePrincipal(UserLogin user)

@@ -189,9 +189,11 @@ public sealed class RoleAdminService : IRoleAdminService
             return RoleAdminOperationResult.Fail("Unable to delete role(s).");
         }
 
-        if (roles.Any(r => string.Equals(r.RoleCode, AdminRole, StringComparison.OrdinalIgnoreCase)))
+        if (roles.Any(r =>
+                string.Equals(r.RoleCode, AdminRole, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(r.RoleCode, CompanyService.SystemAdminRole, StringComparison.OrdinalIgnoreCase)))
         {
-            return RoleAdminOperationResult.Fail("The ADMIN role cannot be deleted.");
+            return RoleAdminOperationResult.Fail("The ADMIN and SYSTEM_ADMIN roles cannot be deleted.");
         }
 
         var ids = roles.Select(r => r.RoleId).ToList();
@@ -229,7 +231,8 @@ public sealed class RoleAdminService : IRoleAdminService
             return AdminContext.Fail("Not authorized.");
         }
 
-        if (!_currentUser.IsInRole(AdminRole))
+        if (!_currentUser.IsInRole(AdminRole) &&
+            !_currentUser.IsInRole(CompanyService.SystemAdminRole))
         {
             return AdminContext.Fail("Not authorized.");
         }

@@ -241,7 +241,8 @@ public sealed class PermissionAdminService : IPermissionAdminService
             return AdminContext.Fail("Not authorized.");
         }
 
-        if (!_currentUser.IsInRole(AdminRole))
+        if (!_currentUser.IsInRole(AdminRole) &&
+            !_currentUser.IsInRole(CompanyService.SystemAdminRole))
         {
             return AdminContext.Fail("Not authorized.");
         }

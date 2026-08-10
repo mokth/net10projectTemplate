@@ -1,0 +1,316 @@
+.company-page {
+    --company-ink: var(--text, #1c2430);
+    --company-muted: #667085;
+    --company-line: var(--line, #d7dde5);
+    --company-surface: var(--surface, #fff);
+    --company-soft: #f3f5f8;
+    --company-accent: #1f6b5b;
+    --company-accent-soft: #e7f3ef;
+    --company-danger: #b42318;
+    display: grid;
+    gap: 16px;
+    min-height: calc(100vh - 100px);
+    animation: company-fade-in 320ms ease both;
+}
+
+.company-page--admin {
+    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+    align-items: start;
+}
+
+.company-toast {
+    grid-column: 1 / -1;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--company-accent-soft);
+    color: #145043;
+    border: 1px solid #c9e4db;
+    font-size: 0.92rem;
+}
+
+.company-rail,
+.company-panel,
+.company-hero {
+    background: var(--company-surface);
+    border: 1px solid var(--company-line);
+    border-radius: 16px;
+}
+
+.company-rail {
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+    overflow: hidden;
+    position: sticky;
+    top: 8px;
+}
+
+.company-rail__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 18px 16px 10px;
+}
+
+.company-rail__eyebrow,
+.company-hero__eyebrow {
+    margin: 0 0 4px;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--company-muted);
+    font-weight: 600;
+}
+
+.company-rail__title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--company-ink);
+}
+
+.company-rail__search {
+    padding: 0 16px 12px;
+}
+
+.company-rail__list {
+    list-style: none;
+    margin: 0;
+    padding: 0 8px 12px;
+    overflow: auto;
+    flex: 1;
+}
+
+.company-rail__item {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    padding: 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    color: inherit;
+    transition: background 160ms ease, transform 160ms ease;
+}
+
+.company-rail__item:hover {
+    background: var(--company-soft);
+}
+
+.company-rail__item.is-active {
+    background: var(--company-accent-soft);
+}
+
+.company-rail__avatar,
+.company-hero__mark {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(145deg, #234a63, #1f6b5b);
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.company-rail__meta {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.company-rail__name {
+    font-weight: 600;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.company-rail__code {
+    font-size: 0.78rem;
+    color: var(--company-muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.company-rail__status,
+.company-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--company-soft);
+    color: var(--company-muted);
+}
+
+.company-rail__status.is-on,
+.company-chip.is-on {
+    background: #eaf7ef;
+    color: #17663a;
+}
+
+.company-rail__status.is-off,
+.company-chip.is-off {
+    background: #f8eaea;
+    color: var(--company-danger);
+}
+
+.company-rail__empty {
+    margin: 8px 16px 20px;
+    color: var(--company-muted);
+    font-size: 0.9rem;
+}
+
+.company-main {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+}
+
+.company-hero {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 20px 22px;
+    background:
+        radial-gradient(1200px 180px at 0% 0%, rgba(31, 107, 91, 0.10), transparent 55%),
+        var(--company-surface);
+    animation: company-rise 380ms ease both;
+}
+
+.company-hero__mark {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    font-size: 1rem;
+}
+
+.company-hero__title {
+    margin: 0;
+    font-size: clamp(1.35rem, 2vw, 1.75rem);
+    line-height: 1.15;
+    font-weight: 700;
+    color: var(--company-ink);
+}
+
+.company-hero__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.company-chip--tone {
+    border: 1px solid transparent;
+}
+
+.company-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.company-panel {
+    padding: 8px 12px 18px;
+}
+
+.company-panel--loading {
+    padding: 28px;
+    color: var(--company-muted);
+}
+
+.company-form ::deep .dxbl-fl-group-header,
+.company-form ::deep .dxbl-fl-group > .card-header {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.company-code ::deep input,
+.company-code input {
+    text-transform: uppercase;
+}
+
+.company-error {
+    margin: 8px 10px 0;
+    color: var(--company-danger);
+    font-size: 0.9rem;
+}
+
+.company-bootstrap-hint {
+    margin: 4px 10px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--company-soft);
+    color: var(--company-muted);
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+
+.company-audit {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 18px;
+    margin: 14px 10px 4px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--company-line);
+    color: var(--company-muted);
+    font-size: 0.78rem;
+}
+
+@keyframes company-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes company-rise {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 960px) {
+    .company-page--admin {
+        grid-template-columns: 1fr;
+    }
+
+    .company-rail {
+        position: static;
+        min-height: 0;
+        max-height: 320px;
+    }
+
+    .company-hero {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .company-hero__actions {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .company-page,
+    .company-hero,
+    .company-rail__item {
+        animation: none;
+        transition: none;
+    }
+}

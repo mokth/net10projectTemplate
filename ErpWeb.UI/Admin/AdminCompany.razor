@@ -1,0 +1,403 @@
+@page "/admin/company"
+@inherits PageBase
+
+<PageTitle>Company Info</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminCompany">
+<div class="company-page @(IsSystemAdmin ? "company-page--admin" : null)">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="company-toast" role="status">@StatusMessage</div>
+    }
+
+    @if (IsSystemAdmin)
+    {
+        <aside class="company-rail">
+            <div class="company-rail__head">
+                <div>
+                    <p class="company-rail__eyebrow">Companies</p>
+                    <h2 class="company-rail__title">Directory</h2>
+                </div>
+                @if (IsSystemAdmin && CanAdd)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              RenderStyleMode="ButtonRenderStyleMode.Outline"
+                              Text="New"
+                              Click="@OnAddNewClick"
+                              Enabled="@(!IsSubmitting)"
+                              CssClass="company-rail__new" />
+                }
+            </div>
+
+            <div class="company-rail__search">
+                <DxTextBox @bind-Text="@ListFilter"
+                           NullText="Search code or name…"
+                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                           CssClass="w-100" />
+            </div>
+
+            @if (IsLoading)
+            {
+                <p class="company-rail__empty">Loading…</p>
+            }
+            else if (FilteredCompanies.Count == 0)
+            {
+                <p class="company-rail__empty">No companies found.</p>
+            }
+            else
+            {
+                <ul class="company-rail__list">
+                    @foreach (var item in FilteredCompanies)
+                    {
+                        <li>
+                            <button type="button"
+                                    class="company-rail__item @(item.CompanyId == EditModel.CompanyId ? "is-active" : null)"
+                                    @onclick="() => SelectCompanyAsync(item.CompanyId)">
+                                <span class="company-rail__avatar" aria-hidden="true">@GetInitials(item.CompanyName, item.CompanyCode)</span>
+                                <span class="company-rail__meta">
+                                    <span class="company-rail__name">@item.CompanyName</span>
+                                    <span class="company-rail__code">@item.CompanyCode</span>
+                                </span>
+                                <span class="company-rail__status @(item.IsActive ? "is-on" : "is-off")">
+                                    @(item.IsActive ? "Active" : "Off")
+                                </span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </aside>
+    }
+
+    <section class="company-main">
+        @if (IsLoading && EditModel.CompanyId == 0 && !IsCreateMode)
+        {
+            <div class="company-panel company-panel--loading">
+                <p>Loading company…</p>
+            </div>
+        }
+        else if (!HasEditableTarget)
+        {
+            <div class="company-panel company-panel--loading">
+                @if (IsSystemAdmin && CanAdd)
+                {
+                    <p>No company selected. Choose one from the directory or create a new company.</p>
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="New company"
+                              Click="@OnAddNewClick" />
+                }
+                else
+                {
+                    <p>@(StatusMessage ?? "Company record is not available.")</p>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="company-hero">
+                <div class="company-hero__mark" aria-hidden="true">@GetInitials(EditModel.CompanyName, EditModel.CompanyCode)</div>
+                <div class="company-hero__copy">
+                    <p class="company-hero__eyebrow">Company profile</p>
+                    <h1 class="company-hero__title">
+                        @(string.IsNullOrWhiteSpace(EditModel.CompanyName) ? "New company" : EditModel.CompanyName)
+                    </h1>
+                    <div class="company-hero__chips">
+                        @if (!string.IsNullOrWhiteSpace(EditModel.CompanyCode))
+                        {
+                            <span class="company-chip">@EditModel.CompanyCode</span>
+                        }
+                        <span class="company-chip company-chip--tone @(EditModel.IsActive ? "is-on" : "is-off")">
+                            @(EditModel.IsActive ? "Active" : "Inactive")
+                        </span>
+                        @if (!IsSystemAdmin)
+                        {
+                            <span class="company-chip">Your company</span>
+                        }
+                    </div>
+                </div>
+                <div class="company-hero__actions">
+                    @if (CanEdit || (IsCreateMode && IsSystemAdmin && CanAdd))
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  Click="@SaveAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    @if (IsSystemAdmin && IsCreateMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  Click="@CancelCreateAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    @if (IsSystemAdmin && !IsCreateMode && CanDelete && EditModel.CompanyId > 0)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                  Text="Deactivate"
+                                  Click="@DeactivateAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                </div>
+            </div>
+
+            <div class="company-panel">
+                <EditForm Model="@EditModel" Context="companyForm" OnValidSubmit="@SaveAsync">
+                    <DataAnnotationsValidator />
+
+                    <DxFormLayout SizeMode="SizeMode.Small" CssClass="company-form">
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>Identity</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Company Code" ColSpanMd="3">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.CompanyCode"
+                                                   maxlength="5"
+                                                   ReadOnly="@(!IsCreateMode)"
+                                                   InputCssClass="required-field company-code" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Active" ColSpanMd="3">
+                                    <Template>
+                                        <DxCheckBox @bind-Checked="@EditModel.IsActive"
+                                                    AllowIndeterminateState="false"
+                                                    ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Company Name" ColSpanMd="6" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.CompanyName"
+                                                   maxlength="100"
+                                                   ReadOnly="@(!CanMutate)"
+                                                   InputCssClass="required-field" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Legal Name" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.LegalName"
+                                                   maxlength="150"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Registration No" ColSpanMd="6" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.RegistrationNo"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Tax No" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.TaxNo"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>Contact</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Phone" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Phone"
+                                                   maxlength="30"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Fax" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Fax"
+                                                   maxlength="30"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Email" ColSpanMd="6" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Email"
+                                                   maxlength="100"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Website" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Website"
+                                                   maxlength="200"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>Address</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Address 1" ColSpanMd="12">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Address1"
+                                                   maxlength="100"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Address 2" ColSpanMd="12" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Address2"
+                                                   maxlength="100"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Address 3" ColSpanMd="12" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Address3"
+                                                   maxlength="100"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="City" ColSpanMd="4" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.City"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="State" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.State"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Post Code" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.PostCode"
+                                                   maxlength="20"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Country" ColSpanMd="4" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.Country"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>Regional</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Currency" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.CurrencyCode"
+                                                   maxlength="3"
+                                                   ReadOnly="@(!CanMutate)"
+                                                   InputCssClass="company-code" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Time Zone" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.TimeZoneId"
+                                                   maxlength="64"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Fiscal Year Start" ColSpanMd="4">
+                                    <Template>
+                                        <DxComboBox Data="@FiscalMonths"
+                                                    @bind-Value="@EditModel.FiscalYearStartMonth"
+                                                    TextFieldName="@nameof(FiscalMonthOption.Name)"
+                                                    ValueFieldName="@nameof(FiscalMonthOption.Value)"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        @if (IsCreateMode)
+                        {
+                            <DxFormLayoutGroup ColSpanMd="12">
+                                <HeaderContentTemplate>First administrator</HeaderContentTemplate>
+                                <Items>
+                                    <DxFormLayoutItem Caption="Admin User ID" ColSpanMd="4">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.AdminLoginId"
+                                                       maxlength="10"
+                                                       InputCssClass="required-field" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Admin Name" ColSpanMd="4">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.AdminDisplayName"
+                                                       maxlength="50"
+                                                       NullText="Defaults to company admin" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Admin Email" ColSpanMd="4">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.AdminEmail"
+                                                       maxlength="50" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Password" ColSpanMd="4" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.AdminPassword"
+                                                       Password="true"
+                                                       maxlength="100"
+                                                       InputCssClass="required-field" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Confirm Password" ColSpanMd="4">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.ConfirmPassword"
+                                                       Password="true"
+                                                       maxlength="100"
+                                                       InputCssClass="required-field" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Branch" ColSpanMd="2" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.BranchCode"
+                                                       maxlength="5"
+                                                       InputCssClass="company-code" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Location" ColSpanMd="2">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@BootstrapModel.LocationCode"
+                                                       maxlength="10"
+                                                       InputCssClass="company-code" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </Items>
+                            </DxFormLayoutGroup>
+                            <p class="company-bootstrap-hint">
+                                Creates ADMIN and USER roles, copies default menu permissions from the DEMO template when available,
+                                and provisions the first admin so the company can sign in immediately.
+                            </p>
+                        }
+                    </DxFormLayout>
+
+                    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+                    {
+                        <p class="company-error">@ErrorMessage</p>
+                    }
+
+                    <div class="company-audit">
+                        @if (!string.IsNullOrWhiteSpace(EditModel.CreatedBy) || EditModel.CreatedDate.HasValue)
+                        {
+                            <span>Created @(EditModel.CreatedBy) · @FormatUtc(EditModel.CreatedDate)</span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(EditModel.ModifiedBy) || EditModel.ModifiedDate.HasValue)
+                        {
+                            <span>Updated @(EditModel.ModifiedBy) · @FormatUtc(EditModel.ModifiedDate)</span>
+                        }
+                    </div>
+                </EditForm>
+            </div>
+        }
+    </section>
+</div>
+</MenuAuthorize>

@@ -38,8 +38,18 @@ IF NOT EXISTS (SELECT 1 FROM dbo.userlogin WHERE id = N'admin' AND CompanyCode =
 BEGIN
     INSERT INTO dbo.userlogin (id, name, password, email, active, userlevel, Created, UserID, CompanyCode, BranchCode, LocationCode, changepass)
     VALUES
-    (N'admin', N'Demo Admin', @hash, N'admin@demo.local', 1, N'ADMIN', GETDATE(), N'ADM01', N'DEMO', N'HQ', N'MAIN', 0),
+    (N'admin', N'Demo Admin', @hash, N'admin@demo.local', 1, N'SYSTEM_ADMIN', GETDATE(), N'ADM01', N'DEMO', N'HQ', N'MAIN', 0),
     (N'chguser', N'Change Pass User', @hash, N'chg@demo.local', 1, N'USER', GETDATE(), N'USR01', N'DEMO', N'HQ', N'MAIN', 1),
     (N'inactive', N'Inactive User', @hash, N'off@demo.local', 0, N'USER', GETDATE(), N'USR02', N'DEMO', N'HQ', N'MAIN', 0);
 END
+GO
+
+-- Promote existing DEMO platform admin to SYSTEM_ADMIN (company-directory access)
+UPDATE dbo.userlogin
+SET userlevel = N'SYSTEM_ADMIN',
+    Updated = GETDATE(),
+    UpdatedUID = N'SEED'
+WHERE id = N'admin'
+  AND CompanyCode = N'DEMO'
+  AND (userlevel IS NULL OR userlevel <> N'SYSTEM_ADMIN');
 GO

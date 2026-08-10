@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<UserRoleMapping> UserRoleMappings => Set<UserRoleMapping>();
     public DbSet<MenuPermission> MenuPermissions => Set<MenuPermission>();
     public DbSet<RoleMenuPermission> RoleMenuPermissions => Set<RoleMenuPermission>();
+    public DbSet<Company> Companies => Set<Company>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

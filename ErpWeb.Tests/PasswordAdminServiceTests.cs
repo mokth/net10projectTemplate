@@ -56,7 +56,14 @@ public class AuthServiceChangePasswordTests
             .Returns(PasswordValidationResult.Success());
 
         var roleSync = new Mock<IUserRoleSyncService>();
-        var sut = new AuthService(users.Object, current.Object, policy.Object, roleSync.Object, NullLogger<AuthService>.Instance);
+        var dbFactory = new Mock<Microsoft.EntityFrameworkCore.IDbContextFactory<ErpWeb.Model.Data.AppDbContext>>();
+        var sut = new AuthService(
+            users.Object,
+            dbFactory.Object,
+            current.Object,
+            policy.Object,
+            roleSync.Object,
+            NullLogger<AuthService>.Instance);
 
         var result = await sut.ChangePasswordAsync("OldPass1", "NewPass99");
 
@@ -76,7 +83,14 @@ public class AuthServiceChangePasswordTests
 
         var policy = new Mock<IPasswordPolicy>();
         var roleSync = new Mock<IUserRoleSyncService>();
-        var sut = new AuthService(users.Object, current.Object, policy.Object, roleSync.Object, NullLogger<AuthService>.Instance);
+        var dbFactory = new Mock<Microsoft.EntityFrameworkCore.IDbContextFactory<ErpWeb.Model.Data.AppDbContext>>();
+        var sut = new AuthService(
+            users.Object,
+            dbFactory.Object,
+            current.Object,
+            policy.Object,
+            roleSync.Object,
+            NullLogger<AuthService>.Instance);
 
         var result = await sut.ChangePasswordAsync("OldPass1", "NewPass99");
 

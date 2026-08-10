@@ -11,21 +11,21 @@ public partial class MainLayout
     private NavigationManager NavigationManager { get; set; } = default!;
 
     [Inject]
-    private ICurrentUserService CurrentUser { get; set; } = default!;
-
-    [Inject]
     private AuthenticationStateProvider AuthenticationStateProvider { get; set; } = default!;
 
     [Inject]
     private ThemeService Themes { get; set; } = default!;
 
-    private bool _sidebarOpen;
+    [Inject]
+    private ICurrentUserService CurrentUser { get; set; } = default!;
+
+    private bool _sidebarOpen = true;
 
     private string BootstrapMode => AppThemes.BootstrapColorMode(Themes.ActiveThemeName);
 
-    private string LocalPath => new Uri(NavigationManager.Uri).LocalPath;
+    private string NavShellClass => _sidebarOpen ? "nav-open" : "nav-collapsed";
 
-    private void ToggleNav() => _sidebarOpen = !_sidebarOpen;
+    private string LocalPath => new Uri(NavigationManager.Uri).LocalPath;
 
     private void CloseNav() => _sidebarOpen = false;
 

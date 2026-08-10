@@ -16,6 +16,7 @@
       <Menu Code="ADMIN_ROLES" Name="Roles" Route="/admin/roles" SortOrder="3" />
       <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="4" />
       <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="5" />
+      <Menu Code="ADMIN_COMPANY" Name="Company Info" Route="/admin/company" SortOrder="6" />
     </Menu>
   </Menu>
 
