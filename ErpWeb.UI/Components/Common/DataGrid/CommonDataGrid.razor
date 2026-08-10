@@ -1,0 +1,175 @@
+@typeparam T
+
+<div class="common-datagrid">
+    <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain" CssClass="mb-2">
+        <TitleTemplate>
+            @if (!string.IsNullOrWhiteSpace(Title))
+            {
+                <h5 class="m-0 page-toolbar-title">@Title</h5>
+            }
+        </TitleTemplate>
+        <Items>
+            @foreach (var button in ToolbarButtons)
+            {
+                <DxToolbarItem Text="@button.Text"
+                               Tooltip="@(button.ToolTip ?? button.Text)"
+                               IconCssClass="@button.IconCssClass"
+                               Enabled="@button.Enabled"
+                               BeginGroup="true"
+                               Click="@(() => OnToolbarClickAsync(button))" />
+            }
+            @if (AllowExport)
+            {
+                <DxToolbarItem Text="Export"
+                               Tooltip="Export to Excel"
+                               IconCssClass="oi oi-data-transfer-download"
+                               BeginGroup="true"
+                               Click="@ExportAsync" />
+            }
+            @if (ShowColumnChooser)
+            {
+                <DxToolbarItem Tooltip="Column Chooser"
+                               IconCssClass="oi oi-cog"
+                               Alignment="ToolbarItemAlignment.Right"
+                               BeginGroup="true"
+                               Click="@ShowChooser" />
+            }
+            @ToolbarContent
+        </Items>
+    </DxToolbar>
+
+    <DxGrid @ref="_grid"
+            Data="@Data"
+            KeyFieldName="@KeyFieldName"
+            ShowSearchBox="@ShowSearchBox"
+            ShowFilterRow="@ShowFilterRow"
+            ShowGroupPanel="@ShowGroupPanel"
+            PageSizeSelectorVisible="true"
+            PageSizeSelectorItems="@(new[] { 5, 10, 20, 50, 100 })"
+            PageSizeSelectorAllRowsItemVisible="true"
+            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+            AllowSelectRowByClick="@AllowSelection"
+            SelectionMode="@SelectionMode"
+            SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
+            SelectedDataItemChanged="HandleSelectedItemChanged"
+            SelectedDataItemsChanged="HandleSelectedItemsChanged"
+            LayoutAutoLoading="OnLayoutLoadingAsync"
+            LayoutAutoSaving="OnLayoutSavingAsync">
+        <Columns>
+            @if (AllowSelection)
+            {
+                <DxGridSelectionColumn Width="60px" />
+            }
+
+            @if (RowActions.Count > 0)
+            {
+                <DxGridCommandColumn Caption="" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false" Width="@GetActionColumnWidth()">
+                    <CellDisplayTemplate>
+                        <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+                            <Items>
+                                @foreach (var action in RowActions)
+                                {
+                                    <DxToolbarItem IconCssClass="@action.IconCssClass"
+                                                   Tooltip="@(action.ToolTip ?? action.Text)"
+                                                   Click="@(() => OnRowActionAsync(context, action))" />
+                                }
+                            </Items>
+                        </DxToolbar>
+                    </CellDisplayTemplate>
+                </DxGridCommandColumn>
+            }
+
+            @foreach (var column in Columns)
+            {
+                @RenderColumn(column)
+            }
+        </Columns>
+
+        <TotalSummary>
+            @foreach (var summary in TotalSummaries)
+            {
+                <DxGridSummaryItem FieldName="@summary.FieldName"
+                                   SummaryType="@summary.SummaryType"
+                                   DisplayFormat="@summary.DisplayFormat" />
+            }
+        </TotalSummary>
+
+        <GroupSummary>
+            @foreach (var summary in GroupSummaries)
+            {
+                <DxGridSummaryItem FieldName="@summary.FieldName"
+                                   SummaryType="@summary.SummaryType"
+                                   DisplayFormat="@summary.DisplayFormat" />
+            }
+        </GroupSummary>
+    </DxGrid>
+</div>
+
+@code {
+    // Markup-based column factory must remain in the .razor partial.
+    private RenderFragment RenderColumn(GridColumnDefinition column) => __builder =>
+    {
+        switch (column.DataType.ToLowerInvariant())
+        {
+            case "datetime":
+            case "date":
+                <DxGridDataColumn FieldName="@column.FieldName"
+                                  Caption="@column.Caption"
+                                  DisplayFormat="@(column.DisplayFormat ?? "g")"
+                                  Width="@column.Width"
+                                  SortIndex="@column.SortIndex"
+                                  SortOrder="@column.SortOrder"
+                                  GroupIndex="@column.GroupIndex"
+                                  VisibleIndex="@column.VisibleIndex">
+                    <FilterRowCellTemplate>
+                        <DxDateEdit Date="(DateTime?)context.FilterRowValue"
+                                    DateChanged="(DateTime? v) => context.FilterRowValue = v"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </FilterRowCellTemplate>
+                </DxGridDataColumn>
+                break;
+            case "time":
+                <DxGridDataColumn FieldName="@column.FieldName"
+                                  Caption="@column.Caption"
+                                  DisplayFormat="@(column.DisplayFormat ?? "t")"
+                                  Width="@column.Width"
+                                  SortIndex="@column.SortIndex"
+                                  SortOrder="@column.SortOrder"
+                                  GroupIndex="@column.GroupIndex"
+                                  VisibleIndex="@column.VisibleIndex" />
+                break;
+            case "bool":
+            case "boolean":
+                <DxGridDataColumn FieldName="@column.FieldName"
+                                  Caption="@column.Caption"
+                                  Width="@column.Width"
+                                  SortIndex="@column.SortIndex"
+                                  SortOrder="@column.SortOrder"
+                                  GroupIndex="@column.GroupIndex"
+                                  VisibleIndex="@column.VisibleIndex" />
+                break;
+            case "int":
+            case "decimal":
+            case "double":
+                <DxGridDataColumn FieldName="@column.FieldName"
+                                  Caption="@column.Caption"
+                                  DisplayFormat="@column.DisplayFormat"
+                                  Width="@column.Width"
+                                  SortIndex="@column.SortIndex"
+                                  SortOrder="@column.SortOrder"
+                                  GroupIndex="@column.GroupIndex"
+                                  VisibleIndex="@column.VisibleIndex" />
+                break;
+            default:
+                <DxGridDataColumn FieldName="@column.FieldName"
+                                  Caption="@column.Caption"
+                                  DisplayFormat="@column.DisplayFormat"
+                                  Width="@column.Width"
+                                  SortIndex="@column.SortIndex"
+                                  SortOrder="@column.SortOrder"
+                                  GroupIndex="@column.GroupIndex"
+                                  VisibleIndex="@column.VisibleIndex" />
+                break;
+        }
+    };
+}

@@ -1,0 +1,39 @@
+@using ErpWeb.UI.Services.Theme
+@inject ThemeService ThemeService
+
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="@BootstrapMode">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    @DxResourceManager.RegisterTheme(ThemeService.ActiveTheme)
+    @DxResourceManager.RegisterScripts()
+    <link href="@Assets["css/site.css"]" rel="stylesheet" />
+    <link href="@Assets["ErpWeb.styles.css"]" rel="stylesheet" />
+    <link href="@Assets["_content/ErpWeb.UI/ErpWeb.UI.styles.css"]" rel="stylesheet" />
+    <ImportMap />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script>
+        window.erpSetCookie = function (key, value) {
+            const expires = new Date();
+            expires.setFullYear(expires.getFullYear() + 1);
+            document.cookie = `${key}=${encodeURIComponent(value)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`;
+            location.reload();
+        };
+    </script>
+</body>
+</html>
+
+@code {
+    private string BootstrapMode =>
+        AppThemes.BootstrapColorMode(ThemeService.ActiveThemeName);
+}

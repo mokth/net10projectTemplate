@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="ErpWeb.Core/ErpWeb.Core.csproj" />
+  <Project Path="ErpWeb.Library/ErpWeb.Library.csproj" />
+  <Project Path="ErpWeb.Model/ErpWeb.Model.csproj" />
+  <Project Path="ErpWeb.Report/ErpWeb.Report.csproj" />
+  <Project Path="ErpWeb.Tests/ErpWeb.Tests.csproj" />
+  <Project Path="ErpWeb.UI/ErpWeb.UI.csproj" />
+  <Project Path="ErpWeb/ErpWeb.csproj" />
+</Solution>

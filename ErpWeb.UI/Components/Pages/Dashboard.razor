@@ -1,0 +1,32 @@
+@page "/dashboard"
+@inherits PageBase
+
+<PageTitle>Dashboard</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.Dashboard">
+    <div class="page-head">
+        <div>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-sub">Session overview for @CurrentUser.FullName</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <table class="meta-table">
+            <tbody>
+                <tr>
+                    <th>Company</th>
+                    <td>@CurrentUser.CompanyCode</td>
+                    <th>Branch</th>
+                    <td>@CurrentUser.BranchCode</td>
+                </tr>
+                <tr>
+                    <th>Location</th>
+                    <td>@CurrentUser.LocationCode</td>
+                    <th>Level</th>
+                    <td>@CurrentUser.UserLevel</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</MenuAuthorize>

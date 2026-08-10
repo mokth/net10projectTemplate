@@ -1,0 +1,37 @@
+@page "/"
+@page "/home"
+@inherits PageBase
+
+<PageTitle>Home</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1 class="page-title">Home</h1>
+        <p class="page-sub">Welcome, @CurrentUser.FullName</p>
+    </div>
+</div>
+
+<div class="panel">
+    <table class="meta-table">
+        <tbody>
+            <tr>
+                <th>Login ID</th>
+                <td>@CurrentUser.LoginId</td>
+                <th>User ID</th>
+                <td>@CurrentUser.UserId</td>
+            </tr>
+            <tr>
+                <th>Company</th>
+                <td>@CurrentUser.CompanyCode</td>
+                <th>Branch</th>
+                <td>@CurrentUser.BranchCode</td>
+            </tr>
+            <tr>
+                <th>Location</th>
+                <td>@CurrentUser.LocationCode</td>
+                <th>Level</th>
+                <td>@CurrentUser.UserLevel</td>
+            </tr>
+        </tbody>
+    </table>
+</div>

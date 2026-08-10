@@ -1,0 +1,22 @@
+﻿<nav class="nav-tree-wrap" aria-label="Primary">
+    @if (_items is null)
+    {
+        <span class="nav-tree-loading">Loading…</span>
+    }
+    else
+    {
+        <DxTreeView Data="@_items"
+                    CssClass="nav-tree"
+                    AllowSelectNodes="true"
+                    UrlMatchMode="NavigationUrlMatchMode.Prefix"
+                    AnimationType="LayoutAnimationType.Slide">
+            <DataMappings>
+                <DxTreeViewDataMapping Text="Name"
+                                       Name="Code"
+                                       Children="Children"
+                                       IconCssClass="Icon"
+                                       NavigateUrl="Route" />
+            </DataMappings>
+        </DxTreeView>
+    }
+</nav>

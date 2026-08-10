@@ -1,0 +1,332 @@
+﻿@inherits CommonDataGridExBase<T>
+@typeparam T
+
+<style>
+    .link-text {
+        text-decoration: underline;
+        text-decoration-color: red;
+    }
+
+    .toolbar {
+        width: 500px;
+    }
+
+    .common-datagrid-ex-loading {
+        position: relative;
+        min-height: 2rem;
+    }
+
+    .common-datagrid-ex-loading::after {
+        content: "Loading...";
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--overlay-scrim, rgba(255, 255, 255, 0.72));
+        color: var(--text, #1c2430);
+        z-index: 2;
+        font-size: 0.875rem;
+    }
+</style>
+
+<div class="@(IsLoading ? "common-datagrid-ex-loading" : null)">
+    <div class="row" style="padding-bottom:5px;padding-right:15px">
+        <div class="col-12">
+            <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+                <TitleTemplate>
+                    @if (ShowColChoose)
+                    {
+                        <h5 class="page-toolbar-title"><i class="fa-solid fa-caret-right"></i><span style="padding-left:10px"> @Title</span></h5>
+                    }
+                    else
+                    {
+                        <h6 class="page-toolbar-title card-title"><strong style="padding-top:10px"> @Title</strong></h6>
+                    }
+                </TitleTemplate>
+                <Items>
+                    @foreach (var btn in Buttons)
+                    {
+                        <DxToolbarItem IconCssClass="@btn.IConClass"
+                                       Tooltip="@(btn.ToolTip ?? btn.Text)"
+                                       Enabled="@btn.Enabled"
+                                       Alignment="ToolbarItemAlignment.Left"
+                                       Click="@(() => OnButtonClick(btn))"
+                                       BeginGroup="true" />
+                    }
+                    <DxToolbarItem IconCssClass="fa-solid fa-arrows-rotate"
+                                   Tooltip="Refresh List"
+                                   Alignment="ToolbarItemAlignment.Left"
+                                   Click="@OnRefreshClick"
+                                   BeginGroup="true" />
+                    @if (ShowColChoose)
+                    {
+                        <DxToolbarItem IconCssClass="fa-solid fa-table-columns"
+                                       Tooltip="COLUMN CHOOSER"
+                                       Alignment="ToolbarItemAlignment.Right"
+                                       Click="@OnColChoose"
+                                       BeginGroup="true" />
+                    }
+                </Items>
+            </DxToolbar>
+        </div>
+    </div>
+
+    @if (PreRendered)
+    {
+        <DxGrid @ref="grid"
+                KeyFieldName="@KeyName"
+                Data="@GridData"
+                ShowGroupPanel="@ShowGroupPanel"
+                PageSizeSelectorVisible="true"
+                PageSizeSelectorItems="@(new[] { 5, 10, 20, 30, 50, 100 })"
+                PageSizeSelectorAllRowsItemVisible="true"
+                ShowFilterRow="@ShowFilterRow"
+                ShowSearchBox="@ShowSearchBox"
+                FocusedRowEnabled="true"
+                SearchTextParseMode="GridSearchTextParseMode.GroupWordsByAnd"
+                ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                GroupFooterDisplayMode="@GroupFooterDisplayMode"
+                AllowSelectRowByClick="true"
+                CustomizeCellDisplayText="@OnCustomizeCellDisplayTextHandle"
+                SelectionMode="@GridSelectionMode"
+                SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
+                SelectedDataItem="@SelectedDataItem"
+                SelectedDataItemChanged="OnSelectionChanged"
+                SelectedDataItemsChanged="OnSelectedDataItemsChanged"
+                LayoutAutoLoading="Grid_LayoutAutoLoading"
+                LayoutAutoSaving="Grid_LayoutAutoSaving">
+            <Columns>
+                @if (allowSelect)
+                {
+                    <DxGridSelectionColumn Width="60px" VisibleIndex="0" />
+                }
+
+                @if (ActionButtons.Count > 0)
+                {
+                    <DxGridCommandColumn Caption=""
+                                         NewButtonVisible="false"
+                                         EditButtonVisible="false"
+                                         DeleteButtonVisible="false"
+                                         VisibleIndex="0"
+                                         Width="@GetGridActionColWidth()">
+                        <CellDisplayTemplate>
+                            <DxToolbar SizeMode="SizeMode.Small"
+                                       ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
+                                <Items>
+                                    @foreach (var but in ActionButtons)
+                                    {
+                                        <DxToolbarItem IconCssClass="@but.IConClass"
+                                                       RenderStyle="ButtonRenderStyle.Info"
+                                                       Tooltip="@(but.ToolTip ?? but.Text)"
+                                                       Enabled="@but.Enabled"
+                                                       Alignment="ToolbarItemAlignment.Left"
+                                                       Click="@(() => OnEditClick(context, but))" />
+                                    }
+                                </Items>
+                            </DxToolbar>
+                        </CellDisplayTemplate>
+                    </DxGridCommandColumn>
+                }
+
+                @foreach (var col in Columns)
+                {
+                    @RenderColumn(col)
+                }
+            </Columns>
+
+            <ColumnHeaderCaptionTemplate>
+                <span title="Click the header to sort data by this column. Drag and drop the header to change the column's position">
+                    @context.Caption
+                </span>
+            </ColumnHeaderCaptionTemplate>
+
+            <GroupSummary>
+                @if (GroupSummaryItems is not null)
+                {
+                    @foreach (var sum in GroupSummaryItems)
+                    {
+                        <DxGridSummaryItem SummaryType="@sum.SummType"
+                                           FieldName="@sum.FieldName"
+                                           FooterColumnName="@sum.FieldName"
+                                           ValueDisplayFormat="@sum.DisplayFormat" />
+                    }
+                }
+            </GroupSummary>
+
+            <TotalSummary>
+                @if (GroupSummaryItems is not null && ShowTotalSummary)
+                {
+                    @foreach (var sum in GroupSummaryItems)
+                    {
+                        <DxGridSummaryItem SummaryType="@sum.SummType"
+                                           FieldName="@sum.FieldName"
+                                           FooterColumnName="@sum.FieldName"
+                                           ValueDisplayFormat="@sum.DisplayFormat" />
+                    }
+                }
+            </TotalSummary>
+        </DxGrid>
+    }
+</div>
+
+@code {
+    private RenderFragment RenderColumn(GridColumnData col) => __builder =>
+    {
+        var caption = string.IsNullOrWhiteSpace(col.Caption) ? col.FieldName : col.Caption.ToUpperInvariant();
+        var dataType = (col.DataType ?? "string").ToLowerInvariant();
+
+        switch (dataType)
+        {
+            case "datetime":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  DisplayFormat="@(col.DisplayFormat ?? "dd-MM-yyyy")"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex" />
+                break;
+            case "time":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  DisplayFormat="@(col.DisplayFormat ?? "dd-MM-yyyy hh:mm:ss tt")"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex" />
+                break;
+            case "stringicon":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex">
+                    <CellDisplayTemplate>
+                        @{
+                            var text = context.Value?.ToString()?.ToUpperInvariant() ?? string.Empty;
+                            <div><i class="@GetIConClss(context, col.FieldName, text)"></i><span style="padding-left:3px">@text</span></div>
+                        }
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                break;
+            case "stringicon2":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex">
+                    <CellDisplayTemplate>
+                        @{
+                            var text = context.DisplayText;
+                            <div><i class="@GetIConClss(context, col.FieldName, text)"></i><span style="padding-left:3px">@text</span></div>
+                        }
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                break;
+            case "stringiconlink":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex">
+                    <CellDisplayTemplate>
+                        @if (context.Value is not null)
+                        {
+                            var text = context.Value.ToString()?.ToUpperInvariant() ?? string.Empty;
+                            var id = $"{col.FieldName}_{Base64Encode(text)}";
+                            <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                      Id="@id"
+                                      IconCssClass="@GetIConClss(context, col.FieldName, text)"
+                                      @attributes="@GetLinkAttributes2(context, col.FieldName)"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@text" />
+                        }
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                break;
+            case "link":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  VisibleIndex="@col.VisibleIndex">
+                    <CellDisplayTemplate>
+                        @if (context.Value is not null)
+                        {
+                            var text = context.Value.ToString()?.ToUpperInvariant() ?? string.Empty;
+                            var id = $"{col.FieldName}_{Base64Encode(text)}";
+                            <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                      Id="@id"
+                                      @attributes="@GetLinkAttributes2(context, col.FieldName)"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@text" />
+                        }
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                break;
+            case "click":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  VisibleIndex="@col.VisibleIndex">
+                    <CellDisplayTemplate>
+                        @if (context.Value is not null)
+                        {
+                            var text = context.Value.ToString()?.ToUpperInvariant() ?? string.Empty;
+                            var id = $"{col.FieldName}_{Base64Encode(text)}";
+                            <DxButton RenderStyle="ButtonRenderStyle.Info"
+                                      Id="@id"
+                                      Click="@(() => OnItemLinkClick(context, col.FieldName))"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="@text" />
+                        }
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                break;
+            case "double":
+            case "int":
+            case "decimal":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  DisplayFormat="@col.DisplayFormat"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex" />
+                break;
+            case "bool":
+            case "boolean":
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex" />
+                break;
+            default:
+                <DxGridDataColumn FieldName="@col.FieldName"
+                                  Caption="@caption"
+                                  Width="@col.Width"
+                                  SortIndex="@col.SortIndex"
+                                  SortOrder="@col.SortOrder"
+                                  GroupIndex="@col.GroupIndex"
+                                  Visible="@col.Visible"
+                                  VisibleIndex="@col.VisibleIndex" />
+                break;
+        }
+    };
+}

@@ -1,0 +1,60 @@
+.nav-tree-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--nav-bg, #fff);
+    padding: 8px 0 12px;
+}
+
+.nav-tree-loading {
+    display: block;
+    padding: 12px 16px;
+    color: var(--nav-muted, #6b7280);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+::deep .nav-tree {
+    --dxbl-treeview-bg: var(--nav-bg, #fff);
+    background: var(--nav-bg, #fff);
+    color: var(--nav-text, #4b5563);
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+}
+
+::deep .nav-tree .dxbl-treeview-item,
+::deep .nav-tree .dxbl-treeview-item-content,
+::deep .nav-tree .dxbl-treeview-item-text {
+    color: var(--nav-text, #4b5563);
+    text-transform: uppercase;
+}
+
+::deep .nav-tree .dxbl-treeview-item {
+    border-radius: 0;
+    min-height: 34px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+::deep .nav-tree .dxbl-treeview-item:hover {
+    background: var(--nav-hover-bg, #f3f0f8);
+    color: var(--nav-hover-text, #5e418a);
+}
+
+::deep .nav-tree .dxbl-treeview-item-selected,
+::deep .nav-tree .dxbl-treeview-item.dxbl-selected,
+::deep .nav-tree [class*="selected"] .dxbl-treeview-item-text {
+    background: var(--nav-selected-bg, #f3f0f8);
+    color: var(--nav-selected-text, #5e418a);
+    font-weight: 600;
+}
+
+::deep .nav-tree .dxbl-treeview-item-icon {
+    color: var(--nav-text, #4b5563);
+    opacity: 0.9;
+}
+
+::deep .nav-tree .dxbl-treeview-expand-button {
+    color: var(--nav-muted, #6b7280);
+}

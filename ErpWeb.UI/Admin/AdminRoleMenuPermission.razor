@@ -1,0 +1,238 @@
+@page "/admin/role-permissions"
+@inherits PageBase
+@using ErpWeb.Core.Security
+
+<PageTitle>Role Permissions</PageTitle>
+
+<style>
+    .role-perm-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem 1.5rem;
+        align-items: end;
+        margin-bottom: 1rem;
+    }
+
+    .role-perm-field {
+        min-width: 220px;
+        flex: 1 1 220px;
+        max-width: 360px;
+    }
+
+    .role-perm-field label {
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 0.25rem;
+        color: var(--bs-secondary-color, #6c757d);
+    }
+
+    .role-perm-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-top: 1rem;
+    }
+
+    .role-perm-hint {
+        color: var(--bs-secondary-color, #6c757d);
+        font-size: 0.875rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .role-perm-dirty {
+        color: #9a6700;
+        font-size: 0.875rem;
+        margin-left: 0.25rem;
+    }
+
+    [data-bs-theme="dark"] .role-perm-dirty {
+        color: #f5c451;
+    }
+
+    .role-perm-menu-name {
+        white-space: pre;
+    }
+
+    .role-perm-grid-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .role-perm-row-actions {
+        display: flex;
+        gap: 0.35rem;
+        justify-content: center;
+        align-items: center;
+    }
+</style>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminRolePermissions">
+@if (!string.IsNullOrWhiteSpace(StatusMessage))
+{
+    <div class="alert alert-info">@StatusMessage</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(ErrorMessage))
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (IsLoading)
+{
+    <p>Loading role permissions…</p>
+}
+else
+{
+    <h4 class="mb-3">Role Permissions@(string.IsNullOrWhiteSpace(SelectedRoleLabel) ? "" : $" ({SelectedRoleLabel})")</h4>
+
+    <div class="role-perm-toolbar">
+        <div class="role-perm-field">
+            <label>Role</label>
+            <DxComboBox Data="@roleOptions"
+                        @bind-Value="@SelectedRoleId"
+                        @bind-Value:after="OnRoleSelectionChangedAsync"
+                        TextFieldName="@nameof(RoleOptionAdminRow.DisplayName)"
+                        ValueFieldName="@nameof(RoleOptionAdminRow.RoleId)"
+                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
+                        Enabled="@(!IsSubmitting)" />
+        </div>
+        <div class="role-perm-field">
+            <label>Module</label>
+            <DxComboBox Data="@moduleOptions"
+                        @bind-Value="@SelectedModuleId"
+                        @bind-Value:after="OnModuleSelectionChangedAsync"
+                        TextFieldName="@nameof(MenuOptionRow.MenuName)"
+                        ValueFieldName="@nameof(MenuOptionRow.MenuId)"
+                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
+                        Enabled="@(!IsSubmitting && SelectedRoleId > 0)" />
+        </div>
+    </div>
+
+    <p class="role-perm-hint">
+        Use row or grid Tick All / Untick All for faster editing. Switch modules to continue, then click Save.
+        @if (HasUnsavedChanges)
+        {
+            <span class="role-perm-dirty">Unsaved changes</span>
+        }
+    </p>
+
+    @if (SelectedRoleId <= 0 || SelectedModuleId <= 0)
+    {
+        <p class="text-muted">Select a role and module to edit permissions.</p>
+    }
+    else if (IsMatrixLoading)
+    {
+        <p>Loading module permissions…</p>
+    }
+    else if (matrixRows.Count == 0)
+    {
+        <p class="text-muted">No menus found under this module.</p>
+    }
+    else
+    {
+        <div class="role-perm-grid-actions">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Tick All"
+                      IconCssClass="fas fa-check-double"
+                      Click="@(() => SetAllVisibleGrants(true))"
+                      Enabled="@(!IsSubmitting && CanEditMatrix)"
+                      title="Tick all permissions for every menu in this module" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Untick All"
+                      IconCssClass="far fa-square"
+                      Click="@(() => SetAllVisibleGrants(false))"
+                      Enabled="@(!IsSubmitting && CanEditMatrix)"
+                      title="Untick all permissions for every menu in this module" />
+        </div>
+
+        <DxGrid Data="@matrixRows"
+                PageSize="50"
+                PagerVisible="true"
+                TextWrapEnabled="false"
+                CssClass="role-perm-grid">
+            <Columns>
+                <DxGridDataColumn Caption="Actions"
+                                  Width="90px"
+                                  CaptionAlignment="GridTextAlignment.Center"
+                                  TextAlignment="GridTextAlignment.Center">
+                    <CellDisplayTemplate>
+                        @{
+                            var row = (RolePermissionMatrixRow)context.DataItem;
+                        }
+                        <div class="role-perm-row-actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                      IconCssClass="fas fa-check-double"
+                                      Click="@(() => SetRowGrants(row.MenuId, true))"
+                                      Enabled="@(!IsSubmitting && CanEditMatrix)"
+                                      title="Tick all permissions on this row" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                      IconCssClass="far fa-square"
+                                      Click="@(() => SetRowGrants(row.MenuId, false))"
+                                      Enabled="@(!IsSubmitting && CanEditMatrix)"
+                                      title="Untick all permissions on this row" />
+                        </div>
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                <DxGridDataColumn FieldName="@nameof(RolePermissionMatrixRow.MenuCode)"
+                                  Caption="Menu"
+                                  Width="160px" />
+                <DxGridDataColumn FieldName="@nameof(RolePermissionMatrixRow.MenuName)"
+                                  Caption="Name"
+                                  MinWidth="180">
+                    <CellDisplayTemplate>
+                        @{
+                            var row = (RolePermissionMatrixRow)context.DataItem;
+                        }
+                        <span class="role-perm-menu-name">@GetIndentedName(row)</span>
+                    </CellDisplayTemplate>
+                </DxGridDataColumn>
+                @foreach (var column in matrixColumns)
+                {
+                    var col = column;
+                    <DxGridDataColumn Caption="@col.PermissionCode"
+                                      CaptionAlignment="GridTextAlignment.Center"
+                                      TextAlignment="GridTextAlignment.Center"
+                                      Width="90px">
+                        <HeaderCaptionTemplate>
+                            <span title="@col.PermissionName">@col.PermissionCode</span>
+                        </HeaderCaptionTemplate>
+                        <CellDisplayTemplate>
+                            @{
+                                var row = (RolePermissionMatrixRow)context.DataItem;
+                            }
+                            <DxCheckBox Checked="@IsGranted(row.MenuId, col.PermissionId)"
+                                        CheckedChanged="@((bool value) => OnGrantChanged(row.MenuId, col.PermissionId, value))"
+                                        AllowIndeterminateState="false"
+                                        Enabled="@CanEditMatrix"
+                                        CssClass="justify-content-center" />
+                        </CellDisplayTemplate>
+                    </DxGridDataColumn>
+                }
+            </Columns>
+        </DxGrid>
+    }
+
+    <div class="role-perm-actions">
+        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                  IconCssClass="fas fa-save"
+                  Click="@OnSaveAsync"
+                  Enabled="@(!IsSubmitting && CanEditMatrix && HasUnsavedChanges)" />
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                  Text="Cancel"
+                  IconCssClass="fas fa-times"
+                  Click="@OnCancelAsync"
+                  Enabled="@(!IsSubmitting && HasUnsavedChanges)" />
+    </div>
+}
+</MenuAuthorize>

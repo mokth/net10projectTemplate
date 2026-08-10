@@ -1,0 +1,97 @@
+@page "/admin/roles"
+@inherits PageBase
+
+<PageTitle>Roles</PageTitle>
+
+<style>
+    .code-style {
+        text-transform: uppercase !important;
+    }
+</style>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminRoles">
+@if (!string.IsNullOrWhiteSpace(StatusMessage))
+{
+    <div class="alert alert-info">@StatusMessage</div>
+}
+
+@if (IsLoading)
+{
+    <p>Loading roles…</p>
+}
+
+<CommonDataGridEx Columns="@Columns()"
+                  Buttons="@Buttons"
+                  ActionButtons="@ActionButtons"
+                  KeyName="@nameof(Role.RoleId)"
+                  GridKey="admin-role-list"
+                  Title="Roles"
+                  T="Role"
+                  OnGridInstance="@OnGridInstance"
+                  GridData="@Data"
+                  allowSelect="true"
+                  OnSelectionsEventHandle="@OnSelectionsEvent"
+                  OnButtonEventHandle="@OnButtonClick"
+                  OnActionEventHandle="@OnActionClick">
+</CommonDataGridEx>
+
+<DxPopup HeaderCssClass="code-style" HeaderText="Role Info"
+         CloseOnOutsideClick="false"
+         Width="40vw"
+         CssClass="common-popup"
+         @bind-Visible="@PopupVisible">
+    <Content>
+        <EditForm Model="@selectedRow" Context="roleForm" OnValidSubmit="@HandleValidSubmit">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Role Code" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox @bind-Text="@selectedRow.RoleCode"
+                                   maxlength="20"
+                                   ReadOnly="@IsEditMode"
+                                   InputCssClass="required-field code-style" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="3">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@selectedRow.IsActive"
+                                    AllowIndeterminateState="false"
+                                    ReadOnly="@(!editEnable)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Role Name" ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <DxTextBox @bind-Text="@selectedRow.RoleName"
+                                   maxlength="100"
+                                   ReadOnly="@(!editEnable)"
+                                   InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <div class="d-flex gap-2">
+                            @if (editEnable)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                          SubmitFormOnClick="true"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Cancel"
+                                      Click="@OnCancel"
+                                      Enabled="@(!IsSubmitting)" />
+                        </div>
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                    <Template>
+                        <small class="text-danger">@ErrorMessage</small>
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </EditForm>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

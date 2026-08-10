@@ -1,0 +1,120 @@
+@page "/admin/permissions"
+@inherits PageBase
+
+<PageTitle>Permissions</PageTitle>
+
+<style>
+    .code-style {
+        text-transform: uppercase !important;
+    }
+</style>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminPermissions">
+@if (!string.IsNullOrWhiteSpace(StatusMessage))
+{
+    <div class="alert alert-info">@StatusMessage</div>
+}
+
+@if (IsLoading)
+{
+    <p>Loading permissions…</p>
+}
+
+<CommonDataGridEx Columns="@Columns()"
+                  Buttons="@Buttons"
+                  ActionButtons="@ActionButtons"
+                  KeyName="@nameof(Permission.PermissionId)"
+                  GridKey="admin-permission-list"
+                  Title="Permissions"
+                  T="Permission"
+                  OnGridInstance="@OnGridInstance"
+                  GridData="@Data"
+                  allowSelect="true"
+                  OnSelectionsEventHandle="@OnSelectionsEvent"
+                  OnButtonEventHandle="@OnButtonClick"
+                  OnActionEventHandle="@OnActionClick">
+</CommonDataGridEx>
+
+<DxPopup HeaderCssClass="code-style" HeaderText="Permission Info"
+         CloseOnOutsideClick="false"
+         Width="50vw"
+         CssClass="common-popup"
+         @bind-Visible="@PopupVisible">
+    <Content>
+        <EditForm Model="@selectedRow" Context="permForm" OnValidSubmit="@HandleValidSubmit">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Code" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox @bind-Text="@selectedRow.PermissionCode"
+                                   maxlength="50"
+                                   ReadOnly="@IsEditMode"
+                                   InputCssClass="required-field code-style" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="3">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@selectedRow.IsActive"
+                                    AllowIndeterminateState="false"
+                                    ReadOnly="@(!editEnable)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Name" ColSpanMd="6" BeginRow="true">
+                    <Template>
+                        <DxTextBox @bind-Text="@selectedRow.PermissionName"
+                                   maxlength="100"
+                                   ReadOnly="@(!editEnable)"
+                                   InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type" ColSpanMd="6">
+                    <Template>
+                        <DxComboBox Data="@PermissionTypes"
+                                    @bind-Value="@selectedRow.PermissionType"
+                                    AllowUserInput="true"
+                                    ReadOnly="@(!editEnable)"
+                                    InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Sort Order" ColSpanMd="4" BeginRow="true">
+                    <Template>
+                        <DxSpinEdit @bind-Value="@selectedRow.SortOrder"
+                                    MinValue="0"
+                                    ReadOnly="@(!editEnable)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <DxTextBox @bind-Text="@selectedRow.Description"
+                                   maxlength="250"
+                                   ReadOnly="@(!editEnable)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                    <Template>
+                        <div class="d-flex gap-2">
+                            @if (editEnable)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                          SubmitFormOnClick="true"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Cancel"
+                                      Click="@OnCancel"
+                                      Enabled="@(!IsSubmitting)" />
+                        </div>
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                    <Template>
+                        <small class="text-danger">@ErrorMessage</small>
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </EditForm>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

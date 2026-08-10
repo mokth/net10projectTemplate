@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Menus>
+  <Menu Code="HOME" Name="Home" Route="/home" SortOrder="1" AlwaysVisible="true" />
+
+  <Menu Code="OPERATIONS" Name="Operations" SortOrder="2">
+    <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
+      <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
+      <Menu Code="INVENTORY_DEMO" Name="Inventory" Route="/inventory-demo" SortOrder="2" />
+    </Menu>
+  </Menu>
+
+  <Menu Code="SECURITY" Name="Security" SortOrder="3">
+    <Menu Code="ADMIN" Name="Administration" SortOrder="1">
+      <Menu Code="ADMIN_DEMO" Name="Admin" Route="/admin-demo" SortOrder="1" />
+      <Menu Code="ADMIN_USERS" Name="User Accounts" Route="/adminuser" SortOrder="2" />
+      <Menu Code="ADMIN_ROLES" Name="Roles" Route="/admin/roles" SortOrder="3" />
+      <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="4" />
+      <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="5" />
+    </Menu>
+  </Menu>
+
+  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="4" AlwaysVisible="true" />
+</Menus>

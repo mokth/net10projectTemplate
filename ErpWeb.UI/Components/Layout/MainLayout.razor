@@ -1,0 +1,36 @@
+﻿@inherits LayoutComponentBase
+
+<div class="shell @(_sidebarOpen ? "nav-open" : null)" data-bs-theme="@BootstrapMode">
+    <aside class="shell-nav">
+        <div class="nav-panel-header">NAVIGATION</div>
+
+        <NavMenu />
+
+        <div class="shell-nav-foot">
+            <div class="shell-nav-user">
+                <span>@CurrentUser.FullName</span>
+                <small>@CurrentUser.CompanyCode / @CurrentUser.BranchCode</small>
+            </div>
+        </div>
+    </aside>
+
+    <div class="shell-main">
+        <header class="shell-top">
+            <button type="button" class="nav-toggle" @onclick="ToggleNav" aria-label="Menu">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="shell-top-spacer"></div>
+            <ThemeSwitcher />
+            <a class="shell-logout" href="/account/logout">Sign out</a>
+        </header>
+
+        <main class="shell-page">
+            @Body
+        </main>
+    </div>
+
+    @if (_sidebarOpen)
+    {
+        <div class="shell-backdrop" @onclick="CloseNav"></div>
+    }
+</div>

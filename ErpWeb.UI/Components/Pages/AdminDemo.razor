@@ -1,0 +1,11 @@
+@page "/admin-demo"
+@inherits PageBase
+
+<PageTitle>Admin Demo</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminDemo">
+    <h1>Admin Demo</h1>
+    <p>This page requires ACCESS permission for <code>ADMIN_DEMO</code> (ADMIN bypasses).</p>
+    <p>Current level: <strong>@CurrentUser.UserLevel</strong></p>
+    <p>User ID (audit): <strong>@CurrentUser.UserId</strong></p>
+</MenuAuthorize>

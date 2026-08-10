@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="DevExpress.Blazor" Version="26.1.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ErpWeb.Core\ErpWeb.Core.csproj" />
+    <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
+    <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
+    <ProjectReference Include="..\ErpWeb.Report\ErpWeb.Report.csproj" />
+  </ItemGroup>
+</Project>

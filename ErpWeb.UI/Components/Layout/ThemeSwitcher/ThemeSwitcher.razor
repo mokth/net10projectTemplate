@@ -1,0 +1,11 @@
+<DxDropDownButton Text="@ShortName"
+                  RenderStyle="ButtonRenderStyle.Secondary"
+                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  CssClass="theme-btn">
+    <Items>
+        <DxDropDownButtonItem Text="Fluent Light" Click="@(() => SetThemeAsync(AppThemeName.FluentLight))" />
+        <DxDropDownButtonItem Text="Fluent Dark" Click="@(() => SetThemeAsync(AppThemeName.FluentDark))" />
+        <DxDropDownButtonItem Text="Classic" Click="@(() => SetThemeAsync(AppThemeName.Classic))" />
+        <DxDropDownButtonItem Text="Bootstrap" Click="@(() => SetThemeAsync(AppThemeName.Bootstrap))" />
+    </Items>
+</DxDropDownButton>

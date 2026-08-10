@@ -1,0 +1,102 @@
+@page "/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Sign in · ErpWeb</PageTitle>
+
+<div class="login-shell">
+    <aside class="login-visual" aria-hidden="true">
+        <img class="login-visual-img" src="images/login-hero.svg" alt="" />
+        <div class="login-visual-content">
+            <div class="login-visual-brand">
+                <span class="login-logo" aria-hidden="true">EW</span>
+                <span class="login-visual-product">ErpWeb</span>
+            </div>
+            <p class="login-visual-tagline">Operations, finance, and team access — in one secure workspace.</p>
+            <ul class="login-visual-points">
+                <li>Company-scoped sign-in</li>
+                <li>Role-based menu access</li>
+                <li>Audit-ready administration</li>
+            </ul>
+        </div>
+    </aside>
+
+    <section class="login-panel">
+        <div class="login-panel-inner">
+            <header class="login-header">
+                <div class="login-mobile-brand">
+                    <span class="login-logo" aria-hidden="true">EW</span>
+                    <span>ErpWeb</span>
+                </div>
+                <h1>Welcome back</h1>
+                <p>Sign in with your company credentials to continue.</p>
+            </header>
+
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="login-error" role="alert">
+                    <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                    <span>@ErrorMessage</span>
+                </div>
+            }
+
+            <form class="login-form" method="post" action="/account/login">
+                <label class="field" for="CompanyCode">
+                    <span>Company code</span>
+                    <input name="CompanyCode"
+                           id="CompanyCode"
+                           maxlength="5"
+                           required
+                           value="@CompanyCode"
+                           autocomplete="organization"
+                           placeholder="e.g. DEMO" />
+                </label>
+
+                <label class="field" for="Username">
+                    <span>Username</span>
+                    <input name="Username"
+                           id="Username"
+                           maxlength="10"
+                           required
+                           autocomplete="username"
+                           placeholder="Enter your username" />
+                </label>
+
+                <label class="field" for="Password">
+                    <span>Password</span>
+                    <div class="field-password">
+                        <input name="Password"
+                               id="Password"
+                               type="@(ShowPassword ? "text" : "password")"
+                               required
+                               autocomplete="current-password"
+                               placeholder="Enter your password" />
+                        <button type="button"
+                                class="password-toggle"
+                                @onclick="TogglePassword"
+                                aria-label="@(ShowPassword ? "Hide password" : "Show password")">
+                            <i class="fa-solid @(ShowPassword ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </label>
+
+                <div class="login-row">
+                    <label class="remember" for="RememberMe">
+                        <input type="checkbox"
+                               name="RememberMe"
+                               id="RememberMe"
+                               value="true" />
+                        <span>Remember me</span>
+                    </label>
+                    <a class="forgot-link" href="/forgot-password">Forgot password?</a>
+                </div>
+
+                <button class="login-btn" type="submit">Sign in</button>
+            </form>
+
+            <p class="login-footnote">
+                Need access? Contact your company administrator.
+            </p>
+        </div>
+    </section>
+</div>

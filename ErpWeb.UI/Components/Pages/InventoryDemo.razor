@@ -1,0 +1,38 @@
+@page "/inventory-demo"
+@inherits PageBase
+
+<PageTitle>Inventory Demo</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryDemo">
+    <h1>Inventory Demo</h1>
+<p class="text-muted">
+    Demo grid scoped to company <strong>@CurrentUser.CompanyCode</strong>
+    / branch <strong>@CurrentUser.BranchCode</strong>
+    / location <strong>@CurrentUser.LocationCode</strong>.
+</p>
+
+@if (!string.IsNullOrWhiteSpace(_status))
+{
+    <div class="alert alert-info">@_status</div>
+}
+
+<div class="mb-3">
+    <PermissionAuthorize MenuCode="@MenuCodes.InventoryDemo" Permission="@PermissionCodes.Add">
+        <button type="button" class="btn btn-primary btn-sm" @onclick="OnAddClickAsync">Add item</button>
+    </PermissionAuthorize>
+</div>
+
+<CommonDataGrid T="InventoryDemoItem"
+                GridKey="inventory-item-list"
+                Title="Inventory Items"
+                KeyFieldName="Id"
+                Data="_items"
+                Columns="_columns"
+                ToolbarButtons="_toolbar"
+                RowActions="_actions"
+                TotalSummaries="_summaries"
+                AllowSelection="true"
+                AllowMultipleSelection="true"
+                OnToolbarButtonClick="HandleToolbarAsync"
+                OnRowActionClick="HandleRowActionAsync" />
+</MenuAuthorize>
