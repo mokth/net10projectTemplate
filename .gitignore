@@ -47,6 +47,3 @@ appsettings.*.local.json
 Thumbs.db
 Desktop.ini
 .DS_Store
-
-# VS Code C# Dev Tools - Auto-generated runners
-.vscodecsdt/Runners/

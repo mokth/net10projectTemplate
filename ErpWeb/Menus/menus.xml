@@ -5,24 +5,7 @@
   <Menu Code="OPERATIONS" Name="Operations" SortOrder="2">
     <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
       <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
-      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
-    </Menu>
-    <Menu Code="INVENTORY" Name="Inventory" SortOrder="2">
-      <Menu Code="INV_ITEMS" Name="Items" Route="/inventory/items" SortOrder="1" />
-      <Menu Code="INV_UOM" Name="UOM" Route="/inventory/uom" SortOrder="2" />
-      <Menu Code="INV_WAREHOUSES" Name="Warehouses" Route="/inventory/warehouses" SortOrder="3" />
-      <Menu Code="INV_LOCATIONS" Name="Locations" Route="/inventory/locations" SortOrder="4" />
-      <Menu Code="INV_REASON_CODES" Name="Reason Codes" Route="/inventory/reason-codes" SortOrder="5" />
-      <Menu Code="INV_OB" Name="Opening Balance" Route="/inventory/ob" SortOrder="10" />
-      <Menu Code="INV_GRN" Name="Goods Receipt" Route="/inventory/grn" SortOrder="11" />
-      <Menu Code="INV_GI" Name="Goods Issue" Route="/inventory/gi" SortOrder="12" />
-      <Menu Code="INV_ST" Name="Stock Transfer" Route="/inventory/st" SortOrder="13" />
-      <Menu Code="INV_SA" Name="Stock Adjustment" Route="/inventory/sa" SortOrder="14" />
-      <Menu Code="INV_STOCK_TAKE" Name="Stock Take" Route="/inventory/stock-take" SortOrder="15" />
-      <Menu Code="INV_PERIOD" Name="Inventory Period" Route="/inventory/period" SortOrder="20" />
-      <Menu Code="INV_STOCK_BALANCE" Name="Stock Balance" Route="/inventory/stock-balance" SortOrder="21" />
-      <Menu Code="INV_STOCK_CARD" Name="Stock Card" Route="/inventory/stock-card" SortOrder="22" />
-      <Menu Code="INV_RECONCILE" Name="Reconciliation" Route="/inventory/reconcile" SortOrder="23" />
+      <Menu Code="INVENTORY_DEMO" Name="Inventory" Route="/inventory-demo" SortOrder="2" />
     </Menu>
   </Menu>
 
@@ -34,7 +17,6 @@
       <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="4" />
       <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="5" />
       <Menu Code="ADMIN_COMPANY" Name="Company Info" Route="/admin/company" SortOrder="6" />
-      <Menu Code="ADMIN_BRANCH" Name="Branches" Route="/admin/branch" SortOrder="7" />
     </Menu>
   </Menu>
 
