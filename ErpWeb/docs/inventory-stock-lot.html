@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>inventory-stock-lot.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="inventory-model-stock-lot--transactions--agent-rules">Inventory Model, Stock, Lot &amp; Transactions — Agent Rules</h1>
+<p><strong>Audience:</strong> AI coding agents and developers changing inventory entities, EF configs, posting, receiving, issue, transfer, sales return, or (later) production traceability.</p>
+<p><strong>Read this before</strong> changing any file under:</p>
+<ul>
+<li><code>ErpWeb.Model/Entities/Inventory/</code></li>
+<li><code>ErpWeb.Model/Configurations/Inventory/</code></li>
+<li><code>ErpWeb.Model/Data/AppDbContext.cs</code></li>
+<li>any stock in/out posting code</li>
+</ul>
+<p><strong>Status:</strong> Entity/EF model is in place (masters + lot + balance + batch + history). Posting service and production genealogy table are <strong>not</strong> implemented yet. Follow these rules when you add them.</p>
+<p><strong>Do not</strong> treat scaffolded/legacy inventory as the template. Inventory was copied from old tables, then rewritten to match <code>Company</code> / <code>Role</code>. Follow <strong>this document + current entities</strong>, not old <code>[Table]</code>/<code>[Key]</code> annotations.</p>
+<hr>
+<h2 id="1-purpose-what-this-model-is">1. Purpose (what this model is)</h2>
+<p>Inventory has <strong>masters</strong> plus <strong>three stock layers</strong>. Do not collapse layers into one table. Do not hang optional master lookups off compound FKs.</p>
+<h3 id="masters-company-scoped-codes">Masters (company-scoped codes)</h3>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Job</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IvType</code></td>
+<td>Item type (<code>KeepStock</code>). Surrogate <code>Id</code> + unique <code>(CompanyCode, TypeCode)</code></td>
+</tr>
+<tr>
+<td><code>IvClass</code> / <code>IvSubClass</code></td>
+<td>Classification hierarchy</td>
+</tr>
+<tr>
+<td><code>MsUom</code></td>
+<td>Unit of measure (<code>MsUOM</code> table)</td>
+</tr>
+<tr>
+<td><code>IvWarehouse</code></td>
+<td>Warehouse, <strong>branch-scoped</strong></td>
+</tr>
+<tr>
+<td><code>IvStockMaster</code></td>
+<td>Item. <code>StockControl</code> = track qty. <code>LotControl</code> = require a real lot</td>
+</tr>
+</tbody>
+</table>
+<h3 id="stock-layers">Stock layers</h3>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Table</th>
+<th>Job</th>
+<th>Lifetime</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity</td>
+<td><code>IvLot</code></td>
+<td>Birth certificate of a lot (PO/supplier/WO).</td>
+<td><strong>Never delete</strong> when qty hits 0</td>
+</tr>
+<tr>
+<td>Quantity</td>
+<td><code>IvBalLoc</code></td>
+<td>On-hand qty <strong>here, now</strong> (item + warehouse + bin + lot + status).</td>
+<td>Create/update on post</td>
+</tr>
+<tr>
+<td>Movement</td>
+<td><code>IvTrxHistory</code></td>
+<td>Posted ledger (like GL trans).</td>
+<td><strong>Append-only</strong></td>
+</tr>
+<tr>
+<td>Staging</td>
+<td><code>IvTrxBatch</code> + <code>IvTrxBatchDetail</code></td>
+<td>Unposted work.</td>
+<td>Clear/archive after post</td>
+</tr>
+</tbody>
+</table>
+<p><code>IvTrxHistory</code> is the inventory equivalent of GL transaction history.<br>
+<code>IvBalLoc</code> is the as-of-now stock pile.<br>
+<code>IvLot</code> is lot traceability (where the lot came from; later: what it was used in).</p>
+<h3 id="core-principles">Core principles</h3>
+<blockquote>
+<p><strong>Join by surrogate <code>Id</code> where the row is a pile, lot, or movement. Find-or-create by unique business key. Copy dimension columns onto history for reports.</strong></p>
+</blockquote>
+<blockquote>
+<p><strong>Masters that are identified by codes stay code-keyed (<code>CompanyCode</code> + code), except <code>IvType</code> which is hybrid (<code>Id</code> + unique TypeCode).</strong></p>
+</blockquote>
+<p>The old system joined by compound keys (<code>Company + ICode + Warehouse + Location + Lot + IStatus + …</code>). That works until one column is blank or a transfer changes status. Do <strong>not</strong> go back to that as the FK for movements.</p>
+<hr>
+<h2 id="2-source-files">2. Source files</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entities</td>
+<td><code>ErpWeb.Model/Entities/Inventory/</code></td>
+</tr>
+<tr>
+<td>EF configs</td>
+<td><code>ErpWeb.Model/Configurations/Inventory/</code></td>
+</tr>
+<tr>
+<td>DbContext</td>
+<td><code>ErpWeb.Model/Data/AppDbContext.cs</code></td>
+</tr>
+</tbody>
+</table>
+<p>Entity namespace: <code>ErpWeb.Model.Entities.Inventory</code><br>
+Config namespace: <code>ErpWeb.Model.Configurations</code> (even though files sit under <code>Configurations/Inventory/</code>).<br>
+<code>AppDbContext</code> uses <code>ApplyConfigurationsFromAssembly</code> — new <code>IEntityTypeConfiguration&lt;T&gt;</code> is picked up automatically, but you must still add <code>DbSet&lt;T&gt;</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Class</th>
+<th>Table</th>
+<th>DbSet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Type</td>
+<td><code>IvType</code></td>
+<td><code>IvType</code></td>
+<td><code>IvTypes</code></td>
+</tr>
+<tr>
+<td>Class</td>
+<td><code>IvClass</code></td>
+<td><code>IvClass</code></td>
+<td><code>IvClasses</code></td>
+</tr>
+<tr>
+<td>Subclass</td>
+<td><code>IvSubClass</code></td>
+<td><code>IvSubClass</code></td>
+<td><code>IvSubClasses</code></td>
+</tr>
+<tr>
+<td>UOM</td>
+<td><code>MsUom</code></td>
+<td><code>MsUOM</code></td>
+<td><code>MsUoms</code></td>
+</tr>
+<tr>
+<td>Warehouse</td>
+<td><code>IvWarehouse</code></td>
+<td><code>IvWarehouse</code></td>
+<td><code>IvWarehouses</code></td>
+</tr>
+<tr>
+<td>Item master</td>
+<td><code>IvStockMaster</code></td>
+<td><code>IvStockMaster</code></td>
+<td><code>IvStockMasters</code></td>
+</tr>
+<tr>
+<td>Lot master</td>
+<td><code>IvLot</code></td>
+<td><code>IvLot</code></td>
+<td><code>IvLots</code></td>
+</tr>
+<tr>
+<td>Balance</td>
+<td><code>IvBalLoc</code></td>
+<td><code>IvBalLoc</code></td>
+<td><code>IvBalLocs</code></td>
+</tr>
+<tr>
+<td>Unposted header</td>
+<td><code>IvTrxBatch</code></td>
+<td><code>IvTrxBatch</code></td>
+<td><code>IvTrxBatches</code></td>
+</tr>
+<tr>
+<td>Unposted line</td>
+<td><code>IvTrxBatchDetail</code></td>
+<td><code>IvTrxBatchDetail</code></td>
+<td><code>IvTrxBatchDetails</code></td>
+</tr>
+<tr>
+<td>Posted history</td>
+<td><code>IvTrxHistory</code></td>
+<td><code>IvTrxHistory</code></td>
+<td><code>IvTrxHistories</code></td>
+</tr>
+</tbody>
+</table>
+<p>Do <strong>not</strong> leave leftover files such as <code>Class1.cs</code>.</p>
+<hr>
+<h2 id="3-entity-modeling-conventions-all-inventory-tables">3. Entity modeling conventions (all inventory tables)</h2>
+<p>Match <code>Company</code> / <code>Role</code>, not scaffolded POCOs.</p>
+<h3 id="must-shape">MUST (shape)</h3>
+<ul>
+<li>File-scoped namespace <code>ErpWeb.Model.Entities.Inventory</code>.</li>
+<li>Plain class. <strong>No</strong> <code>partial</code>. <strong>No</strong> data annotations (<code>[Table]</code>, <code>[Key]</code>, <code>[Column]</code>, <code>[Required]</code>, <code>[MaxLength]</code>).</li>
+<li>Mapping lives only in <code>IEntityTypeConfiguration&lt;T&gt;</code>.</li>
+<li>Nullable reference types: required <code>string</code> uses <code>= string.Empty</code>; optional uses <code>string?</code>.</li>
+<li>Flags: <code>bool IsActive { get; set; } = true</code> — never <code>bool? Active</code>.</li>
+<li>Audit on C#: <code>CreatedDate</code>, <code>CreatedBy</code>, <code>ModifiedDate</code>, <code>ModifiedBy</code>.</li>
+<li>Map audit to existing DB columns in Fluent API (<code>Created</code>, <code>UserID</code>, <code>Updated</code>, <code>UpdatedUID</code>, <code>Active</code>).</li>
+<li>Quantities and money: <code>decimal</code> / <code>decimal?</code> with <code>HasPrecision(18, 4)</code>. <strong>Never</strong> <code>double</code>.</li>
+<li>PascalCase C# names (<code>IClassCode</code>, <code>WhCode</code>, <code>UomCode</code>, <code>DoNo</code>, <code>FrLotNo</code>). Use <code>HasColumnName</code> when the DB name differs.</li>
+<li><code>DeleteBehavior.Restrict</code> on every inventory FK. No cascade delete of lots, balances, or masters that still have children.</li>
+<li>Register <code>DbSet&lt;&gt;</code> on <code>AppDbContext</code> when adding an entity.</li>
+</ul>
+<h3 id="tenant-fields">Tenant fields</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Length</th>
+<th>When required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CompanyCode</code></td>
+<td>5</td>
+<td>Always on inventory rows. Part of almost every business key.</td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>5</td>
+<td>Required when it is in the PK/unique key (warehouse, balance, batch, history). Optional leftover on class/type/UOM/item.</td>
+</tr>
+<tr>
+<td><code>LocationCode</code></td>
+<td>10</td>
+<td>Leftover site/plant field. <strong>Not</strong> the stock bin. Optional. Do not use in posting slice lookups.</td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>10</td>
+<td>Bin <strong>inside</strong> <code>IvBalLoc</code> unique slice. Unused = <code>&quot;&quot;</code>, never <code>NULL</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Warehouse is keyed <code>(CompanyCode, BranchCode, WarehouseCode)</code>. Balance unique slice <strong>must</strong> include <code>BranchCode</code> so it can FK to warehouse.</p>
+<h3 id="must-not-shape">MUST NOT (shape)</h3>
+<ul>
+<li>Do <strong>not</strong> put <code>[Key]</code> on multiple properties. EF Core composite keys are Fluent-only (<code>HasKey(e =&gt; new { ... })</code>).</li>
+<li>Do <strong>not</strong> use <code>nvarchar(max)</code> for codes. Missing <code>HasMaxLength</code> breaks indexes (900-byte key limit).</li>
+<li>Do <strong>not</strong> add a navigation for an <strong>optional</strong> code plus required <code>CompanyCode</code> (section 6).</li>
+<li>Do <strong>not</strong> rename string copies <code>FrLot</code>/<code>ToLot</code> in C# — they clash with navigations <code>FromLot</code>/<code>ToLot</code>. C# names are <code>FrLotNo</code>/<code>ToLotNo</code>.</li>
+</ul>
+<hr>
+<h2 id="4-must--must-not-stock-lot-posting">4. MUST / MUST NOT (stock, lot, posting)</h2>
+<h3 id="must">MUST</h3>
+<ul>
+<li>Use <code>Id</code> (identity <code>int</code>, column <code>ID</code>) as PK on <code>IvType</code>, <code>IvLot</code>, <code>IvBalLoc</code>, <code>IvTrxBatch</code>, <code>IvTrxBatchDetail</code>, <code>IvTrxHistory</code>.</li>
+<li>Keep the listed unique business keys (section 5). They are for find-or-create and human lookup, <strong>not</strong> as movement FKs.</li>
+<li>Link movements with <code>FromBalLocId</code> / <code>ToBalLocId</code> and <code>FromLotId</code> / <code>ToLotId</code>.</li>
+<li>Link detail to batch with <code>BatchId</code> → <code>IvTrxBatch.Id</code>.</li>
+<li>Store unused <code>LocCode</code> / <code>LotNo</code> / <code>IStatus</code> on <code>IvBalLoc</code> as <code>&quot;&quot;</code>, never <code>NULL</code> (SQL unique indexes do not clash two NULLs).</li>
+<li>Create <code>IvLot</code> only when <code>LotNo</code> is a real lot (non-empty). Do not insert dummy lots for <code>LotNo = &quot;&quot;</code>.</li>
+<li>If <code>IvStockMaster.LotControl == true</code>, receipt/production <strong>must</strong> create or find <code>IvLot</code> and set <code>LotId</code>.</li>
+<li>If <code>LotControl == false</code>, <code>IvBalLoc.LotId</code> is null and <code>LotNo</code> is <code>&quot;&quot;</code>.</li>
+<li>Copy <code>LotNo</code> onto <code>IvBalLoc</code> and copy <code>FrLotNo</code> / <code>ToLotNo</code> onto movements (ledger denormalization). When <code>LotId</code> is set, copied <code>LotNo</code> <strong>must match</strong> <code>IvLot.LotNo</code>.</li>
+<li>Update <code>IvBalLoc.StdQty</code> with EF concurrency on <code>RowVersion</code>. Do not read-add-save without the token.</li>
+<li>Treat posted <code>IvTrxHistory</code> as immutable qty. Reverse with a <strong>new</strong> history line.</li>
+<li>Keep <code>IvLot</code> rows after stock is zero (traceability must outlive on-hand).</li>
+</ul>
+<h3 id="must-not">MUST NOT</h3>
+<ul>
+<li>Do <strong>not</strong> unique <code>LotNo</code> alone on <code>IvBalLoc</code>. Same lot must exist in multiple warehouses, bins, and statuses.</li>
+<li>Do <strong>not</strong> use the 6–8 column stock slice as the foreign key.</li>
+<li>Do <strong>not</strong> treat <code>IvBalLoc.PoNo</code> / <code>RefNo</code> as the lot origin. Origin lives on <code>IvLot</code> (<code>SourceType</code>, <code>SourceDocNo</code>, <code>SupplierCode</code>, <code>ReceiptDate</code>).</li>
+<li>Do <strong>not</strong> delete <code>IvLot</code> because on-hand is 0.</li>
+<li>Do <strong>not</strong> update posted history qty.</li>
+<li>Do <strong>not</strong> create an <code>IvLot</code> with empty <code>LotNo</code>.</li>
+<li>Do <strong>not</strong> add production genealogy into <code>IvBalLoc</code>. That is a future consume table (section 11).</li>
+<li>Do <strong>not</strong> cascade-delete lots or balances.</li>
+<li>Do <strong>not</strong> name a navigation <code>ToLot</code> <strong>and</strong> a string property <code>ToLot</code>. String copies are <code>FrLotNo</code> / <code>ToLotNo</code>; navigations are <code>FromLot</code> / <code>ToLot</code>.</li>
+<li>Do <strong>not</strong> FK <code>IvTrxHistory</code> to <code>IvTrxBatch</code>. Batch is staging and is cleared after post. <code>BatchNo</code> on history is a business reference only.</li>
+</ul>
+<hr>
+<h2 id="5-keys">5. Keys</h2>
+<p>Hybrid key pattern (same as <code>IvType</code>): surrogate PK <strong>or</strong> natural PK, plus unique natural key when PK is <code>Id</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>PK</th>
+<th>Unique business key</th>
+<th>FK links</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IvClass</code></td>
+<td><code>(CompanyCode, IClassCode)</code></td>
+<td>that PK</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>IvSubClass</code></td>
+<td><code>(CompanyCode, IClassCode, ISubClassCode)</code></td>
+<td>that PK</td>
+<td>class <code>(CompanyCode, IClassCode)</code></td>
+</tr>
+<tr>
+<td><code>IvType</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvType_Company_TypeCode</code> = <code>(CompanyCode, TypeCode)</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>MsUom</code></td>
+<td><code>(CompanyCode, UomCode)</code></td>
+<td>that PK</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>IvWarehouse</code></td>
+<td><code>(CompanyCode, BranchCode, WarehouseCode)</code></td>
+<td>that PK</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>IvStockMaster</code></td>
+<td><code>(CompanyCode, ICode)</code></td>
+<td>that PK</td>
+<td><strong>no FKs</strong> to type/class/UOM/warehouse (optional codes; section 6)</td>
+</tr>
+<tr>
+<td><code>IvLot</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvLot_Company_ICode_LotNo</code> = <code>(CompanyCode, ICode, LotNo)</code></td>
+<td>item: <code>(CompanyCode, ICode)</code></td>
+</tr>
+<tr>
+<td><code>IvBalLoc</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvBalLoc_StockSlice</code> = <code>(CompanyCode, BranchCode, ICode, WhCode, LocCode, LotNo, IStatus)</code></td>
+<td><code>LotId</code>; item <code>(CompanyCode, ICode)</code>; warehouse <code>(CompanyCode, BranchCode, WhCode)</code> → warehouse principal <code>(CompanyCode, BranchCode, WarehouseCode)</code></td>
+</tr>
+<tr>
+<td><code>IvTrxBatch</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvTrxBatch_Company_Branch_BatchNo</code> = <code>(CompanyCode, BranchCode, BatchNo)</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>IvTrxBatchDetail</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvTrxBatchDetail_Company_Branch_Batch_Line</code> = <code>(CompanyCode, BranchCode, BatchNo, TrxLineNo)</code></td>
+<td><code>BatchId</code>; <code>FromBalLocId</code>; <code>ToBalLocId</code>; <code>FromLotId</code>; <code>ToLotId</code></td>
+</tr>
+<tr>
+<td><code>IvTrxHistory</code></td>
+<td><code>Id</code></td>
+<td><code>UQ_IvTrxHistory_Company_Branch_Batch_Line</code> = <code>(CompanyCode, BranchCode, BatchNo, TrxLineNo)</code></td>
+<td><code>FromBalLocId</code>; <code>ToBalLocId</code>; <code>FromLotId</code>; <code>ToLotId</code>. <strong>No FK to batch</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>IStatus</code> is part of the balance slice. Good / Damaged / QC Hold are <strong>separate piles</strong>.</p>
+<p><code>RevNo</code> on <code>IvBalLoc</code> is <strong>not</strong> part of the unique key. Do not add it unless revision is a true stock dimension.</p>
+<p>Item (<code>IvStockMaster</code>) is <strong>company-level</strong>. <code>BranchCode</code> on the item is home-branch leftover, not part of the PK. Warehouse and stock piles are <strong>branch-level</strong>.</p>
+<hr>
+<h2 id="6-required-vs-optional-relationships-do-not-fix-this">6. Required vs optional relationships (do not “fix” this)</h2>
+<h3 id="graph-that-is-configured-in-ef">Graph that IS configured in EF</h3>
+<pre class="hljs"><code><div>IvClass 1──* IvSubClass
+
+IvStockMaster 1──* IvLot
+IvStockMaster 1──* IvBalLoc
+IvLot         1──* IvBalLoc       (LotId nullable)
+IvWarehouse   1──* IvBalLoc       (WhCode → WarehouseCode)
+
+IvTrxBatch    1──* IvTrxBatchDetail   (BatchId)
+IvTrxBatchDetail ── FromBalLoc / ToBalLoc
+IvTrxBatchDetail ── FromLot / ToLot
+
+IvTrxHistory     ── FromBalLoc / ToBalLoc
+IvTrxHistory     ── FromLot / ToLot
+</div></code></pre>
+<h3 id="graph-that-is-codes-only-no-navigation-no-fk">Graph that is codes-only (NO navigation, NO FK)</h3>
+<p>On <code>IvStockMaster</code>: <code>IType</code>, <code>IClassCode</code>, <code>ISubClassCode</code>, <code>StdUom</code>, <code>PurUom</code>, <code>SellingUom</code>, <code>DefWarehouse</code>.</p>
+<p><strong>Why:</strong> EF composite FKs cannot mix required <code>CompanyCode</code> with a nullable lookup code. If <code>IType</code> is null but <code>CompanyCode</code> is set, the relationship is invalid. Do not add <code>IvType</code> / <code>IvClass</code> / <code>MsUom</code> navigations on stock until those codes are required non-null columns <strong>and</strong> you accept insert-order coupling.</p>
+<p>Lookup in services by <code>(CompanyCode, code)</code>, not by navigation.</p>
+<p><code>ProdCode</code> / <code>ProdDesc</code> on movement lines exist beside <code>ICode</code> / <code>IDesc</code>. Treat as legacy duplication unless a later module defines a different meaning. Do not delete them in posting work.</p>
+<hr>
+<h2 id="7-how-from-vs-to-works-on-a-movement-line">7. How From vs To works on a movement line</h2>
+<table>
+<thead>
+<tr>
+<th>Trx type</th>
+<th>FromBalLocId / FromLotId</th>
+<th>ToBalLocId / ToLotId</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stock in / GRN / PO receipt</td>
+<td>null</td>
+<td>required (create/find pile)</td>
+</tr>
+<tr>
+<td>Stock out / issue / sales</td>
+<td>required</td>
+<td>null</td>
+</tr>
+<tr>
+<td>Transfer / status change</td>
+<td>required</td>
+<td>required (other warehouse/bin/status, often same LotId)</td>
+</tr>
+<tr>
+<td>Non-lot item</td>
+<td>lot FKs null</td>
+<td>lot FKs null</td>
+</tr>
+</tbody>
+</table>
+<p>Copy warehouse/lot/qty onto <code>Fr*</code> / <code>To*</code> columns for reports. IDs are the join.</p>
+<hr>
+<h2 id="8-standard-string-lengths-reuse-these">8. Standard string lengths (reuse these)</h2>
+<p>Do not invent new lengths for the same kind of field.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>MaxLength</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Company / branch</td>
+<td>5</td>
+<td><code>CompanyCode</code>, <code>BranchCode</code></td>
+</tr>
+<tr>
+<td>Site leftover</td>
+<td>10</td>
+<td><code>LocationCode</code></td>
+</tr>
+<tr>
+<td>User audit</td>
+<td>10</td>
+<td><code>CreatedBy</code>, <code>ModifiedBy</code></td>
+</tr>
+<tr>
+<td>Item code</td>
+<td>30</td>
+<td><code>ICode</code>, <code>IClassCode</code>, <code>ISubClassCode</code>, <code>ProdCode</code></td>
+</tr>
+<tr>
+<td>Description</td>
+<td>200</td>
+<td><code>IDesc</code>, <code>ProdDesc</code>, <code>TypeDesc</code></td>
+</tr>
+<tr>
+<td>Short name</td>
+<td>100</td>
+<td><code>TypeName</code>, <code>ISubClassName</code>, <code>WarehouseDesc</code>, <code>UomDesc</code></td>
+</tr>
+<tr>
+<td>Type / trx / status</td>
+<td>20 / 10</td>
+<td><code>TypeCode</code> 20, <code>TrxType</code> 20, <code>BatchStatus</code> 20, <code>IStatus</code> 10, <code>QcStatus</code> 10</td>
+</tr>
+<tr>
+<td>Warehouse</td>
+<td>20</td>
+<td><code>WarehouseCode</code>, <code>WhCode</code>, <code>DefWarehouse</code>, <code>FrWarehouse</code></td>
+</tr>
+<tr>
+<td>UOM</td>
+<td>10</td>
+<td><code>UomCode</code>, <code>StdUom</code>, <code>FrStdUom</code></td>
+</tr>
+<tr>
+<td>Lot</td>
+<td>50</td>
+<td><code>LotNo</code>, <code>FrLotNo</code>, <code>ToLotNo</code></td>
+</tr>
+<tr>
+<td>Doc nos</td>
+<td>30</td>
+<td><code>PoNo</code>, <code>SoNo</code>, <code>DoNo</code>, <code>InvNo</code></td>
+</tr>
+<tr>
+<td>GL / tax</td>
+<td>20</td>
+<td><code>SellingGlCode</code>, <code>TaxGroup</code>, <code>SupplierCode</code></td>
+</tr>
+<tr>
+<td>Currency</td>
+<td>3</td>
+<td><code>Currency</code></td>
+</tr>
+<tr>
+<td>Remarks</td>
+<td>250</td>
+<td><code>Remarks</code>, <code>WarehouseRemark</code></td>
+</tr>
+<tr>
+<td>Image</td>
+<td>500</td>
+<td><code>ImagePath</code></td>
+</tr>
+</tbody>
+</table>
+<p>Qty/money: <code>decimal(18,4)</code>.</p>
+<hr>
+<h2 id="9-lot-traceability-why-ivlot-exists">9. Lot traceability (why <code>IvLot</code> exists)</h2>
+<p><code>LotNo</code> on <code>IvBalLoc</code> is only a <strong>stock dimension</strong> (qty of lot A in this bin). It is not the lot passport.</p>
+<p>Traceability the business needs:</p>
+<ol>
+<li>Material lot came from which PO / supplier.</li>
+<li>Later: FG lot consumed which material lots.</li>
+<li>FG sold to customer (history).</li>
+<li>Customer return: same FG lot → materials → PO/supplier.</li>
+</ol>
+<p>That cannot live only on <code>IvBalLoc</code>:</p>
+<ul>
+<li>Same lot exists in many locations.</li>
+<li>Balance rows may go to qty 0; origin must remain.</li>
+<li>Production is many-to-many (one FG lot, many material lots).</li>
+</ul>
+<h3 id="ivlot-origin-fields"><code>IvLot</code> origin fields</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SourceType</code></td>
+<td><code>PO</code> / <code>GRN</code> / <code>WO</code> / <code>ADJ</code> (string, max 20)</td>
+</tr>
+<tr>
+<td><code>SourceDocNo</code></td>
+<td>Source document number</td>
+</tr>
+<tr>
+<td><code>SupplierCode</code></td>
+<td>Supplier at birth (no supplier entity yet — store code)</td>
+</tr>
+<tr>
+<td><code>ReceiptDate</code></td>
+<td>When the lot entered the company</td>
+</tr>
+<tr>
+<td><code>MfgDate</code> / <code>ExpiryDate</code></td>
+<td>Optional</td>
+</tr>
+<tr>
+<td><code>QcStatus</code></td>
+<td>Optional lot QC, not the same as <code>IvBalLoc.IStatus</code> (pile status)</td>
+</tr>
+</tbody>
+</table>
+<p>Find lot by <code>(CompanyCode, ICode, LotNo)</code>. Scan-by-number index: <code>(CompanyCode, LotNo)</code> — not unique across items.</p>
+<h3 id="item-flags">Item flags</h3>
+<p><code>IvStockMaster.LotControl</code> (default <code>false</code>).<br>
+<code>StockControl</code> = whether qty is tracked. <code>LotControl</code> = whether a real lot number is required.<br>
+<code>IvType.KeepStock</code> is type-level default intent; posting still obeys the <strong>item</strong> flags.</p>
+<hr>
+<h2 id="10-posting-algorithm-implement-this-in-core">10. Posting algorithm (implement this in Core)</h2>
+<p>Atomic transaction. Order:</p>
+<ol>
+<li>
+<p><strong>Lot (if <code>LotControl</code>)</strong><br>
+Find <code>IvLot</code> by <code>(CompanyCode, ICode, LotNo)</code>. If missing, insert with origin (<code>SourceType</code>, <code>SourceDocNo</code>, <code>SupplierCode</code>, <code>ReceiptDate</code>). Never use empty <code>LotNo</code>.</p>
+</li>
+<li>
+<p><strong>Balance pile</strong><br>
+Find <code>IvBalLoc</code> by <code>UQ_IvBalLoc_StockSlice</code>. If missing, insert qty 0, set <code>LotId</code> + copied <code>LotNo</code>.<br>
+Unused slice fields = <code>&quot;&quot;</code>.</p>
+</li>
+<li>
+<p><strong>Stamp the line</strong><br>
+Set <code>FromBalLocId</code> / <code>ToBalLocId</code> and <code>FromLotId</code> / <code>ToLotId</code> on <code>IvTrxBatchDetail</code>. Copy <code>FrLotNo</code> / <code>ToLotNo</code>.</p>
+</li>
+<li>
+<p><strong>Qty</strong><br>
+Update <code>IvBalLoc.StdQty</code> using <code>RowVersion</code> (optimistic concurrency). Fail and retry/abort on conflict. Do not oversell.</p>
+</li>
+<li>
+<p><strong>History</strong><br>
+Insert <code>IvTrxHistory</code> (copy line + header dates/status). Same BalLoc/Lot FKs. Do not update later.</p>
+</li>
+<li>
+<p><strong>Staging</strong><br>
+Delete or archive <code>IvTrxBatch</code> + details.</p>
+</li>
+</ol>
+<p>History has <strong>no</strong> live FK to <code>IvTrxBatch</code>. After post, <code>BatchNo</code> on history is a business reference only.</p>
+<h3 id="concurrency">Concurrency</h3>
+<p><code>IvBalLoc.RowVersion</code> is SQL <code>rowversion</code>. Two posters on the same pile must not last-write-wins.</p>
+<hr>
+<h2 id="11-not-in-the-model-yet-do-not-invent-on-balloc">11. Not in the model yet (do not invent on BalLoc)</h2>
+<p>When <strong>production</strong> is implemented, add a consume / genealogy table, for example <code>IvLotConsume</code>:</p>
+<ul>
+<li><code>ParentLotId</code> = FG <code>IvLot.Id</code></li>
+<li><code>ChildLotId</code> = material <code>IvLot.Id</code></li>
+<li><code>Qty</code> consumed</li>
+<li>Source WO / batch reference</li>
+</ul>
+<p>Then:</p>
+<ul>
+<li>Return FG → <code>IvTrxHistory</code> by <code>FromLotId</code>/<code>ToLotId</code> → <code>IvLotConsume</code> children → each child <code>IvLot.SupplierCode</code> / <code>SourceDocNo</code>.</li>
+</ul>
+<p>Until that module exists: do not store parent/child lots on <code>IvBalLoc</code> or <code>IvLot</code>.</p>
+<p>Also not modeled yet (add when needed, on <code>IvBalLoc</code>, not by overloading <code>StdQty</code>):</p>
+<ul>
+<li><code>ReservedQty</code> / <code>AvailableQty</code> for SO allocate</li>
+</ul>
+<p>Also not modeled yet: UOM conversion table, serial master, stock-take header. Add new entities with section 3 conventions; do not overload <code>IvBalLoc</code>.</p>
+<hr>
+<h2 id="12-column--property-naming-traps">12. Column / property naming traps</h2>
+<table>
+<thead>
+<tr>
+<th>C#</th>
+<th>DB column</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Id</code></td>
+<td><code>ID</code></td>
+<td>Hybrid PKs: type, lot, balance, batch, detail, history</td>
+</tr>
+<tr>
+<td><code>ICode</code> / <code>IDesc</code> / <code>IStatus</code></td>
+<td>same</td>
+<td></td>
+</tr>
+<tr>
+<td><code>IClassCode</code> on stock/subclass</td>
+<td><code>IClass</code></td>
+<td>Stock and subclass column is <code>IClass</code></td>
+</tr>
+<tr>
+<td><code>ISubClassCode</code> on stock</td>
+<td><code>ISubclass</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>UomCode</code> / <code>UomDesc</code></td>
+<td><code>UOMCode</code> / <code>UOMDesc</code></td>
+<td>Table <code>MsUOM</code></td>
+</tr>
+<tr>
+<td><code>UneceUom</code></td>
+<td><code>UNECE_UOM</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>WhCode</code></td>
+<td><code>WHCode</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>SellingGlCode</code></td>
+<td><code>SellingGLCode</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>IvBalLoc.LotNo</code></td>
+<td><code>LotNo</code></td>
+<td>Copy of lot number; FK is <code>LotId</code></td>
+</tr>
+<tr>
+<td><code>FrLotNo</code></td>
+<td><code>FrLot</code></td>
+<td>String copy. Navigation is <code>FromLot</code></td>
+</tr>
+<tr>
+<td><code>ToLotNo</code></td>
+<td><code>ToLot</code></td>
+<td>String copy. Navigation is <code>ToLot</code> (<code>IvLot</code>)</td>
+</tr>
+<tr>
+<td><code>PoNo</code></td>
+<td><code>PO_No</code></td>
+<td>Document ref, not lot origin</td>
+</tr>
+<tr>
+<td><code>SoNo</code></td>
+<td><code>SO_No</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>DoNo</code></td>
+<td><code>DONo</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>PoRelNo</code></td>
+<td><code>PO_Rel_No</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>SoLineNo</code> / <code>PoLineNo</code></td>
+<td><code>SO_Line_No</code> / <code>PO_Line_No</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>CreatedDate</code></td>
+<td><code>Created</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>CreatedBy</code></td>
+<td><code>UserID</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ModifiedDate</code></td>
+<td><code>Updated</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ModifiedBy</code></td>
+<td><code>UpdatedUID</code></td>
+<td>Missing on <code>IvBalLoc</code> and <code>IvTrxHistory</code> — do not invent the column</td>
+</tr>
+<tr>
+<td><code>IsActive</code></td>
+<td><code>Active</code></td>
+<td>Masters + <code>IvLot</code>. Not on balance/batch/history</td>
+</tr>
+<tr>
+<td><code>AsNowCost</code></td>
+<td><code>asNowCost</code></td>
+<td>History only</td>
+</tr>
+<tr>
+<td><code>LocCode</code> vs <code>LocationCode</code></td>
+<td>both exist</td>
+<td><code>LocCode</code> = bin in the stock slice</td>
+</tr>
+</tbody>
+</table>
+<p>EF: <code>FromLotId</code> → nav <code>FromLot</code>; <code>ToLotId</code> → nav <code>ToLot</code>. That is why the strings cannot be named <code>ToLot</code>.</p>
+<p><code>IvBalLoc</code> has <code>ModifiedDate</code> but no <code>ModifiedBy</code> (legacy table had <code>Updated</code>, not <code>UpdatedUID</code>).</p>
+<hr>
+<h2 id="13-agent-checklist">13. Agent checklist</h2>
+<h3 id="when-changing--adding-an-inventory-entity">When changing / adding an inventory <strong>entity</strong></h3>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">POCO + Fluent config; no data annotations on the class</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1"><code>CompanyCode</code> in the business key unless there is a documented exception</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">Hybrid <code>Id</code> PK only for type/lot/balance/batch/detail/history</label></li>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3"><code>HasMaxLength</code> on every string; <code>HasPrecision(18,4)</code> on qty/money</label></li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">Audit names mapped to <code>Created</code> / <code>UserID</code> / <code>Updated</code> / <code>UpdatedUID</code> / <code>Active</code></label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">FKs <code>Restrict</code>; no cascade</label></li>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">No navigation on optional stock lookup codes (section 6)</label></li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7"><code>DbSet</code> on <code>AppDbContext</code></label></li>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Do not rename <code>FrLotNo</code>/<code>ToLotNo</code> back to <code>ToLot</code></label></li>
+</ul>
+<h3 id="when-adding-receive-issue-transfer-adjust-or-posting">When adding receive, issue, transfer, adjust, or posting</h3>
+<ul>
+<li><input type="checkbox" id="checkbox9"><label for="checkbox9">Resolve pile by unique slice <strong>or</strong> by <code>BalLocId</code> if already stamped</label></li>
+<li><input type="checkbox" id="checkbox10"><label for="checkbox10">Lot-controlled item: find/create <code>IvLot</code>, set <code>LotId</code></label></li>
+<li><input type="checkbox" id="checkbox11"><label for="checkbox11">Non-lot item: <code>LotId</code> null, <code>LotNo</code> <code>&quot;&quot;</code></label></li>
+<li><input type="checkbox" id="checkbox12"><label for="checkbox12">Set From/To BalLoc and Lot IDs per trx type</label></li>
+<li><input type="checkbox" id="checkbox13"><label for="checkbox13">Copy <code>Fr*</code> / <code>To*</code> including <code>FrLotNo</code> / <code>ToLotNo</code></label></li>
+<li><input type="checkbox" id="checkbox14"><label for="checkbox14">Update qty with <code>RowVersion</code></label></li>
+<li><input type="checkbox" id="checkbox15"><label for="checkbox15">Insert history; do not update old history qty</label></li>
+<li><input type="checkbox" id="checkbox16"><label for="checkbox16">Do not delete <code>IvLot</code></label></li>
+<li><input type="checkbox" id="checkbox17"><label for="checkbox17">Do not unique <code>LotNo</code> on <code>IvBalLoc</code></label></li>
+<li><input type="checkbox" id="checkbox18"><label for="checkbox18">Do not join posting by compound slice as FK</label></li>
+<li><input type="checkbox" id="checkbox19"><label for="checkbox19">Do not FK history to batch</label></li>
+</ul>
+<hr>
+<h2 id="14-quick-examples">14. Quick examples</h2>
+<p><strong>PO receipt, lot-controlled item</strong><br>
+Insert/find <code>IvLot</code> (SourceType=<code>PO</code>/<code>GRN</code>, SourceDocNo, SupplierCode).<br>
+Find/create <code>IvBalLoc</code> slice. <code>ToBalLocId</code> + <code>ToLotId</code>. Increase <code>StdQty</code>. History in.</p>
+<p><strong>Warehouse transfer, same lot</strong><br>
+<code>FromLotId == ToLotId</code>. Different <code>FromBalLocId</code> / <code>ToBalLocId</code> (other <code>WhCode</code>/<code>LocCode</code>/<code>IStatus</code>).</p>
+<p><strong>Sales issue</strong><br>
+<code>FromBalLocId</code> + <code>FromLotId</code>. Decrease qty. History out.</p>
+<p><strong>Customer return of FG</strong><br>
+Receive onto <code>ToLotId</code> = original FG lot (do not invent a new lot unless business says so).<br>
+Supplier/material trace = <code>IvLot</code> origin + (later) consume table, not <code>IvBalLoc.PoNo</code>.</p>
+<p><strong>New master field on <code>IvStockMaster</code></strong><br>
+Add POCO property (<code>string?</code> or <code>decimal?</code>). Map length/precision and <code>HasColumnName</code> if the DB name differs. Do <strong>not</strong> add an EF navigation to <code>IvType</code>/<code>IvClass</code>/<code>MsUom</code> for an optional code.</p>
+
+</body>
+</html>

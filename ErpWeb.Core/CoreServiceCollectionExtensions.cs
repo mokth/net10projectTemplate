@@ -1,4 +1,8 @@
+using ErpWeb.Core.Inventory;
+
 using ErpWeb.Core.Menus;
+
+using ErpWeb.Core.Numbering;
 
 using ErpWeb.Core.Security;
 
@@ -58,6 +62,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+        services.AddScoped<IInventoryTenantContext, InventoryTenantContext>();
+
         services.AddScoped<IUserAdminService, UserAdminService>();
 
         services.AddScoped<IRoleAdminService, RoleAdminService>();
@@ -77,6 +83,24 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IAccessRightService, AccessRightService>();
 
         services.AddScoped<INavigationService, NavigationService>();
+
+        services.AddScoped<IRunningNumberService, RunningNumberService>();
+
+        services.AddScoped<ICurrentDateService, CurrentDateService>();
+
+        services.AddScoped<IIvInventoryLookupService, IvInventoryLookupService>();
+
+        services.AddScoped<IIvMiscReceiptService, IvMiscReceiptService>();
+
+        services.AddScoped<IIvMiscIssueService, IvMiscIssueService>();
+
+        services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
+
+        services.AddScoped<IIvInventoryReconciliationService, IvInventoryReconciliationService>();
+
+        services.AddScoped<IIvStockMasterService, IvStockMasterService>();
+
+        services.AddScoped<IIvInventoryRefService, IvInventoryRefService>();
 
         return services;
 

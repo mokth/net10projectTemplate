@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>how_lotno_generated.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="how-lot-number-is-generated-on-miscellaneous-receipt">How lot number is generated on miscellaneous receipt</h1>
+<p>This note explains how lot number works on the miscellaneous receipt entry screen (<code>IvMiscReceipt</code>), in plain language.</p>
+<p><code>InventoryLotEntryState</code> is a small helper that remembers <strong>which item is currently open in the add/edit popup</strong>, then decides what to do with the <strong>lot number</strong>.</p>
+<p>Think of it as: <strong>lot number belongs to the item, not to the popup.</strong> If the user picks a different item, the old lot should not stay.</p>
+<hr>
+<h2 id="why-it-exists">Why it exists</h2>
+<p>On a miscellaneous receipt, some items need a lot number (and expiry date), and some do not.</p>
+<p>The popup is reused for every line. Without this helper, a common mistake happens:</p>
+<ol>
+<li>User adds Item A (lot-controlled) → lot <code>260827001</code> is filled.</li>
+<li>User changes the item to Item B.</li>
+<li>The old lot from Item A is still sitting there.</li>
+</ol>
+<p>That would be wrong. The helper stops that.</p>
+<p>It only remembers one thing: <strong>the last item code in this popup</strong>.</p>
+<hr>
+<h2 id="when-it-is-used-on-this-screen">When it is used on this screen</h2>
+<p>There are three moments:</p>
+<p><strong>1. User clicks Add line</strong></p>
+<p>The helper is cleared. The popup starts with no item and no lot.</p>
+<p><strong>2. User clicks Edit on an existing line</strong></p>
+<p>The helper is told: “this popup is already for item X.”
+So if the user opens the line and does not change the item, the existing lot stays.</p>
+<p><strong>3. User picks an item in the popup</strong></p>
+<p>This is the main decision. The helper looks at the new item and returns one of three answers:</p>
+<table>
+<thead>
+<tr>
+<th>Answer</th>
+<th>Meaning</th>
+<th>What the screen does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Keep</strong></td>
+<td>Same item (or nothing useful to change)</td>
+<td>Leave lot and expiry as they are</td>
+</tr>
+<tr>
+<td><strong>Clear</strong></td>
+<td>This item does <strong>not</strong> use lot control</td>
+<td>Empty lot number and expiry</td>
+</tr>
+<tr>
+<td><strong>New lot</strong></td>
+<td>Different item, and it <strong>does</strong> use lot control</td>
+<td>Fill a new lot number, clear expiry</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="how-it-decides">How it decides</h2>
+<p>When the user selects an item:</p>
+<ol>
+<li>
+<p><strong>Item has no lot control</strong>
+Lot number is not needed. Clear it.</p>
+</li>
+<li>
+<p><strong>Same item as before</strong>
+Example: user is editing a line for <code>ITEM-A</code>, and picks <code>ITEM-A</code> again.
+Do not generate a new lot. Keep what is already there.</p>
+</li>
+<li>
+<p><strong>Different item, and it uses lot control</strong>
+Example: first pick, or user changed from <code>ITEM-A</code> to <code>ITEM-B</code>.
+Generate a new lot number.</p>
+</li>
+</ol>
+<p>That last case is why “Add line” and “change item” get a fresh lot, but “edit the same line and keep the same item” does not overwrite the lot.</p>
+<hr>
+<h2 id="where-the-lot-number-is-generated">Where the lot number is generated</h2>
+<p>The lot number is generated <strong>on this receipt screen</strong>, not in the database and not when you save.</p>
+<p>Two places work together.</p>
+<p><strong>1. The helper decides “we need a new lot”</strong></p>
+<p>In <code>InventoryLotEntryState.SelectItem</code> (<code>ErpWeb.UI/Inventory/InventoryLotEntryState.cs</code>):</p>
+<ul>
+<li>if the item has <strong>no</strong> lot control → return <strong>Clear</strong></li>
+<li>if it is the <strong>same item</strong> already in the popup → return <strong>Keep</strong></li>
+<li>if it is a <strong>different</strong> lot-controlled item → call <code>nextLotNo()</code> and return <strong>New lot</strong></li>
+</ul>
+<p><strong>2. This receipt page actually builds the number</strong></p>
+<p>That <code>nextLotNo</code> is <code>NextLotNo()</code> in <code>ErpWeb.UI/Inventory/Transactions/IvMiscReceipt.razor.cs</code>.</p>
+<p>The number is made in the UI, from today’s date plus a running count of lots already on <strong>this receipt</strong>.</p>
+<p>A new lot looks like:</p>
+<p><strong>date + running number</strong></p>
+<p>Example for 27 Aug 2026:</p>
+<ul>
+<li>first lot-controlled line: <code>260827001</code></li>
+<li>next one: <code>260827002</code></li>
+<li>next: <code>260827003</code></li>
+</ul>
+<p>It counts how many lines on this receipt already have a lot that starts with today’s date. The line being edited is ignored, so editing one line does not jump the number.</p>
+<p>The user can still type a different lot number after it is filled. The helper only <strong>suggests</strong> the next number.</p>
+<hr>
+<h2 id="when-it-is-generated">When it is generated</h2>
+<p>Only when the user <strong>picks an item</strong> in the add/edit popup.</p>
+<p>That happens in <code>OnItemSelectedAsync</code>. A new lot is generated only if the helper returns <strong>NewLot</strong>. That is when:</p>
+<ul>
+<li>the chosen item <strong>uses lot control</strong>, and</li>
+<li>it is <strong>not the same item</strong> already in this popup</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>User action</th>
+<th>New lot generated?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Click <strong>Add line</strong></td>
+<td>No. Popup is empty. Lot is generated later when they pick an item.</td>
+</tr>
+<tr>
+<td>Pick a <strong>lot-controlled</strong> item on a new line</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Change to a <strong>different</strong> lot-controlled item</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Pick an item with <strong>no</strong> lot control</td>
+<td>No. Lot is cleared.</td>
+</tr>
+<tr>
+<td>Edit a line and keep the <strong>same</strong> item</td>
+<td>No. Existing lot is kept.</td>
+</tr>
+<tr>
+<td>Click <strong>Add item / Update item</strong> (save the line)</td>
+<td>No. It just copies the lot already in the popup.</td>
+</tr>
+<tr>
+<td>Click <strong>Save</strong> on the whole receipt</td>
+<td>No. It only stores what is already on the lines.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="simple-walkthrough">Simple walkthrough</h2>
+<p><strong>Add a lot-controlled item</strong></p>
+<ul>
+<li>Popup is empty.</li>
+<li>User picks <code>MILK</code>.</li>
+<li>Helper says “new lot”.</li>
+<li>Screen fills <code>260827001</code>.</li>
+<li>User must still enter expiry date.</li>
+</ul>
+<p><strong>Add a normal item (no lot)</strong></p>
+<ul>
+<li>User picks <code>PAPER</code>.</li>
+<li>Helper says “clear”.</li>
+<li>Lot and expiry stay empty. That is correct.</li>
+</ul>
+<p><strong>Edit an existing line, keep the same item</strong></p>
+<ul>
+<li>Line already has lot <code>ABC-99</code>.</li>
+<li>User opens it, maybe changes quantity, saves.</li>
+<li>Helper says “keep”.</li>
+<li>Lot stays <code>ABC-99</code>.</li>
+</ul>
+<p><strong>Edit a line, then change to another lot-controlled item</strong></p>
+<ul>
+<li>Old item’s lot is still in the box.</li>
+<li>User picks a different item.</li>
+<li>Helper says “new lot”.</li>
+<li>Old lot is replaced, expiry is cleared, user enters a new expiry.</li>
+</ul>
+<hr>
+<h2 id="after-the-user-clicks-add--update">After the user clicks Add / Update</h2>
+<p>When the line is saved onto the grid:</p>
+<ul>
+<li>If the item <strong>uses lot control</strong> → keep the lot number (and expiry).</li>
+<li>If it <strong>does not</strong> → lot number and expiry are stored blank, even if something was typed.</li>
+</ul>
+<p>And before that, if the item uses lot control, the screen checks:</p>
+<ul>
+<li>lot number is filled</li>
+<li>expiry date is filled</li>
+<li>expiry is not before today</li>
+</ul>
+<hr>
+<h2 id="short-version">Short version</h2>
+<p><code>_lotEntry</code> remembers the current item in the popup.</p>
+<ul>
+<li>Same item → keep the lot.</li>
+<li>No lot control → clear it.</li>
+<li>New or different lot-controlled item → suggest the next lot number like <code>260827001</code>.</li>
+</ul>
+<p>The lot number is generated <strong>when the user selects a lot-controlled item</strong> in the popup.
+<code>SelectItem</code> decides it is needed, then <code>NextLotNo()</code> creates <code>yyMMdd</code> + <code>001</code>, <code>002</code>, and so on.
+That way lot numbers do not accidentally copy from one item to another.</p>
+
+</body>
+</html>

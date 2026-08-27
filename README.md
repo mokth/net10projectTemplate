@@ -26,6 +26,8 @@ ADMIN password admin: User Accounts `/adminuser` (reset password / force-change)
 
 Menu / access rights: run `scripts/init-menu-access.sql` after `init-userlogin.sql`. Sync menus from XML via `POST /admin/menus/sync` (ADMIN). Startup sync is off (`Menus:SyncOnStartup=false`). Roles are **company-scoped** (named `PermissionCodes`, not bitmasks). Architecture: [`ErpWeb/docs/menu-access.md`](ErpWeb/docs/menu-access.md).
 
+Inventory stock / lot / posting rules (for agents): [`ErpWeb/docs/inventory-stock-lot.md`](ErpWeb/docs/inventory-stock-lot.md). Global inventory batch numbers: run `scripts/init-msrunningno.sql`.
+
 ### Password security notes (v1)
 
 - Policy: min 8, ASCII letter + digit, reject username match; validated at startup (non-weakenable).

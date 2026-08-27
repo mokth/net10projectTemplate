@@ -1,0 +1,49 @@
+@namespace ErpWeb.UI.Inventory.Lookups
+@using Microsoft.AspNetCore.Components.Web
+
+<DxPopup HeaderCssClass="code-style"
+         HeaderText="SELECT ITEM"
+         CloseOnOutsideClick="false"
+         Width="80vw"
+         CssClass="common-popup"
+         @bind-Visible="@Visible"
+         Closing="@OnClosing">
+    <Content>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-warning py-2">@_error</div>
+        }
+
+        <DxGrid @ref="_grid"
+                Data="@_items"
+                KeyFieldName="@nameof(IvStockMasterLookupRow.ICode)"
+                ShowSearchBox="true"
+                ShowFilterRow="true"
+                ShowGroupPanel="false"
+                PageSize="20"
+                TextWrapEnabled="false"
+                FocusedRowEnabled="true"
+                RowDoubleClick="@OnRowDoubleClick"
+                SelectedDataItemChanged="@OnSelectedItemChanged">
+            <Columns>
+                <DxGridDataColumn FieldName="@nameof(IvStockMasterLookupRow.ICode)" Caption="ITEM CODE" Width="140px" />
+                <DxGridDataColumn FieldName="@nameof(IvStockMasterLookupRow.IDesc)" Caption="DESCRIPTION" />
+                <DxGridDataColumn FieldName="@nameof(IvStockMasterLookupRow.IType)" Caption="TYPE" Width="100px" />
+                <DxGridDataColumn FieldName="@nameof(IvStockMasterLookupRow.IClassCode)" Caption="CLASS" Width="120px" />
+                <DxGridDataColumn FieldName="@nameof(IvStockMasterLookupRow.StdUom)" Caption="UOM" Width="80px" />
+            </Columns>
+        </DxGrid>
+
+        <div class="d-flex gap-2 mt-3" @onkeydown="OnKeyDown">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                      Text="SELECT"
+                      IconCssClass="fa-solid fa-check"
+                      Click="@SelectFocusedAsync"
+                      Enabled="@(_focused is not null)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="CANCEL"
+                      IconCssClass="fa-solid fa-xmark"
+                      Click="@CloseAsync" />
+        </div>
+    </Content>
+</DxPopup>

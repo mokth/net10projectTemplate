@@ -2,9 +2,11 @@
 using ErpWeb.Components;
 using ErpWeb.Core;
 using ErpWeb.Core.Menus;
+using ErpWeb.Inventory;
 using ErpWeb.Model;
 using ErpWeb.UI;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Services;
 using ErpWeb.UI.Services.Theme;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -45,6 +47,7 @@ try
     builder.Services.AddScoped<ICookieSignInService, CookieSignInService>();
     builder.Services.AddScoped<CookiesService>();
     builder.Services.AddScoped<ThemeService>();
+    builder.Services.AddScoped<PageNavigationGuard>();
     builder.Services.AddScoped<IGridLayoutStorage, LocalStorageGridLayoutStorage>();
 
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -96,6 +99,7 @@ try
 
     app.MapAccountEndpoints();
     app.MapMenuAdminEndpoints();
+    app.MapIvStockMasterExportEndpoints();
     app.MapStaticAssets().AllowAnonymous();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode()

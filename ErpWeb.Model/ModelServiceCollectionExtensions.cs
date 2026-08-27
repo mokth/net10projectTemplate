@@ -1,5 +1,6 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Repositories;
+using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -12,6 +13,10 @@ public static class ModelServiceCollectionExtensions
         services.AddDbContextFactory<AppDbContext>(options =>
             options.UseSqlServer(connectionString));
         services.AddScoped<IUserLoginRepository, UserLoginRepository>();
+        services.AddScoped<IIvStockMasterRepository, IvStockMasterRepository>();
+        services.AddScoped<IIvStockCommonRepository, IvStockCommonRepository>();
+        services.AddScoped<IIvStockTransactionRepository, IvStockTransactionRepository>();
+        services.AddScoped<IIvStockPostingRepository, IvStockPostingRepository>();
         return services;
     }
 }

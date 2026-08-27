@@ -9,6 +9,7 @@ public interface IGridLayoutStorage
 {
     Task<GridPersistentLayout?> LoadAsync(string gridKey);
     Task SaveAsync(string gridKey, GridPersistentLayout layout);
+    Task ClearAsync(string gridKey);
 }
 
 public class LocalStorageGridLayoutStorage : IGridLayoutStorage
@@ -61,6 +62,23 @@ public class LocalStorageGridLayoutStorage : IGridLayoutStorage
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to save grid layout for {GridKey}", gridKey);
+        }
+    }
+
+    public async Task ClearAsync(string gridKey)
+    {
+        if (string.IsNullOrWhiteSpace(gridKey))
+        {
+            return;
+        }
+
+        try
+        {
+            await _jsRuntime.InvokeVoidAsync("localStorage.removeItem", BuildKey(gridKey));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clear grid layout for {GridKey}", gridKey);
         }
     }
 

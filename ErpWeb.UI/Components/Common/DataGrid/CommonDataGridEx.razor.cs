@@ -31,6 +31,15 @@ public class CommonDataGridExBase<T> : ComponentBase
     [Parameter] public Action<GridCustomizeCellDisplayTextEventArgs>? OnCustomizeCellDisplayTextHandle { get; set; }
     [Parameter] public Func<string, Task<IEnumerable<T>>>? LoadGridData { get; set; }
     [Parameter] public object? GridData { get; set; }
+    /// <summary>
+    /// When set, binds DxGrid.Data to this custom source (server paging) instead of GridData.
+    /// </summary>
+    [Parameter] public GridCustomDataSource? CustomDataSource { get; set; }
+    /// <summary>When true, toolbar items show Text beside icons.</summary>
+    [Parameter] public bool ShowToolbarText { get; set; }
+    /// <summary>When false, EXPORT toolbar clicks raise OnButtonEventHandle instead of XLSX export.</summary>
+    [Parameter] public bool UseBuiltInExport { get; set; } = true;
+    [Parameter] public bool ShowResetLayoutButton { get; set; }
 
     [Parameter] public bool allowSelect { get; set; }
     [Parameter] public bool allowCustomizeCell { get; set; }
@@ -52,6 +61,13 @@ public class CommonDataGridExBase<T> : ComponentBase
     protected bool PreRendered { get; set; }
     protected bool IsLoading { get; set; }
     protected GridSelectionMode SelectionMode { get; set; }
+
+    protected object? BoundData => CustomDataSource is not null ? CustomDataSource : GridData;
+    protected bool UsesCustomData => CustomDataSource is not null;
+    protected bool EffectiveShowFilterRow => !UsesCustomData && ShowFilterRow;
+    protected bool EffectiveShowGroupPanel => !UsesCustomData && ShowGroupPanel;
+    protected bool EffectiveShowSearchBox => !UsesCustomData && ShowSearchBox;
+    protected bool PageSizeSelectorAllRowsVisible => !UsesCustomData;
 
     private bool _gridInstanceFired;
     private string? LayoutKey =>
@@ -132,7 +148,7 @@ public class CommonDataGridExBase<T> : ComponentBase
 
     public async Task OnButtonClick(ButtonInfo btn)
     {
-        if (string.Equals(btn.Text, "EXPORT", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(btn.Text, "EXPORT", StringComparison.OrdinalIgnoreCase) && UseBuiltInExport)
         {
             if (IsLoading)
             {
@@ -155,6 +171,12 @@ public class CommonDataGridExBase<T> : ComponentBase
             return;
         }
 
+        if (string.Equals(btn.Text, "RESET LAYOUT", StringComparison.OrdinalIgnoreCase))
+        {
+            await ResetLayoutAsync();
+            return;
+        }
+
         if (!OnButtonEventHandle.HasDelegate)
         {
             return;
@@ -165,6 +187,21 @@ public class CommonDataGridExBase<T> : ComponentBase
             SelectedButton = btn,
             SelectedRow = SelectedRow
         });
+    }
+
+    public async Task ResetLayoutAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(LayoutKey))
+        {
+            await LayoutStorage.ClearAsync(LayoutKey);
+        }
+
+        // Remount so LayoutAutoLoading applies defaults (storage cleared).
+        _gridInstanceFired = false;
+        PreRendered = false;
+        await InvokeAsync(StateHasChanged);
+        PreRendered = true;
+        await InvokeAsync(StateHasChanged);
     }
 
     public async Task OnEditClick(GridCommandColumnCellDisplayTemplateContext context, ButtonInfo btn)

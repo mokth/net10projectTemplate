@@ -1,0 +1,21 @@
+@namespace ErpWeb.UI.Inventory.Lookups
+
+<div class="iv-code-combo">
+    <DxComboBox Data="@Data"
+                TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                SearchMode="ListSearchMode.AutoSearch"
+                SearchFilterCondition="ListSearchFilterCondition.Contains"
+                Value="@Value"
+                ValueExpression="() => Value"
+                ValueChanged="@(async (string? v) => await OnValueChanged(v))"
+                Enabled="@Enabled"
+                ReadOnly="@ReadOnly"
+                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                InputCssClass="@InputCssClass"
+                NullText="@NullText" />
+    @if (IsLoading)
+    {
+        <small class="text-muted">Loading…</small>
+    }
+</div>

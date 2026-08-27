@@ -1,0 +1,17 @@
+@namespace ErpWeb.UI.Inventory.Lookups
+
+<div class="iv-stock-picker d-flex gap-1 align-items-center">
+    <DxTextBox Text="@DisplayText"
+               ReadOnly="true"
+               InputCssClass="@InputCssClass"
+               CssClass="flex-grow-1" />
+    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+              IconCssClass="fa-solid fa-magnifying-glass"
+              Text="Search"
+              Click="@OpenSearchAsync"
+              Enabled="@Enabled" />
+</div>
+
+<IvBalLocSearchPopup @bind-Visible="@_popupVisible"
+                     ICodeFilter="@ICodeFilter"
+                     Selected="OnSelectedAsync" />

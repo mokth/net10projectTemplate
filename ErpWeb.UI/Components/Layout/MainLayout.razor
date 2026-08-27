@@ -1,5 +1,18 @@
 ﻿@inherits LayoutComponentBase
 
+<NavigationLock ConfirmExternalNavigation="@Guard.IsBlocking"
+                OnBeforeInternalNavigation="OnBeforeInternalNav" />
+
+@if (!string.IsNullOrWhiteSpace(_leaveBlockedToast))
+{
+    <div class="shell-nav-lock-toast" role="status">
+        <div class="iv-toast iv-toast--wait">
+            <span>@_leaveBlockedToast</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissLeaveBlockedToast" aria-label="Dismiss">×</button>
+        </div>
+    </div>
+}
+
 <div class="shell @NavShellClass" data-bs-theme="@BootstrapMode">
     <Header @bind-SidebarOpen="_sidebarOpen" />
 

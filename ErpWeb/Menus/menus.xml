@@ -5,7 +5,18 @@
   <Menu Code="OPERATIONS" Name="Operations" SortOrder="2">
     <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
       <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
-      <Menu Code="INVENTORY_DEMO" Name="Inventory" Route="/inventory-demo" SortOrder="2" />
+      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
+    </Menu>
+    <Menu Code="INVENTORY" Name="Inventory" SortOrder="2">
+      <Menu Code="INV_ITEM_MASTER" Name="Item Master" Route="/inventory/items" SortOrder="1" />
+      <Menu Code="INV_WAREHOUSE" Name="Warehouses" Route="/inventory/warehouses" SortOrder="2" />
+      <Menu Code="INV_LOCATION" Name="Locations" Route="/inventory/locations" SortOrder="3" />
+      <Menu Code="INV_STATUS" Name="Item Status" Route="/inventory/statuses" SortOrder="4" />
+      <Menu Code="INV_UOM" Name="UOM" Route="/inventory/uoms" SortOrder="5" />
+      <Menu Code="INV_TYPE" Name="Item Type" Route="/inventory/types" SortOrder="6" />
+      <Menu Code="INV_CLASS" Name="Item Class" Route="/inventory/classes" SortOrder="7" />
+      <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="8" />
+      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="9" />
     </Menu>
   </Menu>
 

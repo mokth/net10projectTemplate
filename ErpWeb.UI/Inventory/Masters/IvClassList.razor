@@ -1,0 +1,220 @@
+@page "/inventory/classes"
+@inherits IvRefListPageBase<IvClassListRow>
+
+<PageTitle>Item Class</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryClass">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-layer-group"></i></div>
+        <div>
+            <p class="iv-eyebrow">Inventory</p>
+            <h1 class="iv-title">Item Classes</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading classes…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(IvClassListRow.Code)"
+                      GridKey="iv-class-list"
+                      Title="Classes"
+                      T="IvClassListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Class" : "View Class") : "New Class")"
+             CloseOnOutsideClick="false"
+             Width="60vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="classForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Code"
+                                       maxlength="30"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="3">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@EditModel.IsActive"
+                                        AllowIndeterminateState="false"
+                                        ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Desc"
+                                       maxlength="200"
+                                       ReadOnly="@(!EditEnabled)"
+                                       InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-subclass-head">
+                                <h3>Subclasses</h3>
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                              Text="Add"
+                                              IconCssClass="fa-solid fa-plus"
+                                              Click="@AddSubclassRow"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                            </div>
+                            <div class="iv-subclass-grid">
+                                <DxGrid Data="@EditModel.SubClasses"
+                                        ShowFilterRow="false"
+                                        ShowGroupPanel="false"
+                                        ShowSearchBox="false"
+                                        PageSize="20"
+                                        TextWrapEnabled="false"
+                                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer">
+                                    <Columns>
+                                        @if (EditEnabled)
+                                        {
+                                            <DxGridCommandColumn Width="72px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                                <CellDisplayTemplate Context="subCell">
+                                                    @{
+                                                        var sub = (IvSubClassEditVm)subCell.DataItem;
+                                                    }
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                              IconCssClass="fa-solid fa-trash"
+                                                              title="Remove"
+                                                              Click="@(() => RemoveSubclassRow(sub))"
+                                                              Enabled="@(!IsSubmitting)" />
+                                                </CellDisplayTemplate>
+                                            </DxGridCommandColumn>
+                                        }
+                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Code)" Caption="Code" Width="140px">
+                                            <CellDisplayTemplate Context="codeCell">
+                                                @{
+                                                    var sub = (IvSubClassEditVm)codeCell.DataItem;
+                                                    var codeLocked = !EditEnabled || (sub.RowVersion is { Length: > 0 });
+                                                }
+                                                <DxTextBox @bind-Text="@sub.Code"
+                                                           maxlength="30"
+                                                           ReadOnly="@codeLocked"
+                                                           InputCssClass="code-style" />
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Desc)" Caption="Description" MinWidth="180">
+                                            <CellDisplayTemplate Context="descCell">
+                                                @{
+                                                    var sub = (IvSubClassEditVm)descCell.DataItem;
+                                                }
+                                                <DxTextBox @bind-Text="@sub.Desc"
+                                                           maxlength="100"
+                                                           ReadOnly="@(!EditEnabled)" />
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.IsActive)" Caption="Active" Width="90px">
+                                            <CellDisplayTemplate Context="activeCell">
+                                                @{
+                                                    var sub = (IvSubClassEditVm)activeCell.DataItem;
+                                                }
+                                                <DxCheckBox @bind-Checked="@sub.IsActive"
+                                                            AllowIndeterminateState="false"
+                                                            ReadOnly="@(!EditEnabled)" />
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                    </Columns>
+                                </DxGrid>
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

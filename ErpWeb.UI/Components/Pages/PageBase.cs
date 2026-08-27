@@ -1,4 +1,5 @@
 using ErpWeb.Core.Services;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 
@@ -13,6 +14,9 @@ public abstract class PageBase : ComponentBase
     [Inject]
     protected ICurrentUserService CurrentUser { get; set; } = default!;
 
+    [Inject]
+    protected PageNavigationGuard NavigationGuard { get; set; } = default!;
+
     protected bool IsBusy { get; set; }
 
     protected string? ErrorMessage { get; set; }
@@ -23,4 +27,7 @@ public abstract class PageBase : ComponentBase
     }
 
     protected virtual Task OnPageInitializedAsync() => Task.CompletedTask;
+
+    protected IDisposable BeginBlockingWork(string message) =>
+        NavigationGuard.Begin(message);
 }

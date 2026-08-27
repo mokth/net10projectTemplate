@@ -1,0 +1,419 @@
+@page "/inventory/items/{Mode:regex(^(new|edit|view)$)}"
+@page "/inventory/items/{Mode:regex(^(new|edit|view)$)}/{ICode}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryItemMaster">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-box"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory · Item Master</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    @if (!IsNewMode && !string.IsNullOrWhiteSpace(Model.ICode))
+                    {
+                        <span class="iv-chip">@Model.ICode</span>
+                    }
+                    <span class="iv-status @(Model.IsActive ? "is-on" : "is-off")">
+                        @(Model.IsActive ? "Active" : "Inactive")
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            </section>
+        }
+        else if (IsViewMode)
+        {
+            <div class="iv-form-grid">
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Basic</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Code", Model.ICode)
+                        @Detail("Description", Model.IDesc)
+                        @Detail("Barcode", Model.Barcode)
+                        @Detail("Brand", Model.Brand)
+                        @Detail("Active", Model.IsActive ? "Yes" : "No")
+                    </div>
+                </section>
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Classification</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Type", Model.IType)
+                        @Detail("Class", Model.IClassCode)
+                        @Detail("Subclass", Model.ISubClassCode)
+                        @Detail("Classification", Model.Classification)
+                        @Detail("Size", Model.Size)
+                        @Detail("Color", Model.Color)
+                    </div>
+                </section>
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Units</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Std UOM", Model.StdUom)
+                        @Detail("Selling UOM", Model.SellingUom)
+                        @Detail("Purchase UOM", Model.PurUom)
+                        @Detail("Std pack size", FormatDec(Model.StdPackSize))
+                        @Detail("Purchase pack size", FormatDec(Model.PurStdPackSize))
+                    </div>
+                </section>
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Inventory</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Stock control", Model.StockControl ? "Yes" : "No")
+                        @Detail("Lot control", Model.LotControl ? "Yes" : "No")
+                        @Detail("Default warehouse", Model.DefWarehouse)
+                        @Detail("Default location", Model.DefLocation)
+                        @Detail("Min stock", FormatDec(Model.MinStock))
+                        @Detail("Max stock", FormatDec(Model.MaxStock))
+                    </div>
+                </section>
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Pricing</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Selling price", FormatDec(Model.SellingPrice, "n4"))
+                        @Detail("Purchase price", FormatDec(Model.PurchasePrice, "n4"))
+                    </div>
+                </section>
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Accounting</h2>
+                    <div class="iv-detail-grid">
+                        @Detail("Selling GL", Model.SellingGlCode)
+                        @Detail("Purchase GL", Model.PurchaseGlCode)
+                        @Detail("Tax group", Model.TaxGroup)
+                        @Detail("Purchase tax group", Model.PurchaseTaxGroup)
+                    </div>
+                </section>
+            </div>
+
+            <section class="iv-card">
+                <h2 class="iv-card__title">Audit</h2>
+                <div class="iv-audit">
+                    <span>Created @(Model.CreatedBy ?? "—") · @FormatUtc(Model.CreatedDate)</span>
+                    <span>Updated @(Model.ModifiedBy ?? "—") · @FormatUtc(Model.ModifiedDate)</span>
+                </div>
+            </section>
+
+            <footer class="iv-footer">
+                <p class="iv-footer__hint">Read-only view</p>
+                <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CLOSE"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@OnCloseAsync" />
+                    @if (CanEdit)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="EDIT"
+                                  IconCssClass="far fa-edit"
+                                  Click="@OnEditFromView" />
+                    }
+                </div>
+            </footer>
+        }
+        else
+        {
+            <EditForm Model="@Model" OnValidSubmit="@OnSaveAsync">
+                <div class="iv-form-grid">
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Basic</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Item code</label>
+                                <DxTextBox @bind-Text="@Model.ICode"
+                                           maxlength="30"
+                                           ReadOnly="@(!IsNewMode)"
+                                           InputCssClass="required-field"
+                                           NullText="Required" />
+                                @FieldError(nameof(IvStockMasterEditVm.ICode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Description</label>
+                                <DxTextBox @bind-Text="@Model.IDesc" maxlength="100" NullText="Item description" />
+                                @FieldError(nameof(IvStockMasterEditVm.IDesc))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Barcode</label>
+                                <DxTextBox @bind-Text="@Model.Barcode" maxlength="50" />
+                                @FieldError(nameof(IvStockMasterEditVm.Barcode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Brand</label>
+                                <DxTextBox @bind-Text="@Model.Brand" maxlength="50" />
+                                @FieldError(nameof(IvStockMasterEditVm.Brand))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Active</label>
+                                <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Classification</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Type</label>
+                                <IvCodeComboBox Data="@Types" @bind-Value="@Model.IType" NullText="Select type" />
+                                @FieldError(nameof(IvStockMasterEditVm.IType))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Class</label>
+                                <IvCodeComboBox Data="@Classes"
+                                                Value="@Model.IClassCode"
+                                                ValueChanged="OnClassChangedAsync"
+                                                NullText="Select class" />
+                                @FieldError(nameof(IvStockMasterEditVm.IClassCode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Subclass</label>
+                                <IvCodeComboBox Data="@SubClasses"
+                                                @bind-Value="@Model.ISubClassCode"
+                                                IsLoading="@SubClassesLoading"
+                                                Enabled="@(!string.IsNullOrWhiteSpace(Model.IClassCode))"
+                                                NullText="Select subclass" />
+                                @FieldError(nameof(IvStockMasterEditVm.ISubClassCode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Classification</label>
+                                <DxTextBox @bind-Text="@Model.Classification" maxlength="50" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Size</label>
+                                <DxTextBox @bind-Text="@Model.Size" maxlength="50" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Color</label>
+                                <DxTextBox @bind-Text="@Model.Color" maxlength="50" />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Units</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Std UOM</label>
+                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.StdUom" NullText="Select UOM" />
+                                @FieldError(nameof(IvStockMasterEditVm.StdUom))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Selling UOM</label>
+                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.SellingUom" NullText="Select UOM" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Purchase UOM</label>
+                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.PurUom" NullText="Select UOM" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Std pack size</label>
+                                <DxSpinEdit @bind-Value="@Model.StdPackSize" MinValue="0m" DisplayFormat="n4" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Purchase pack size</label>
+                                <DxSpinEdit @bind-Value="@Model.PurStdPackSize" MinValue="0m" DisplayFormat="n4" />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Inventory</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Stock control</label>
+                                <DxCheckBox @bind-Checked="@Model.StockControl" AllowIndeterminateState="false" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Lot control</label>
+                                <DxCheckBox @bind-Checked="@Model.LotControl" AllowIndeterminateState="false" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Default warehouse</label>
+                                <IvCodeComboBox Data="@Warehouses"
+                                                Value="@Model.DefWarehouse"
+                                                ValueChanged="OnWarehouseChangedAsync"
+                                                NullText="Select warehouse" />
+                                @FieldError(nameof(IvStockMasterEditVm.DefWarehouse))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Default location</label>
+                                <IvCodeComboBox Data="@Locations"
+                                                @bind-Value="@Model.DefLocation"
+                                                IsLoading="@LocationsLoading"
+                                                Enabled="@(!string.IsNullOrWhiteSpace(Model.DefWarehouse))"
+                                                NullText="Select location" />
+                                @FieldError(nameof(IvStockMasterEditVm.DefLocation))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Min stock</label>
+                                <DxSpinEdit @bind-Value="@Model.MinStock" MinValue="0m" DisplayFormat="n4" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Max stock</label>
+                                <DxSpinEdit @bind-Value="@Model.MaxStock" MinValue="0m" DisplayFormat="n4" />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Pricing</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Selling price</label>
+                                <DxSpinEdit @bind-Value="@Model.SellingPrice" MinValue="0m" DisplayFormat="n4" />
+                                @FieldError(nameof(IvStockMasterEditVm.SellingPrice))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Purchase price</label>
+                                <DxSpinEdit @bind-Value="@Model.PurchasePrice" MinValue="0m" DisplayFormat="n4" />
+                                @FieldError(nameof(IvStockMasterEditVm.PurchasePrice))
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Accounting</h2>
+                        <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-field">
+                                <label class="iv-field__label">Selling GL</label>
+                                <DxTextBox @bind-Text="@Model.SellingGlCode" maxlength="20" />
+                                @FieldError(nameof(IvStockMasterEditVm.SellingGlCode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Purchase GL</label>
+                                <DxTextBox @bind-Text="@Model.PurchaseGlCode" maxlength="20" />
+                                @FieldError(nameof(IvStockMasterEditVm.PurchaseGlCode))
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Tax group</label>
+                                <DxTextBox @bind-Text="@Model.TaxGroup" maxlength="20" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Purchase tax group</label>
+                                <DxTextBox @bind-Text="@Model.PurchaseTaxGroup" maxlength="20" />
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                @if (ValidationErrors.Count > 0)
+                {
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Validation</h2>
+                        <ul class="iv-validation-list">
+                            @foreach (var pair in ValidationErrors)
+                            {
+                                <li><strong>@pair.Key</strong>: @pair.Value</li>
+                            }
+                        </ul>
+                    </section>
+                }
+
+                <footer class="iv-footer">
+                    <p class="iv-footer__hint">@(IsDirty ? "Unsaved changes" : "Ready")</p>
+                    <div class="iv-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CANCEL"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.InventoryItemMaster" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "SAVE")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      SubmitFormOnClick="true"
+                                      Enabled="@(!IsSubmitting)" />
+                        </PermissionAuthorize>
+                    </div>
+                </footer>
+            </EditForm>
+        }
+    </div>
+
+    <DxPopup HeaderText="Discard changes?"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="iv-confirm__copy">You have unsaved changes. Discard them and leave this page?</p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Concurrency conflict"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@ConcurrencyVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                This item was changed by another user. Reload the latest version, or keep your edits and overwrite on the next save.
+            </p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Keep my changes"
+                              Click="@KeepMyChangesAsync"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Reload latest"
+                              Click="@ReloadLatestAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>
+
+@code {
+    private RenderFragment Detail(string label, string? value) => __builder =>
+    {
+        <div class="iv-detail-row">
+            <span class="iv-detail-row__label">@label</span>
+            <span class="iv-detail-row__value">@(string.IsNullOrWhiteSpace(value) ? "—" : value)</span>
+        </div>
+    };
+
+    private RenderFragment FieldError(string field) => __builder =>
+    {
+        if (ValidationErrors.TryGetValue(field, out var message) && !string.IsNullOrWhiteSpace(message))
+        {
+            <p class="iv-field__error">@message</p>
+        }
+    };
+}

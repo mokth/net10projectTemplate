@@ -52,13 +52,24 @@
                 @foreach (var btn in Buttons)
                 {
                     <DxToolbarItem IconCssClass="@btn.IConClass"
+                                   Text="@(ShowToolbarText ? btn.Text : null)"
                                    Tooltip="@(btn.ToolTip ?? btn.Text)"
                                    Enabled="@btn.Enabled"
                                    Alignment="ToolbarItemAlignment.Left"
                                    Click="@(() => OnButtonClick(btn))"
                                    BeginGroup="true" />
                 }
+                @if (ShowResetLayoutButton)
+                {
+                    <DxToolbarItem IconCssClass="fa-solid fa-table"
+                                   Text="@(ShowToolbarText ? "RESET LAYOUT" : null)"
+                                   Tooltip="Reset column layout"
+                                   Alignment="ToolbarItemAlignment.Left"
+                                   Click="@(() => OnButtonClick(new ButtonInfo { Text = "RESET LAYOUT" }))"
+                                   BeginGroup="true" />
+                }
                 <DxToolbarItem IconCssClass="fa-solid fa-arrows-rotate"
+                               Text="@(ShowToolbarText ? "REFRESH" : null)"
                                Tooltip="Refresh List"
                                Alignment="ToolbarItemAlignment.Left"
                                Click="@OnRefreshClick"
@@ -66,6 +77,7 @@
                 @if (ShowColChoose)
                 {
                     <DxToolbarItem IconCssClass="fa-solid fa-table-columns"
+                                   Text="@(ShowToolbarText ? "COLUMNS" : null)"
                                    Tooltip="COLUMN CHOOSER"
                                    Alignment="ToolbarItemAlignment.Right"
                                    Click="@OnColChoose"
@@ -79,13 +91,13 @@
     {
         <DxGrid @ref="grid"
                 KeyFieldName="@KeyName"
-                Data="@GridData"
-                ShowGroupPanel="@ShowGroupPanel"
+                Data="@BoundData"
+                ShowGroupPanel="@EffectiveShowGroupPanel"
                 PageSizeSelectorVisible="true"
                 PageSizeSelectorItems="@(new[] { 5, 10, 20, 30, 50, 100 })"
-                PageSizeSelectorAllRowsItemVisible="true"
-                ShowFilterRow="@ShowFilterRow"
-                ShowSearchBox="@ShowSearchBox"
+                PageSizeSelectorAllRowsItemVisible="@PageSizeSelectorAllRowsVisible"
+                ShowFilterRow="@EffectiveShowFilterRow"
+                ShowSearchBox="@EffectiveShowSearchBox"
                 FocusedRowEnabled="true"
                 SearchTextParseMode="GridSearchTextParseMode.GroupWordsByAnd"
                 ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
@@ -94,7 +106,7 @@
                 AllowSelectRowByClick="true"
                 CustomizeCellDisplayText="@OnCustomizeCellDisplayTextHandle"
                 SelectionMode="@GridSelectionMode"
-                SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
+                SelectAllCheckboxMode="GridSelectAllCheckboxMode.Page"
                 SelectedDataItem="@SelectedDataItem"
                 SelectedDataItemChanged="OnSelectionChanged"
                 SelectedDataItemsChanged="OnSelectedDataItemsChanged"

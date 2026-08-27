@@ -1,0 +1,9 @@
+/* Page-specific tweaks; shared chrome lives in /css/inventory-chrome.css */
+
+.iv-page ::deep .common-datagrid-ex {
+    min-height: 280px;
+}
+
+.iv-page ::deep .dxbl-grid {
+    border: 0;
+}

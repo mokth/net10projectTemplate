@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>inventory-posting-explain.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="how-postinventorymiasync-works">How <code>PostInventoryMIAsync</code> works</h1>
+<p>This note explains <code>PostInventoryMIAsync</code> in <code>ErpWeb.Core/Inventory/IvInventoryPostingService.cs</code> in plain language.</p>
+<p>The interface <code>IIvInventoryPostingService</code> only says “post these batches.” The real work lives in <code>IvInventoryPostingService</code>.</p>
+<p><strong>MI</strong> means <strong>Miscellaneous Issue</strong>: a document that takes stock <strong>out</strong> of the warehouse (write-off, sample, consumption, etc.).</p>
+<p><strong>Posting</strong> means: this draft is now official, and on-hand quantity must actually go down.</p>
+<p>Think of it as: <em>“Take this issue document, check it is valid, take the stock off the shelf, write it in the history book, then mark the document POSTED.”</em></p>
+<p>The method handles <strong>one batch number</strong> at a time. If the user posts several issues, the outer method (<code>DispatchAsync</code>) calls this once per batch.</p>
+<hr>
+<h2 id="big-picture-all-or-nothing">Big picture: all or nothing</h2>
+<p>The first thing it does is open a <strong>database transaction</strong>.</p>
+<p>That is like a sealed envelope:</p>
+<ul>
+<li>If every step succeeds, the envelope is sealed (<code>Commit</code>) — stock is reduced and the document is POSTED.</li>
+<li>If anything fails, the envelope is thrown away (<code>Rollback</code>) — stock and the document look as if posting never started.</li>
+</ul>
+<p>That is why you never get “stock went down but the document is still NEW,” or the opposite.</p>
+<hr>
+<h2 id="the-objects-it-works-with">The objects it works with</h2>
+<table>
+<thead>
+<tr>
+<th>Everyday idea</th>
+<th>In this function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The issue document (header)</td>
+<td><code>IvTrxBatch</code> — batch number, status NEW/POSTED, date</td>
+</tr>
+<tr>
+<td>The lines on the document</td>
+<td><code>IvTrxBatchDetail</code> — item, qty, warehouse, lot, <strong>which stock pile</strong> (<code>FromBalLocId</code>)</td>
+</tr>
+<tr>
+<td>One pile of stock on a shelf</td>
+<td><code>IvBalLoc</code> — item + warehouse + location + lot + status, with <code>StdQty</code> (on hand)</td>
+</tr>
+<tr>
+<td>Item master (rules for the item)</td>
+<td><code>IvStockMaster</code> — is it stock-controlled? lot-controlled? active?</td>
+</tr>
+<tr>
+<td>Official “this happened” record</td>
+<td><code>IvTrxHistory</code> — one row per line after posting</td>
+</tr>
+</tbody>
+</table>
+<p>An issue line does <strong>not</strong> say “take 5 of item ABC from anywhere.” It points at a <strong>specific pile</strong>: <code>FromBalLocId</code>. That is the shelf bin we will take from.</p>
+<hr>
+<h2 id="step-by-step">Step by step</h2>
+<h3 id="1-lock-the-document-so-nobody-else-can-post-it-at-the-same-time">1. Lock the document so nobody else can post it at the same time</h3>
+<pre class="hljs"><code><div><span class="hljs-keyword">var</span> batch = <span class="hljs-keyword">await</span> _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+<span class="hljs-keyword">if</span> (batch <span class="hljs-keyword">is</span> <span class="hljs-literal">null</span>
+    || !<span class="hljs-built_in">string</span>.Equals(batch.TrxType, IvTrxTypes.MiscellaneousIssue, StringComparison.OrdinalIgnoreCase))
+{
+    <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(batchNo, <span class="hljs-string">&quot;Miscellaneous issue was not found.&quot;</span>);
+}
+
+<span class="hljs-keyword">if</span> (!<span class="hljs-built_in">string</span>.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+{
+    <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(batchNo, <span class="hljs-string">&quot;Only NEW issues can be posted.&quot;</span>);
+}
+</div></code></pre>
+<p>It finds the batch for <strong>this company and branch</strong>, and <strong>locks</strong> it. Locking means: if another user is also posting this same document, they wait.</p>
+<p>Then it checks:</p>
+<ol>
+<li>Does this batch exist, and is it really an <strong>MI</strong> (not a receipt or something else)?</li>
+<li>Is status <strong>NEW</strong>? Only drafts can be posted. Already POSTED or cancelled documents are rejected.</li>
+</ol>
+<hr>
+<h3 id="2-load-the-lines-and-refuse-empty--already-posted-work">2. Load the lines and refuse empty / already-posted work</h3>
+<pre class="hljs"><code><div><span class="hljs-keyword">var</span> details = <span class="hljs-keyword">await</span> _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+<span class="hljs-keyword">if</span> (details.Count == <span class="hljs-number">0</span>)
+{
+    <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(batchNo, <span class="hljs-string">&quot;Issue has no lines.&quot;</span>);
+}
+
+<span class="hljs-keyword">if</span> (<span class="hljs-keyword">await</span> _posting.HistoryExistsForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken))
+{
+    <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(batchNo, <span class="hljs-string">&quot;History already exists for this batch.&quot;</span>);
+}
+</div></code></pre>
+<ul>
+<li>No lines → nothing to issue → fail.</li>
+<li>History already exists → this batch was already posted (or leftover data) → fail, so we never post twice.</li>
+</ul>
+<hr>
+<h3 id="3-lock-item-masters-and-build-a-plan-per-line">3. Lock item masters and build a “plan” per line</h3>
+<p>It loads every item used on the document and builds a <strong>plan</strong> (<code>MiLinePlan</code>) for each line via <code>BuildMiPostLine</code>.</p>
+<p>The plan is a cleaned-up checklist: item code, quantity, which pile (<code>FromBalLocId</code>), and a “slice” (item + warehouse + location + lot + status).</p>
+<p><code>BuildMiPostLine</code> rejects a line if:</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Item code missing</td>
+<td>We would not know what to take</td>
+</tr>
+<tr>
+<td>Item not found or inactive</td>
+<td>Cannot issue a dead/unknown item</td>
+</tr>
+<tr>
+<td>Item is <strong>not</strong> stock-controlled</td>
+<td>MI is only for items that keep on-hand qty</td>
+</tr>
+<tr>
+<td>Quantity ≤ 0</td>
+<td>Cannot issue zero or negative</td>
+</tr>
+<tr>
+<td>No source pile (<code>FromBalLocId</code>)</td>
+<td>Must know <strong>which</strong> bin to take from</td>
+</tr>
+<tr>
+<td>No warehouse</td>
+<td>Incomplete location</td>
+</tr>
+<tr>
+<td>No item status</td>
+<td>Incomplete stock identity</td>
+</tr>
+<tr>
+<td>Lot-controlled item but no lot</td>
+<td>Lot items must name the lot</td>
+</tr>
+<tr>
+<td>Non-lot item <strong>has</strong> a lot</td>
+<td>Data is inconsistent</td>
+</tr>
+</tbody>
+</table>
+<p>If <strong>any</strong> line fails, the whole batch is rolled back. Partial posting is not allowed: you cannot take 2 of 3 lines and leave the third.</p>
+<hr>
+<h3 id="4-combine-quantities-that-hit-the-same-pile">4. Combine quantities that hit the same pile</h3>
+<pre class="hljs"><code><div><span class="hljs-keyword">var</span> deltaById = <span class="hljs-keyword">new</span> Dictionary&lt;<span class="hljs-built_in">int</span>, <span class="hljs-built_in">decimal</span>&gt;();
+<span class="hljs-keyword">var</span> sliceById = <span class="hljs-keyword">new</span> Dictionary&lt;<span class="hljs-built_in">int</span>, IvStockSliceKey&gt;();
+<span class="hljs-keyword">foreach</span> (<span class="hljs-keyword">var</span> plan <span class="hljs-keyword">in</span> linePlans)
+{
+    deltaById[plan.FromBalLocId] = deltaById.GetValueOrDefault(plan.FromBalLocId) + plan.Quantity;
+    sliceById[plan.FromBalLocId] = plan.FromSlice;
+}
+</div></code></pre>
+<p>Example: two lines both take from pile <strong>#42</strong> — 3 pcs and 2 pcs. The function does <strong>not</strong> reduce that pile twice separately first. It adds them: <strong>need 5 from pile #42</strong>.</p>
+<p>That way the “do we have enough?” check is against the <strong>total</strong>, not line by line in a way that could look OK then fail later.</p>
+<hr>
+<h3 id="5-lock-each-stock-pile-in-a-fixed-order">5. Lock each stock pile, in a fixed order</h3>
+<p>It sorts the piles by their “slice” (item, warehouse, location, lot, status) and locks them one by one.</p>
+<p><strong>Why sort?</strong> If User A locks pile 1 then pile 2, and User B locks pile 2 then pile 1, they can wait forever for each other (deadlock). Same order every time avoids that.</p>
+<p>For each locked pile it also checks:</p>
+<ol>
+<li>The pile still exists for this company/branch.</li>
+<li>The pile still matches what the issue line says (same item, warehouse, location, lot, status).</li>
+</ol>
+<p>If someone changed that pile after the document was saved (moved stock, changed lot, etc.), posting stops instead of taking the wrong stock.</p>
+<hr>
+<h3 id="6-check-quantity-before-taking-anything">6. Check quantity <strong>before</strong> taking anything</h3>
+<pre class="hljs"><code><div><span class="hljs-keyword">foreach</span> (<span class="hljs-keyword">var</span> (balLocId, <span class="hljs-keyword">required</span>) <span class="hljs-keyword">in</span> deltaById)
+{
+    <span class="hljs-keyword">var</span> actual = locked[balLocId].StdQty;
+    <span class="hljs-keyword">if</span> (<span class="hljs-keyword">required</span> &gt; actual)
+    {
+        <span class="hljs-keyword">await</span> tx.RollbackAsync(cancellationToken);
+        <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(
+            batchNo,
+            <span class="hljs-string">$&quot;Insufficient quantity on balance Id <span class="hljs-subst">{balLocId}</span> (on hand <span class="hljs-subst">{actual}</span>, required <span class="hljs-subst">{<span class="hljs-keyword">required</span>}</span>).&quot;</span>);
+    }
+}
+</div></code></pre>
+<p>If you need 10 and the shelf has 7, it <strong>fails the whole batch</strong>. Stock is not reduced at all.</p>
+<p>This is the important difference from <strong>receipt (MR)</strong>:</p>
+<ul>
+<li>Receipt <strong>adds</strong> stock (can even create a new pile).</li>
+<li>Issue <strong>must</strong> take from an existing pile, and <strong>must not</strong> go negative.</li>
+</ul>
+<hr>
+<h3 id="7-actually-decrease-on-hand-quantity">7. Actually decrease on-hand quantity</h3>
+<pre class="hljs"><code><div><span class="hljs-keyword">foreach</span> (<span class="hljs-keyword">var</span> balLocId <span class="hljs-keyword">in</span> orderedIds)
+{
+    <span class="hljs-keyword">var</span> <span class="hljs-keyword">required</span> = deltaById[balLocId];
+    <span class="hljs-keyword">var</span> affected = <span class="hljs-keyword">await</span> _posting.DecreaseBalLocQtyAsync(
+        db, balLocId, companyCode, branchCode, <span class="hljs-keyword">required</span>, batch.TrxDtTime, cancellationToken);
+    <span class="hljs-keyword">if</span> (affected != <span class="hljs-number">1</span>)
+    {
+        <span class="hljs-keyword">await</span> tx.RollbackAsync(cancellationToken);
+        <span class="hljs-keyword">return</span> IvInventoryPostingBatchResult.Fail(
+            batchNo,
+            <span class="hljs-string">$&quot;Stock decrease failed for balance Id <span class="hljs-subst">{balLocId}</span> (insufficient quantity or missing row).&quot;</span>);
+    }
+}
+</div></code></pre>
+<p>The SQL is roughly: <em>subtract qty, but only if <code>StdQty &gt;= qty</code></em>.</p>
+<p>The extra check is for a race: between “we saw 10 on hand” and “we subtract 8,” another user might have taken stock. Then <code>affected != 1</code> and this posting rolls back.</p>
+<p><code>TestHookAfterMiStockUpdate</code> is <strong>only for tests</strong>: it can fake a crash after stock is reduced but before history is written, to prove the transaction still rolls everything back.</p>
+<hr>
+<h3 id="8-write-history-and-stamp-the-lines">8. Write history and stamp the lines</h3>
+<p>For each line it:</p>
+<ol>
+<li>Stores on the detail which pile and lot were used (<code>FromBalLocId</code>, <code>FromLotId</code>).</li>
+<li>Inserts one <strong>history</strong> row: a frozen copy of “we issued this item, from this warehouse/location/lot, this qty, on this date.”</li>
+</ol>
+<p>History is the audit trail. Later, rollback uses these rows to put stock back.</p>
+<p>Then it generates an <code>OperationId</code> (a unique id for this posting run) so you can tell one post apart from another.</p>
+<hr>
+<h3 id="9-mark-the-document-posted-and-commit">9. Mark the document POSTED and commit</h3>
+<pre class="hljs"><code><div>batch.BatchStatus = IvBatchStatuses.Posted;
+batch.PostedDate = now;
+batch.PostedBy = uid;
+batch.PostedCount += <span class="hljs-number">1</span>;
+batch.PostingOperationId = opId;
+batch.ModifiedDate = now;
+batch.ModifiedBy = uid;
+
+<span class="hljs-keyword">await</span> db.SaveChangesAsync(cancellationToken);
+<span class="hljs-keyword">await</span> tx.CommitAsync(cancellationToken);
+</div></code></pre>
+<p>Only after stock is reduced <strong>and</strong> history is written does the header become POSTED. Then <code>SaveChanges</code> + <code>Commit</code> make it permanent.</p>
+<p>If that commit succeeds, it returns success with the batch number and operation id.</p>
+<hr>
+<h2 id="mental-flowchart">Mental flowchart</h2>
+<pre class="hljs"><code><div>User clicks Post on MI batch 1001
+        │
+        ▼
+Open transaction (all or nothing)
+        │
+        ▼
+Lock document ── not MI or not NEW? ──► fail, undo
+        │
+        ▼
+Load lines ── empty or already in history? ──► fail, undo
+        │
+        ▼
+Check each line (item, qty, lot, source pile)
+        │ any line bad
+        ▼
+Combine qty per pile, lock piles in sorted order
+        │ pile missing / identity changed / not enough qty
+        ▼
+Subtract on-hand (SQL: only if still enough)
+        │
+        ▼
+Write history + mark POSTED
+        │
+        ▼
+Commit ── done. Document is official. Stock is lower.
+</div></code></pre>
+<hr>
+<h2 id="how-this-is-different-from-posting-a-receipt-postinventorymrasync">How this is different from posting a receipt (<code>PostInventoryMRAsync</code>)</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Miscellaneous <strong>Receipt</strong> (stock in)</th>
+<th>Miscellaneous <strong>Issue</strong> (stock out)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Direction</td>
+<td>Add to shelf</td>
+<td>Take from shelf</td>
+</tr>
+<tr>
+<td>Pile</td>
+<td>Can <strong>create</strong> a new pile if none exists</td>
+<td>Must use an <strong>existing</strong> pile (<code>FromBalLocId</code>)</td>
+</tr>
+<tr>
+<td>Lot</td>
+<td>Can create lot records</td>
+<td>Uses the lot already on that pile</td>
+</tr>
+<tr>
+<td>Negative stock</td>
+<td>Not the main risk</td>
+<td>Main risk — blocked twice (check, then SQL)</td>
+</tr>
+<tr>
+<td>History fields</td>
+<td><code>ToWarehouse</code>, <code>ToBalLocId</code>, …</td>
+<td><code>FrWarehouse</code>, <code>FromBalLocId</code>, …</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="what-a-junior-should-remember">What a junior should remember</h2>
+<ol>
+<li><strong>Posting an issue actually removes stock.</strong> Saving the draft does not.</li>
+<li><strong>One batch = one all-or-nothing job.</strong> One bad line fails the whole document.</li>
+<li><strong>Lock first, then check, then change.</strong> That stops two users from taking the same last 5 pieces.</li>
+<li><strong>History is the official record.</strong> The document status POSTED is the flag; history is what later screens and rollback trust.</li>
+<li><strong>Never go negative.</strong> If there is not enough on that exact pile, posting stops.</li>
+</ol>
+<hr>
+<h2 id="source-files">Source files</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Public API</td>
+<td><code>ErpWeb.Core/Inventory/IIvInventoryPostingService.cs</code></td>
+</tr>
+<tr>
+<td>Posting implementation</td>
+<td><code>ErpWeb.Core/Inventory/IvInventoryPostingService.cs</code> (<code>PostInventoryMIAsync</code>)</td>
+</tr>
+<tr>
+<td>Line validation</td>
+<td><code>BuildMiPostLine</code> in the same file</td>
+</tr>
+<tr>
+<td>Stock decrease</td>
+<td><code>ErpWeb.Model/Repositories/Inventory/IvStockPostingRepository.cs</code> (<code>DecreaseBalLocQtyAsync</code>)</td>
+</tr>
+<tr>
+<td>Balance row</td>
+<td><code>ErpWeb.Model/Entities/Inventory/IvBalLoc.cs</code></td>
+</tr>
+<tr>
+<td>History row</td>
+<td><code>ErpWeb.Model/Entities/Inventory/IvTrxHistory.cs</code></td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>
