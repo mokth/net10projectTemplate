@@ -39,6 +39,11 @@ BEGIN
 END
 GO
 
+-- Live ERPWeb.IvMSCode.Code is nvarchar(5). Widen before INDUSTRY/CHANNEL seeds (DEALER/ENDUSER).
+IF COL_LENGTH(N'dbo.IvMSCode', N'Code') IS NOT NULL AND COL_LENGTH(N'dbo.IvMSCode', N'Code') < 100
+    ALTER TABLE dbo.IvMSCode ALTER COLUMN Code nvarchar(50) NULL;
+GO
+
 IF OBJECT_ID(N'dbo.SaCountry', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SaCountry (
@@ -242,7 +247,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'INDUSTRY' AND Code 
     INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'ELEC', N'Electronics', N'INDUSTRY');
 
 IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'INDUSTRY' AND Code = N'FB')
-    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'FB', N'Food & Beverage', N'INDUSTRY');
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'FB', N'Food and Beverage', N'INDUSTRY');
 
 IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'INDUSTRY' AND Code = N'CONST')
     INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'CONST', N'Construction', N'INDUSTRY');
