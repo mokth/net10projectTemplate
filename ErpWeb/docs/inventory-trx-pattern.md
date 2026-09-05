@@ -69,7 +69,7 @@ Do not:
 | **Stock IN** | Miscellaneous Receipt (MR) | Increase on-hand | Destination: `ToWarehouse` / `ToLocation` / `ToLotNo` | Customer Return (`CR`), Goods Receive (`GR`), Finished Goods (`FG`) |
 | **Stock OUT** | Miscellaneous Issue (MI) | Decrease on-hand | Source pile: `FromBalLocId` | Vendor Return (`VR`), Sales Out (`SP`), Issue to Production (`IP`), Scrap |
 
-Transfer (`TR`) is a **third** family (from **and** to). Do not clone MI or MR for transfer until a transfer spec exists.
+Transfer (`TR`) is a **third** family (from **and** to). Spec: [stock_transfer_implementation_plan_v8.md](stock_transfer_implementation_plan_v8.md). Clone **MI chrome** (list, post/rollback/cancel) and add MR-style destination warehouse/location on each line. Do not dispatch TR into MI/MR posting methods. Do not implement v7 (`InventoryDocument` / `StockLedger`).
 
 Codes already live in `ErpWeb.Core/Inventory/IvTrxConstants.cs` (`IvTrxTypes`). Reuse them. Do not invent a second code for the same document.
 

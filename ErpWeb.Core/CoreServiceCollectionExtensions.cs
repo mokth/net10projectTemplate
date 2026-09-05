@@ -1,5 +1,7 @@
 using ErpWeb.Core.Inventory;
 
+using ErpWeb.Core.Sales;
+
 using ErpWeb.Core.Menus;
 
 using ErpWeb.Core.Numbering;
@@ -86,6 +88,10 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IRunningNumberService, RunningNumberService>();
 
+        services.AddScoped<IDocumentNumberingService, DocumentNumberingService>();
+
+        services.AddScoped<IAdSmNumAdminService, AdSmNumAdminService>();
+
         services.AddScoped<ICurrentDateService, CurrentDateService>();
 
         services.AddScoped<IIvInventoryLookupService, IvInventoryLookupService>();
@@ -94,13 +100,31 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvMiscIssueService, IvMiscIssueService>();
 
+        services.AddScoped<IIvStockTransferService, IvStockTransferService>();
+
+        services.AddScoped<IIvScrapService, IvScrapService>();
+
+        services.AddScoped<IIvStockReturnService, IvStockReturnService>();
+
+        services.AddScoped<IIvStockAdjustmentService, IvStockAdjustmentService>();
+
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
+
+        services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
 
         services.AddScoped<IIvInventoryReconciliationService, IvInventoryReconciliationService>();
 
         services.AddScoped<IIvStockMasterService, IvStockMasterService>();
 
         services.AddScoped<IIvInventoryRefService, IvInventoryRefService>();
+
+        services.AddScoped<ISaCustService, SaCustService>();
+
+        services.AddScoped<ISaCustLookupService, SaCustLookupService>();
+
+        services.AddScoped<ISaSalesRefService, SaSalesRefService>();
+
+        services.AddScoped<ISaInvoiceService, SaInvoiceService>();
 
         return services;
 

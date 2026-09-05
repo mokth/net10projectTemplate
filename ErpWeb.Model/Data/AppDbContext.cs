@@ -1,5 +1,7 @@
 using ErpWeb.Model.Entities;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Model.Data;
@@ -20,6 +22,8 @@ public class AppDbContext : DbContext
     public DbSet<RoleMenuPermission> RoleMenuPermissions => Set<RoleMenuPermission>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<MsRunningNo> MsRunningNos => Set<MsRunningNo>();
+    public DbSet<AdSmNum> AdSmNums => Set<AdSmNum>();
+    public DbSet<AdSmNumDate> AdSmNumDates => Set<AdSmNumDate>();
 
     public DbSet<IvClass> IvClasses => Set<IvClass>();
     public DbSet<IvSubClass> IvSubClasses => Set<IvSubClass>();
@@ -34,6 +38,24 @@ public class AppDbContext : DbContext
     public DbSet<IvTrxBatch> IvTrxBatches => Set<IvTrxBatch>();
     public DbSet<IvTrxBatchDetail> IvTrxBatchDetails => Set<IvTrxBatchDetail>();
     public DbSet<IvTrxHistory> IvTrxHistories => Set<IvTrxHistory>();
+
+    public DbSet<SaCust> SaCusts => Set<SaCust>();
+    public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();
+    public DbSet<SaCustContact> SaCustContacts => Set<SaCustContact>();
+    public DbSet<SaCustType> SaCustTypes => Set<SaCustType>();
+    public DbSet<SaCustGroup> SaCustGroups => Set<SaCustGroup>();
+    public DbSet<IvAreaCode> IvAreaCodes => Set<IvAreaCode>();
+    public DbSet<IvMsCode> IvMsCodes => Set<IvMsCode>();
+    public DbSet<SaCountry> SaCountries => Set<SaCountry>();
+    public DbSet<SaCurrency> SaCurrencies => Set<SaCurrency>();
+    public DbSet<SaDisGroup> SaDisGroups => Set<SaDisGroup>();
+    public DbSet<SaDisCust> SaDisCusts => Set<SaDisCust>();
+    public DbSet<SaCurrRate> SaCurrRates => Set<SaCurrRate>();
+    public DbSet<SaInvoice> SaInvoices => Set<SaInvoice>();
+    public DbSet<SaInvoiceDetail> SaInvoiceDetails => Set<SaInvoiceDetail>();
+    public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();
+    public DbSet<SaPaymentTerm> SaPaymentTerms => Set<SaPaymentTerm>();
+    public DbSet<SaSalesRep> SaSalesReps => Set<SaSalesRep>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

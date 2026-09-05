@@ -1,0 +1,151 @@
+@page "/sales/countries"
+@inherits SaCodeRefListPageBase<SaCountryListRow>
+
+<PageTitle>Country</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesCountry">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-earth-americas"></i></div>
+        <div>
+            <p class="iv-eyebrow">Sales</p>
+            <h1 class="iv-title">Countries</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading countries…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(SaCountryListRow.Code)"
+                      GridKey="sa-country-list"
+                      Title="Countries"
+                      T="SaCountryListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Country" : "View Country") : "New Country")"
+             CloseOnOutsideClick="false"
+             Width="40vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="countryForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Code"
+                                       maxlength="3"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Name" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Name"
+                                       maxlength="100"
+                                       ReadOnly="@(!EditEnabled)"
+                                       InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Latitude" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.Latitude"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Longitude" ColSpanMd="6">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.Longitude"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

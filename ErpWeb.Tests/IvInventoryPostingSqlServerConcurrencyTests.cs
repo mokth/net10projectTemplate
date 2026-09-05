@@ -284,4 +284,261 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             Assert.Equal(1, await db.IvTrxHistories.CountAsync(x => x.BatchNo == issue.BatchNo));
         }
     }
+
+    [Fact]
+    public async Task SqlServer_cr_concurrent_post_only_one_succeeds()
+    {
+        if (!IsSqlServerAvailable())
+        {
+            return;
+        }
+
+        var cs = GetSqlServerConnectionString()!;
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
+        var factory = new TestDbContextFactory(options);
+
+        var iCode = "C" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        await using (var db = factory.CreateDbContext())
+        {
+            if (!await db.IvWarehouses.AnyAsync(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.WarehouseCode == "MAIN"))
+            {
+                return;
+            }
+
+            var classCode = await db.IvClasses.Where(x => x.CompanyCode == "DEMO").Select(x => x.IClassCode).FirstOrDefaultAsync();
+            if (string.IsNullOrWhiteSpace(classCode))
+            {
+                return;
+            }
+
+            db.IvStockMasters.Add(new IvStockMaster
+            {
+                CompanyCode = "DEMO",
+                ICode = iCode,
+                IDesc = "CR concurrency test item",
+                StdUom = "EA",
+                StockControl = true,
+                LotControl = false,
+                IsActive = true,
+                IClassCode = classCode
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var postingRepo = new IvStockPostingRepository();
+        var posting = new IvInventoryPostingService(
+            factory, tenant, access.Object, postingRepo,
+            new IvStockCommonRepository(factory),
+            NullLogger<IvInventoryPostingService>.Instance);
+        var cr = new IvStockReturnService(
+            factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(DateTime.Today),
+            new IvStockMasterRepository(factory),
+            new IvStockCommonRepository(factory),
+            new IvStockTransactionRepository(),
+            postingRepo, posting,
+            NullLogger<IvStockReturnService>.Instance);
+
+        var save = await cr.SaveNewAsync(new IvStockReturnSaveRequest
+        {
+            TrxDate = DateTime.Today,
+            Lines =
+            [
+                new IvStockReturnLineRequest
+                {
+                    ICode = iCode,
+                    ToWarehouse = "MAIN",
+                    ToLocation = string.Empty,
+                    Quantity = 18m,
+                    UnitPrice = 1m,
+                    IStatus = "ACTIVE",
+                    Reason = IvReturnReasons.Return
+                }
+            ]
+        });
+
+        if (!save.Succeeded)
+        {
+            return;
+        }
+
+        var post1 = Task.Run(() => cr.PostAsync([save.BatchNo]));
+        var post2 = Task.Run(() => cr.PostAsync([save.BatchNo]));
+        var results = await Task.WhenAll(post1, post2);
+
+        Assert.Equal(1, results.Count(r => r.Succeeded));
+        Assert.Equal(1, results.Count(r => !r.Succeeded));
+
+        await using var verify = factory.CreateDbContext();
+        var batch = await verify.IvTrxBatches.SingleAsync(x => x.BatchNo == save.BatchNo);
+        Assert.Equal(IvBatchStatuses.Posted, batch.BatchStatus);
+        Assert.Equal(1, batch.PostedCount);
+        Assert.Equal(1, await verify.IvTrxHistories.CountAsync(x => x.BatchNo == save.BatchNo));
+        var qty = await verify.IvBalLocs
+            .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.ICode == iCode)
+            .Select(x => x.StdQty)
+            .SingleAsync();
+        Assert.Equal(18m, qty);
+    }
+
+    [Fact]
+    public async Task SqlServer_adj_concurrent_decrease_only_one_succeeds()
+    {
+        if (!IsSqlServerAvailable())
+        {
+            return;
+        }
+
+        var cs = GetSqlServerConnectionString()!;
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
+        var factory = new TestDbContextFactory(options);
+
+        var iCode = "A" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        await using (var db = factory.CreateDbContext())
+        {
+            if (!await db.IvWarehouses.AnyAsync(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.WarehouseCode == "MAIN"))
+            {
+                return;
+            }
+
+            var classCode = await db.IvClasses.Where(x => x.CompanyCode == "DEMO").Select(x => x.IClassCode).FirstOrDefaultAsync();
+            if (string.IsNullOrWhiteSpace(classCode))
+            {
+                return;
+            }
+
+            db.IvStockMasters.Add(new IvStockMaster
+            {
+                CompanyCode = "DEMO",
+                ICode = iCode,
+                IDesc = "ADJ concurrency test item",
+                StdUom = "EA",
+                StockControl = true,
+                LotControl = false,
+                IsActive = true,
+                IClassCode = classCode
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var postingRepo = new IvStockPostingRepository();
+        var posting = new IvInventoryPostingService(
+            factory, tenant, access.Object, postingRepo,
+            new IvStockCommonRepository(factory),
+            NullLogger<IvInventoryPostingService>.Instance);
+        var mr = new IvMiscReceiptService(
+            factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(DateTime.Today),
+            new IvStockMasterRepository(factory),
+            new IvStockCommonRepository(factory),
+            new IvStockTransactionRepository(),
+            postingRepo, posting,
+            NullLogger<IvMiscReceiptService>.Instance);
+        var adj = new IvStockAdjustmentService(
+            factory, tenant, access.Object, new RunningNumberService(),
+            new IvStockMasterRepository(factory),
+            new IvStockCommonRepository(factory),
+            new IvStockTransactionRepository(),
+            postingRepo, posting,
+            NullLogger<IvStockAdjustmentService>.Instance);
+
+        var receipt = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = DateTime.Today,
+            Lines =
+            [
+                new IvMiscReceiptLineRequest
+                {
+                    ICode = iCode,
+                    ToWarehouse = "MAIN",
+                    ToLocation = "",
+                    Quantity = 100m,
+                    Uom = "EA",
+                    IClassCode = "RAW",
+                    IStatus = "ACTIVE",
+                    UnitPrice = 1m
+                }
+            ]
+        });
+        if (!receipt.Succeeded || !(await mr.PostAsync([receipt.BatchNo])).Succeeded)
+        {
+            return;
+        }
+
+        int balLocId;
+        await using (var db = factory.CreateDbContext())
+        {
+            balLocId = await db.IvBalLocs
+                .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.ICode == iCode)
+                .Select(x => x.Id)
+                .SingleAsync();
+        }
+
+        var save1 = await adj.SaveNewAsync(new IvStockAdjustmentSaveRequest
+        {
+            TrxDate = DateTime.Today,
+            Lines =
+            [
+                new IvStockAdjustmentLineRequest
+                {
+                    BalLocId = balLocId,
+                    ICode = iCode,
+                    Warehouse = "MAIN",
+                    Location = string.Empty,
+                    LotNo = string.Empty,
+                    AdjustQty = -70m,
+                    Uom = "EA",
+                    IClassCode = "RAW",
+                    IStatus = "ACTIVE",
+                    UnitPrice = 1m,
+                    Reason = IvAdjustmentReasons.Count
+                }
+            ]
+        });
+        var save2 = await adj.SaveNewAsync(new IvStockAdjustmentSaveRequest
+        {
+            TrxDate = DateTime.Today,
+            Lines =
+            [
+                new IvStockAdjustmentLineRequest
+                {
+                    BalLocId = balLocId,
+                    ICode = iCode,
+                    Warehouse = "MAIN",
+                    Location = string.Empty,
+                    LotNo = string.Empty,
+                    AdjustQty = -50m,
+                    Uom = "EA",
+                    IClassCode = "RAW",
+                    IStatus = "ACTIVE",
+                    UnitPrice = 1m,
+                    Reason = IvAdjustmentReasons.Count
+                }
+            ]
+        });
+        if (!save1.Succeeded || !save2.Succeeded)
+        {
+            return;
+        }
+
+        var post1 = Task.Run(() => adj.PostAsync([save1.BatchNo]));
+        var post2 = Task.Run(() => adj.PostAsync([save2.BatchNo]));
+        var results = await Task.WhenAll(post1, post2);
+
+        Assert.Equal(1, results.Count(r => r.Succeeded));
+        Assert.Equal(1, results.Count(r => !r.Succeeded));
+
+        await using var verify = factory.CreateDbContext();
+        var qty = await verify.IvBalLocs.Where(x => x.Id == balLocId).Select(x => x.StdQty).SingleAsync();
+        Assert.True(qty is 30m or 50m);
+        Assert.True(qty >= 0m);
+    }
 }

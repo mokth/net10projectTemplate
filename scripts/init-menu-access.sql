@@ -142,6 +142,7 @@ DECLARE @operationsId int;
 DECLARE @overviewId int;
 DECLARE @securityId int;
 DECLARE @adminId int;
+DECLARE @adminMasterId int;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'HOME')
     INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
@@ -207,6 +208,20 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'ADMIN_COMPANY')
     INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
     VALUES (N'ADMIN_COMPANY', N'Company Info', @adminId, N'/admin/company', 6, 0, 1, SYSUTCDATETIME(), N'SEED');
 
+IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'ADMIN_MASTER')
+    INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+    VALUES (N'ADMIN_MASTER', N'Master', @adminId, NULL, 7, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+SELECT @adminMasterId = MenuId FROM dbo.Menu WHERE MenuCode = N'ADMIN_MASTER';
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_SM_NUM')
+    INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+    VALUES (N'SA_SM_NUM', N'Continuous Numbers', @adminMasterId, N'/sales/numbering/continuous', 1, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_SM_NUM_DATE')
+    INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+    VALUES (N'SA_SM_NUM_DATE', N'Period Numbers', @adminMasterId, N'/sales/numbering/period', 2, 0, 1, SYSUTCDATETIME(), N'SEED');
+
 IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'CHANGE_PASSWORD')
     INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
     VALUES (N'CHANGE_PASSWORD', N'Change password', NULL, N'/change-password', 4, 1, 1, SYSUTCDATETIME(), N'SEED');
@@ -224,6 +239,9 @@ UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/roles', SortOrder 
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/permissions', SortOrder = 4 WHERE MenuCode = N'ADMIN_PERMISSIONS';
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/role-permissions', SortOrder = 5 WHERE MenuCode = N'ADMIN_ROLE_PERMISSIONS';
 UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = N'/admin/company', SortOrder = 6, MenuName = N'Company Info', IsActive = 1 WHERE MenuCode = N'ADMIN_COMPANY';
+UPDATE dbo.Menu SET ParentMenuId = @adminId, Route = NULL, SortOrder = 7, MenuName = N'Master', IsActive = 1 WHERE MenuCode = N'ADMIN_MASTER';
+UPDATE dbo.Menu SET ParentMenuId = @adminMasterId, Route = N'/sales/numbering/continuous', SortOrder = 1, MenuName = N'Continuous Numbers', IsActive = 1 WHERE MenuCode = N'SA_SM_NUM';
+UPDATE dbo.Menu SET ParentMenuId = @adminMasterId, Route = N'/sales/numbering/period', SortOrder = 2, MenuName = N'Period Numbers', IsActive = 1 WHERE MenuCode = N'SA_SM_NUM_DATE';
 UPDATE dbo.Menu SET SortOrder = 2, Route = NULL WHERE MenuCode = N'OPERATIONS';
 UPDATE dbo.Menu SET SortOrder = 3, Route = NULL WHERE MenuCode = N'SECURITY';
 UPDATE dbo.Menu SET SortOrder = 4 WHERE MenuCode = N'CHANGE_PASSWORD';
@@ -256,6 +274,36 @@ SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE')
 WHERE m.MenuCode IN (N'ADMIN_USERS', N'ADMIN_ROLES', N'ADMIN_PERMISSIONS', N'ADMIN_ROLE_PERMISSIONS', N'ADMIN_COMPANY')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE')
+WHERE m.MenuCode IN (
+    N'SA_CUST', N'SA_CUST_TYPE', N'SA_CUST_GROUP', N'SA_AREA',
+    N'SA_COUNTRY', N'SA_CURRENCY', N'SA_DIS_GROUP', N'SA_CURR_RATE',
+    N'SA_PAY_TERM', N'SA_SALES_REP', N'SA_TAX_GROUP')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE')
+WHERE m.MenuCode IN (N'SA_SM_NUM', N'SA_SM_NUM_DATE')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
+WHERE m.MenuCode = N'SA_INVOICE'
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);

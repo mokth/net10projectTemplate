@@ -1,0 +1,599 @@
+@page "/inventory/stock-transfer/{Mode:regex(^(new|edit|view)$)}"
+@page "/inventory/stock-transfer/{Mode:regex(^(new|edit|view)$)}/{BatchNo:int}"
+
+@inherits PageBase
+@using ErpWeb.UI.Inventory.Lookups
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockTransfer">
+    <div class="tr-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="tr-toast tr-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="tr-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="tr-toast tr-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="tr-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="tr-card">
+                <p class="mb-0">Loading transfer…</p>
+            </div>
+        }
+        else
+        {
+            <header class="tr-hero">
+                <div class="tr-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-box-open"></i>
+                </div>
+                <div class="tr-hero__copy">
+                    <p class="tr-eyebrow">Inventory</p>
+                    <h1 class="tr-title">@PageHeading</h1>
+                    <div class="tr-chips">
+                        <span class="tr-chip">@ModeChip</span>
+                        <span class="tr-chip">Batch @BatchNoDisplay</span>
+                        <span class="tr-chip">@LineCountLabel</span>
+                        <span class="tr-chip">@BatchStatusDisplay</span>
+                    </div>
+                </div>
+                <div class="tr-hero__kpi">
+                    <span>Document total</span>
+                    <strong>@DocumentTotal.ToString("n2")</strong>
+                </div>
+            </header>
+
+            <section class="tr-card">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="tr-header-form">
+                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                        <Template>
+                            <DxDateEdit @bind-Date="@Header.TrxDate"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        Enabled="@CanEditDocument" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.RefNo"
+                                       NullText="AUTO"
+                                       maxlength="50"
+                                       ReadOnly="@(!CanEditDocument)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@Header.Remark"
+                                    Rows="2"
+                                    maxlength="250"
+                                    ReadOnly="@(!CanEditDocument)"
+                                    NullText="Optional notes for this issue" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            <section class="tr-card tr-lines">
+                <div class="tr-lines__head">
+                    <div>
+                        <p class="tr-eyebrow">Lines</p>
+                        <h2 class="tr-lines__title">Transfer items</h2>
+                    </div>
+                    @if (CanEditDocument)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Add item"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OnNewLineClickAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                </div>
+
+                <DxGrid Data="@Lines"
+                        KeyFieldName="@nameof(IvStockTransferLineVm.LineNo)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="tr-line-grid"
+                        RowDoubleClick="@OnLineRowDoubleClick">
+                    <Columns>
+                        @if (CanEditDocument)
+                        {
+                            <DxGridCommandColumn Width="120px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (IvStockTransferLineVm)context.DataItem;
+                                    }
+                                    <div class="tr-row-actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  title="Edit"
+                                                  Click="@(() => EditLineAsync(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                        @if (CanSplitLine(line))
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                      IconCssClass="fa-solid fa-code-branch"
+                                                      title="Split to new lot"
+                                                      Click="@(() => OpenSplitDialogAsync(line))"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        }
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  title="Remove"
+                                                  Click="@(() => RemoveLine(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        }
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.LineNo)" Caption="#" Width="56px" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.ICode)" Caption="Item" Width="130px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var itemLine = (IvStockTransferLineVm)context.DataItem;
+                                }
+                                <div class="tr-cell-stack">
+                                    <span class="tr-cell-stack__primary">@itemLine.ICode</span>
+                                    <span class="tr-cell-stack__secondary">@itemLine.IDesc</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Transfer From" MinWidth="180">
+                            <CellDisplayTemplate>
+                                @{
+                                    var fromLine = (IvStockTransferLineVm)context.DataItem;
+                                }
+                                <div class="tr-cell-stack">
+                                    <span class="tr-cell-stack__primary">@fromLine.FrWarehouse / @DisplayOrDash(fromLine.FrLocation)</span>
+                                    <span class="tr-cell-stack__secondary">
+                                        Lot: @DisplayOrDash(fromLine.FrLotNo)
+                                        · Avail: @fromLine.AvailableQty.ToString("n4") @fromLine.Uom
+                                    </span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Transfer To" MinWidth="160">
+                            <CellDisplayTemplate>
+                                @{
+                                    var toLine = (IvStockTransferLineVm)context.DataItem;
+                                }
+                                <div class="tr-cell-stack">
+                                    <span class="tr-cell-stack__primary">@toLine.ToWarehouse / @DisplayOrDash(toLine.ToLocation)</span>
+                                    @if (toLine.LotControl)
+                                    {
+                                        <span class="tr-cell-stack__secondary">Dest lot: @DisplayOrDash(toLine.ToLotNo)</span>
+                                    }
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.Quantity)" Caption="Transfer Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.IStatus)" Caption="Status" Width="90px">
+                            <CellDisplayTemplate>
+                                <span class="@StatusChipClass(((IvStockTransferLineVm)context.DataItem).IStatus)">
+                                    @(((IvStockTransferLineVm)context.DataItem).IStatus)
+                                </span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.Remarks)" Caption="Remark" MinWidth="120">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvStockTransferLineVm)context.DataItem).Remarks)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockTransferLineVm.Amount)" Caption="Amount" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                    <TotalSummary>
+                        <DxGridSummaryItem FieldName="@nameof(IvStockTransferLineVm.AvailableQty)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n4"
+                                           FooterColumnName="@nameof(IvStockTransferLineVm.AvailableQty)" />
+                        <DxGridSummaryItem FieldName="@nameof(IvStockTransferLineVm.Quantity)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n4"
+                                           FooterColumnName="@nameof(IvStockTransferLineVm.Quantity)" />
+                        <DxGridSummaryItem FieldName="@nameof(IvStockTransferLineVm.Amount)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n2"
+                                           FooterColumnName="@nameof(IvStockTransferLineVm.Amount)" />
+                    </TotalSummary>
+                    <EmptyDataAreaTemplate>
+                        <div class="tr-empty">
+                            <div class="tr-empty__icon" aria-hidden="true">
+                                <i class="fa-solid fa-box-open"></i>
+                            </div>
+                            <h3>No items yet</h3>
+                            <p>@(CanEditDocument ? "Add items to issue stock from a warehouse location." : "This issue has no lines.")</p>
+                            @if (CanEditDocument)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Add item"
+                                          IconCssClass="fa-solid fa-plus"
+                                          Click="@OnNewLineClickAsync"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+            </section>
+
+            <footer class="tr-footer">
+                <p class="tr-footer__hint">
+                    @if (IsViewMode)
+                    {
+                        @($"{LineCountLabel} · Total {DocumentTotal:n2}")
+                    }
+                    else
+                    {
+                        @(Lines.Count == 0 ? "Add at least one item to save this issue." : $"{LineCountLabel} · Total {DocumentTotal:n2}")
+                    }
+                </p>
+                <div class="tr-footer__actions">
+                    @if (IsViewMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Close"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCloseAsync" />
+                        @if (CanEditFromView)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.InventoryStockTransfer" Permission="@PermissionCodes.Edit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Edit"
+                                          IconCssClass="fa-solid fa-pen"
+                                          Click="@OnEditFromView" />
+                            </PermissionAuthorize>
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.InventoryStockTransfer" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      Click="@OnSaveAsync"
+                                      Enabled="@CanSave" />
+                        </PermissionAuthorize>
+                    }
+                </div>
+            </footer>
+        }
+    </div>
+
+    <DxPopup HeaderText="@PopupTitle"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="760px"
+             CssClass="tr-popup common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <div class="tr-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="tr-popup-form">
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Item</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                                <Template>
+                                    <IvStockMasterPicker ICode="@Popup.ICode"
+                                                         Selected="OnItemSelectedAsync"
+                                                         InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Barcode" ColSpanMd="6">
+                                <Template>
+                                    <div class="d-flex gap-1" @onkeydown="OnBarcodeKeyDown">
+                                        <DxTextBox @bind-Text="@Popup.Barcode"
+                                                   NullText="Scan or enter barcode"
+                                                   CssClass="flex-grow-1"
+                                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Go"
+                                                  Click="@OnBarcodeResolveAsync"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.IDesc" ReadOnly="true" NullText="Selected item description" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.IClassCode" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Transfer From</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Balance location (Fr Lot)" ColSpanMd="12">
+                                <Template>
+                                    <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
+                                                    DisplayLotNo="@Popup.BalLocDisplay"
+                                                    ICodeFilter="@Popup.ICode"
+                                                    Selected="OnBalLocSelectedAsync"
+                                                    Enabled="@(!string.IsNullOrWhiteSpace(Popup.ICode) && !IsSubmitting)"
+                                                    InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.FrWarehouse" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Location" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.FrLocation" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Lot" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.FrLotNo" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Available Qty" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.AvailableQty.ToString("n4")" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Item status" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.IStatus" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Transfer To</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                                <Template>
+                                    <IvCodeComboBox Data="@Warehouses"
+                                                    Value="@Popup.ToWarehouse"
+                                                    ValueChanged="OnWarehouseChangedAsync"
+                                                    InputCssClass="required-field"
+                                                    NullText="Select warehouse" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                                <Template>
+                                    <IvCodeComboBox Data="@Locations"
+                                                    @bind-Value="@Popup.ToLocation"
+                                                    IsLoading="@LocationsLoading"
+                                                    Enabled="@(!string.IsNullOrWhiteSpace(Popup.ToWarehouse))"
+                                                    InputCssClass="@(Locations.Count > 0 ? "required-field" : null)"
+                                                    NullText="Select location" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (Popup.LotControl)
+                            {
+                                <DxFormLayoutItem Caption="Dest lot no" ColSpanMd="6">
+                                    <Template>
+                                        <div class="d-flex gap-1">
+                                            <DxTextBox @bind-Text="@Popup.ToLotNo"
+                                                       NullText="Enter destination lot"
+                                                       CssClass="flex-grow-1 required-field"
+                                                       maxlength="50" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      Text="Generate"
+                                                      Click="@OnGenerateDestLotAsync"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        </div>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Transfer Details</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Transfer Qty" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.Quantity"
+                                                Increment="1m"
+                                                MinValue="0.0001m"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.UnitPrice"
+                                                Increment="0.0001m"
+                                                MinValue="0m"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Line amount" ColSpanMd="4">
+                                <Template>
+                                    <div class="tr-amount-preview">
+                                        <span>Qty × unit price</span>
+                                        <strong>@PopupAmount.ToString("n2")</strong>
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (Popup.FromBalLocId > 0)
+                            {
+                                <DxFormLayoutItem ColSpanMd="12">
+                                    <Template>
+                                        <div class="tr-avail-advisory @(Popup.Quantity > PopupMaxIssueQty ? "tr-avail-advisory--warn" : "")">
+                                            <i class="fa-solid fa-circle-info"></i>
+                                            Max issuable from this lot: <strong>@PopupMaxIssueQty.ToString("n4")</strong> @Popup.Uom
+                                            @if (Popup.Quantity > PopupMaxIssueQty)
+                                            {
+                                                <span class="tr-avail-advisory__warn"> — Transfer Qty exceeds available</span>
+                                            }
+                                        </div>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="@Popup.Remarks" Rows="3" NullText="Optional notes for this line" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+            </div>
+
+            <div class="tr-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(PopupError))
+                {
+                    <p class="tr-popup-error">@PopupError</p>
+                }
+                <div class="tr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@OnPopupCancel" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@PopupPrimaryText"
+                              IconCssClass="@(IsEditingLine ? "fa-solid fa-check" : "fa-solid fa-plus")"
+                              Click="@OnCommitLine" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Split to new lot"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="640px"
+             CssClass="tr-popup common-popup"
+             @bind-Visible="@SplitPopupVisible">
+        <Content>
+            <div class="tr-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="tr-popup-form">
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@SplitPopup.ICode" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@SplitPopup.IDesc" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Origin qty" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox Text="@SplitPopup.OriginQty.ToString("n4")" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Split to new record(s)" ColSpanMd="4">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@SplitPopup.SplitCount" MinValue="2" MaxValue="99" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Auto generate" ColSpanMd="4">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@SplitPopup.AutoGenerate" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="To warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            Value="@SplitPopup.ToWarehouse"
+                                            ValueChanged="OnSplitWarehouseChangedAsync"
+                                            InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="To location" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Locations"
+                                            @bind-Value="@SplitPopup.ToLocation"
+                                            IsLoading="@LocationsLoading"
+                                            Enabled="@(!string.IsNullOrWhiteSpace(SplitPopup.ToWarehouse))"
+                                            InputCssClass="@(Locations.Count > 0 ? "required-field" : null)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    @if (SplitPopup.AutoGenerate)
+                    {
+                        <DxFormLayoutItem Caption="Run no" ColSpanMd="6">
+                            <Template>
+                                <DxSpinEdit @bind-Value="@SplitPopup.RunNo" MinValue="1" MaxValue="999" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                    else
+                    {
+                        <DxFormLayoutItem Caption="New lot no start" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@SplitPopup.NewLotNoStart" maxlength="50" InputCssClass="required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                </DxFormLayout>
+            </div>
+            <div class="tr-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(SplitPopupError))
+                {
+                    <p class="tr-popup-error">@SplitPopupError</p>
+                }
+                <div class="tr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@OnSplitPopupCancel" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Process"
+                              IconCssClass="fa-solid fa-code-branch"
+                              Click="@OnSplitProcessAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard this issue?"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="440px"
+             CssClass="tr-confirm common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="tr-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+            <div class="tr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Keep editing"
+                          Click="@OnKeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Discard"
+                          IconCssClass="fa-solid fa-trash"
+                          Click="@ConfirmDiscardAsync" />
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

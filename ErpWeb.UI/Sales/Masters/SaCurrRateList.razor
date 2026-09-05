@@ -1,0 +1,162 @@
+@page "/sales/currency-rates"
+@using ErpWeb.UI.Admin.Master
+@inherits SaKeyedRefListPageBase<SaCurrRateListRow, SaCurrRateKey>
+
+<PageTitle>Currency Rate</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesCurrRate">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-chart-line"></i></div>
+        <div>
+            <p class="iv-eyebrow">Sales</p>
+            <h1 class="iv-title">Currency Rates</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading currency rates…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(SaCurrRateListRow.RowKey)"
+                      GridKey="sa-curr-rate-list"
+                      Title="Currency Rates"
+                      T="SaCurrRateListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Currency Rate" : "View Currency Rate") : "New Currency Rate")"
+             CloseOnOutsideClick="false"
+             Width="50vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="currRateForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Currency" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@CurrencyOptions"
+                                        TextFieldName="@nameof(SaCurrencyListRow.Code)"
+                                        ValueFieldName="@nameof(SaCurrencyListRow.Code)"
+                                        @bind-Value="@EditModel.CurrCode"
+                                        ReadOnly="@IsEditMode"
+                                        InputCssClass="required-field code-style"
+                                        NullText="Select currency" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="6">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@EditModel.Status"
+                                        AllowIndeterminateState="false"
+                                        ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Date" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.StartDate"
+                                        ReadOnly="@IsEditMode"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Date" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.EndDate"
+                                        ReadOnly="@IsEditMode"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Rate" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.HomeCurPerUnit"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

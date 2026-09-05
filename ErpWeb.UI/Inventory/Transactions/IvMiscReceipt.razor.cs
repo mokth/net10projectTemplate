@@ -615,11 +615,19 @@ public partial class IvMiscReceipt : PageBase
     private string NextLotNo()
     {
         var prefix = DateTime.Today.ToString("yyMMdd");
-        var used = Lines.Count(x =>
-            x != _editingLine &&
-            !string.IsNullOrWhiteSpace(x.ToLotNo) &&
-            x.ToLotNo.StartsWith(prefix, StringComparison.Ordinal));
-        return $"{prefix}{(used + 1):000}";
+        var used = Lines
+            .Where(x => x != _editingLine && !string.IsNullOrWhiteSpace(x.ToLotNo))
+            .Select(x => x.ToLotNo)
+            .ToList();
+        return IvLotNumberGenerator.AllocateAsync(
+                1,
+                prefix,
+                1,
+                autoGenerate: true,
+                used,
+                _ => Task.FromResult(false))
+            .GetAwaiter()
+            .GetResult()[0];
     }
 
     private void ApplyPopupToLine(IvMiscReceiptLineVm line)

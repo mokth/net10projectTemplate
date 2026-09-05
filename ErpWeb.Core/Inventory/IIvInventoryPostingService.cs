@@ -1,3 +1,5 @@
+using ErpWeb.Model.Data;
+
 namespace ErpWeb.Core.Inventory;
 
 public sealed class IvInventoryPostingResult
@@ -53,5 +55,31 @@ public interface IIvInventoryPostingService
     Task<IvInventoryPostingResult> RollbackAsync(
         string trxType,
         IReadOnlyList<int> batchNos,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stock-out post on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Caller must already have begun a transaction on <paramref name="db"/>.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stock-out rollback on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Caller must already have begun a transaction on <paramref name="db"/>.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
         CancellationToken cancellationToken = default);
 }

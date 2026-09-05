@@ -1,6 +1,7 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Repositories;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Sales;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -17,6 +18,8 @@ public static class ModelServiceCollectionExtensions
         services.AddScoped<IIvStockCommonRepository, IvStockCommonRepository>();
         services.AddScoped<IIvStockTransactionRepository, IvStockTransactionRepository>();
         services.AddScoped<IIvStockPostingRepository, IvStockPostingRepository>();
+        services.AddScoped<ISaCustRepository, SaCustRepository>();
+        services.AddScoped<ISaInvoiceRepository, SaInvoiceRepository>();
         return services;
     }
 }

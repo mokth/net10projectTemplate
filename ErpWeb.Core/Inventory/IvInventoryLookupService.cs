@@ -1,5 +1,7 @@
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Data;
 using ErpWeb.Model.Repositories.Inventory;
+using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -7,6 +9,7 @@ public sealed class IvCodeLookupRow
 {
     public string Code { get; init; } = string.Empty;
     public string? Desc { get; init; }
+    public decimal? Rate { get; init; }
     public string DisplayText => string.IsNullOrWhiteSpace(Desc) ? Code : $"{Code} — {Desc}";
 }
 
@@ -141,6 +144,11 @@ public interface IIvInventoryLookupService
     Task<IvInventoryLookupResult> ListActiveUomsAsync(CancellationToken cancellationToken = default);
 
     Task<IvInventoryLookupResult> ListActiveStatusesAsync(CancellationToken cancellationToken = default);
+
+    Task<bool> LotExistsAsync(
+        string iCode,
+        string lotNo,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class IvInventoryLookupService : IIvInventoryLookupService
@@ -148,15 +156,18 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
     private readonly ICurrentUserService _currentUser;
     private readonly IIvStockMasterRepository _stockMasters;
     private readonly IIvStockCommonRepository _common;
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
 
     public IvInventoryLookupService(
         ICurrentUserService currentUser,
         IIvStockMasterRepository stockMasters,
-        IIvStockCommonRepository common)
+        IIvStockCommonRepository common,
+        IDbContextFactory<AppDbContext> dbFactory)
     {
         _currentUser = currentUser;
         _stockMasters = stockMasters;
         _common = common;
+        _dbFactory = dbFactory;
     }
 
     public async Task<IvInventoryLookupResult> SearchStockMastersAsync(
@@ -421,6 +432,32 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             Code = x.IStatus,
             Desc = x.StatusDesc
         }).ToList());
+    }
+
+    public async Task<bool> LotExistsAsync(
+        string iCode,
+        string lotNo,
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = Authorize();
+        if (ctx.Error is not null)
+        {
+            return false;
+        }
+
+        var code = (iCode ?? string.Empty).Trim();
+        var lot = (lotNo ?? string.Empty).Trim();
+        if (code.Length == 0 || lot.Length == 0)
+        {
+            return false;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.IvLots.AsNoTracking().AnyAsync(
+            x => x.CompanyCode == ctx.CompanyCode
+                 && x.ICode == code
+                 && x.LotNo == lot,
+            cancellationToken);
     }
 
     private (string? CompanyCode, string? BranchCode, string? Error) Authorize()

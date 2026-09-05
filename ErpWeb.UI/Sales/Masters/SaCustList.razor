@@ -1,0 +1,208 @@
+@page "/sales/customers"
+@inherits PageBase
+
+<PageTitle>Customer Profile</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesCustomerProfile">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-users"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales</p>
+                <h1 class="iv-title">Customer Profile</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Customers</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search code, name, telephone…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SaCustListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SaCustListRow.CustCode)"
+                                      GridKey="sales-customer-list"
+                                      Title="Customers"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No customers match the current filters.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
+                        {
+                            <button type="button"
+                                    class="iv-list-compact__item"
+                                    @onclick="() => NavigateView(row.CustCode)">
+                                <span class="iv-list-compact__code">@row.CustCode</span>
+                                <span class="iv-list-compact__desc">@(string.IsNullOrWhiteSpace(row.CustName) ? "—" : row.CustName)</span>
+                                <div class="iv-list-compact__meta">
+                                    <span class="iv-status @(row.IsActive ? "is-on" : "is-off")">
+                                        @(row.IsActive ? "Active" : "Inactive")
+                                    </span>
+                                    @if (!string.IsNullOrWhiteSpace(row.CustType))
+                                    {
+                                        <span class="iv-chip">@row.CustType</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(row.CustGroupCode))
+                                    {
+                                        <span class="iv-chip">@row.CustGroupCode</span>
+                                    }
+                                </div>
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter customers"
+             CloseOnOutsideClick="false"
+             Width="520px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@ActiveFilterOptions"
+                                        TextFieldName="@nameof(ActiveFilterOption.Name)"
+                                        ValueFieldName="@nameof(ActiveFilterOption.Key)"
+                                        @bind-Value="@DraftActiveKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Type" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Types"
+                                            @bind-Value="@DraftType"
+                                            NullText="All types" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Group" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Groups"
+                                            @bind-Value="@DraftGroup"
+                                            NullText="All groups" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftSalesman"
+                                       NullText="Any salesman"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Area" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftArea"
+                                       NullText="Any area"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Confirm"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmVisible">
+        <Content>
+            <p class="iv-confirm__copy">@ConfirmMessage</p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => ConfirmVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="@ConfirmButtonStyle"
+                              Text="@ConfirmButtonText"
+                              Click="@ConfirmActionAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

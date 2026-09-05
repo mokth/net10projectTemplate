@@ -1,5 +1,7 @@
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Sales;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -135,6 +137,60 @@ internal static class InventoryLeftoverSite
     }
 
     public static void Apply(IvStockMaster entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaCust entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaCustType entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaCustGroup entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(IvAreaCode entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaCurrency entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaPaymentTerm entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaSalesRep entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaTaxGroup entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaDisGroup entity, InventoryTenantScope writeScope)
     {
         entity.BranchCode = writeScope.BranchCode;
         entity.LocationCode = writeScope.LocationCode;

@@ -1,0 +1,246 @@
+@page "/sales/discount-groups"
+@using ErpWeb.UI.Admin.Master
+@inherits SaKeyedRefListPageBase<SaDisGroupListRow, SaDisGroupKey>
+
+<PageTitle>Discount Group</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDisGroup">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-percent"></i></div>
+        <div>
+            <p class="iv-eyebrow">Sales</p>
+            <h1 class="iv-title">Discount Groups</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading discount groups…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(SaDisGroupListRow.RowKey)"
+                      GridKey="sa-dis-group-list"
+                      Title="Discount Groups"
+                      T="SaDisGroupListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Discount Group" : "View Discount Group") : "New Discount Group")"
+             CloseOnOutsideClick="false"
+             Width="70vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="disGroupForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Name" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.GroupName"
+                                       maxlength="40"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pay Code" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.PayCode"
+                                       maxlength="40"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="4" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.GroupLevel"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.GroupStatus"
+                                       maxlength="20"
+                                       ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount Type" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.DiscountType"
+                                       maxlength="20"
+                                       ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount" ColSpanMd="4" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.Discount"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount 2" ColSpanMd="4">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.Discount2"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount 3" ColSpanMd="4">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.Discount3"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-subclass-head">
+                                <h3>Members</h3>
+                                @if (EditEnabled)
+                                {
+                                    <div class="d-flex gap-2 align-items-center">
+                                        <DxTextBox @bind-Text="@NewMemberCode"
+                                                   maxlength="30"
+                                                   NullText="Customer code"
+                                                   InputCssClass="code-style" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                                  Text="Add"
+                                                  IconCssClass="fa-solid fa-plus"
+                                                  Click="@AddMemberAsync"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                }
+                            </div>
+                            <div class="iv-subclass-grid">
+                                <DxGrid Data="@EditModel.Members"
+                                        ShowFilterRow="false"
+                                        ShowGroupPanel="false"
+                                        ShowSearchBox="false"
+                                        PageSize="20"
+                                        TextWrapEnabled="false"
+                                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer">
+                                    <Columns>
+                                        @if (EditEnabled)
+                                        {
+                                            <DxGridCommandColumn Width="72px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                                <CellDisplayTemplate Context="memberCell">
+                                                    @{
+                                                        var member = (SaDisGroupMemberVm)memberCell.DataItem;
+                                                    }
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                              IconCssClass="fa-solid fa-trash"
+                                                              title="Remove"
+                                                              Click="@(() => RemoveMemberRow(member))"
+                                                              Enabled="@(!IsSubmitting)" />
+                                                </CellDisplayTemplate>
+                                            </DxGridCommandColumn>
+                                        }
+                                        <DxGridDataColumn FieldName="@nameof(SaDisGroupMemberVm.CustCode)" Caption="Customer Code" Width="160px">
+                                            <CellDisplayTemplate Context="codeCell">
+                                                @{
+                                                    var member = (SaDisGroupMemberVm)codeCell.DataItem;
+                                                }
+                                                <span class="code-style">@member.CustCode</span>
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                        <DxGridDataColumn FieldName="@nameof(SaDisGroupMemberVm.CustName)" Caption="Customer Name" MinWidth="200">
+                                            <CellDisplayTemplate Context="nameCell">
+                                                @{
+                                                    var member = (SaDisGroupMemberVm)nameCell.DataItem;
+                                                }
+                                                <span>@member.CustName</span>
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                    </Columns>
+                                </DxGrid>
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

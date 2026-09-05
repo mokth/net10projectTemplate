@@ -113,6 +113,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
 
         var bal = Assert.Single(await db.IvBalLocs.ToListAsync());
         Assert.Equal(100m, bal.StdQty);
+        Assert.Equal("SITE", bal.LocationCode);
         Assert.Equal(1, await db.IvTrxHistories.CountAsync());
         await AssertInvariantAsync(db, bal.Id);
     }
@@ -291,7 +292,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
     public async Task Wrong_trx_type_rejected()
     {
         var posting = CreatePosting();
-        var result = await posting.PostAsync("TR", [1]);
+        var result = await posting.PostAsync("XX", [1]);
         Assert.False(result.Succeeded);
         Assert.Contains("not implemented", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }

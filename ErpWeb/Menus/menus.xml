@@ -2,12 +2,8 @@
 <Menus>
   <Menu Code="HOME" Name="Home" Route="/home" SortOrder="1" AlwaysVisible="true" />
 
-  <Menu Code="OPERATIONS" Name="Operations" SortOrder="2">
-    <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
-      <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
-      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
-    </Menu>
-    <Menu Code="INVENTORY" Name="Inventory" SortOrder="2">
+  <Menu Code="INVENTORY" Name="Inventory" SortOrder="2">
+    <Menu Code="INV_MASTER" Name="Master" SortOrder="1">
       <Menu Code="INV_ITEM_MASTER" Name="Item Master" Route="/inventory/items" SortOrder="1" />
       <Menu Code="INV_WAREHOUSE" Name="Warehouses" Route="/inventory/warehouses" SortOrder="2" />
       <Menu Code="INV_LOCATION" Name="Locations" Route="/inventory/locations" SortOrder="3" />
@@ -15,12 +11,42 @@
       <Menu Code="INV_UOM" Name="UOM" Route="/inventory/uoms" SortOrder="5" />
       <Menu Code="INV_TYPE" Name="Item Type" Route="/inventory/types" SortOrder="6" />
       <Menu Code="INV_CLASS" Name="Item Class" Route="/inventory/classes" SortOrder="7" />
-      <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="8" />
-      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="9" />
+    </Menu>
+    <Menu Code="INV_TRANSACTIONS" Name="Transactions" SortOrder="2">
+      <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="1" />
+      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="2" />
+      <Menu Code="INV_STOCK_TRANSFER" Name="Stock Transfer" Route="/inventory/stock-transfer" SortOrder="3" />
+      <Menu Code="INV_SCRAP" Name="Scrap" Route="/inventory/scrap" SortOrder="4" />
+      <Menu Code="INV_STOCK_RETURN" Name="Stock Return" Route="/inventory/stock-return" SortOrder="5" />
+      <Menu Code="INV_STOCK_ADJUSTMENT" Name="Stock Adjustment" Route="/inventory/stock-adjustment" SortOrder="6" />
+    </Menu>
+  </Menu>
+  <Menu Code="SALES" Name="Sales" SortOrder="3">
+    <Menu Code="SA_MASTER" Name="Master" SortOrder="1">
+      <Menu Code="SA_CUST" Name="Customer Profile" Route="/sales/customers" SortOrder="1" />
+      <Menu Code="SA_CUST_TYPE" Name="Customer Types" Route="/sales/customer-types" SortOrder="2" />
+      <Menu Code="SA_CUST_GROUP" Name="Customer Groups" Route="/sales/customer-groups" SortOrder="3" />
+      <Menu Code="SA_AREA" Name="Areas" Route="/sales/areas" SortOrder="4" />
+      <Menu Code="SA_COUNTRY" Name="Countries" Route="/sales/countries" SortOrder="5" />
+      <Menu Code="SA_CURRENCY" Name="Currencies" Route="/sales/currencies" SortOrder="6" />
+      <Menu Code="SA_DIS_GROUP" Name="Discount Groups" Route="/sales/discount-groups" SortOrder="7" />
+      <Menu Code="SA_CURR_RATE" Name="Currency Rates" Route="/sales/currency-rates" SortOrder="8" />
+      <Menu Code="SA_PAY_TERM" Name="Payment Terms" Route="/sales/payment-terms" SortOrder="9" />
+      <Menu Code="SA_SALES_REP" Name="Sales Reps" Route="/sales/sales-reps" SortOrder="10" />
+      <Menu Code="SA_TAX_GROUP" Name="Tax Groups" Route="/sales/tax-groups" SortOrder="11" />
+    </Menu>
+    <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2">
+      <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="1" />
+    </Menu>
+  </Menu>
+  <Menu Code="OPERATIONS" Name="Operations" SortOrder="4">
+    <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
+      <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
+      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
     </Menu>
   </Menu>
 
-  <Menu Code="SECURITY" Name="Security" SortOrder="3">
+  <Menu Code="SECURITY" Name="Security" SortOrder="5">
     <Menu Code="ADMIN" Name="Administration" SortOrder="1">
       <Menu Code="ADMIN_DEMO" Name="Admin" Route="/admin-demo" SortOrder="1" />
       <Menu Code="ADMIN_USERS" Name="User Accounts" Route="/adminuser" SortOrder="2" />
@@ -28,8 +54,12 @@
       <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="4" />
       <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="5" />
       <Menu Code="ADMIN_COMPANY" Name="Company Info" Route="/admin/company" SortOrder="6" />
+      <Menu Code="ADMIN_MASTER" Name="Master" SortOrder="7">
+        <Menu Code="SA_SM_NUM" Name="Continuous Numbers" Route="/sales/numbering/continuous" SortOrder="1" />
+        <Menu Code="SA_SM_NUM_DATE" Name="Period Numbers" Route="/sales/numbering/period" SortOrder="2" />
+      </Menu>
     </Menu>
   </Menu>
 
-  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="4" AlwaysVisible="true" />
+  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="6" AlwaysVisible="true" />
 </Menus>

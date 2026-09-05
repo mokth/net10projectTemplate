@@ -3,6 +3,7 @@ using ErpWeb.Components;
 using ErpWeb.Core;
 using ErpWeb.Core.Menus;
 using ErpWeb.Inventory;
+using ErpWeb.Sales;
 using ErpWeb.Model;
 using ErpWeb.UI;
 using ErpWeb.UI.Components.Common.DataGrid;
@@ -100,6 +101,7 @@ try
     app.MapAccountEndpoints();
     app.MapMenuAdminEndpoints();
     app.MapIvStockMasterExportEndpoints();
+    app.MapSaCustExportEndpoints();
     app.MapStaticAssets().AllowAnonymous();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode()

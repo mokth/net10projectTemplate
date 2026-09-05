@@ -1,0 +1,483 @@
+@page "/inventory/stock-adjustment/{Mode:regex(^(new|edit|view)$)}"
+@page "/inventory/stock-adjustment/{Mode:regex(^(new|edit|view)$)}/{BatchNo:int}"
+
+@inherits PageBase
+@using ErpWeb.UI.Inventory.Lookups
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockAdjustment">
+    <div class="sa-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="sa-toast sa-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sa-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="sa-toast sa-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="sa-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="sa-card">
+                <p class="mb-0">Loading adjustment…</p>
+            </div>
+        }
+        else
+        {
+            <header class="sa-hero">
+                <div class="sa-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-box-open"></i>
+                </div>
+                <div class="sa-hero__copy">
+                    <p class="sa-eyebrow">Inventory</p>
+                    <h1 class="sa-title">@PageHeading</h1>
+                    <div class="sa-chips">
+                        <span class="sa-chip">@ModeChip</span>
+                        <span class="sa-chip">Batch @BatchNoDisplay</span>
+                        <span class="sa-chip">@LineCountLabel</span>
+                        <span class="sa-chip">@BatchStatusDisplay</span>
+                    </div>
+                </div>
+                <div class="sa-hero__kpi">
+                    <span>Net value impact</span>
+                    <strong>@DocumentTotal.ToString("n2")</strong>
+                </div>
+            </header>
+
+            <section class="sa-card">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-header-form">
+                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                        <Template>
+                            <DxDateEdit @bind-Date="@Header.TrxDate"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        Enabled="@CanEditDocument" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.RefNo"
+                                       NullText="AUTO"
+                                       maxlength="50"
+                                       ReadOnly="@(!CanEditDocument)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@Header.Remark"
+                                    Rows="2"
+                                    maxlength="250"
+                                    ReadOnly="@(!CanEditDocument)"
+                                    NullText="Optional notes for this issue" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            <section class="sa-card sa-lines">
+                <div class="sa-lines__head">
+                    <div>
+                        <p class="sa-eyebrow">Lines</p>
+                        <h2 class="sa-lines__title">Adjustment items</h2>
+                    </div>
+                    @if (CanEditDocument)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Add line"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OnNewLineClickAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                </div>
+
+                <DxGrid Data="@Lines"
+                        KeyFieldName="@nameof(IvStockAdjustmentLineVm.LineNo)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="sa-line-grid"
+                        RowDoubleClick="@OnLineRowDoubleClick">
+                    <Columns>
+                        @if (CanEditDocument)
+                        {
+                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (IvStockAdjustmentLineVm)context.DataItem;
+                                    }
+                                    <div class="sa-row-actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  title="Edit"
+                                                  Click="@(() => EditLineAsync(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  title="Remove"
+                                                  Click="@(() => RemoveLine(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        }
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.LineNo)" Caption="#" Width="56px" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.ICode)" Caption="Item" Width="130px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var itemLine = (IvStockAdjustmentLineVm)context.DataItem;
+                                }
+                                <div class="sa-cell-stack">
+                                    <span class="sa-cell-stack__primary">@itemLine.ICode</span>
+                                    <span class="sa-cell-stack__secondary">@itemLine.IDesc</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Balance" MinWidth="180">
+                            <CellDisplayTemplate>
+                                @{
+                                    var balLine = (IvStockAdjustmentLineVm)context.DataItem;
+                                }
+                                <div class="sa-cell-stack">
+                                    <span class="sa-cell-stack__primary">@balLine.Warehouse / @DisplayOrDash(balLine.Location)</span>
+                                    <span class="sa-cell-stack__secondary">
+                                        Lot: @DisplayOrDash(balLine.LotNo)
+                                        · Current: @balLine.CurrentQty.ToString("n4") @balLine.Uom
+                                    </span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.AdjustQty)" Caption="Adjust Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                            <CellDisplayTemplate>
+                                @{
+                                    var adjLine = (IvStockAdjustmentLineVm)context.DataItem;
+                                }
+                                <span class="@AdjustQtyClass(adjLine.AdjustQty)">@adjLine.AdjustQty.ToString("n4")</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.NewQty)" Caption="New Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.IStatus)" Caption="Status" Width="90px">
+                            <CellDisplayTemplate>
+                                <span class="@StatusChipClass(((IvStockAdjustmentLineVm)context.DataItem).IStatus)">
+                                    @(((IvStockAdjustmentLineVm)context.DataItem).IStatus)
+                                </span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.UnitPrice)" Caption="Unit Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Reason)" Caption="Reason" Width="100px">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvStockAdjustmentLineVm)context.DataItem).Reason)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Remarks)" Caption="Remark" MinWidth="120">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvStockAdjustmentLineVm)context.DataItem).Remarks)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Amount)" Caption="Amount" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                    <TotalSummary>
+                        <DxGridSummaryItem FieldName="@nameof(IvStockAdjustmentLineVm.AdjustQty)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n4"
+                                           FooterColumnName="@nameof(IvStockAdjustmentLineVm.AdjustQty)" />
+                        <DxGridSummaryItem FieldName="@nameof(IvStockAdjustmentLineVm.Amount)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n2"
+                                           FooterColumnName="@nameof(IvStockAdjustmentLineVm.Amount)" />
+                    </TotalSummary>
+                    <EmptyDataAreaTemplate>
+                        <div class="sa-empty">
+                            <div class="sa-empty__icon" aria-hidden="true">
+                                <i class="fa-solid fa-box-open"></i>
+                            </div>
+                            <h3>No lines yet</h3>
+                            <p>@(CanEditDocument ? "Add lines to adjust stock on an existing balance location." : "This adjustment has no lines.")</p>
+                            @if (CanEditDocument)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Add line"
+                                          IconCssClass="fa-solid fa-plus"
+                                          Click="@OnNewLineClickAsync"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+            </section>
+
+            <footer class="sa-footer">
+                <p class="sa-footer__hint">
+                    @if (IsViewMode)
+                    {
+                        @($"{LineCountLabel} · Total {DocumentTotal:n2}")
+                    }
+                    else
+                    {
+                        @(Lines.Count == 0 ? "Add at least one line to save this adjustment." : $"{LineCountLabel} · Net value {DocumentTotal:n2}")
+                    }
+                </p>
+                <div class="sa-footer__actions">
+                    @if (IsViewMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Close"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCloseAsync" />
+                        @if (CanEditFromView)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.InventoryStockAdjustment" Permission="@PermissionCodes.Edit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Edit"
+                                          IconCssClass="fa-solid fa-pen"
+                                          Click="@OnEditFromView" />
+                            </PermissionAuthorize>
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.InventoryStockAdjustment" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      Click="@OnSaveAsync"
+                                      Enabled="@CanSave" />
+                        </PermissionAuthorize>
+                    }
+                </div>
+            </footer>
+        }
+    </div>
+
+    <DxPopup HeaderText="@PopupTitle"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="760px"
+             CssClass="sa-popup common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <div class="sa-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-popup-form">
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Item</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                                <Template>
+                                    <IvStockMasterPicker ICode="@Popup.ICode"
+                                                         Selected="OnItemSelectedAsync"
+                                                         InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Barcode" ColSpanMd="6">
+                                <Template>
+                                    <div class="d-flex gap-1" @onkeydown="OnBarcodeKeyDown">
+                                        <DxTextBox @bind-Text="@Popup.Barcode"
+                                                   NullText="Scan or enter barcode"
+                                                   CssClass="flex-grow-1"
+                                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Go"
+                                                  Click="@OnBarcodeResolveAsync"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.IDesc" ReadOnly="true" NullText="Selected item description" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.IClassCode" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Balance</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Balance location" ColSpanMd="12">
+                                <Template>
+                                    <IvBalLocPicker BalLocId="@Popup.BalLocId"
+                                                    DisplayLotNo="@Popup.BalLocDisplay"
+                                                    ICodeFilter="@Popup.ICode"
+                                                    Selected="OnBalLocSelectedAsync"
+                                                    Enabled="@(!string.IsNullOrWhiteSpace(Popup.ICode) && !IsSubmitting)"
+                                                    InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.Warehouse" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Location" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.Location" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Lot" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.LotNo" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Current qty" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.CurrentQty.ToString("n4")" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Item status" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@Popup.IStatus" ReadOnly="true" NullText="—" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (Popup.LotControl && Popup.ExpiryDate.HasValue)
+                            {
+                                <DxFormLayoutItem Caption="Expiry date" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox Text="@Popup.ExpiryDate.Value.ToString("dd/MM/yyyy")" ReadOnly="true" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Adjustment</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Adjust qty" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@PopupAdjustQty"
+                                                Increment="1m"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="New qty" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@PopupNewQty"
+                                                Increment="1m"
+                                                MinValue="0m"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.UnitPrice"
+                                                Increment="0.0001m"
+                                                MinValue="0m"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Line amount" ColSpanMd="12">
+                                <Template>
+                                    <div class="sa-amount-preview">
+                                        <span>Adjust × unit price (informational)</span>
+                                        <strong>@PopupAmount.ToString("n2")</strong>
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (Popup.BalLocId > 0 && Popup.AdjustQty < 0m)
+                            {
+                                <DxFormLayoutItem ColSpanMd="12">
+                                    <Template>
+                                        <div class="sa-avail-advisory @(Math.Abs(Popup.AdjustQty) > PopupMaxDecreaseQty ? "sa-avail-advisory--warn" : "")">
+                                            <i class="fa-solid fa-circle-info"></i>
+                                            Max decrease from this balance: <strong>@PopupMaxDecreaseQty.ToString("n4")</strong> @Popup.Uom
+                                            @if (Math.Abs(Popup.AdjustQty) > PopupMaxDecreaseQty)
+                                            {
+                                                <span class="sa-avail-advisory__warn"> — decrease exceeds available</span>
+                                            }
+                                        </div>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            <DxFormLayoutItem Caption="Reason" ColSpanMd="6">
+                                <Template>
+                                    <DxComboBox Data="@ReasonOptions"
+                                                @bind-Value="@Popup.Reason"
+                                                AllowUserInput="false"
+                                                NullText="Required"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="@Popup.Remarks" Rows="3" NullText="Required when reason is OTHER" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+            </div>
+
+            <div class="sa-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(PopupError))
+                {
+                    <p class="sa-popup-error">@PopupError</p>
+                }
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@OnPopupCancel" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@PopupPrimaryText"
+                              IconCssClass="@(IsEditingLine ? "fa-solid fa-check" : "fa-solid fa-plus")"
+                              Click="@OnCommitLine" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard this adjustment?"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="440px"
+             CssClass="sa-confirm common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="sa-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+            <div class="sa-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Keep editing"
+                          Click="@OnKeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Discard"
+                          IconCssClass="fa-solid fa-trash"
+                          Click="@ConfirmDiscardAsync" />
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

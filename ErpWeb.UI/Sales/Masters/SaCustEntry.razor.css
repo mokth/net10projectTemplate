@@ -1,0 +1,160 @@
+.iv-validation-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--danger, #b42318);
+    font-size: 0.9rem;
+}
+
+.iv-page ::deep .dxbl-text-edit,
+.iv-page ::deep .dxbl-combobox,
+.iv-page ::deep .dxbl-spin-edit,
+.iv-page ::deep .dxbl-memo {
+    width: 100%;
+}
+
+.sa-cust-identity {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.sa-cust-identity__divider {
+    width: 1px;
+    min-height: 100%;
+    background: var(--iv-line, #d7dde5);
+}
+
+.sa-cust-tab {
+    padding-top: 12px;
+}
+
+.sa-cust-tab__toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+}
+
+.sa-cust-row-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.iv-page ::deep .sa-cust-grid {
+    width: 100%;
+}
+
+.sa-cust-pay-stack {
+    display: grid;
+    gap: 12px;
+}
+
+.sa-cust-pay-field {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+}
+
+.sa-cust-pay-field--top {
+    align-items: start;
+}
+
+.sa-cust-pay-field .iv-field__label {
+    margin: 0;
+    line-height: 1.2;
+}
+
+.sa-cust-pay-control,
+.sa-cust-pay-control .iv-code-combo {
+    min-width: 0;
+}
+
+.sa-cust-pay-control--discount,
+.sa-cust-pay-control--addon {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.sa-cust-pay-control--addon {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.sa-cust-discount-pct {
+    min-width: 2.4rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: #f97316;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.sa-cust-discount-suffix {
+    color: var(--iv-muted, #667085);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.sa-cust-radios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    align-items: center;
+    min-height: 32px;
+}
+
+.sa-cust-radio-box {
+    display: grid;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--iv-line, #d7dde5);
+    border-radius: 6px;
+    background: var(--iv-surface, #fff);
+}
+
+.sa-cust-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--iv-ink, #1d2939);
+    cursor: pointer;
+}
+
+.sa-cust-radio input {
+    margin: 0;
+}
+
+.sa-cust-req {
+    color: var(--danger, #b42318);
+}
+
+.sa-cust-hint {
+    margin: 8px 0 14px;
+    color: var(--iv-muted, #667085);
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+    .sa-cust-identity {
+        grid-template-columns: 1fr;
+    }
+
+    .sa-cust-identity__divider {
+        display: none;
+    }
+
+    .sa-cust-pay-field {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+}

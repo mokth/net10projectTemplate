@@ -1,0 +1,229 @@
+@page "/sales/numbering/period"
+@using ErpWeb.Core.Numbering
+
+
+@inherits AdSmNumListPageBase<AdSmNumDateListRow, AdSmNumDateKey>
+
+<PageTitle>Period Numbers</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminSmNumDate">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></div>
+        <div>
+            <p class="iv-eyebrow">Admin</p>
+            <h1 class="iv-title">Period Numbers</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading period numbers…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(AdSmNumDateListRow.Uid)"
+                      GridKey="ad-sm-num-date-list"
+                      Title="Period Numbers"
+                      T="AdSmNumDateListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Period Number" : "View Period Number") : "New Period Number")"
+             CloseOnOutsideClick="false"
+             Width="50vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="numDateForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="NumCd" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.NumCd"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Year" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit T="short"
+                                        @bind-Value="@EditModel.Year"
+                                        ReadOnly="@IsEditMode"
+                                        MinValue="@( (short)0 )"
+                                        MaxValue="@( (short)2099 )"
+                                        ShowSpinButtons="false"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Month" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit T="short"
+                                        @bind-Value="@EditModel.Month"
+                                        ReadOnly="@IsEditMode"
+                                        MinValue="@( (short)0 )"
+                                        MaxValue="@( (short)12 )"
+                                        ShowSpinButtons="false"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-muted">@YearMonthHint</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Prefix" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Prefix"
+                                       ReadOnly="@NamespaceFrozen"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Sequence digits" ColSpanMd="6">
+                        <Template>
+                            <DxSpinEdit T="short"
+                                        @bind-Value="@EditModel.TotLength"
+                                        ReadOnly="@NamespaceFrozen"
+                                        MinValue="@( (short)1 )"
+                                        MaxValue="@( (short)30 )"
+                                        ShowSpinButtons="false"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Next sequence" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit T="long"
+                                        @bind-Value="@EditModel.Seq"
+                                        ReadOnly="@(!EditEnabled)"
+                                        MinValue="@(IsEditMode ? Math.Max(1L, EditModel.OriginalSeq) : 1L)"
+                                        ShowSpinButtons="false"
+                                        InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Delimiter" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.NumberingDelimeter"
+                                       ReadOnly="@NamespaceFrozen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Format (optional, must contain {1})" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.NumberingFormat"
+                                       ReadOnly="@NamespaceFrozen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.NumDes"
+                                       ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Sample number" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                                <DxTextBox Text="@SampleNumber"
+                                           ValidationEnabled="false"
+                                           ReadOnly="true" />
+                            @if (!string.IsNullOrEmpty(SampleError))
+                            {
+                                <small class="text-danger">@SampleError</small>
+                            }
+                        </Template>
+                    </DxFormLayoutItem>
+                    @if (IsEditMode)
+                    {
+                        <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                            <Template>
+                                <small class="text-muted">
+                                    NumCd, Year, and Month cannot be changed. To use a different period, delete and recreate or add another row.
+                                    @if (EditModel.OriginalSeq > 1)
+                                    {
+                                        <text> Prefix, format, delimiter, and sequence digits are locked after numbers have been issued.</text>
+                                    }
+                                </small>
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

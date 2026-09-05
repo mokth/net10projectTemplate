@@ -404,7 +404,8 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
         return new IvInventoryLookupService(
             current.Object,
             new IvStockMasterRepository(_factory),
-            new IvStockCommonRepository(_factory));
+            new IvStockCommonRepository(_factory),
+            _factory);
     }
 
     private static Mock<IAccessRightService> Access()

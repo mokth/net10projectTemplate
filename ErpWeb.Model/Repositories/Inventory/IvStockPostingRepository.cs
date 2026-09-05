@@ -14,6 +14,13 @@ public interface IIvStockPostingRepository
         int batchNo,
         CancellationToken cancellationToken = default);
 
+    Task<IvTrxBatch?> LockSpBatchByInvoiceRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<IvTrxBatchDetail>> LoadDetailsForBatchAsync(
         AppDbContext db,
         int batchId,
@@ -51,6 +58,7 @@ public interface IIvStockPostingRepository
         string? stdUom,
         string? userId,
         DateTime? transDate,
+        string? locationCode,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<IvTrxHistory>> LoadHistoryForBatchAsync(
@@ -95,6 +103,23 @@ public interface IIvStockPostingRepository
         decimal qty,
         DateTime? transDate,
         CancellationToken cancellationToken = default);
+
+    Task<IvLot?> TryLockLotAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        string lotNo,
+        CancellationToken cancellationToken = default);
+
+    IvLot StageNewTransferLot(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        string lotNo,
+        string? sourceType,
+        string? sourceDocNo,
+        DateTime? receiptDate,
+        string? userId);
 }
 
 /// <summary>
@@ -131,6 +156,52 @@ WHERE CompanyCode = {company}
             .FirstOrDefaultAsync(
                 x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo,
                 cancellationToken);
+    }
+
+    public async Task<IvTrxBatch?> LockSpBatchByInvoiceRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var no = (invNo ?? string.Empty).Trim();
+        var trxType = "SP";
+
+        List<IvTrxBatch> rows;
+        if (db.Database.IsSqlServer())
+        {
+            rows = await db.IvTrxBatches
+                .FromSqlInterpolated($@"
+SELECT *
+FROM dbo.IvTrxBatch WITH (UPDLOCK, HOLDLOCK)
+WHERE CompanyCode = {company}
+  AND BranchCode = {branch}
+  AND TrxType = {trxType}
+  AND RefNo = {no}")
+                .AsTracking()
+                .ToListAsync(cancellationToken);
+        }
+        else
+        {
+            rows = await db.IvTrxBatches
+                .Where(x =>
+                    x.CompanyCode == company
+                    && x.BranchCode == branch
+                    && x.TrxType == trxType
+                    && x.RefNo == no)
+                .ToListAsync(cancellationToken);
+        }
+
+        if (rows.Count > 1)
+        {
+            throw new InvalidOperationException($"Multiple SP batches exist for invoice {no}.");
+        }
+
+        return rows.SingleOrDefault();
     }
 
     public async Task<IReadOnlyList<IvTrxBatchDetail>> LoadDetailsForBatchAsync(
@@ -294,6 +365,7 @@ WHERE CompanyCode = {company}
         string? stdUom,
         string? userId,
         DateTime? transDate,
+        string? locationCode,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(db);
@@ -301,6 +373,7 @@ WHERE CompanyCode = {company}
         var existing = await LockBalLocExactAsync(db, slice, forUpdate: true, cancellationToken);
         if (existing is not null)
         {
+            StampLocationIfMissing(existing, locationCode);
             return existing;
         }
 
@@ -318,6 +391,7 @@ WHERE CompanyCode = {company}
             StdQty = 0m,
             StdUom = Truncate(stdUom, 10),
             TransDate = transDate,
+            LocationCode = Truncate(locationCode, 10),
             CreatedDate = now,
             CreatedBy = Truncate(userId, 10)
         };
@@ -337,6 +411,7 @@ WHERE CompanyCode = {company}
                 throw;
             }
 
+            StampLocationIfMissing(raced, locationCode);
             return raced;
         }
     }
@@ -435,6 +510,8 @@ WHERE ID = {id}
                 LocCode = row.LocCode,
                 LotNo = row.LotNo,
                 IStatus = row.IStatus,
+                LocationCode = row.LocationCode,
+                TransDate = row.TransDate,
                 StdQty = row.StdQty,
                 StdUom = row.StdUom,
                 LotId = row.LotId
@@ -624,6 +701,52 @@ WHERE CompanyCode = {companyCode}
                 cancellationToken);
     }
 
+    public Task<IvLot?> TryLockLotAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        string lotNo,
+        CancellationToken cancellationToken = default) =>
+        LockLotExactAsync(db, companyCode, iCode, lotNo, forUpdate: true, cancellationToken);
+
+    public IvLot StageNewTransferLot(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        string lotNo,
+        string? sourceType,
+        string? sourceDocNo,
+        DateTime? receiptDate,
+        string? userId)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var code = (iCode ?? string.Empty).Trim();
+        var lot = (lotNo ?? string.Empty).Trim();
+        if (lot.Length == 0)
+        {
+            throw new InvalidOperationException("Lot number is required for transfer destination lot.");
+        }
+
+        var now = DateTime.UtcNow;
+        var entity = new IvLot
+        {
+            CompanyCode = company,
+            ICode = code,
+            LotNo = lot,
+            SourceType = sourceType,
+            SourceDocNo = sourceDocNo,
+            ReceiptDate = receiptDate,
+            ExpiryDate = null,
+            IsActive = true,
+            CreatedDate = now,
+            CreatedBy = Truncate(userId, 10)
+        };
+
+        db.IvLots.Add(entity);
+        return entity;
+    }
+
     private static bool IsUniqueViolation(DbUpdateException ex)
     {
         if (ex.InnerException is SqlException sql)
@@ -636,6 +759,22 @@ WHERE CompanyCode = {companyCode}
                || message.Contains("unique", StringComparison.OrdinalIgnoreCase)
                || message.Contains("2627", StringComparison.Ordinal)
                || message.Contains("2601", StringComparison.Ordinal);
+    }
+
+    private static void StampLocationIfMissing(IvBalLoc row, string? locationCode)
+    {
+        if (!string.IsNullOrWhiteSpace(row.LocationCode))
+        {
+            return;
+        }
+
+        var stamped = Truncate(locationCode, 10);
+        if (stamped is null)
+        {
+            return;
+        }
+
+        row.LocationCode = stamped;
     }
 
     private static string? Truncate(string? value, int max)
