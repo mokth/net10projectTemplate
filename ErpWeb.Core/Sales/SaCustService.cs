@@ -873,7 +873,7 @@ public sealed class SaCustService : ISaCustService
             ShipFax = x.ShipFax,
             ShipEmail = x.ShipEmail,
             ShipWebsite = x.ShipWebsite,
-            Addresses = x.Addresses.OrderBy(a => a.Line).Select(a => new SaCustAddressVm)
+            Addresses = x.Addresses.OrderBy(a => a.Line).Select(a => new SaCustAddressVm
             {
                 Line = a.Line,
                 AddName = a.AddName,

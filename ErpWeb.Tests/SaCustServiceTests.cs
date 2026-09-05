@@ -340,6 +340,127 @@ public class SaCustServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Country_Required()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("NOCTRY");
+        model.Country = null;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("Country"));
+    }
+
+    [Fact]
+    public async Task IndependentShip_RequiresShipCountry()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("NOSHIP");
+        model.AppShip = false;
+        model.ShipCountry = null;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("ShipCountry"));
+    }
+
+    [Fact]
+    public async Task IndependentShip_PersistsDestinationCountry()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("EXPORT1");
+        model.AppShip = false;
+        model.Country = "MY";
+        model.City = "KL";
+        model.ShipName = "SG Warehouse";
+        model.ShipAddress1 = "Harbour Dr";
+        model.ShipCity = "Singapore";
+        model.ShipCountry = "SG";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+        Assert.True(result.Succeeded, result.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "EXPORT1");
+        Assert.Equal("MY", row.Country);
+        Assert.Equal("SG", row.ShipCountry);
+        Assert.Equal("SG Warehouse", row.ShipName);
+        Assert.Equal("Harbour Dr", row.ShipAddress1);
+        Assert.Equal(false, row.AppShip);
+    }
+
+    [Fact]
+    public async Task AppShip_On_CopiesMainCountryToShip()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("LOCAL1");
+        model.AppShip = true;
+        model.Country = "MY";
+        model.Address1 = "Main St";
+        model.City = "KL";
+        model.ShipCountry = "SG";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+        Assert.True(result.Succeeded, result.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "LOCAL1");
+        Assert.Equal("MY", row.Country);
+        Assert.Equal("MY", row.ShipCountry);
+        Assert.Equal("Main St", row.ShipAddress1);
+        Assert.Equal("KL", row.ShipCity);
+    }
+
+    [Fact]
+    public async Task InvalidIndustry_Rejected()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BADIND");
+        model.IndustryCode = "NOPE";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("IndustryCode"));
+    }
+
+    [Fact]
+    public async Task InvalidChannel_Rejected()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BADCH");
+        model.ChannelCode = "NOPE";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("ChannelCode"));
+    }
+
+    [Fact]
+    public async Task ValidIndustryAndChannel_Succeed()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("OKSEG");
+        model.IndustryCode = "ELEC";
+        model.ChannelCode = "OEM";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+        Assert.True(result.Succeeded, result.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "OKSEG");
+        Assert.Equal("ELEC", row.IndustryCode);
+        Assert.Equal("OEM", row.ChannelCode);
+    }
+
+    [Fact]
     public async Task ValidMsCodeLookups_Succeed()
     {
         var sut = CreateSut();

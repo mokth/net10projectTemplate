@@ -184,6 +184,8 @@ public class SaCustSqlServerConcurrencyTests
             PayCode = "NET30",
             Currency = "MYR",
             GlCode = "AR001",
+            Country = "MY",
+            AppShip = true,
             Contacts = [new SaCustContactVm { Line = 1 }]
         };
 
@@ -214,6 +216,8 @@ public class SaCustSqlServerConcurrencyTests
             PayCode = "NET30",
             Currency = "MYR",
             GlCode = "AR001",
+            Country = "MY",
+            AppShip = true,
             IsActive = true
         });
         await db.SaveChangesAsync();
