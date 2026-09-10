@@ -282,6 +282,7 @@ public sealed class SaTaxGroupEditVm
     public string Code { get; set; } = string.Empty;
     public string? Desc { get; set; }
     public decimal Percentage { get; set; }
+    public string? TaxGlCode { get; set; }
     public string CompanyCode { get; set; } = string.Empty;
     public string? BranchCode { get; set; }
     public string? LocationCode { get; set; }

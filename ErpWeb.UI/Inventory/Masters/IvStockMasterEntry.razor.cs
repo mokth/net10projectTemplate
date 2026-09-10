@@ -39,6 +39,7 @@ public partial class IvStockMasterEntry : PageBase
     protected IReadOnlyList<IvCodeLookupRow> Types { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Classes { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> SubClasses { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> Classifications { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Uoms { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Warehouses { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Locations { get; set; } = [];
@@ -54,6 +55,21 @@ public partial class IvStockMasterEntry : PageBase
             : "View item";
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
+
+    protected string ClassificationDisplay
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Model.Classification))
+            {
+                return "—";
+            }
+
+            var row = Classifications.FirstOrDefault(x =>
+                string.Equals(x.Code, Model.Classification, StringComparison.OrdinalIgnoreCase));
+            return row?.DisplayText ?? Model.Classification;
+        }
+    }
 
     protected bool IsDirty =>
         !IsViewMode
@@ -342,17 +358,20 @@ public partial class IvStockMasterEntry : PageBase
     {
         var types = await Lookups.ListActiveTypesAsync();
         var classes = await Lookups.ListActiveClassesAsync();
+        var classifications = await Lookups.ListClassificationsAsync();
         var uoms = await Lookups.ListActiveUomsAsync();
         var warehouses = await Lookups.ListActiveWarehousesAsync();
 
         Types = types.Succeeded ? types.Rows : [];
         Classes = classes.Succeeded ? classes.Rows : [];
+        Classifications = classifications.Succeeded ? classifications.Rows : [];
         Uoms = uoms.Succeeded ? uoms.Rows : [];
         Warehouses = warehouses.Succeeded ? warehouses.Rows : [];
 
-        if (!types.Succeeded || !classes.Succeeded || !uoms.Succeeded || !warehouses.Succeeded)
+        if (!types.Succeeded || !classes.Succeeded || !classifications.Succeeded || !uoms.Succeeded || !warehouses.Succeeded)
         {
-            ErrorMessage = types.ErrorMessage ?? classes.ErrorMessage ?? uoms.ErrorMessage ?? warehouses.ErrorMessage
+            ErrorMessage = types.ErrorMessage ?? classes.ErrorMessage ?? classifications.ErrorMessage
+                ?? uoms.ErrorMessage ?? warehouses.ErrorMessage
                 ?? "Unable to load lookups.";
         }
     }

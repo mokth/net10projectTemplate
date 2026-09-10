@@ -15,6 +15,7 @@ public class SaTaxGroupConfiguration : IEntityTypeConfiguration<SaTaxGroup>
         builder.Property(e => e.TaxGrCode).HasMaxLength(20).IsRequired();
         builder.Property(e => e.TaxGrDesc).HasMaxLength(100);
         builder.Property(e => e.Percentage).HasPrecision(18, 6);
+        builder.Property(e => e.TaxGlCode).HasMaxLength(20);
         builder.Property(e => e.CreatedDate).HasColumnName("Created");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(20);
         builder.Property(e => e.ModifiedDate).HasColumnName("Updated");

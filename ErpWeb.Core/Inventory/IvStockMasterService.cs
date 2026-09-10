@@ -131,6 +131,11 @@ public sealed class IvStockMasterService : IIvStockMasterService
             errors["IDesc"] = "Description must be at most 200 characters.";
         }
 
+        if (string.IsNullOrWhiteSpace(model.SellingGlCode))
+        {
+            errors["SellingGlCode"] = "Selling GL is required.";
+        }
+
         if (model.LotControl && !model.StockControl)
         {
             errors["LotControl"] = "Lot control requires stock control.";
@@ -149,8 +154,26 @@ public sealed class IvStockMasterService : IIvStockMasterService
         var purUom = NullIfWhiteSpace(model.PurUom);
         var defWh = NullIfWhiteSpace(model.DefWarehouse);
         var defLoc = NullIfWhiteSpace(model.DefLocation);
+        var classification = NullIfWhiteSpace(model.Classification);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        if (classification is null)
+        {
+            errors["Classification"] = "Classification is required.";
+        }
+        else
+        {
+            var classificationRow = await _common.GetClassificationAsync(db, classification, cancellationToken);
+            if (classificationRow is null)
+            {
+                errors["Classification"] = $"Classification '{classification}' was not found.";
+            }
+            else
+            {
+                classification = classificationRow.Code;
+            }
+        }
 
         if (iType is not null)
         {
@@ -333,7 +356,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     sellingUom,
                     purUom,
                     defWh,
-                    defLoc);
+                    defLoc,
+                    classification);
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
                 await db.SaveChangesAsync(cancellationToken);
@@ -379,7 +403,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 sellingUom,
                 purUom,
                 defWh,
-                defLoc);
+                defLoc,
+                classification);
             // Leftover BranchCode / LocationCode: do not touch on update.
             existing.ModifiedDate = now;
             existing.ModifiedBy = userId;
@@ -710,7 +735,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         string? sellingUom,
         string? purUom,
         string? defWh,
-        string? defLoc)
+        string? defLoc,
+        string? classification)
     {
         entity.IDesc = TruncateOptional(desc, 200);
         entity.Barcode = TruncateOptional(model.Barcode, 50);
@@ -736,7 +762,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         entity.PurchaseGlCode = TruncateOptional(model.PurchaseGlCode, 20);
         entity.TaxGroup = TruncateOptional(model.TaxGroup, 20);
         entity.PurchaseTaxGroup = TruncateOptional(model.PurchaseTaxGroup, 20);
-        entity.Classification = TruncateOptional(model.Classification, 50);
+        entity.Classification = TruncateOptional(classification, 50);
         entity.Size = TruncateOptional(model.Size, 50);
         entity.Color = TruncateOptional(model.Color, 50);
     }

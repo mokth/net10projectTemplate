@@ -655,6 +655,7 @@ public partial class SaCustEntry : PageBase
             Website = source.Website,
             CjLmw = source.CjLmw,
             CustBrn = source.CustBrn,
+            TinNo = source.TinNo,
             RegType = source.RegType,
             Remark = source.Remark,
             AppInvoice = source.AppInvoice,

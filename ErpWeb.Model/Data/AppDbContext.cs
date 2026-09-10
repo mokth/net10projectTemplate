@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
 
     public DbSet<IvClass> IvClasses => Set<IvClass>();
     public DbSet<IvSubClass> IvSubClasses => Set<IvSubClass>();
+    public DbSet<IvClassification> IvClassifications => Set<IvClassification>();
     public DbSet<IvType> IvTypes => Set<IvType>();
     public DbSet<IvStatus> IvStatuses => Set<IvStatus>();
     public DbSet<IvWarehouse> IvWarehouses => Set<IvWarehouse>();
@@ -53,6 +54,14 @@ public class AppDbContext : DbContext
     public DbSet<SaCurrRate> SaCurrRates => Set<SaCurrRate>();
     public DbSet<SaInvoice> SaInvoices => Set<SaInvoice>();
     public DbSet<SaInvoiceDetail> SaInvoiceDetails => Set<SaInvoiceDetail>();
+    public DbSet<SaCdn> SaCdns => Set<SaCdn>();
+    public DbSet<SaCdnDetail> SaCdnDetails => Set<SaCdnDetail>();
+    public DbSet<SaDo> SaDos => Set<SaDo>();
+    public DbSet<SaDoDetail> SaDoDetails => Set<SaDoDetail>();
+    public DbSet<SaSo> SaSos => Set<SaSo>();
+    public DbSet<SaSoDetail> SaSoDetails => Set<SaSoDetail>();
+    public DbSet<SaDocApplication> SaDocApplications => Set<SaDocApplication>();
+    public DbSet<SaDocApplicationBackfillSkip> SaDocApplicationBackfillSkips => Set<SaDocApplicationBackfillSkip>();
     public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();
     public DbSet<SaPaymentTerm> SaPaymentTerms => Set<SaPaymentTerm>();
     public DbSet<SaSalesRep> SaSalesReps => Set<SaSalesRep>();
@@ -62,6 +71,7 @@ public class AppDbContext : DbContext
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
         // SQL Server rowversion is DB-generated. SQLite (tests) has no equivalent — send CLR value.
+        // Also strip SQL Server-specific filtered index expressions that are invalid in SQLite.
         var provider = Database.ProviderName ?? string.Empty;
         if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
@@ -73,6 +83,17 @@ public class AppDbContext : DbContext
                         string.Equals(property.Name, "RowVersion", StringComparison.Ordinal))
                     {
                         property.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+                    }
+                }
+
+                // Remove filtered indexes — their filter expressions use SQL Server syntax ([Col] = N'...')
+                // which is invalid in SQLite. Uniqueness is relaxed in tests; referential integrity is enforced by logic.
+                foreach (var index in entityType.GetIndexes().ToList())
+                {
+                    // "Relational:Filter" is the annotation used by HasFilter(...)
+                    if (index.FindAnnotation("Relational:Filter")?.Value is not null)
+                    {
+                        entityType.RemoveIndex(index.Properties);
                     }
                 }
             }

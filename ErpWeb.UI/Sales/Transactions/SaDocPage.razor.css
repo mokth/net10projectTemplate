@@ -1,0 +1,535 @@
+.sdoc-page {
+    --sdoc-ink: var(--text, #1c2430);
+    --sdoc-muted-text: var(--muted, #667085);
+    --sdoc-line: var(--line, #d7dde5);
+    --sdoc-surface: var(--surface, #fff);
+    --sdoc-soft: color-mix(in srgb, var(--sdoc-muted-text) 8%, var(--sdoc-surface));
+    --sdoc-ok: #17663a;
+    --sdoc-ok-bg: #eaf7ef;
+    --sdoc-hold: #b54708;
+    --sdoc-hold-bg: #fef4e6;
+    --sdoc-gap: 8px;
+    --sdoc-pad: 12px 16px;
+    --sdoc-titlebar-pad: 10px 16px;
+    --sdoc-group-gap: 8px;
+    --sdoc-footer-pad: 12px 4px 4px;
+    --sdoc-border: 1px solid var(--sdoc-line);
+    --sdoc-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sdoc-gap);
+    min-height: calc(100vh - var(--top-h, 52px) - 40px);
+    animation: sdoc-fade-in 280ms ease both;
+}
+
+/* ---- Toasts ---- */
+
+.sdoc-page ::deep .sdoc-toast {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--sdoc-radius);
+    font-size: 0.92rem;
+    border: var(--sdoc-border);
+}
+
+.sdoc-page ::deep .sdoc-toast--ok {
+    background: var(--sdoc-ok-bg);
+    color: var(--sdoc-ok);
+    border-color: color-mix(in srgb, var(--sdoc-ok) 28%, var(--sdoc-line));
+}
+
+.sdoc-page ::deep .sdoc-toast--err {
+    background: color-mix(in srgb, var(--danger, #b42318) 10%, var(--sdoc-surface));
+    color: var(--danger, #b42318);
+    border-color: color-mix(in srgb, var(--danger, #b42318) 28%, var(--sdoc-line));
+}
+
+.sdoc-page ::deep .sdoc-toast--warn {
+    background: var(--sdoc-hold-bg);
+    color: var(--sdoc-hold);
+    border-color: color-mix(in srgb, var(--sdoc-hold) 28%, var(--sdoc-line));
+}
+
+.sdoc-page ::deep .sdoc-toast__close {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+.sdoc-page ::deep .sdoc-toast__close:hover {
+    opacity: 1;
+}
+
+.sdoc-page ::deep .sdoc-toast__body {
+    min-width: 0;
+    flex: 1;
+}
+
+.sdoc-page ::deep .sdoc-warn-list {
+    margin: 6px 0 0;
+    padding-left: 1.2rem;
+}
+
+.sdoc-page ::deep .sdoc-warn-list li + li {
+    margin-top: 2px;
+}
+
+/* ---- Title bar ---- */
+
+.sdoc-page ::deep .sdoc-titlebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    column-gap: var(--sdoc-group-gap);
+    align-items: center;
+    padding: var(--sdoc-titlebar-pad);
+    background: var(--sdoc-surface);
+    border: var(--sdoc-border);
+    border-radius: var(--sdoc-radius);
+}
+
+.sdoc-page ::deep .sdoc-titlebar__title {
+    min-width: 0;
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.25;
+    font-weight: 700;
+    color: var(--sdoc-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sdoc-page ::deep .sdoc-titlebar__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: min(40ch, 36vw);
+    min-width: 0;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--sdoc-soft);
+    color: var(--sdoc-muted-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sdoc-page ::deep .sdoc-titlebar__status-extra {
+    font-weight: 500;
+    color: var(--sdoc-muted-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sdoc-page ::deep .sdoc-titlebar__kpi {
+    text-align: right;
+    color: var(--sdoc-muted-text);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.sdoc-page ::deep .sdoc-titlebar__kpi strong {
+    display: block;
+    margin-top: 1px;
+    font-size: 1.15rem;
+    letter-spacing: -0.02em;
+    color: var(--sdoc-ink);
+    white-space: nowrap;
+}
+
+.sdoc-page ::deep .sdoc-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--sdoc-soft);
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-status.is-on {
+    background: var(--sdoc-ok-bg);
+    color: var(--sdoc-ok);
+}
+
+.sdoc-page ::deep .sdoc-status.is-off {
+    background: color-mix(in srgb, var(--danger, #b42318) 12%, var(--sdoc-surface));
+    color: var(--danger, #b42318);
+}
+
+.sdoc-page ::deep .sdoc-status.is-hold {
+    background: var(--sdoc-hold-bg);
+    color: var(--sdoc-hold);
+}
+
+/* ---- Master ---- */
+
+.sdoc-page ::deep .sdoc-master {
+    background: var(--sdoc-surface);
+    border: var(--sdoc-border);
+    border-radius: var(--sdoc-radius);
+    padding: var(--sdoc-pad);
+}
+
+.sdoc-page ::deep .sdoc-header-form {
+    margin: 0;
+}
+
+.sdoc-page ::deep .sdoc-header-form .dxbl-fl-group,
+.sdoc-page ::deep .sdoc-header-form .dxbl-fl-item {
+    min-width: 0;
+}
+
+.sdoc-page ::deep .sdoc-header-form .dxbl-fl-group-header,
+.sdoc-page ::deep .sdoc-header-form .dxbl-fl-group > .card-header {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-header-form .dxbl-fl-item-caption,
+.sdoc-page ::deep .sdoc-popup-form .dxbl-fl-item-caption {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--field-label, var(--sdoc-muted-text));
+}
+
+.sdoc-page ::deep .sdoc-references {
+    margin-top: 4px;
+}
+
+.sdoc-page ::deep .sdoc-reference-slot--multi {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sdoc-group-gap);
+    min-width: 0;
+    align-items: center;
+}
+
+.sdoc-page ::deep .sdoc-field-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    min-width: 0;
+    width: 100%;
+}
+
+.sdoc-page ::deep .sdoc-field-row > *:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.sdoc-page ::deep .sdoc-address-tabs {
+    margin-top: 8px;
+    padding-top: 4px;
+    border-top: 1px solid color-mix(in srgb, var(--sdoc-line) 70%, transparent);
+}
+
+.sdoc-page ::deep .sdoc-tab {
+    padding-top: 12px;
+}
+
+.sdoc-page ::deep .sdoc-field-error {
+    margin: 4px 0 0;
+    color: var(--danger, #b42318);
+    font-size: 0.8rem;
+}
+
+/* ---- Items ---- */
+
+.sdoc-page ::deep .sdoc-items {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 280px;
+    background: var(--sdoc-surface);
+    border: var(--sdoc-border);
+    border-radius: var(--sdoc-radius);
+    padding: var(--sdoc-pad);
+}
+
+.sdoc-page ::deep .sdoc-items__head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.sdoc-page ::deep .sdoc-items__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--sdoc-ink);
+}
+
+.sdoc-page ::deep .sdoc-line-grid {
+    width: 100%;
+    flex: 1;
+}
+
+.sdoc-page ::deep .sdoc-line-grid .dxbl-grid {
+    border: 0;
+}
+
+.sdoc-page ::deep .sdoc-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+.sdoc-page ::deep .sdoc-cell-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.3;
+}
+
+.sdoc-page ::deep .sdoc-cell-stack__primary {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--sdoc-ink);
+}
+
+.sdoc-page ::deep .sdoc-cell-stack__secondary {
+    font-size: 0.78rem;
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-empty {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    padding: 36px 16px 28px;
+    text-align: center;
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-empty h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--sdoc-ink);
+}
+
+.sdoc-page ::deep .sdoc-empty p {
+    margin: 0 0 8px;
+    max-width: 36ch;
+    font-size: 0.9rem;
+}
+
+/* ---- Totals (right-aligned compact stack) ---- */
+
+.sdoc-page ::deep .sdoc-totals {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    margin-top: 12px;
+    margin-left: auto;
+    width: min(240px, 100%);
+}
+
+.sdoc-page ::deep .sdoc-totals > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    font-size: 0.8rem;
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-totals strong {
+    color: var(--sdoc-ink);
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.sdoc-page ::deep .sdoc-totals > div:last-child strong {
+    font-size: 1.05rem;
+}
+
+/* ---- Footer ---- */
+
+.sdoc-page ::deep .sdoc-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 -4px -4px;
+    padding: var(--sdoc-footer-pad);
+    background: linear-gradient(180deg, transparent, var(--bg, #edf0f3) 28%);
+}
+
+.sdoc-page ::deep .sdoc-footer__hint {
+    margin: 0;
+    color: var(--sdoc-muted-text);
+    font-size: 0.86rem;
+}
+
+.sdoc-page ::deep .sdoc-footer__actions,
+.sdoc-page ::deep .sdoc-popup-footer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* ---- Popup (class ownership only) ---- */
+
+.sdoc-page ::deep .sdoc-popup-body {
+    max-height: min(72vh, 680px);
+    overflow: auto;
+    padding-right: 4px;
+}
+
+.sdoc-page ::deep .sdoc-popup-footer {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: var(--sdoc-border);
+}
+
+.sdoc-page ::deep .sdoc-popup-error {
+    margin: 0;
+    color: var(--danger, #b42318);
+    font-size: 0.88rem;
+}
+
+.sdoc-page ::deep .sdoc-popup-hint {
+    margin: 0 0 0.5rem;
+    color: var(--sdoc-muted-text);
+    font-size: 0.85rem;
+}
+
+.sdoc-page ::deep .sdoc-popup-form .dxbl-fl-group-header,
+.sdoc-page ::deep .sdoc-popup-form .dxbl-fl-group > .card-header {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.sdoc-page ::deep .sdoc-popup-form .dxbl-text-edit,
+.sdoc-page ::deep .sdoc-popup-form .dxbl-combobox,
+.sdoc-page ::deep .sdoc-popup-form .dxbl-spin-edit {
+    width: 100%;
+    min-width: 0;
+}
+
+.sdoc-page ::deep .sdoc-popup-calc {
+    display: flex;
+    gap: 20px;
+    padding: 8px 0 0;
+    font-size: 0.88rem;
+    color: var(--sdoc-muted-text);
+    justify-content: flex-end;
+}
+
+.sdoc-page ::deep .sdoc-discount-mode {
+    display: flex;
+    gap: 8px;
+}
+
+.sdoc-page ::deep .sdoc-amount-preview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: var(--sdoc-radius);
+    background: var(--sdoc-soft);
+    color: var(--sdoc-muted-text);
+    font-size: 0.82rem;
+    height: 100%;
+}
+
+.sdoc-page ::deep .sdoc-amount-preview strong {
+    font-size: 1.05rem;
+    color: var(--sdoc-ink);
+}
+
+.sdoc-page ::deep .sdoc-confirm__copy {
+    margin: 0 0 16px;
+    color: var(--sdoc-ink);
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+
+.sdoc-page ::deep .sdoc-ship-editor__hint {
+    margin: 0 0 8px;
+    font-size: 0.85rem;
+    color: var(--sdoc-muted-text);
+}
+
+.sdoc-page ::deep .sdoc-ship-editor__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: var(--sdoc-border);
+}
+
+.sdoc-page ::deep .sdoc-loading {
+    background: var(--sdoc-surface);
+    border: var(--sdoc-border);
+    border-radius: var(--sdoc-radius);
+    padding: var(--sdoc-pad);
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 767px) {
+    .sdoc-page ::deep .sdoc-titlebar {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "title title"
+            "status kpi";
+        row-gap: 6px;
+    }
+
+    .sdoc-page ::deep .sdoc-titlebar__title { grid-area: title; }
+    .sdoc-page ::deep .sdoc-titlebar__status { grid-area: status; max-width: none; }
+    .sdoc-page ::deep .sdoc-titlebar__kpi { grid-area: kpi; justify-self: start; text-align: left; }
+
+    .sdoc-page ::deep .sdoc-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sdoc-page ::deep .sdoc-footer__actions {
+        justify-content: stretch;
+    }
+
+    .sdoc-page ::deep .sdoc-totals {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sdoc-page {
+        animation: none;
+    }
+}
+
+@keyframes sdoc-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}

@@ -6,6 +6,7 @@ public class SaTaxGroup
     public string TaxGrCode { get; set; } = string.Empty;
     public string? TaxGrDesc { get; set; }
     public decimal Percentage { get; set; }
+    public string? TaxGlCode { get; set; }
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

@@ -311,6 +311,33 @@ WHERE m.MenuCode = N'SA_INVOICE'
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CLOSE')
+WHERE m.MenuCode = N'SA_DO'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'CLOSE')
+WHERE m.MenuCode = N'SA_SO'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
+WHERE m.MenuCode IN (N'SA_CN', N'SA_DN')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode = N'POST'
 WHERE m.MenuCode = N'DASHBOARD'
   AND NOT EXISTS (

@@ -189,6 +189,33 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var result = await PostInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Posted {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            expectedTrxType, companyCode, branchCode, batchNo, result.OperationId, Truncate(userId, 10));
+
+        return result;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> PostInventoryMRCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
         // Phase 1 — Validate (lock batch, re-read authoritative document + masters)
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -225,7 +252,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             var planResult = await BuildMrPostLineAsync(db, companyCode, branchCode, detail, masters, cancellationToken);
             if (planResult.Error is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, planResult.Error);
             }
 
@@ -300,7 +326,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             var next = bal.StdQty + deltaBySlice[slice];
             if (next < 0m)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Stock would go negative for {slice} (on hand {bal.StdQty}, change {deltaBySlice[slice]}).");
@@ -373,14 +398,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
 
-        // Phase 7 — Commit
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Posted {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
-            expectedTrxType, companyCode, branchCode, batchNo, opId, uid);
-
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
 
@@ -395,6 +412,33 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var result = await RollBackInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Rolled back {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            expectedTrxType, companyCode, branchCode, batchNo, result.OperationId, Truncate(userId, 10));
+
+        return result;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> RollBackInventoryMRCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, expectedTrxType, StringComparison.OrdinalIgnoreCase))
@@ -434,7 +478,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                 .FirstOrDefaultAsync(x => x.Id == h.ToBalLocId.Value, cancellationToken);
             if (bal is null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"ORPHAN_HISTORY: BalLoc Id {h.ToBalLocId} missing for line {h.TrxLineNo}.");
@@ -443,7 +486,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             if (!string.Equals(bal.CompanyCode, companyCode, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(bal.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, "Tenant mismatch on balance row.");
             }
 
@@ -460,14 +502,12 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         {
             if (!locked.TryGetValue(slice, out var bal))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, $"Balance slice missing: {slice}");
             }
 
             var next = bal.StdQty - deltaBySlice[slice];
             if (next < 0m)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Stock would go negative for {slice} (on hand {bal.StdQty}, rollback {deltaBySlice[slice]}).");
@@ -500,13 +540,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         batch.RollbackOperationId = opId;
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
-
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Rolled back {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
-            expectedTrxType, companyCode, branchCode, batchNo, opId, uid);
 
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
@@ -1001,6 +1034,64 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         ArgumentNullException.ThrowIfNull(db);
         return RollBackInventoryMICoreAsync(
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+    }
+
+    public Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return PostInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+    }
+
+    public Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return RollBackInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+    }
+
+    public async Task DeleteNewStockInBatchInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+
+        var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+        if (batch is null
+            || !string.Equals(batch.TrxType, expectedTrxType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Stock-in batch {batchNo} was not found or has the wrong type (expected {expectedTrxType}).");
+        }
+
+        if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Stock-in batch {batchNo} cannot be deleted because it is not NEW (status: {batch.BatchStatus}).");
+        }
+
+        var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        db.IvTrxBatchDetails.RemoveRange(details);
+        db.IvTrxBatches.Remove(batch);
+        // No SaveChanges/Commit — caller owns the transaction.
     }
 
     private async Task<IvInventoryPostingBatchResult> PostInventoryMIAsync(

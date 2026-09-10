@@ -34,8 +34,10 @@ public sealed class SaInvoiceOperationResult
     public IReadOnlyList<SaInvoiceCustomerLookupRow> Customers { get; init; } = [];
     public IReadOnlyList<SaInvoiceTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> SalesReps { get; init; } = [];
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyList<string> PostWarnings { get; init; } = [];
 
     public static SaInvoiceOperationResult Ok() =>
         new() { Succeeded = true, ErrorKind = SaInvoiceErrorKind.None };
@@ -43,13 +45,16 @@ public sealed class SaInvoiceOperationResult
     public static SaInvoiceOperationResult OkSaved(string invNo) =>
         new() { Succeeded = true, ErrorKind = SaInvoiceErrorKind.None, InvNo = invNo };
 
-    public static SaInvoiceOperationResult OkDocument(SaInvoiceDocument document) =>
+    public static SaInvoiceOperationResult OkDocument(
+        SaInvoiceDocument document,
+        IReadOnlyList<string>? postWarnings = null) =>
         new()
         {
             Succeeded = true,
             ErrorKind = SaInvoiceErrorKind.None,
             Document = document,
-            InvNo = document.InvNo
+            InvNo = document.InvNo,
+            PostWarnings = postWarnings ?? []
         };
 
     public static SaInvoiceOperationResult OkList(SaInvoiceListPage page) =>
@@ -60,7 +65,8 @@ public sealed class SaInvoiceOperationResult
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
         IReadOnlyList<SaInvoiceCustomerLookupRow> customers,
         IReadOnlyList<SaInvoiceTaxGroupLookupRow> taxGroups,
-        IReadOnlyList<IvCodeLookupRow> payCodes) =>
+        IReadOnlyList<IvCodeLookupRow> payCodes,
+        IReadOnlyList<IvCodeLookupRow>? salesReps = null) =>
         new()
         {
             Succeeded = true,
@@ -69,7 +75,8 @@ public sealed class SaInvoiceOperationResult
             Warehouses = warehouses,
             Customers = customers,
             TaxGroups = taxGroups,
-            PayCodes = payCodes
+            PayCodes = payCodes,
+            SalesReps = salesReps ?? []
         };
 
     public static SaInvoiceOperationResult OkDefaults(SaInvoiceCustomerDefaults defaults) =>
@@ -131,6 +138,7 @@ public sealed class SaInvoicePostingItemResult
     public bool Succeeded { get; init; }
     public string Outcome { get; init; } = string.Empty;
     public string? ErrorMessage { get; init; }
+    public string? ReasonCode { get; init; }
 
     public static SaInvoicePostingItemResult Posted(string invNo) =>
         new() { InvNo = invNo, Succeeded = true, Outcome = "Posted" };
@@ -140,6 +148,16 @@ public sealed class SaInvoicePostingItemResult
 
     public static SaInvoicePostingItemResult Failed(string invNo, string reason) =>
         new() { InvNo = invNo, Succeeded = false, Outcome = "Failed: " + reason, ErrorMessage = reason };
+
+    public static SaInvoicePostingItemResult Failed(string invNo, string reasonCode, string userMessage) =>
+        new()
+        {
+            InvNo = invNo,
+            Succeeded = false,
+            Outcome = "Failed: " + userMessage,
+            ErrorMessage = userMessage,
+            ReasonCode = reasonCode
+        };
 
     public static SaInvoicePostingItemResult NotAttempted(string invNo) =>
         new() { InvNo = invNo, Succeeded = false, Outcome = "Not attempted", ErrorMessage = "Not attempted" };
@@ -199,6 +217,7 @@ public sealed class SaInvoiceItemLookupRow
     public string? TaxGroup { get; init; }
     public bool StockControl { get; init; }
     public string? DefWarehouse { get; init; }
+    public string? Classification { get; init; }
     public string DisplayText => string.IsNullOrWhiteSpace(IDesc) ? ICode : $"{ICode} — {IDesc}";
 }
 
@@ -224,6 +243,9 @@ public sealed class SaInvoiceCustomerDefaults
     public string? SalesmanCode { get; init; }
     public string? DiscountMethod { get; init; }
     public bool? DecPoint { get; init; }
+    public string? InvEmail { get; init; }
+    public string? BuyerTin { get; init; }
+    public string? BuyerBrn { get; init; }
     public string? InvName { get; init; }
     public string? InvAddress1 { get; init; }
     public string? InvAddress2 { get; init; }
@@ -245,6 +267,7 @@ public sealed class SaInvoiceCustomerDefaults
     public string? ShipCountry { get; init; }
     public string? ShipTel { get; init; }
     public string? ShipFax { get; init; }
+    public IReadOnlyList<SaCustAddressVm> ShipToAddresses { get; init; } = [];
 }
 
 public sealed class SaInvoiceDocument
@@ -274,6 +297,18 @@ public sealed class SaInvoiceDocument
     public string? InvCountry { get; init; }
     public string? InvTel { get; init; }
     public string? InvFax { get; init; }
+    public string? InvEmail { get; init; }
+    public DateTime? DueDate { get; init; }
+    public string? ArGlCode { get; init; }
+    public string? BuyerTin { get; init; }
+    public string? BuyerBrn { get; init; }
+    public string? BuyerRegType { get; init; }
+    public string? GstregNo { get; init; }
+    public string? CustType { get; init; }
+    public string? CustGroupCode { get; init; }
+    public string? AreaCode { get; init; }
+    public string? IndustryCode { get; init; }
+    public string? ChannelCode { get; init; }
     public string? ShipName { get; init; }
     public string? ShipAddress1 { get; init; }
     public string? ShipAddress2 { get; init; }
@@ -298,6 +333,14 @@ public sealed class SaInvoiceDocument
 public sealed class SaInvoiceLineDto
 {
     public int Line { get; init; }
+    public string SoNo { get; init; } = string.Empty;
+    public short? SoLine { get; init; }
+    public short? CustRel { get; init; }
+    public string? CustPo { get; init; }
+    public bool LinkDo { get; init; }
+    public string DoNo { get; init; } = string.Empty;
+    public short? DoLine { get; init; }
+    public decimal SoConsumedQty { get; init; }
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
     public decimal Qty { get; init; }
@@ -323,6 +366,7 @@ public sealed class SaInvoiceLineDto
     public string? OrderType { get; init; }
     public bool StockControl { get; init; }
     public string? SellingGlCode { get; init; }
+    public string? Classification { get; init; }
     public string? Remarks { get; init; }
     public decimal ShipQty { get; init; }
     public bool ShipmentComplete { get; init; }
@@ -369,6 +413,18 @@ public sealed class SaInvoiceSaveRequest
     public string? InvCountry { get; set; }
     public string? InvTel { get; set; }
     public string? InvFax { get; set; }
+    public string? InvEmail { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? ArGlCode { get; set; }
+    public string? BuyerTin { get; set; }
+    public string? BuyerBrn { get; set; }
+    public string? BuyerRegType { get; set; }
+    public string? GstregNo { get; set; }
+    public string? CustType { get; set; }
+    public string? CustGroupCode { get; set; }
+    public string? AreaCode { get; set; }
+    public string? IndustryCode { get; set; }
+    public string? ChannelCode { get; set; }
     public string? ShipName { get; set; }
     public string? ShipAddress1 { get; set; }
     public string? ShipAddress2 { get; set; }
@@ -387,6 +443,12 @@ public sealed class SaInvoiceLineRequest
 {
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
+    public string? SoNo { get; set; }
+    public short? SoLine { get; set; }
+    public short? CustRel { get; set; }
+    public bool LinkDo { get; set; }
+    public string? DoNo { get; set; }
+    public short? DoLine { get; set; }
     public decimal Qty { get; set; }
     public string? FrWarehouse { get; set; }
     public decimal UnitPrice { get; set; }
@@ -401,6 +463,7 @@ public sealed class SaInvoiceLineRequest
     public bool IsInclusive { get; set; }
     public string? TaxGrCode { get; set; }
     public string? OrderType { get; set; }
+    public string? Classification { get; set; }
     public string? Remarks { get; set; }
 }
 

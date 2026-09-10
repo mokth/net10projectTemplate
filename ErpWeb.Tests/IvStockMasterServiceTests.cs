@@ -73,6 +73,12 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             RowVersion = Rv(4)
         });
 
+        db.IvClassifications.AddRange(
+            new IvClassification { Code = "001", Description = "Classification A" },
+            new IvClassification { Code = "002", Description = "Classification B" },
+            new IvClassification { Code = "003", Description = "Classification C" },
+            new IvClassification { Code = "004", Description = "Classification O" });
+
         db.IvClasses.AddRange(
             new IvClass
             {
@@ -143,6 +149,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 StockControl = true,
                 LotControl = false,
                 IsActive = true,
+                SellingGlCode = "GLSALE",
+                Classification = "001",
                 BranchCode = "LEFTOVER",
                 RowVersion = Rv(11)
             },
@@ -158,6 +166,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 StockControl = true,
                 LotControl = true,
                 IsActive = true,
+                SellingGlCode = "GLSALE",
+                Classification = "002",
                 RowVersion = Rv(12)
             },
             new IvStockMaster
@@ -171,6 +181,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 StdUom = "KG",
                 StockControl = true,
                 IsActive = false,
+                SellingGlCode = "GLSALE",
+                Classification = "003",
                 RowVersion = Rv(13)
             },
             new IvStockMaster
@@ -181,6 +193,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 IClassCode = "FG",
                 StdUom = "KG",
                 IsActive = true,
+                SellingGlCode = "GLSALE",
+                Classification = "004",
                 RowVersion = Rv(14)
             });
 
@@ -283,6 +297,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             StockControl = true,
             LotControl = false,
             IsActive = true,
+            SellingGlCode = "GLSALE",
+            Classification = "004",
             RowVersion = other.RowVersion
         }, isNew: false);
 
@@ -299,6 +315,48 @@ public class IvStockMasterServiceTests : IAsyncLifetime
         Assert.False(result.Succeeded);
         Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
         Assert.True(result.ValidationErrors.ContainsKey("ICode"));
+    }
+
+    [Fact]
+    public async Task MissingSellingGl_Fails()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E510");
+        model.SellingGlCode = " ";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("SellingGlCode"));
+    }
+
+    [Fact]
+    public async Task MissingClassification_Fails()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E511");
+        model.Classification = null;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("Classification"));
+    }
+
+    [Fact]
+    public async Task UnknownClassification_Fails()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E512");
+        model.Classification = "999";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("Classification"));
     }
 
     [Fact]
@@ -519,6 +577,8 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             MaxStock = source.MaxStock,
             SellingPrice = source.SellingPrice,
             PurchasePrice = source.PurchasePrice,
+            SellingGlCode = source.SellingGlCode,
+            Classification = source.Classification,
             RowVersion = null
         };
 
@@ -573,7 +633,9 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             StockControl = true,
             LotControl = false,
             DefWarehouse = "MAIN",
-            DefLocation = "BIN1"
+            DefLocation = "BIN1",
+            SellingGlCode = "GLSALE",
+            Classification = "001"
         };
 
     private static IvMasterKeyToken Token(string code, byte[] rowVersion) =>

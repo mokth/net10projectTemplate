@@ -1,6 +1,5 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
-using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 
 namespace ErpWeb.Core.Inventory;
@@ -126,8 +125,14 @@ public sealed class IvSpCreateOrReplaceCommand
     public required string BranchCode { get; init; }
     public required string LocationCode { get; init; }
     public required string UserId { get; init; }
-    public required string InvNo { get; init; }
-    public required DateTime InvDate { get; init; }
+    /// <summary>Document ref used as IvTrxBatch.RefNo and SP detail InvNo (invoice no, or DO/{doNo}).</summary>
+    public required string DocumentNo { get; init; }
+    public required DateTime DocumentDate { get; init; }
+    /// <summary>
+    /// When set, stamped onto SP detail DoNo. For DO shipments both InvNo and DoNo are the DO number
+    /// (document key — not an AR invoice). Invoice callers typically leave null or pass invoice.DoNo.
+    /// </summary>
+    public string? DoNo { get; init; }
     public required IReadOnlyList<IvSpRequiredLine> RequiredLines { get; init; }
     public bool OverwriteExisting { get; init; }
 
@@ -140,9 +145,9 @@ public sealed class IvSpShipmentEditQuery
     public required string CompanyCode { get; init; }
     public required string BranchCode { get; init; }
     public required string LocationCode { get; init; }
-    public required string InvNo { get; init; }
+    public required string DocumentNo { get; init; }
     public int SoLineNo { get; init; }
-    public required DateTime InvDate { get; init; }
+    public required DateTime DocumentDate { get; init; }
     public required string ICode { get; init; }
     public required string FrWarehouse { get; init; }
     public decimal RequestedStdQty { get; init; }
@@ -160,8 +165,9 @@ public sealed class IvSpReplaceLineCommand
     public required string BranchCode { get; init; }
     public required string LocationCode { get; init; }
     public required string UserId { get; init; }
-    public required string InvNo { get; init; }
-    public required DateTime InvDate { get; init; }
+    public required string DocumentNo { get; init; }
+    public required DateTime DocumentDate { get; init; }
+    public string? DoNo { get; init; }
     public int SoLineNo { get; init; }
     public required string ICode { get; init; }
     public string? IDesc { get; init; }
@@ -177,11 +183,11 @@ public sealed class IvSpValidatePostQuery
     public required string CompanyCode { get; init; }
     public required string BranchCode { get; init; }
     public required string LocationCode { get; init; }
-    public required string InvNo { get; init; }
-    public required DateTime InvDate { get; init; }
+    public required string DocumentNo { get; init; }
+    public required DateTime DocumentDate { get; init; }
     public required IvTrxBatch Batch { get; init; }
     public required IReadOnlyList<IvTrxBatchDetail> Details { get; init; }
-    public required IReadOnlyList<SaInvoiceDetail> InvoiceLines { get; init; }
+    public required IReadOnlyList<IvSpRequiredLine> RequiredLines { get; init; }
     public required IReadOnlyDictionary<int, IvBalLocLockResult> LockedBalances { get; init; }
 }
 
@@ -209,14 +215,14 @@ public interface IIvSpShipmentService
 
     /// <summary>
     /// Lock released FromBalLocIds (slice-sorted) then remove SP details and optionally the batch.
-    /// Caller owns SaveChanges.
+    /// Caller owns SaveChanges. documentNo is IvTrxBatch.RefNo (bare InvNo or DO/{doNo}).
     /// </summary>
     Task ReleaseShipmentReservationAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         string locationCode,
-        string invNo,
+        string documentNo,
         bool removeBatch,
         CancellationToken cancellationToken = default);
 }

@@ -120,3 +120,87 @@ BEGIN
         GETDATE(), N'SYSTEM', N'-', NULL);
 END
 GO
+
+-- ========== DEMO monthly DO seed (Seq = next to issue) ==========
+IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NOT NULL
+   AND NOT EXISTS (
+        SELECT 1 FROM dbo.AdSmNumDate
+        WHERE CompanyCode = N'DEMO'
+          AND BranchCode = N'HQ'
+          AND NumCd = N'DO'
+          AND [Year] = 2026
+          AND [Month] = 9)
+BEGIN
+    INSERT INTO dbo.AdSmNumDate (
+        CompanyCode, BranchCode, LocationCode,
+        [Year], [Month], NumCd, NumDes, TotLength, Prefix, Seq,
+        Created, UserID, NumberingDelimeter, NumberingFormat)
+    VALUES (
+        N'DEMO', N'HQ', N'MAIN',
+        2026, 9, N'DO', N'Sales Delivery Order', 4, N'DO', 1,
+        GETDATE(), N'SYSTEM', N'-', NULL);
+END
+GO
+
+-- ========== DEMO monthly SO seed (Seq = next to issue) ==========
+IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NOT NULL
+   AND NOT EXISTS (
+        SELECT 1 FROM dbo.AdSmNumDate
+        WHERE CompanyCode = N'DEMO'
+          AND BranchCode = N'HQ'
+          AND NumCd = N'SO'
+          AND [Year] = 2026
+          AND [Month] = 9)
+BEGIN
+    INSERT INTO dbo.AdSmNumDate (
+        CompanyCode, BranchCode, LocationCode,
+        [Year], [Month], NumCd, NumDes, TotLength, Prefix, Seq,
+        Created, UserID, NumberingDelimeter, NumberingFormat)
+    VALUES (
+        N'DEMO', N'HQ', N'MAIN',
+        2026, 9, N'SO', N'Sales Order', 4, N'SO', 1,
+        GETDATE(), N'SYSTEM', N'-', NULL);
+END
+GO
+
+-- ========== DEMO monthly CN seed (Seq = next to issue) ==========
+IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NOT NULL
+   AND NOT EXISTS (
+        SELECT 1 FROM dbo.AdSmNumDate
+        WHERE CompanyCode = N'DEMO'
+          AND BranchCode = N'HQ'
+          AND NumCd = N'CN'
+          AND [Year] = 2026
+          AND [Month] = 9)
+BEGIN
+    INSERT INTO dbo.AdSmNumDate (
+        CompanyCode, BranchCode, LocationCode,
+        [Year], [Month], NumCd, NumDes, TotLength, Prefix, Seq,
+        Created, UserID, NumberingDelimeter, NumberingFormat)
+    VALUES (
+        N'DEMO', N'HQ', N'MAIN',
+        2026, 9, N'CN', N'Sales Credit Note', 4, N'CN', 1,
+        GETDATE(), N'SYSTEM', N'-', NULL);
+END
+GO
+
+-- ========== DEMO monthly DN seed (Seq = next to issue) ==========
+IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NOT NULL
+   AND NOT EXISTS (
+        SELECT 1 FROM dbo.AdSmNumDate
+        WHERE CompanyCode = N'DEMO'
+          AND BranchCode = N'HQ'
+          AND NumCd = N'DN'
+          AND [Year] = 2026
+          AND [Month] = 9)
+BEGIN
+    INSERT INTO dbo.AdSmNumDate (
+        CompanyCode, BranchCode, LocationCode,
+        [Year], [Month], NumCd, NumDes, TotLength, Prefix, Seq,
+        Created, UserID, NumberingDelimeter, NumberingFormat)
+    VALUES (
+        N'DEMO', N'HQ', N'MAIN',
+        2026, 9, N'DN', N'Sales Debit Note', 4, N'DN', 1,
+        GETDATE(), N'SYSTEM', N'-', NULL);
+END
+GO

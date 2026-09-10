@@ -31,7 +31,15 @@ public class SaInvoiceDetail
     public string? OrderType { get; set; }
     public bool StockControl { get; set; } = true;
     public string? SellingGlCode { get; set; }
+    public string? Classification { get; set; }
     public string? Remarks { get; set; }
+    public string SoNo { get; set; } = string.Empty;
+    public short? SoLine { get; set; }
+    public short? CustRel { get; set; }
+    public bool LinkDo { get; set; }
+    public string DoNo { get; set; } = string.Empty;
+    public short? DoLine { get; set; }
+    public decimal SoConsumedQty { get; set; }
 
     public SaInvoice Invoice { get; set; } = null!;
 }

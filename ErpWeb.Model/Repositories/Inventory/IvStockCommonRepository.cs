@@ -46,6 +46,9 @@ public interface IIvStockCommonRepository
         string companyCode,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<IvClassification>> ListClassificationsAsync(
+        CancellationToken cancellationToken = default);
+
     Task<(IReadOnlyList<IvOnHandBalanceRow> Rows, int TotalCount)> SearchOnHandPagedAsync(
         string companyCode,
         string branchCode,
@@ -112,6 +115,11 @@ public interface IIvStockCommonRepository
         AppDbContext db,
         string companyCode,
         string typeCode,
+        CancellationToken cancellationToken = default);
+
+    Task<IvClassification?> GetClassificationAsync(
+        AppDbContext db,
+        string code,
         CancellationToken cancellationToken = default);
 
     // --- Master CRUD lists (include inactive) ---
@@ -378,6 +386,16 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
             .AsNoTracking()
             .Where(x => x.CompanyCode == company && x.IsActive)
             .OrderBy(x => x.TypeCode)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<IvClassification>> ListClassificationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.IvClassifications
+            .AsNoTracking()
+            .OrderBy(x => x.Code)
             .ToListAsync(cancellationToken);
     }
 
@@ -654,6 +672,18 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
             .FirstOrDefaultAsync(
                 x => x.CompanyCode == company && x.TypeCode == code && x.IsActive,
                 cancellationToken);
+    }
+
+    public Task<IvClassification?> GetClassificationAsync(
+        AppDbContext db,
+        string code,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var key = (code ?? string.Empty).Trim();
+        return db.IvClassifications
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Code == key, cancellationToken);
     }
 
     public async Task<IReadOnlyList<IvWarehouse>> ListWarehousesAsync(

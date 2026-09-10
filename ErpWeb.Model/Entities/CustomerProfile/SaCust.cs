@@ -31,6 +31,7 @@ public class SaCust
     public string? Website { get; set; }
     public string? CjLmw { get; set; }
     public string? CustBrn { get; set; }
+    public string? TinNo { get; set; }
     public string? RegType { get; set; }
     public string? Remark { get; set; }
 

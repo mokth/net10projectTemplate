@@ -47,6 +47,19 @@ public class SaInvoice
     public string? ShipTel { get; set; }
     public string? ShipFax { get; set; }
 
+    public DateTime? DueDate { get; set; }
+    public string? ArGlCode { get; set; }
+    public string? InvEmail { get; set; }
+    public string? BuyerTin { get; set; }
+    public string? BuyerBrn { get; set; }
+    public string? BuyerRegType { get; set; }
+    public string? GstregNo { get; set; }
+    public string? CustType { get; set; }
+    public string? CustGroupCode { get; set; }
+    public string? AreaCode { get; set; }
+    public string? IndustryCode { get; set; }
+    public string? ChannelCode { get; set; }
+
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }

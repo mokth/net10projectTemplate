@@ -107,8 +107,31 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         db.SaCurrencies.Add(new SaCurrency { CompanyCode = "DEMO", CurrCode = "USD", IsActive = true });
         db.SaCurrencies.Add(new SaCurrency { CompanyCode = "DEMO", CurrCode = "EUR", IsActive = true });
         db.IvMsCodes.Add(new IvMsCode { Code = "NET30", Name = "Net 30", CodeType = IvMsCodeTypes.PayCode });
-        db.SaTaxGroups.Add(new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "SR", TaxGrDesc = "Standard", Percentage = 6m });
-        db.SaTaxGroups.Add(new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "ZR", TaxGrDesc = "Zero", Percentage = 0m });
+        db.SaPaymentTerms.Add(new SaPaymentTerm
+        {
+            CompanyCode = "DEMO",
+            PayCode = "NET30",
+            PayDesc = "Net 30",
+            Days = 30,
+            IsActive = true
+        });
+        db.SaSalesReps.Add(new SaSalesRep
+        {
+            CompanyCode = "DEMO",
+            SrepCode = "SM1",
+            SrepName = "Sales One",
+            IsActive = true
+        });
+        db.SaSalesReps.Add(new SaSalesRep
+        {
+            CompanyCode = "DEMO",
+            SrepCode = "SMINACTIVE",
+            SrepName = "Inactive Rep",
+            IsActive = false
+        });
+        db.SaTaxGroups.Add(new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "SR", TaxGrDesc = "Standard", Percentage = 6m, TaxGlCode = "GLTAX" });
+        db.SaTaxGroups.Add(new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "ZR", TaxGrDesc = "Zero", Percentage = 0m, TaxGlCode = "GLTAX0" });
+        db.SaTaxGroups.Add(new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "NOTAXGL", TaxGrDesc = "No tax GL", Percentage = 6m });
         db.SaCurrRates.Add(new SaCurrRate
         {
             CurrCode = "USD",
@@ -144,6 +167,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             IsActive = true,
             SellingPrice = 10m,
             SellingGlCode = "GLSALE",
+            Classification = "CLASS-A",
             DefWarehouse = "MAIN"
         });
         db.IvStockMasters.Add(new IvStockMaster
@@ -156,7 +180,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             StockControl = false,
             IsActive = true,
             SellingPrice = 50m,
-            SellingGlCode = "GLSVC"
+            SellingGlCode = "GLSVC",
+            Classification = "CLASS-S"
         });
         db.IvStockMasters.Add(new IvStockMaster
         {
@@ -170,6 +195,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             SellingPrice = 8m,
             StdPackSize = 12m,
             SellingGlCode = "GLPACK",
+            Classification = "CLASS-P",
             DefWarehouse = "MAIN"
         });
         db.SaCusts.Add(new SaCust
@@ -179,13 +205,29 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Alpha",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLAR01",
+            TinNo = "TIN01",
+            CustBrn = "BRN01",
+            Email = "alpha@example.com",
+            Tel = "0123456789",
             Address1 = "MAIN ADDR 1",
             Address4 = "MAIN ADDR 4",
             City = "MAIN CITY",
+            Country = "MY",
+            InvName = "Alpha",
             InvAddress1 = "INV ADDR 1",
             InvCity = "INV CITY",
+            InvPostalCode = "50000",
+            InvCountry = "MY",
+            InvTel = "0123456789",
             ShipAddress1 = "SHIP ADDR 1",
             ShipCity = "SHIP CITY",
+            CustType = "TRADE",
+            CustGroupCode = "G1",
+            AreaCode = "A1",
+            IndustryCode = "IND1",
+            ChannelCode = "CH1",
             IsActive = true,
             RowVersion = [1, 0, 0, 0, 0, 0, 0, 0]
         });
@@ -196,6 +238,17 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Beta",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLAR02",
+            TinNo = "TIN02",
+            Email = "beta@example.com",
+            Tel = "0111111111",
+            Country = "MY",
+            InvName = "Beta",
+            InvAddress1 = "BETA ADDR",
+            InvCity = "BETA CITY",
+            InvPostalCode = "50001",
+            InvCountry = "MY",
             InvoicePrefix = "ACME",
             DiscountMethod = SaCustPaymentOptions.DiscountJoin,
             IsActive = true,
@@ -208,11 +261,17 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Apply Main",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLARAPP",
+            TinNo = "TINAPP",
+            Email = "app@example.com",
             AppInvoice = true,
             AppShip = true,
             Address1 = "MAIN BILL 1",
             Address4 = "MAIN BILL 4",
             City = "MAIN BILL CITY",
+            PostalCode = "50002",
+            Country = "MY",
             Tel = "111",
             InvName = "INV NAME",
             InvAddress1 = "SPEC INV 1",
@@ -228,12 +287,20 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Special Addr",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLARSPEC",
+            TinNo = "TINSPEC",
+            Email = "spec@example.com",
             AppInvoice = false,
             AppShip = false,
             Address1 = "MAIN IGNORE",
+            Country = "MY",
             InvName = "Bill To Spec",
             InvAddress1 = "SPEC BILL 1",
             InvCity = "SPEC BILL CITY",
+            InvPostalCode = "50003",
+            InvCountry = "MY",
+            InvTel = "222",
             ShipName = "Ship To Spec",
             ShipAddress1 = "SPEC SHIP 1",
             ShipCity = "SPEC SHIP CITY",
@@ -247,6 +314,17 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Taxable Co",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLARTAX",
+            TinNo = "TINTAX",
+            Email = "tax@example.com",
+            Tel = "333",
+            Country = "MY",
+            InvName = "Taxable Co",
+            InvAddress1 = "TAX ADDR",
+            InvCity = "TAX CITY",
+            InvPostalCode = "50004",
+            InvCountry = "MY",
             Taxable = true,
             TaxGrCode = "SR",
             IsActive = true,
@@ -259,6 +337,17 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Dec Point",
             Currency = "MYR",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLARDEC",
+            TinNo = "TINDEC",
+            Email = "dec@example.com",
+            Tel = "444",
+            Country = "MY",
+            InvName = "Dec Point",
+            InvAddress1 = "DEC ADDR",
+            InvCity = "DEC CITY",
+            InvPostalCode = "50005",
+            InvCountry = "MY",
             DecPoint = true,
             IsActive = true,
             RowVersion = [6, 0, 0, 0, 0, 0, 0, 0]
@@ -270,8 +359,73 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustName = "Usd Buyer",
             Currency = "USD",
             PayCode = "NET30",
+            SalesmanCode = "SM1",
+            GlCode = "GLARUSD",
+            TinNo = "TINUSD",
+            Email = "usd@example.com",
+            Tel = "555",
+            Country = "MY",
+            InvName = "Usd Buyer",
+            InvAddress1 = "USD ADDR",
+            InvCity = "USD CITY",
+            InvPostalCode = "50006",
+            InvCountry = "MY",
             IsActive = true,
             RowVersion = [7, 0, 0, 0, 0, 0, 0, 0]
+        });
+        db.SaCustAdds.AddRange(
+            new SaCustAdd
+            {
+                CompanyCode = "DEMO",
+                CustCode = "CUSTAPP",
+                Line = 1,
+                AddName = "Warehouse A",
+                DeliverTo = "WH-A",
+                Address1 = "SHIPTO A1",
+                Address2 = "SHIPTO A2",
+                Address3 = "SHIPTO A3",
+                Address4 = "SHIPTO A4 SHOULD NOT APPLY",
+                City = "Ship City A",
+                State = "SEL",
+                PostalCode = "40000",
+                Country = "MY",
+                Tel = "100",
+                Fax = "101"
+            },
+            new SaCustAdd
+            {
+                CompanyCode = "DEMO",
+                CustCode = "CUSTAPP",
+                Line = 2,
+                AddName = "Warehouse B",
+                DeliverTo = "WH-B",
+                Address1 = "SHIPTO B1",
+                City = "Ship City B",
+                Country = "MY"
+            });
+        // Other-company customer + ship-to with same CustCode — must not leak into DEMO defaults.
+        db.SaCusts.Add(new SaCust
+        {
+            CompanyCode = "OTHER",
+            CustCode = "CUSTAPP",
+            CustName = "Other Co Cust",
+            Currency = "MYR",
+            PayCode = "NET30",
+            GlCode = "GLAROTH",
+            TinNo = "TINOTH",
+            Country = "SG",
+            IsActive = true,
+            RowVersion = [9, 0, 0, 0, 0, 0, 0, 0]
+        });
+        db.SaCustAdds.Add(new SaCustAdd
+        {
+            CompanyCode = "OTHER",
+            CustCode = "CUSTAPP",
+            Line = 1,
+            AddName = "Other Co Addr",
+            DeliverTo = "OTHER-WH",
+            Address1 = "OTHER ADDR",
+            Country = "SG"
         });
         await db.SaveChangesAsync();
     }
@@ -294,6 +448,330 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Equal("HQ", invoice.Details.Single().BranchCode);
         Assert.Equal(20m, invoice.TotAmnt);
         Assert.Equal(SaInvoiceStatuses.New, invoice.Status);
+        Assert.Empty(save.PostWarnings);
+    }
+
+    [Fact]
+    public async Task SaveNew_fails_commercial_gaps_before_numbering()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "SVC1");
+            item.SellingGlCode = null;
+            item.Classification = null;
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUSTTAX");
+            cust.GlCode = null;
+            cust.TinNo = null;
+            cust.CustBrn = null;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUSTTAX",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "NOTAXGL",
+            Lines = [Line("SVC1", 1m, 100m)]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, save.ErrorKind);
+        Assert.Contains(save.ValidationErrors.Keys, k => k.Equals("ArGlCode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(save.ValidationErrors.Keys, k => k.Equals("TaxGlCode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(save.ValidationErrors.Keys, k => k.Equals("BuyerTin", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(save.ValidationErrors.Keys, k => k.Equals("Lines[0].SellingGlCode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(save.ValidationErrors.Keys, k => k.Equals("Lines[0].Classification", StringComparison.OrdinalIgnoreCase));
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.False(await db.SaInvoices.AnyAsync());
+        }
+
+        // Commercial fail must not consume numbering — next valid save still gets first number.
+        var numbering = new FakeDocumentNumberingService();
+        var sutNumbered = CreateSut(numbering: numbering);
+        var failAgain = await sutNumbered.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUSTTAX",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "NOTAXGL",
+            Lines = [Line("SVC1", 1m, 100m)]
+        });
+        Assert.False(failAgain.Succeeded);
+        Assert.Equal(0, numbering.IssuedCount);
+
+        // Restore master gaps so a valid save can allocate.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "SVC1");
+            item.SellingGlCode = "GLSVC";
+            item.Classification = "CLASS-S";
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUSTTAX");
+            cust.GlCode = "GLARTAX";
+            cust.TinNo = "TINTAX";
+            cust.CustBrn = "BRNTAX";
+            await db.SaveChangesAsync();
+        }
+
+        var ok = await sutNumbered.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUSTTAX",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "SR",
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(ok.Succeeded, ok.ErrorMessage);
+        Assert.Equal(1, numbering.IssuedCount);
+        Assert.Equal("INV2609-0001", ok.InvNo);
+    }
+
+    [Fact]
+    public async Task Get_warns_commercial_gaps_on_persisted_invoice()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.ArGlCode = null;
+            await db.SaveChangesAsync();
+        }
+
+        var get = await sut.GetAsync(save.InvNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+        Assert.Contains(get.PostWarnings, w => w.Contains("AR GL", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(get.PostWarnings, w => w.Contains("shipment", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task SaveNew_or_contact_and_buyer_id_pass_with_one_side()
+    {
+        var sut = CreateSut();
+        var telOnly = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            InvTel = "019999",
+            InvEmail = null,
+            BuyerTin = "TIN-ONLY",
+            BuyerBrn = null,
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(telOnly.Succeeded, telOnly.ErrorMessage);
+
+        var emailOnly = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            InvTel = null,
+            InvEmail = "only@example.com",
+            BuyerTin = null,
+            BuyerBrn = "BRN-ONLY",
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(emailOnly.Succeeded, emailOnly.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task SaveNew_commercial_error_key_order_is_deterministic()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "SVC1");
+            item.SellingGlCode = null;
+            item.Classification = null;
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUST01");
+            cust.GlCode = null;
+            cust.TinNo = null;
+            cust.CustBrn = null;
+            cust.Email = null;
+            cust.Tel = null;
+            cust.InvTel = null;
+            cust.SalesmanCode = null;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = null,
+            InvTel = null,
+            InvEmail = null,
+            BuyerTin = null,
+            BuyerBrn = null,
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+
+        Assert.False(save.Succeeded);
+        var keys = save.ValidationErrors.Keys.ToList();
+        // Address/name backfilled from customer; remaining commercial gaps in contract order:
+        var expected = new[]
+        {
+            "SalesmanCode",
+            "ArGlCode",
+            "InvTel",
+            "BuyerTin",
+            "Lines[0].SellingGlCode",
+            "Lines[0].Classification"
+        };
+        Assert.Equal(expected.Length, keys.Count);
+        for (var i = 0; i < expected.Length; i++)
+        {
+            Assert.True(
+                keys[i].Equals(expected[i], StringComparison.OrdinalIgnoreCase),
+                $"Expected key[{i}]={expected[i]}, got {keys[i]}. Keys=[{string.Join(", ", keys)}]");
+        }
+    }
+
+    [Fact]
+    public async Task Post_fails_when_salesman_inactivated_after_save()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var rep = await db.SaSalesReps.SingleAsync(x => x.SrepCode == "SM1");
+            rep.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.SalesmanInvalid, post.Posting[0].ReasonCode);
+        Assert.Equal(SaInvoiceStatuses.New, (await sut.GetAsync(save.InvNo!)).Document!.Status);
+    }
+
+    [Fact]
+    public async Task Post_freeline_amount_zero_allows_blank_selling_gl()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var detail = await db.SaInvoiceDetails.SingleAsync(x => x.InvNo == save.InvNo);
+            detail.ICode = null;
+            detail.Classification = null;
+            detail.SellingGlCode = null;
+            detail.Amount = 0m;
+            detail.NetAmount = 0m;
+            detail.TaxAmt = 0m;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Post_freeline_nonzero_amount_requires_selling_gl()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var detail = await db.SaInvoiceDetails.SingleAsync(x => x.InvNo == save.InvNo);
+            detail.ICode = null;
+            detail.Classification = null;
+            detail.SellingGlCode = null;
+            // Amount already non-zero from save
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.LineSalesGlMissing, post.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Update_commercial_fail_leaves_existing_NEW_unchanged()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var originalAr = save.Document!.ArGlCode;
+        var originalSalesman = save.Document.SalesmanCode;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUST01");
+            cust.GlCode = null;
+            await db.SaveChangesAsync();
+        }
+
+        var update = await UpdateDocAsync(sut, save.InvNo!, new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SMINACTIVE",
+            Lines = [Line("SVC1", 2m, 10m)]
+        });
+        Assert.False(update.Succeeded);
+        Assert.Contains(update.ValidationErrors.Keys, k => k.Equals("SalesmanCode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(update.ValidationErrors.Keys, k => k.Equals("ArGlCode", StringComparison.OrdinalIgnoreCase));
+
+        var get = await sut.GetAsync(save.InvNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+        Assert.Equal(originalAr, get.Document!.ArGlCode);
+        Assert.Equal(originalSalesman, get.Document.SalesmanCode);
+        Assert.Equal(1m, get.Document.Lines[0].Qty);
+    }
+
+    [Fact]
+    public async Task Post_fails_operationally_when_shipment_wiped_after_save()
+    {
+        await SeedBalLocAsync(100m);
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 5m, price: 10m, iCode: "A100"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await ShipAsync(sut, save.InvNo!)).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batches = await db.IvTrxBatches
+                .Where(x => x.RefNo == save.InvNo)
+                .ToListAsync();
+            var details = await db.IvTrxBatchDetails
+                .Where(x => batches.Select(b => b.BatchNo).Contains(x.BatchNo))
+                .ToListAsync();
+            db.IvTrxBatchDetails.RemoveRange(details);
+            db.IvTrxBatches.RemoveRange(batches);
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("shipment", post.Posting[0].ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SaInvoiceStatuses.New, (await sut.GetAsync(save.InvNo!)).Document!.Status);
     }
 
     [Fact]
@@ -637,6 +1115,348 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Equal("PO-9", doc.PoNo);
         Assert.Equal("hello remark", doc.Remark);
         Assert.Equal("INV", doc.InvPrefix);
+        Assert.Equal(FixedToday.AddDays(30), doc.DueDate);
+        Assert.Equal("GLAR01", doc.ArGlCode);
+        Assert.Equal("TIN01", doc.BuyerTin);
+        Assert.Equal("BRN01", doc.BuyerBrn);
+        Assert.Equal("CLASS-S", doc.Lines.Single().Classification);
+    }
+
+    [Fact]
+    public async Task GetLookups_includes_item_Classification()
+    {
+        var sut = CreateSut();
+        var lookups = await sut.GetLookupsAsync();
+
+        Assert.True(lookups.Succeeded, lookups.ErrorMessage);
+        Assert.Equal("CLASS-S", lookups.Items.Single(x => x.ICode == "SVC1").Classification);
+        Assert.Equal("CLASS-A", lookups.Items.Single(x => x.ICode == "A100").Classification);
+    }
+
+    [Fact]
+    public async Task Save_backfill_requires_commercial_header()
+    {
+        var sut = CreateSut();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUST02");
+            cust.InvName = null;
+            cust.InvAddress1 = null;
+            cust.InvCountry = null;
+            cust.Country = null;
+            cust.AppInvoice = false;
+            await db.SaveChangesAsync();
+        }
+
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, cust: "CUST02", iCode: "SVC1"));
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, save.ErrorKind);
+        Assert.Contains(save.ValidationErrors.Keys, k =>
+            k is "InvName" or "InvAddress1" or "InvCountry");
+    }
+
+    [Fact]
+    public async Task Save_preserves_BuyerTin_BuyerBrn_InvEmail_Classification()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            BuyerTin = "KEEP-TIN",
+            BuyerBrn = "KEEP-BRN",
+            InvEmail = "keep@invoice.com",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = 1m,
+                    UnitPrice = 10m,
+                    Classification = "KEEP-CLASS"
+                }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.Equal("KEEP-TIN", save.Document!.BuyerTin);
+        Assert.Equal("KEEP-BRN", save.Document.BuyerBrn);
+        Assert.Equal("keep@invoice.com", save.Document.InvEmail);
+        Assert.Equal("KEEP-CLASS", save.Document.Lines.Single().Classification);
+
+        var update = await UpdateDocAsync(sut, save.InvNo!, new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            BuyerTin = "KEEP-TIN",
+            BuyerBrn = "KEEP-BRN",
+            InvEmail = "keep@invoice.com",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = 1m,
+                    UnitPrice = 10m,
+                    Classification = "KEEP-CLASS"
+                }
+            ]
+        });
+        Assert.True(update.Succeeded, update.ErrorMessage);
+        Assert.Equal("KEEP-TIN", update.Document!.BuyerTin);
+        Assert.Equal("KEEP-BRN", update.Document.BuyerBrn);
+        Assert.Equal("keep@invoice.com", update.Document.InvEmail);
+        Assert.Equal("KEEP-CLASS", update.Document.Lines.Single().Classification);
+    }
+
+    [Fact]
+    public async Task Save_missing_pay_term_sets_DueDate_to_InvDate()
+    {
+        var sut = CreateSut();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvMsCodes.Add(new IvMsCode { Code = "COD", Name = "Cash", CodeType = IvMsCodeTypes.PayCode });
+            await db.SaveChangesAsync();
+        }
+
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "COD",
+            SalesmanCode = "SM1",
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.Equal(FixedToday, save.Document!.DueDate);
+    }
+
+    [Fact]
+    public void HasTax_epsilon_boundaries()
+    {
+        Assert.False(SaInvoiceService.HasTax(0.00m));
+        Assert.False(SaInvoiceService.HasTax(-0.009m));
+        Assert.True(SaInvoiceService.HasTax(0.01m));
+        Assert.True(SaInvoiceService.HasTax(-0.01m));
+    }
+
+    [Fact]
+    public async Task Missing_company_context_fails_closed()
+    {
+        var tenant = new Mock<IInventoryTenantContext>();
+        tenant.Setup(x => x.TryBranchScope()).Returns((InventoryTenantScope?)null);
+        tenant.Setup(x => x.TryWriteScope()).Returns((InventoryTenantScope?)null);
+
+        var sut = CreateSut(tenant: tenant.Object);
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.False(save.Succeeded);
+        Assert.Contains("company", save.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Post_skips_TaxGlCode_when_taxes_below_epsilon()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "NOTAXGL",
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.Taxes = 0.009m;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Post_fails_TaxGl_when_taxes_at_epsilon_without_TaxGlCode()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "NOTAXGL",
+            Lines = [Line("SVC1", 1m, 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.Taxes = 0.01m;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.TaxGlMissing, post.Posting[0].ReasonCode);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(SaInvoiceStatuses.New, (await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo)).Status);
+        }
+    }
+
+    [Fact]
+    public async Task Post_fails_blank_classification_on_stock_line()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var detail = await db.SaInvoiceDetails.SingleAsync(x => x.InvNo == save.InvNo);
+            detail.Classification = " ";
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.LineClassification, post.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Post_allows_freeline_without_classification()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var detail = await db.SaInvoiceDetails.SingleAsync(x => x.InvNo == save.InvNo);
+            detail.ICode = null;
+            detail.Classification = null;
+            detail.Amount = 0m;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Post_whitespace_TIN_and_BRN_fails_BuyerId()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.BuyerTin = "   ";
+            inv.BuyerBrn = "\t";
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.BuyerId, post.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Post_accepts_TIN_with_surrounding_whitespace()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.BuyerTin = "  TIN-OK  ";
+            inv.BuyerBrn = null;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Post_whitespace_or_inactive_salesman_fails()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.SalesmanCode = "   ";
+            await db.SaveChangesAsync();
+        }
+
+        var postWs = await sut.PostAsync([save.InvNo!]);
+        Assert.False(postWs.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.SalesmanInvalid, postWs.Posting[0].ReasonCode);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo);
+            inv.SalesmanCode = "SMINACTIVE";
+            await db.SaveChangesAsync();
+        }
+
+        var postInactive = await sut.PostAsync([save.InvNo!]);
+        Assert.False(postInactive.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.SalesmanInvalid, postInactive.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Post_concurrent_second_post_returns_concurrency()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var first = await sut.PostAsync([save.InvNo!]);
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var second = await sut.PostAsync([save.InvNo!]);
+        Assert.False(second.Succeeded);
+        Assert.Equal(SaInvoicePostReasonCodes.Concurrency, second.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Cross_company_invoice_not_found()
+    {
+        var demo = CreateSut();
+        var save = await demo.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var other = CreateSut(tenant: InventoryTenantTestHelper.CreateTenantContext(company: "OTHER"));
+        var get = await other.GetAsync(save.InvNo!);
+        Assert.False(get.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.NotFound, get.ErrorKind);
+
+        var post = await other.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("not found", post.Posting[0].ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -648,6 +1468,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Equal("INV ADDR 1", nullish.CustomerDefaults!.InvAddress1);
         Assert.Null(nullish.CustomerDefaults.InvAddress4);
         Assert.Equal("SHIP ADDR 1", nullish.CustomerDefaults.ShipAddress1);
+        Assert.Empty(nullish.CustomerDefaults.ShipToAddresses);
 
         var useMain = await sut.GetCustomerDefaultsAsync("CUSTAPP", FixedToday);
         Assert.True(useMain.Succeeded, useMain.ErrorMessage);
@@ -657,6 +1478,16 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Equal("Apply Main", useMain.CustomerDefaults.ShipName);
         Assert.Equal("MAIN BILL 1", useMain.CustomerDefaults.ShipAddress1);
 
+        var shipTo = useMain.CustomerDefaults.ShipToAddresses;
+        Assert.Equal(2, shipTo.Count);
+        Assert.Equal(1, shipTo[0].Line);
+        Assert.Equal(2, shipTo[1].Line);
+        Assert.Equal("WH-A", shipTo[0].DeliverTo);
+        Assert.Equal("Warehouse A", shipTo[0].AddName);
+        Assert.Equal("SHIPTO A1", shipTo[0].Address1);
+        Assert.Null(shipTo[0].Address4); // Address4 deliberately omitted — no ShipAddress4
+        Assert.DoesNotContain(shipTo, x => string.Equals(x.AddName, "Other Co Addr", StringComparison.Ordinal));
+
         var useSpec = await sut.GetCustomerDefaultsAsync("CUSTSPEC", FixedToday);
         Assert.True(useSpec.Succeeded, useSpec.ErrorMessage);
         Assert.Equal("Bill To Spec", useSpec.CustomerDefaults!.InvName);
@@ -664,6 +1495,70 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Null(useSpec.CustomerDefaults.InvAddress4);
         Assert.Equal("Ship To Spec", useSpec.CustomerDefaults.ShipName);
         Assert.Equal("SPEC SHIP 1", useSpec.CustomerDefaults.ShipAddress1);
+    }
+
+    [Fact]
+    public async Task GetCustomerDefaults_trims_cust_code_and_scopes_company()
+    {
+        var sut = CreateSut();
+        var trimmed = await sut.GetCustomerDefaultsAsync("  CUSTAPP  ", FixedToday);
+        Assert.True(trimmed.Succeeded, trimmed.ErrorMessage);
+        Assert.Equal("CUSTAPP", trimmed.CustomerDefaults!.CustCode);
+        Assert.Equal(2, trimmed.CustomerDefaults.ShipToAddresses.Count);
+        Assert.DoesNotContain(
+            trimmed.CustomerDefaults.ShipToAddresses,
+            x => string.Equals(x.AddName, "Other Co Addr", StringComparison.Ordinal));
+
+        var other = CreateSut(tenant: InventoryTenantTestHelper.CreateTenantContext(company: "OTHER"));
+        var otherDefaults = await other.GetCustomerDefaultsAsync("CUSTAPP", FixedToday);
+        Assert.True(otherDefaults.Succeeded, otherDefaults.ErrorMessage);
+        Assert.Single(otherDefaults.CustomerDefaults!.ShipToAddresses);
+        Assert.Equal("Other Co Addr", otherDefaults.CustomerDefaults.ShipToAddresses[0].AddName);
+    }
+
+    [Fact]
+    public async Task GetCustomerDefaults_mixed_flags_independent()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCusts.Add(new SaCust
+            {
+                CompanyCode = "DEMO",
+                CustCode = "CUSTMIX",
+                CustName = "Mixed Flags",
+                Currency = "MYR",
+                PayCode = "NET30",
+                SalesmanCode = "SM1",
+                GlCode = "GLARMIX",
+                TinNo = "TINMIX",
+                Email = "mix@example.com",
+                AppInvoice = true,
+                AppShip = false,
+                Address1 = "MAIN MIX 1",
+                Address4 = "MAIN MIX 4",
+                City = "MAIN MIX CITY",
+                Country = "MY",
+                Tel = "777",
+                InvName = "INV SHOULD IGNORE",
+                InvAddress1 = "INV IGNORE",
+                ShipName = "Dedicated Ship",
+                ShipAddress1 = "DED SHIP 1",
+                ShipCity = "DED CITY",
+                ShipCountry = "MY",
+                IsActive = true,
+                RowVersion = [8, 0, 0, 0, 0, 0, 0, 0]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.GetCustomerDefaultsAsync("CUSTMIX", FixedToday);
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal("Mixed Flags", result.CustomerDefaults!.InvName);
+        Assert.Equal("MAIN MIX 1", result.CustomerDefaults.InvAddress1);
+        Assert.Equal("MAIN MIX 4", result.CustomerDefaults.InvAddress4);
+        Assert.Equal("Dedicated Ship", result.CustomerDefaults.ShipName);
+        Assert.Equal("DED SHIP 1", result.CustomerDefaults.ShipAddress1);
     }
 
     [Fact]
@@ -1207,6 +2102,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             CustCode = cust,
             Currency = currency ?? (string.Equals(cust, "CUSTUSD", StringComparison.OrdinalIgnoreCase) ? "USD" : "MYR"),
             PayCode = "NET30",
+            SalesmanCode = "SM1",
             Lines = [Line(iCode ?? "A100", qty, price)]
         };
 
@@ -1255,10 +2151,13 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     private SaInvoiceService CreateSut(
         IvInventoryPostingService? posting = null,
         string location = "SITE",
-        IDocumentNumberingService? numbering = null)
+        IDocumentNumberingService? numbering = null,
+        IInventoryTenantContext? tenant = null)
     {
-        var tenant = InventoryTenantTestHelper.CreateTenantContext(location: location);
+        tenant ??= InventoryTenantTestHelper.CreateTenantContext(location: location);
         var postingRepo = new IvStockPostingRepository();
+        var salesOrders = new SaSoRepository();
+        var docApplication = new SaDocApplicationService(salesOrders, new SaDoRepository());
         return new(
             _factory,
             tenant,
@@ -1274,6 +2173,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             postingRepo,
             posting ?? CreatePosting(),
             new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
+            salesOrders,
+            docApplication,
             new SaCustLookupService(_factory, tenant),
             NullLogger<SaInvoiceService>.Instance);
     }

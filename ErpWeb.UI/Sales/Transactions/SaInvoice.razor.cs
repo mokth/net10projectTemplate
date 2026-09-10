@@ -14,7 +14,10 @@ public partial class SaInvoice : PageBase, IDisposable
     [Parameter] public string? InvNo { get; set; }
 
     [Inject] private ISaInvoiceService Invoices { get; set; } = default!;
+    [Inject] private ISaSoService Sos { get; set; } = default!;
+    [Inject] private ISaDoService Dos { get; set; } = default!;
     [Inject] private ISaCustLookupService Lookups { get; set; } = default!;
+    [Inject] private IIvInventoryLookupService InventoryLookups { get; set; } = default!;
     [Inject] private ICurrentDateService Dates { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
@@ -22,15 +25,20 @@ public partial class SaInvoice : PageBase, IDisposable
     protected bool IsLoading = true;
     protected bool IsSubmitting;
     protected bool PopupVisible;
+    protected bool SoPickerVisible;
+    protected bool SoPickerLoading;
+    protected bool DoPickerVisible;
+    protected bool DoPickerLoading;
     protected bool ConfirmDiscardVisible;
     protected bool ConfirmCustChangeVisible;
     protected bool ConfirmShipOverwriteVisible;
     protected bool ShipEditorVisible;
     protected bool ConcurrencyVisible;
     protected string? PopupError;
+    protected string? SoPickerError;
     protected bool CanEditPermission;
     protected string InvNoDisplay = "AUTO";
-    protected string DoNoDisplay = "AUTO";
+    protected string DoNoDisplay = string.Empty;
     protected string StatusDisplay = SaInvoiceStatuses.New;
     protected DateTime InvDate;
     protected string? CustCode;
@@ -55,6 +63,10 @@ public partial class SaInvoice : PageBase, IDisposable
     protected string? InvCountry;
     protected string? InvTel;
     protected string? InvFax;
+    protected string? InvEmail;
+    protected DateTime? DueDate;
+    protected string? BuyerTin;
+    protected string? BuyerBrn;
     protected string? ShipName;
     protected string? ShipAddress1;
     protected string? ShipAddress2;
@@ -70,6 +82,7 @@ public partial class SaInvoice : PageBase, IDisposable
     protected decimal TotAmnt;
     protected bool ShipmentComplete = true;
     protected bool DateShipmentWarning;
+    protected List<string> PostWarnings { get; set; } = [];
     protected int ActiveTabIndex;
     protected Dictionary<string, string> ValidationErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -84,11 +97,13 @@ public partial class SaInvoice : PageBase, IDisposable
     private bool _decPoint;
     private bool? _taxable;
     private byte[] _rowVersion = [];
-    private int _defaultsSeq;
+    private int _customerApplySeq;
     private CancellationTokenSource _cts = new();
     private string? _shipConfirmMessage;
     private byte[]? _shipConfirmToken;
     private int? _shipEditLine;
+    private int? _shipToLine;
+    private IReadOnlyList<SaCustAddressVm> _shipToOptions = [];
 
     protected List<SaInvoiceLineVm> Lines { get; set; } = [];
     protected List<SaInvoiceCustomerLookupRow> Customers { get; set; } = [];
@@ -96,15 +111,37 @@ public partial class SaInvoice : PageBase, IDisposable
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
+    protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> Classifications { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Countries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
+    protected IReadOnlyList<SaCustAddressVm> ShipToOptions => _shipToOptions;
+    protected int? ShipToLine => _shipToLine;
     protected SaInvoiceLineVm Popup { get; set; } = new();
     protected bool PopupDiscountIsAmount { get; set; }
+    protected List<SaSoPickerOption> SoPickerOptions { get; set; } = [];
+    protected List<SaSoLineDto> SoPickerLines { get; set; } = [];
+    protected IReadOnlyList<SaSoLineDto> SelectedSoPickerLines { get; set; } = [];
+    protected string? SelectedSourceSoNo { get; set; }
+    protected List<SaDoBillablePickerRow> DoPickerLines { get; set; } = [];
+    protected IReadOnlyList<SaDoBillablePickerRow> SelectedDoPickerLines { get; set; } = [];
+    protected string? DoPickerError { get; set; }
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
     protected bool IsViewMode => !IsNewMode && !IsEditMode;
     protected bool CanEditDocument => (IsNewMode || IsEditMode) && !IsViewMode;
+
+    /// <summary>
+    /// New/Edit always show Source. View shows it when DoNo display value is non-blank.
+    /// </summary>
+    protected bool ShowSourceCard =>
+        !IsViewMode || !string.IsNullOrWhiteSpace(DoNoDisplay);
+
+    protected bool CanEditAddresses =>
+        CanEditDocument
+        && string.Equals(StatusDisplay, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(CustCode);
     protected bool CanEditFromView =>
         IsViewMode
         && CanEditPermission
@@ -115,13 +152,95 @@ public partial class SaInvoice : PageBase, IDisposable
     protected string LineCountLabel => Lines.Count == 1 ? "1 line" : $"{Lines.Count} lines";
     protected bool HasCustomer => !string.IsNullOrWhiteSpace(CustCode);
     protected bool CanMutateLines => CanEditDocument && HasCustomer && CurrRateValid && !IsSubmitting;
+    protected bool CanOpenSoPicker => CanMutateLines && HasCustomer;
+    protected bool CanOpenDoPicker => CanMutateLines && HasCustomer;
+    protected bool TaxGroupRequired => _taxable == true;
+    protected bool HasContact =>
+        !string.IsNullOrWhiteSpace(InvTel) || !string.IsNullOrWhiteSpace(InvEmail);
+    protected bool HasBuyerId =>
+        !string.IsNullOrWhiteSpace(BuyerTin) || !string.IsNullOrWhiteSpace(BuyerBrn);
+    protected string ContactRequiredCss => HasContact ? string.Empty : "required-field";
+    protected string BuyerIdRequiredCss => HasBuyerId ? string.Empty : "required-field";
+    /// <summary>
+    /// Local UX only. Must not gate on master-derived AR GL / selling GL / tax GL / classification.
+    /// </summary>
     protected bool CanSave =>
         CanEditDocument
         && !IsSubmitting
         && Lines.Count > 0
         && HasCustomer
         && CurrRateValid
-        && !string.IsNullOrWhiteSpace(PayCode);
+        && !string.IsNullOrWhiteSpace(PayCode)
+        && (!TaxGroupRequired || !string.IsNullOrWhiteSpace(TaxGrCode))
+        && !string.IsNullOrWhiteSpace(SalesmanCode)
+        && !string.IsNullOrWhiteSpace(InvName)
+        && !string.IsNullOrWhiteSpace(InvAddress1)
+        && !string.IsNullOrWhiteSpace(InvCity)
+        && !string.IsNullOrWhiteSpace(InvPostalCode)
+        && !string.IsNullOrWhiteSpace(InvCountry)
+        && HasContact;
+    // BuyerTin/BuyerBrn intentionally omitted: server snapshots from customer master.
+    protected string FooterHint
+    {
+        get
+        {
+            if (IsViewMode || CanSave)
+            {
+                return $"{(_isDirty ? "Unsaved changes" : "Ready")} · {LineCountLabel}";
+            }
+
+            if (IsSubmitting)
+            {
+                return "Saving…";
+            }
+
+            if (!HasCustomer)
+            {
+                return "Select a customer";
+            }
+
+            if (!CurrRateValid)
+            {
+                return "Valid FX rate is required";
+            }
+
+            if (string.IsNullOrWhiteSpace(PayCode))
+            {
+                return "Payment term is required";
+            }
+
+            if (TaxGroupRequired && string.IsNullOrWhiteSpace(TaxGrCode))
+            {
+                return "Tax group is required";
+            }
+
+            if (string.IsNullOrWhiteSpace(SalesmanCode))
+            {
+                return "Salesman is required";
+            }
+
+            if (string.IsNullOrWhiteSpace(InvName)
+                || string.IsNullOrWhiteSpace(InvAddress1)
+                || string.IsNullOrWhiteSpace(InvCity)
+                || string.IsNullOrWhiteSpace(InvPostalCode)
+                || string.IsNullOrWhiteSpace(InvCountry))
+            {
+                return "Complete billing address";
+            }
+
+            if (!HasContact)
+            {
+                return "Telephone or email is required";
+            }
+
+            if (Lines.Count == 0)
+            {
+                return "Add at least one line";
+            }
+
+            return $"{(_isDirty ? "Unsaved changes" : "Ready")} · {LineCountLabel}";
+        }
+    }
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
     protected string PopupPrimaryText => IsEditingLine ? "Update item" : "Add item";
@@ -162,6 +281,7 @@ public partial class SaInvoice : PageBase, IDisposable
         ErrorMessage = null;
         StatusMessage = null;
         ValidationErrors.Clear();
+        PostWarnings.Clear();
         ConfirmDiscardVisible = false;
         ConfirmCustChangeVisible = false;
         ConfirmShipOverwriteVisible = false;
@@ -170,6 +290,8 @@ public partial class SaInvoice : PageBase, IDisposable
         _isDirty = false;
         _pendingCustCode = null;
         PopupVisible = false;
+        ResetSoPicker();
+        ResetDoPicker();
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Edit);
         var lookups = await Invoices.GetLookupsAsync(_cts.Token);
@@ -185,10 +307,13 @@ public partial class SaInvoice : PageBase, IDisposable
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
+            SalesReps = lookups.SalesReps.ToList();
         }
 
         Countries = await Lookups.ListCountriesForAssignmentAsync(_cts.Token);
         States = await Lookups.ListStatesForAssignmentAsync(_cts.Token);
+        var classifications = await InventoryLookups.ListClassificationsAsync(_cts.Token);
+        Classifications = classifications.Succeeded ? classifications.Rows : [];
         if (_disposed)
         {
             return;
@@ -220,7 +345,8 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         ApplyDocument(result.Document);
-        await CaptureCustomerFlagsAsync(result.Document.CustCode);
+        PostWarnings = result.PostWarnings.ToList();
+        await ApplyCustomerDefaultsAsync(result.Document.CustCode, addressApply: false, seq: _customerApplySeq);
         RecalcDocument();
         IsLoading = false;
     }
@@ -229,7 +355,7 @@ public partial class SaInvoice : PageBase, IDisposable
     {
         InvNo = null;
         InvNoDisplay = "AUTO";
-        DoNoDisplay = "AUTO";
+        DoNoDisplay = string.Empty;
         StatusDisplay = SaInvoiceStatuses.New;
         InvDate = Dates.Today.Date;
         CustCode = null;
@@ -243,7 +369,12 @@ public partial class SaInvoice : PageBase, IDisposable
         SalesmanCode = null;
         PoNo = null;
         Remark = null;
+        InvEmail = null;
+        DueDate = null;
+        BuyerTin = null;
+        BuyerBrn = null;
         ClearAddresses();
+        ClearShipToState();
         Lines = [];
         GrossAmnt = 0;
         Taxes = 0;
@@ -254,6 +385,8 @@ public partial class SaInvoice : PageBase, IDisposable
         _discountMethod = null;
         _decPoint = false;
         _taxable = null;
+        ResetSoPicker();
+        ResetDoPicker();
     }
 
     private void ClearAddresses()
@@ -263,6 +396,34 @@ public partial class SaInvoice : PageBase, IDisposable
         ShipName = ShipAddress1 = ShipAddress2 = ShipAddress3 = null;
         ShipCity = ShipState = ShipPostalCode = ShipCountry = ShipTel = ShipFax = null;
     }
+
+    private void ClearShipToState()
+    {
+        _shipToLine = null;
+        _shipToOptions = [];
+    }
+
+    private void WipeAllCustomerDependentFields()
+    {
+        CustName = null;
+        InvPrefix = null;
+        Currency = "MYR";
+        CurrRate = 1m;
+        CurrRateValid = false;
+        PayCode = null;
+        TaxGrCode = null;
+        SalesmanCode = null;
+        Remark = null;
+        ClearAddresses();
+        ClearShipToState();
+        _taxable = null;
+        _discountMethod = null;
+        _decPoint = false;
+        ResetSoPicker();
+        ResetDoPicker();
+    }
+
+    private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
     private void ApplyDocument(SaInvoiceDocument doc)
     {
@@ -293,6 +454,10 @@ public partial class SaInvoice : PageBase, IDisposable
         InvCountry = doc.InvCountry;
         InvTel = doc.InvTel;
         InvFax = doc.InvFax;
+        InvEmail = doc.InvEmail;
+        DueDate = doc.DueDate;
+        BuyerTin = doc.BuyerTin;
+        BuyerBrn = doc.BuyerBrn;
         ShipName = doc.ShipName;
         ShipAddress1 = doc.ShipAddress1;
         ShipAddress2 = doc.ShipAddress2;
@@ -316,26 +481,60 @@ public partial class SaInvoice : PageBase, IDisposable
         }
     }
 
-    private async Task CaptureCustomerFlagsAsync(string? custCode)
+    private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
     {
-        if (string.IsNullOrWhiteSpace(custCode))
+        var code = NormCustCode(custCode);
+        if (string.IsNullOrEmpty(code))
+        {
+            if (addressApply)
+            {
+                WipeAllCustomerDependentFields();
+            }
+            else
+            {
+                ClearShipToState();
+            }
+
+            return;
+        }
+
+        var result = await Invoices.GetCustomerDefaultsAsync(code, InvDate, _cts.Token);
+        // Stale check BEFORE any stamp
+        if (seq != _customerApplySeq || _disposed)
         {
             return;
         }
 
-        var lookup = Customers.FirstOrDefault(x => string.Equals(x.CustCode, custCode, StringComparison.OrdinalIgnoreCase));
-        _discountMethod = lookup?.DiscountMethod;
-        _decPoint = lookup?.DecPoint == true;
+        if (!result.Succeeded || result.CustomerDefaults is null)
+        {
+            if (addressApply)
+            {
+                ErrorMessage = result.ErrorMessage ?? "Unable to load customer defaults.";
+            }
 
-        var defaults = await Invoices.GetCustomerDefaultsAsync(custCode, InvDate, _cts.Token);
-        if (_disposed || !defaults.Succeeded || defaults.CustomerDefaults is null)
+            return;
+        }
+
+        var d = result.CustomerDefaults;
+        _taxable = d.Taxable;
+        _discountMethod = d.DiscountMethod ?? _discountMethod;
+        _decPoint = d.DecPoint == true;
+        _shipToOptions = d.ShipToAddresses ?? [];
+
+        if (!addressApply)
+        {
+            _shipToLine = null; // combo empty; keep saved Inv*/Ship*
+            return;
+        }
+
+        if (seq != _customerApplySeq)
         {
             return;
         }
 
-        _taxable = defaults.CustomerDefaults.Taxable;
-        _discountMethod = defaults.CustomerDefaults.DiscountMethod ?? _discountMethod;
-        _decPoint = defaults.CustomerDefaults.DecPoint == true;
+        ApplyDefaults(d);
+        _shipToLine = null;
+        Remark = null;
     }
 
     protected async Task OnCustCodeChanged(string? value)
@@ -345,20 +544,31 @@ public partial class SaInvoice : PageBase, IDisposable
             return;
         }
 
-        var next = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        var next = NormCustCode(value);
+        next = string.IsNullOrEmpty(next) ? null : next;
         if (string.Equals(CustCode, next, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        if (Lines.Count > 0)
+        // Confirm only when changing to another customer while lines exist.
+        if (Lines.Count > 0 && next is not null)
         {
             _pendingCustCode = next;
             ConfirmCustChangeVisible = true;
             return;
         }
 
+        // Clearing customer always wipes lines — no confirm (locked).
+        if (Lines.Count > 0 && next is null)
+        {
+            Lines.Clear();
+        }
+
+        ResetSoPicker();
+        ResetDoPicker();
         await ApplyCustomerAsync(next);
+        RecalcDocument();
     }
 
     protected async Task ConfirmCustChangeAsync()
@@ -366,7 +576,7 @@ public partial class SaInvoice : PageBase, IDisposable
         ConfirmCustChangeVisible = false;
         var next = _pendingCustCode;
         _pendingCustCode = null;
-        Lines = [];
+        Lines.Clear();
         await ApplyCustomerAsync(next);
         RecalcDocument();
         MarkDirty();
@@ -380,42 +590,20 @@ public partial class SaInvoice : PageBase, IDisposable
 
     private async Task ApplyCustomerAsync(string? custCode)
     {
+        var next = string.IsNullOrEmpty(NormCustCode(custCode)) ? null : NormCustCode(custCode);
+        var seq = Interlocked.Increment(ref _customerApplySeq);
+        CustCode = next;
         _isApplyingDefaults = true;
         try
         {
-            CustCode = custCode;
-            if (string.IsNullOrWhiteSpace(custCode))
+            if (next is null)
             {
-                CustName = null;
-                InvPrefix = null;
-                Currency = "MYR";
-                CurrRate = 1m;
-                CurrRateValid = false;
-                PayCode = null;
-                TaxGrCode = null;
-                SalesmanCode = null;
-                ClearAddresses();
-                _taxable = null;
-                _discountMethod = null;
-                _decPoint = false;
+                WipeAllCustomerDependentFields();
                 MarkDirty();
                 return;
             }
 
-            var seq = Interlocked.Increment(ref _defaultsSeq);
-            var result = await Invoices.GetCustomerDefaultsAsync(custCode, InvDate, _cts.Token);
-            if (_disposed || seq != _defaultsSeq)
-            {
-                return;
-            }
-
-            if (!result.Succeeded || result.CustomerDefaults is null)
-            {
-                ErrorMessage = result.ErrorMessage ?? "Unable to load customer defaults.";
-                return;
-            }
-
-            ApplyDefaults(result.CustomerDefaults);
+            await ApplyCustomerDefaultsAsync(next, addressApply: true, seq: seq);
             MarkDirty();
         }
         finally
@@ -438,6 +626,21 @@ public partial class SaInvoice : PageBase, IDisposable
         _taxable = d.Taxable;
         _discountMethod = d.DiscountMethod;
         _decPoint = d.DecPoint == true;
+        if (string.IsNullOrWhiteSpace(InvEmail))
+        {
+            InvEmail = d.InvEmail;
+        }
+
+        if (string.IsNullOrWhiteSpace(BuyerTin))
+        {
+            BuyerTin = d.BuyerTin;
+        }
+
+        if (string.IsNullOrWhiteSpace(BuyerBrn))
+        {
+            BuyerBrn = d.BuyerBrn;
+        }
+
         InvName = d.InvName;
         InvAddress1 = d.InvAddress1;
         InvAddress2 = d.InvAddress2;
@@ -459,6 +662,53 @@ public partial class SaInvoice : PageBase, IDisposable
         ShipCountry = d.ShipCountry;
         ShipTel = d.ShipTel;
         ShipFax = d.ShipFax;
+        _shipToOptions = d.ShipToAddresses ?? [];
+    }
+
+    protected void OnShipToLineChanged(int? line)
+    {
+        if (!CanEditAddresses)
+        {
+            return;
+        }
+
+        _shipToLine = line;
+        if (line is null)
+        {
+            // Combo cleared — Ship* unchanged (no AppShip restore)
+            return;
+        }
+
+        var row = _shipToOptions.FirstOrDefault(x => x.Line == line);
+        if (row is null)
+        {
+            _shipToLine = null; // stale Line after list refresh
+            return;
+        }
+
+        StampShipFrom(row);
+        MarkDirty();
+    }
+
+    private void StampShipFrom(SaCustAddressVm row)
+    {
+        ShipName = !string.IsNullOrWhiteSpace(row.AddName) ? row.AddName : row.DeliverTo;
+        ShipAddress1 = row.Address1;
+        ShipAddress2 = row.Address2;
+        ShipAddress3 = row.Address3;
+        // Address4 deliberately omitted — no ShipAddress4 on invoice
+        ShipCity = row.City;
+        ShipState = row.State;
+        ShipPostalCode = row.PostalCode;
+        ShipCountry = row.Country;
+        ShipTel = row.Tel;
+        ShipFax = row.Fax;
+    }
+
+    protected void OnShipFieldEdited()
+    {
+        _shipToLine = null;
+        MarkDirty();
     }
 
     protected async Task OnInvDateChanged(DateTime newDate)
@@ -543,6 +793,232 @@ public partial class SaInvoice : PageBase, IDisposable
         PopupVisible = true;
     }
 
+    protected async Task OpenSoPickerAsync()
+    {
+        if (!CanOpenSoPicker)
+        {
+            return;
+        }
+
+        SoPickerVisible = true;
+        await LoadSoPickerOptionsAsync();
+    }
+
+    protected async Task OnSelectedSourceSoChangedAsync(string? soNo)
+    {
+        SelectedSourceSoNo = soNo;
+        SelectedSoPickerLines = [];
+        SoPickerLines = [];
+        SoPickerError = null;
+
+        if (string.IsNullOrWhiteSpace(SelectedSourceSoNo))
+        {
+            return;
+        }
+
+        var requestedSoNo = SelectedSourceSoNo;
+        SoPickerLoading = true;
+        try
+        {
+            var result = await Sos.GetBillableLinesAsync(requestedSoNo, _cts.Token);
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!string.Equals(SelectedSourceSoNo, requestedSoNo, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!result.Succeeded)
+            {
+                SoPickerError = result.ErrorMessage ?? "Unable to load remaining SO lines.";
+                return;
+            }
+
+            var existingKeys = Lines
+                .Where(x => !x.LinkDo && !string.IsNullOrWhiteSpace(x.SoNo) && x.SoLine is not null)
+                .Select(x => (SoNo: x.SoNo!, SoLine: (int)x.SoLine!.Value));
+            // Grid holds exactly one selected SO; KeyFieldName=Line is unique within this collection.
+            SoPickerLines = SaDocPickerLines.FilterRemainingSoLines(
+                result.RemainingLines,
+                requestedSoNo,
+                existingKeys).ToList();
+            SelectedSoPickerLines = SaDocPickerLines.SelectAllCurrent(SoPickerLines);
+            if (SoPickerLines.Count == 0)
+            {
+                SoPickerError = "Selected sales order has no remaining billable lines (qty may be reserved on delivery orders or other draft invoices).";
+            }
+        }
+        finally
+        {
+            SoPickerLoading = false;
+        }
+    }
+
+    protected void OnSelectedSoPickerLinesChanged(IReadOnlyList<object> selected)
+    {
+        SelectedSoPickerLines = selected.OfType<SaSoLineDto>().ToList();
+    }
+
+    protected void CloseSoPicker()
+    {
+        SoPickerVisible = false;
+    }
+
+    protected void AddFromSo()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedSourceSoNo))
+        {
+            SoPickerError = "Select a sales order first.";
+            return;
+        }
+
+        if (SelectedSoPickerLines.Count == 0)
+        {
+            SoPickerError = "Select at least one sales order line.";
+            return;
+        }
+
+        if (Lines.Any(x => x.LinkDo))
+        {
+            SoPickerError = "This invoice already has Delivery Order lines. Mixed invoices are not allowed.";
+            return;
+        }
+
+        var added = 0;
+        foreach (var source in SelectedSoPickerLines)
+        {
+            var keyExists = Lines.Any(x =>
+                string.Equals(x.SoNo, SelectedSourceSoNo, StringComparison.OrdinalIgnoreCase)
+                && x.SoLine == source.Line);
+            if (keyExists)
+            {
+                continue;
+            }
+
+            Lines.Add(ApplyItemClassification(SaInvoiceLineVm.FromSalesOrder(source, SelectedSourceSoNo)));
+            added++;
+        }
+
+        if (added == 0)
+        {
+            SoPickerError = "All remaining lines from this sales order are already added.";
+            return;
+        }
+
+        Renumber();
+        Lines = Lines.ToList();
+        RecalcDocument();
+        MarkDirty();
+        StatusMessage = added == 1 ? "1 sales order line added." : $"{added} sales order lines added.";
+        ResetSoPicker();
+        ResetDoPicker();
+    }
+
+    protected async Task OpenDoPickerAsync()
+    {
+        if (!CanOpenDoPicker)
+        {
+            return;
+        }
+
+        DoPickerVisible = true;
+        DoPickerError = null;
+        SelectedDoPickerLines = [];
+        DoPickerLines = [];
+        DoPickerLoading = true;
+        try
+        {
+            var result = await Dos.GetBillableLinesAsync(CustCode!, Currency, _cts.Token);
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!result.Succeeded)
+            {
+                DoPickerError = result.ErrorMessage ?? "Unable to load posted delivery orders.";
+                DoPickerLines = [];
+                SelectedDoPickerLines = [];
+                return;
+            }
+
+            var existingKeys = Lines
+                .Where(x => x.LinkDo && !string.IsNullOrWhiteSpace(x.DoNo) && x.DoLine is not null)
+                .Select(x => (DoNo: x.DoNo!, DoLine: (int)x.DoLine!.Value));
+            var filtered = SaDocPickerLines.FilterRemainingDoLines(result.BillableLines, existingKeys);
+            DoPickerLines = filtered
+                .Select(x => new SaDoBillablePickerRow { Source = x })
+                .ToList();
+            SelectedDoPickerLines = SaDocPickerLines.SelectAllCurrent(DoPickerLines);
+            if (DoPickerLines.Count == 0)
+            {
+                DoPickerError = "No remaining posted delivery order lines for this customer.";
+            }
+        }
+        finally
+        {
+            DoPickerLoading = false;
+        }
+    }
+
+    protected void OnSelectedDoPickerLinesChanged(IReadOnlyList<object> selected)
+    {
+        SelectedDoPickerLines = selected.OfType<SaDoBillablePickerRow>().ToList();
+    }
+
+    protected void CloseDoPicker()
+    {
+        DoPickerVisible = false;
+    }
+
+    protected void AddFromDo()
+    {
+        if (SelectedDoPickerLines.Count == 0)
+        {
+            DoPickerError = "Select at least one delivery order line.";
+            return;
+        }
+
+        if (Lines.Any(x => !x.LinkDo && !string.IsNullOrWhiteSpace(x.SoNo)))
+        {
+            DoPickerError = "This invoice already has direct Sales Order lines. Mixed invoices are not allowed.";
+            return;
+        }
+
+        var added = 0;
+        foreach (var row in SelectedDoPickerLines)
+        {
+            var source = row.Source;
+            var keyExists = Lines.Any(x =>
+                x.LinkDo
+                && string.Equals(x.DoNo, source.DoNo, StringComparison.OrdinalIgnoreCase)
+                && x.DoLine == source.Line);
+            if (keyExists)
+            {
+                continue;
+            }
+
+            Lines.Add(ApplyItemClassification(SaInvoiceLineVm.FromDeliveryOrder(source)));
+            added++;
+        }
+
+        if (added == 0)
+        {
+            DoPickerError = "All remaining delivery order lines are already added.";
+            return;
+        }
+
+        Renumber();
+        Lines = Lines.ToList();
+        RecalcDocument();
+        MarkDirty();
+        StatusMessage = added == 1 ? "1 delivery order line added." : $"{added} delivery order lines added.";
+        ResetDoPicker();
+    }
+
     protected void EditLine(SaInvoiceLineVm line)
     {
         if (!CanMutateLines)
@@ -585,6 +1061,7 @@ public partial class SaInvoice : PageBase, IDisposable
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
         Popup.UnitPrice = item.SellingPrice ?? 0m;
+        Popup.Classification = item.Classification;
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
         {
@@ -623,6 +1100,12 @@ public partial class SaInvoice : PageBase, IDisposable
         if (Popup.Qty <= 0m)
         {
             PopupError = "Quantity must be greater than zero.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Popup.Classification))
+        {
+            PopupError = "Classification is required.";
             return;
         }
 
@@ -683,7 +1166,26 @@ public partial class SaInvoice : PageBase, IDisposable
             }
 
             _isDirty = false;
-            Navigation.NavigateTo($"/sales/invoices/edit/{result.InvNo}");
+            if (result.PostWarnings.Count > 0)
+            {
+                StatusMessage = "Invoice saved.";
+                PostWarnings = result.PostWarnings.ToList();
+                if (IsNewMode)
+                {
+                    Navigation.NavigateTo($"/sales/invoices/edit/{result.InvNo}");
+                    return;
+                }
+
+                if (result.Document is not null)
+                {
+                    ApplyDocument(result.Document);
+                    RecalcDocument();
+                }
+
+                return;
+            }
+
+            Navigation.NavigateTo("/sales/invoices");
         }
         finally
         {
@@ -840,7 +1342,7 @@ public partial class SaInvoice : PageBase, IDisposable
 
     protected Task OnCancelAsync()
     {
-        if (IsEditMode || _isDirty || (IsNewMode && (Lines.Count > 0 || HasCustomer)))
+        if (_isDirty)
         {
             ConfirmDiscardVisible = true;
             return Task.CompletedTask;
@@ -882,7 +1384,7 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         ApplyDocument(result.Document);
-        await CaptureCustomerFlagsAsync(result.Document.CustCode);
+        await ApplyCustomerDefaultsAsync(result.Document.CustCode, addressApply: false, seq: _customerApplySeq);
         RecalcDocument();
         _isDirty = false;
         ValidationErrors.Clear();
@@ -890,6 +1392,7 @@ public partial class SaInvoice : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
+
     protected void DismissError() => ErrorMessage = null;
 
     private bool HandleOperationResult(SaInvoiceOperationResult result, bool stayOnPage)
@@ -951,6 +1454,9 @@ public partial class SaInvoice : PageBase, IDisposable
             InvCountry = InvCountry,
             InvTel = InvTel,
             InvFax = InvFax,
+            InvEmail = InvEmail,
+            BuyerTin = BuyerTin,
+            BuyerBrn = BuyerBrn,
             ShipName = ShipName,
             ShipAddress1 = ShipAddress1,
             ShipAddress2 = ShipAddress2,
@@ -1039,15 +1545,112 @@ public partial class SaInvoice : PageBase, IDisposable
         if (CanEditDocument)
         {
             _isDirty = true;
+            ValidationErrors.Clear();
         }
     }
 
     protected void MarkDirtyOnly() => MarkDirty();
+
+    private async Task LoadSoPickerOptionsAsync()
+    {
+        SoPickerLoading = true;
+        SoPickerError = null;
+        SelectedSourceSoNo = null;
+        SoPickerLines = [];
+        SelectedSoPickerLines = [];
+        try
+        {
+            var result = await Sos.SearchAsync(new SaSoListQuery
+            {
+                SearchText = CustCode,
+                Skip = 0,
+                Take = 50,
+                SortDescending = true
+            }, _cts.Token);
+
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!result.Succeeded || result.ListPage is null)
+            {
+                SoPickerOptions = [];
+                SoPickerError = result.ErrorMessage ?? "Unable to search sales orders.";
+                return;
+            }
+
+            SoPickerOptions = result.ListPage.Rows
+                .Where(x =>
+                    string.Equals(x.CustCode, CustCode, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(x.Status, SaSoStatuses.New, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(x.Status, SaSoStatuses.Shipped, StringComparison.OrdinalIgnoreCase)))
+                .Select(x => new SaSoPickerOption(x.SoNo, x.SoDate, x.Status, x.CustPo))
+                .ToList();
+
+            if (SoPickerOptions.Count == 0)
+            {
+                SoPickerError = "No open sales orders were found for this customer.";
+            }
+        }
+        finally
+        {
+            SoPickerLoading = false;
+        }
+    }
+
+    private void ResetSoPicker()
+    {
+        SoPickerVisible = false;
+        SoPickerLoading = false;
+        SoPickerError = null;
+        SelectedSourceSoNo = null;
+        SoPickerLines = [];
+        SelectedSoPickerLines = [];
+        SoPickerOptions = [];
+    }
+
+    private void ResetDoPicker()
+    {
+        DoPickerVisible = false;
+        DoPickerLoading = false;
+        DoPickerError = null;
+        DoPickerLines = [];
+        SelectedDoPickerLines = [];
+    }
+
+    private SaInvoiceLineVm ApplyItemClassification(SaInvoiceLineVm line)
+    {
+        if (string.IsNullOrWhiteSpace(line.Classification))
+        {
+            line.Classification = ClassificationFromItem(line.ICode);
+        }
+
+        return line;
+    }
+
+    private string? ClassificationFromItem(string? iCode) =>
+        Items.FirstOrDefault(x => string.Equals(x.ICode, iCode, StringComparison.OrdinalIgnoreCase))
+            ?.Classification;
 }
 
 public sealed class SaInvoiceLineVm
 {
     public int Line { get; set; }
+    public string? SoNo { get; set; }
+    public short? SoLine { get; set; }
+    public short? CustRel { get; set; }
+    public string? CustPo { get; set; }
+    public bool HasSource => !string.IsNullOrWhiteSpace(SoNo) || LinkDo;
+    public string? SoRevDisplay =>
+        string.IsNullOrWhiteSpace(SoNo) ? null : (CustRel is > 0 ? CustRel.Value.ToString() : "1");
+    public string? SoLineDisplay => SoLine is > 0 ? SoLine.Value.ToString() : null;
+    public string? SourceDoNo => LinkDo && !string.IsNullOrWhiteSpace(DoNo) ? DoNo : null;
+    public string? SourceDoLine => LinkDo && DoLine is > 0 ? DoLine.Value.ToString() : null;
+    public bool LinkDo { get; set; }
+    public string? DoNo { get; set; }
+    public short? DoLine { get; set; }
+    public decimal SoConsumedQty { get; set; }
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
     public decimal Qty { get; set; } = 1m;
@@ -1070,11 +1673,20 @@ public sealed class SaInvoiceLineVm
     public decimal NetAmount { get; set; }
     public bool StockControl { get; set; } = true;
     public bool ShipmentComplete { get; set; }
+    public string? Classification { get; set; }
     public string? Remarks { get; set; }
 
     public SaInvoiceLineVm Clone() => new()
     {
         Line = Line,
+        SoNo = SoNo,
+        SoLine = SoLine,
+        CustRel = CustRel,
+        CustPo = CustPo,
+        LinkDo = LinkDo,
+        DoNo = DoNo,
+        DoLine = DoLine,
+        SoConsumedQty = SoConsumedQty,
         ICode = ICode,
         IDesc = IDesc,
         Qty = Qty,
@@ -1095,14 +1707,21 @@ public sealed class SaInvoiceLineVm
         Amount = Amount,
         TaxAmt = TaxAmt,
         NetAmount = NetAmount,
-        StockControl = StockControl,
-        ShipmentComplete = ShipmentComplete,
-        Remarks = Remarks
-    };
+            StockControl = StockControl,
+            ShipmentComplete = ShipmentComplete,
+            Classification = Classification,
+            Remarks = Remarks
+        };
 
     public SaInvoiceLineRequest ToRequest() =>
         new()
         {
+            SoNo = SoNo,
+            SoLine = SoLine,
+            CustRel = CustRel,
+            LinkDo = LinkDo,
+            DoNo = DoNo,
+            DoLine = DoLine,
             ICode = ICode,
             IDesc = IDesc,
             Qty = Qty,
@@ -1118,6 +1737,7 @@ public sealed class SaInvoiceLineVm
             ItemDiscAmount1 = ItemDiscAmount1,
             IsInclusive = IsInclusive,
             TaxGrCode = TaxGrCode,
+            Classification = Classification,
             Remarks = Remarks
         };
 
@@ -1141,6 +1761,14 @@ public sealed class SaInvoiceLineVm
         new()
         {
             Line = dto.Line,
+            SoNo = dto.SoNo,
+            SoLine = dto.SoLine,
+            CustRel = dto.CustRel,
+            CustPo = dto.CustPo,
+            LinkDo = dto.LinkDo,
+            DoNo = dto.DoNo,
+            DoLine = dto.DoLine,
+            SoConsumedQty = dto.SoConsumedQty,
             ICode = dto.ICode,
             IDesc = dto.IDesc,
             Qty = dto.Qty,
@@ -1163,6 +1791,66 @@ public sealed class SaInvoiceLineVm
             NetAmount = dto.NetAmount,
             StockControl = dto.StockControl,
             ShipmentComplete = dto.ShipmentComplete,
+            Classification = dto.Classification,
             Remarks = dto.Remarks
+        };
+
+    public static SaInvoiceLineVm FromSalesOrder(SaSoLineDto dto, string soNo) =>
+        new()
+        {
+            SoNo = soNo,
+            SoLine = checked((short)dto.Line),
+            CustRel = dto.CustRel,
+            CustPo = dto.CustPo,
+            LinkDo = false,
+            DoNo = null,
+            DoLine = null,
+            SoConsumedQty = 0m,
+            ICode = dto.ICode,
+            IDesc = dto.IDesc,
+            Qty = dto.RemainingBillableQty > 0m ? dto.RemainingBillableQty : dto.BalanceQty,
+            StdPackSize = dto.StdPsize > 0m ? dto.StdPsize : (decimal?)null,
+            StdUom = dto.StdUom,
+            FrWarehouse = dto.Warehouse,
+            UnitPrice = dto.UnitPrice,
+            ItemDiscount = dto.ItemDiscount,
+            ItemDiscount2 = dto.ItemDiscount2,
+            ItemDiscount3 = dto.ItemDiscount3,
+            ItemDiscount4 = dto.ItemDiscount4,
+            ItemDiscount5 = dto.ItemDiscount5,
+            ItemDiscount6 = dto.ItemDiscount6,
+            ItemDiscAmount = dto.ItemDiscAmount,
+            ItemDiscAmount1 = dto.ItemDiscAmount1,
+            IsInclusive = dto.IsInclusive,
+            TaxGrCode = dto.TaxGroup,
+            Amount = dto.Amount,
+            TaxAmt = dto.TaxAmt,
+            NetAmount = dto.NetAmount,
+            StockControl = dto.StockControl,
+            ShipmentComplete = !dto.StockControl,
+            Classification = dto.Classification,
+            Remarks = dto.Remarks
+        };
+
+    public static SaInvoiceLineVm FromDeliveryOrder(SaDoBillableLineDto dto) =>
+        new()
+        {
+            SoNo = !string.IsNullOrWhiteSpace(dto.SoNo) && dto.SoLine > 0 ? dto.SoNo : null,
+            SoLine = !string.IsNullOrWhiteSpace(dto.SoNo) && dto.SoLine > 0 ? dto.SoLine : null,
+            CustRel = !string.IsNullOrWhiteSpace(dto.SoNo) && dto.SoLine > 0 ? dto.CustRel : null,
+            CustPo = dto.CustPo,
+            LinkDo = true,
+            DoNo = dto.DoNo,
+            DoLine = dto.Line,
+            SoConsumedQty = 0m,
+            ICode = dto.ICode,
+            IDesc = dto.IDesc,
+            Qty = dto.RemainingBillableQty,
+            FrWarehouse = dto.FrWarehouse,
+            UnitPrice = dto.UnitPrice,
+            StockControl = dto.StockControl,
+            ShipmentComplete = true,
+            Classification = null,
+            Remarks = null
         };
 }

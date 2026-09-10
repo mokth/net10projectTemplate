@@ -575,6 +575,7 @@ public sealed class SaCustService : ISaCustService
         entity.Website = NullIfWhiteSpace(model.Website);
         SetIfChanged(entity, snapshot, () => entity.CjLmw, v => entity.CjLmw = v, NullIfWhiteSpace(model.CjLmw));
         SetIfChanged(entity, snapshot, () => entity.CustBrn, v => entity.CustBrn = v, NullIfWhiteSpace(model.CustBrn));
+        SetIfChanged(entity, snapshot, () => entity.TinNo, v => entity.TinNo = v, NullIfWhiteSpace(model.TinNo));
         SetIfChanged(entity, snapshot, () => entity.RegType, v => entity.RegType = v, NullIfWhiteSpace(model.RegType));
         SetIfChanged(entity, snapshot, () => entity.Remark, v => entity.Remark = v, NullIfWhiteSpace(model.Remark));
         SetIfChanged(entity, snapshot, () => entity.AppInvoice, v => entity.AppInvoice = v, model.AppInvoice);
@@ -857,6 +858,7 @@ public sealed class SaCustService : ISaCustService
             Website = x.Website,
             CjLmw = x.CjLmw,
             CustBrn = x.CustBrn,
+            TinNo = x.TinNo,
             RegType = x.RegType,
             Remark = x.Remark,
             AppInvoice = x.AppInvoice,

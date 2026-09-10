@@ -125,6 +125,10 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();
+        services.AddScoped<ISaDoService, SaDoService>();
+        services.AddScoped<ISaSoService, SaSoService>();
+        services.AddScoped<ISaCdnService, SaCdnService>();
+        services.AddScoped<ISaDocApplication, SaDocApplicationService>();
 
         return services;
 

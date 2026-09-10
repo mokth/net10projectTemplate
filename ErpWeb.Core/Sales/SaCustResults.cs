@@ -53,6 +53,13 @@ public sealed class SaCustAddressVm
     public string? Country { get; set; }
     public string? Tel { get; set; }
     public string? Fax { get; set; }
+
+    public string DisplayText =>
+        !string.IsNullOrWhiteSpace(DeliverTo)
+            ? DeliverTo!
+            : !string.IsNullOrWhiteSpace(AddName)
+                ? AddName!
+                : $"Line {Line}";
 }
 
 public sealed class SaCustContactVm
@@ -96,6 +103,7 @@ public sealed class SaCustEditVm
     public string? Website { get; set; }
     public string? CjLmw { get; set; }
     public string? CustBrn { get; set; }
+    public string? TinNo { get; set; }
     public string? RegType { get; set; }
     public string? Remark { get; set; }
     public bool? AppInvoice { get; set; }

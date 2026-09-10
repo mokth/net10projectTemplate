@@ -34,6 +34,10 @@ public static class MenuCodes
     public const string SalesSalesRep = "SA_SALES_REP";
     public const string SalesTaxGroup = "SA_TAX_GROUP";
     public const string SalesInvoice = "SA_INVOICE";
+    public const string SalesDeliveryOrder = "SA_DO";
+    public const string SalesOrder = "SA_SO";
+    public const string SalesCreditNote = "SA_CN";
+    public const string SalesDebitNote = "SA_DN";
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

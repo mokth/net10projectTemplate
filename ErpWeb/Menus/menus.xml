@@ -36,7 +36,11 @@
       <Menu Code="SA_TAX_GROUP" Name="Tax Groups" Route="/sales/tax-groups" SortOrder="11" />
     </Menu>
     <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2">
+      <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="0" />
       <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="1" />
+      <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="2" />
+      <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="3" />
+      <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="4" />
     </Menu>
   </Menu>
   <Menu Code="OPERATIONS" Name="Operations" SortOrder="4">

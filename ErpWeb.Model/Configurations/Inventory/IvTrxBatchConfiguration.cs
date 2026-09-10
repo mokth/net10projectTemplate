@@ -19,6 +19,7 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
         builder.Property(e => e.RefNo).HasMaxLength(50);
         builder.Property(e => e.Remarks).HasMaxLength(250);
         builder.Property(e => e.LocationCode).HasMaxLength(10);
+        builder.Property(e => e.SourceFingerprint).HasMaxLength(64);
         builder.Property(e => e.PostedBy).HasMaxLength(10);
         builder.Property(e => e.RollbackBy).HasMaxLength(10);
         builder.Property(e => e.PostedCount).HasDefaultValue(0);
@@ -34,5 +35,18 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BatchStatus })
             .HasDatabaseName("IX_IvTrxBatch_Company_BatchStatus");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.TrxType, e.RefNo })
+            .HasDatabaseName("IX_IvTrxBatch_Company_Branch_TrxType_RefNo");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.RefNo })
+            .IsUnique()
+            .HasFilter("[TrxType] = 'SP' AND [RefNo] IS NOT NULL")
+            .HasDatabaseName("UQ_IvTrxBatch_SP_Ref");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.RefNo })
+            .IsUnique()
+            .HasFilter("[TrxType] = N'CR' AND [RefNo] >= N'CN/' AND [RefNo] < N'CN0'")
+            .HasDatabaseName("UQ_IvTrxBatch_CR_CnRef");
     }
 }

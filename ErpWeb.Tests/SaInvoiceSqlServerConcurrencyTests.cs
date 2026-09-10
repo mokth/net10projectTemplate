@@ -674,6 +674,8 @@ public class SaInvoiceSqlServerConcurrencyTests
             .ReturnsAsync(true);
         var tenant = InventoryTenantTestHelper.CreateTenantContext();
         var postingRepo = new IvStockPostingRepository();
+        var salesOrders = new SaSoRepository();
+        var docApplication = new SaDocApplicationService(salesOrders, new SaDoRepository());
         var posting = new IvInventoryPostingService(
             factory,
             tenant,
@@ -697,6 +699,8 @@ public class SaInvoiceSqlServerConcurrencyTests
             postingRepo,
             posting,
             new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
+            salesOrders,
+            docApplication,
             new SaCustLookupService(factory, tenant),
             NullLogger<SaInvoiceService>.Instance);
     }

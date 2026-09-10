@@ -32,6 +32,7 @@
     --overlay-scrim: rgba(255, 255, 255, 0.72);
     --control-border: #cfd6df;
     --field-label: #344054;
+    --required-field-bg: #fff6e5;
 }
 
 /* Fluent Dark (and any data-bs-theme=dark host) */
@@ -64,8 +65,18 @@
     --overlay-scrim: rgba(15, 20, 28, 0.72);
     --control-border: #3a4a63;
     --field-label: #c5ced9;
+    --required-field-bg: #3a3220;
 
     color-scheme: dark;
+}
+
+/* Mandatory-field tint (InputCssClass on text/date/combo, CssClass on DxComboBox root). */
+.required-field,
+.required-field input,
+.required-field .dxbl-text-edit-input,
+.required-field.dxbl-text-edit .dxbl-text-edit-input,
+.required-field.dxbl-spin-edit .dxbl-text-edit-input {
+    background-color: var(--required-field-bg) !important;
 }
 
 *,

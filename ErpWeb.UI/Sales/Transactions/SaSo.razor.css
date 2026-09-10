@@ -1,0 +1,47 @@
+/* Page chrome lives in SaDocPage.razor.css. */
+
+.saso-revisions {
+    display: grid;
+    gap: 8px;
+}
+
+.saso-revisions__head {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sdoc-muted-text, #667085);
+}
+
+.saso-revisions__list {
+    display: grid;
+    gap: 4px;
+}
+
+.saso-revisions__item {
+    display: grid;
+    grid-template-columns: 70px 110px 120px 140px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    border: 0;
+    border-radius: var(--sdoc-radius, 8px);
+    background: var(--sdoc-soft, #f4f6f8);
+    color: var(--sdoc-ink, #1c2430);
+    font-size: 0.82rem;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.saso-revisions__item span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+    .saso-revisions__item {
+        grid-template-columns: 64px 1fr;
+    }
+}

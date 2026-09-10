@@ -61,14 +61,14 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="NumCd" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="NumCd" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.NumCd"
                                        ReadOnly="@IsEditMode"
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Year" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Year" ColSpanMd="4">
                         <Template>
                             <DxSpinEdit T="short"
                                         @bind-Value="@EditModel.Year"
@@ -79,7 +79,7 @@
                                         InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Month" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Month" ColSpanMd="4">
                         <Template>
                             <DxSpinEdit T="short"
                                         @bind-Value="@EditModel.Month"

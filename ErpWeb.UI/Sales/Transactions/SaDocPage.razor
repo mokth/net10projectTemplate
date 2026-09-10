@@ -1,0 +1,9 @@
+@* Page-level chrome wrapper only. No document state, bindings, permissions, or services. *@
+<div class="sdoc-page">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

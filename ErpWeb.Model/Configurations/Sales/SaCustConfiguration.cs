@@ -39,6 +39,7 @@ public class SaCustConfiguration : IEntityTypeConfiguration<SaCust>
         builder.Property(e => e.Website).HasMaxLength(100);
         builder.Property(e => e.CjLmw).HasMaxLength(50);
         builder.Property(e => e.CustBrn).HasMaxLength(50);
+        builder.Property(e => e.TinNo).HasMaxLength(20);
         builder.Property(e => e.RegType).HasMaxLength(20);
         builder.Property(e => e.Remark).HasMaxLength(500);
 

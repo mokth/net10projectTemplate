@@ -20,6 +20,9 @@ public static class ModelServiceCollectionExtensions
         services.AddScoped<IIvStockPostingRepository, IvStockPostingRepository>();
         services.AddScoped<ISaCustRepository, SaCustRepository>();
         services.AddScoped<ISaInvoiceRepository, SaInvoiceRepository>();
+        services.AddScoped<ISaDoRepository, SaDoRepository>();
+        services.AddScoped<ISaSoRepository, SaSoRepository>();
+        services.AddScoped<ISaCdnRepository, SaCdnRepository>();
         return services;
     }
 }

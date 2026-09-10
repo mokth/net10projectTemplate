@@ -85,6 +85,13 @@
                                         InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Tax GL code" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.TaxGlCode"
+                                       maxlength="20"
+                                       ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
                     @* @if (IsEditMode)
                     {
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Company" ColSpanMd="4" BeginRow="true">

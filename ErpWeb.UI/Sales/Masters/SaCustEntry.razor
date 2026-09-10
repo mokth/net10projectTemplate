@@ -102,6 +102,7 @@
                                 @Detail("Apply to invoice", FormatBool(Model.AppInvoice))
                                 @Detail("Apply to shipment", FormatBool(Model.AppShip))
                                 @Detail("BRN", Model.CustBrn)
+                                @Detail("TIN", Model.TinNo)
                                 @Detail("Reg type", Model.RegType)
                             </div>
                         </div>
@@ -396,6 +397,10 @@
                                     <div class="iv-field">
                                         <label class="iv-field__label">BRN</label>
                                         <DxTextBox @bind-Text="@Model.CustBrn" maxlength="50" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">TIN</label>
+                                        <DxTextBox @bind-Text="@Model.TinNo" maxlength="20" />
                                     </div>
                                     <div class="iv-field">
                                         <label class="iv-field__label">Reg type</label>

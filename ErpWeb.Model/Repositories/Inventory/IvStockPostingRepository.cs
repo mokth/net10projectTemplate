@@ -14,6 +14,22 @@ public interface IIvStockPostingRepository
         int batchNo,
         CancellationToken cancellationToken = default);
 
+    Task<IvTrxBatch?> LockSpBatchByRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string documentNo,
+        CancellationToken cancellationToken = default);
+
+    Task<IvTrxBatch?> LockBatchByTrxTypeAndRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string trxType,
+        string refNo,
+        CancellationToken cancellationToken = default);
+
+    [Obsolete("Use LockSpBatchByRefAsync.")]
     Task<IvTrxBatch?> LockSpBatchByInvoiceRefAsync(
         AppDbContext db,
         string companyCode,
@@ -158,18 +174,36 @@ WHERE CompanyCode = {company}
                 cancellationToken);
     }
 
-    public async Task<IvTrxBatch?> LockSpBatchByInvoiceRefAsync(
+    public Task<IvTrxBatch?> LockSpBatchByInvoiceRefAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         string invNo,
+        CancellationToken cancellationToken = default) =>
+        LockSpBatchByRefAsync(db, companyCode, branchCode, invNo, cancellationToken);
+
+    public async Task<IvTrxBatch?> LockSpBatchByRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string documentNo,
+        CancellationToken cancellationToken = default) =>
+        await LockBatchByTrxTypeAndRefAsync(
+            db, companyCode, branchCode, "SP", documentNo, cancellationToken);
+
+    public async Task<IvTrxBatch?> LockBatchByTrxTypeAndRefAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string trxType,
+        string refNo,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(db);
         var company = (companyCode ?? string.Empty).Trim();
         var branch = (branchCode ?? string.Empty).Trim();
-        var no = (invNo ?? string.Empty).Trim();
-        var trxType = "SP";
+        var type = (trxType ?? string.Empty).Trim();
+        var no = (refNo ?? string.Empty).Trim();
 
         List<IvTrxBatch> rows;
         if (db.Database.IsSqlServer())
@@ -180,7 +214,7 @@ SELECT *
 FROM dbo.IvTrxBatch WITH (UPDLOCK, HOLDLOCK)
 WHERE CompanyCode = {company}
   AND BranchCode = {branch}
-  AND TrxType = {trxType}
+  AND TrxType = {type}
   AND RefNo = {no}")
                 .AsTracking()
                 .ToListAsync(cancellationToken);
@@ -191,14 +225,14 @@ WHERE CompanyCode = {company}
                 .Where(x =>
                     x.CompanyCode == company
                     && x.BranchCode == branch
-                    && x.TrxType == trxType
+                    && x.TrxType == type
                     && x.RefNo == no)
                 .ToListAsync(cancellationToken);
         }
 
         if (rows.Count > 1)
         {
-            throw new InvalidOperationException($"Multiple SP batches exist for invoice {no}.");
+            throw new InvalidOperationException($"Multiple {type} batches exist for RefNo {no}.");
         }
 
         return rows.SingleOrDefault();

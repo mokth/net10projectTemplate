@@ -1,0 +1,41 @@
+@namespace ErpWeb.UI.Sales.Transactions
+@using ErpWeb.Core.Sales
+
+<div class="sinv-ship-editor">
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <p class="sinv-popup-error">@ErrorMessage</p>
+    }
+    <p class="sinv-ship-editor__hint">
+        Line @_soLineNo · required @(_requestedStdQty.ToString("n4")). Snapshot only — APPLY re-locks stock.
+    </p>
+    <DxGrid Data="@_rows"
+            KeyFieldName="@nameof(EditorRow.Key)"
+            PageSize="20"
+            CssClass="sinv-grid">
+        <Columns>
+            <DxGridDataColumn FieldName="@nameof(EditorRow.FromBalLocId)" Caption="BalLoc" Width="80px" />
+            <DxGridDataColumn FieldName="@nameof(EditorRow.FrLotNo)" Caption="Lot" Width="120px" />
+            <DxGridDataColumn FieldName="@nameof(EditorRow.FrLocation)" Caption="Loc" Width="80px" />
+            <DxGridDataColumn FieldName="@nameof(EditorRow.Available)" Caption="Available" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+            <DxGridDataColumn FieldName="@nameof(EditorRow.IssueQty)" Caption="Issue" Width="120px">
+                <CellDisplayTemplate>
+                    @{
+                        var row = (EditorRow)context.DataItem;
+                    }
+                    <DxSpinEdit Value="@row.IssueQty"
+                                ValueChanged="@((decimal v) => OnIssueChanged(row, v))"
+                                MinValue="0m"
+                                Enabled="@Enabled"
+                                CssClass="w-100" />
+                </CellDisplayTemplate>
+            </DxGridDataColumn>
+            <DxGridDataColumn FieldName="@nameof(EditorRow.FailReason)" Caption="Status" Width="140px" />
+        </Columns>
+    </DxGrid>
+    <div class="sinv-ship-editor__actions">
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancel" Enabled="@(!IsSubmitting)" />
+        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsSubmitting ? "Applying…" : "APPLY")"
+                  Click="@OnApplyAsync" Enabled="@(!IsSubmitting && Enabled)" />
+    </div>
+</div>

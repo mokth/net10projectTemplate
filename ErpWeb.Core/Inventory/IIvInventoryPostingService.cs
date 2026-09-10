@@ -82,4 +82,40 @@ public interface IIvInventoryPostingService
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stock-in (MR or CR) post on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Caller must already have begun a transaction on <paramref name="db"/>.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType, // MR or CR
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stock-in (MR or CR) rollback on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Caller must already have begun a transaction on <paramref name="db"/>.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Physically delete a NEW CR/MR batch (details + header) on the caller's db/tx. No SaveChanges or Commit.
+    /// Throws <see cref="InvalidOperationException"/> if the batch is not found, has the wrong type, or is not NEW.</summary>
+    Task DeleteNewStockInBatchInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken = default);
 }

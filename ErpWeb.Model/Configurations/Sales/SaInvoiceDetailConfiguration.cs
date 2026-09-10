@@ -37,10 +37,21 @@ public class SaInvoiceDetailConfiguration : IEntityTypeConfiguration<SaInvoiceDe
         builder.Property(e => e.LocalAmount).HasPrecision(18, 2);
         builder.Property(e => e.OrderType).HasMaxLength(20);
         builder.Property(e => e.SellingGlCode).HasMaxLength(20);
+        builder.Property(e => e.Classification).HasMaxLength(50);
         builder.Property(e => e.Remarks).HasMaxLength(250);
+        builder.Property(e => e.SoNo).HasColumnName("SONo").HasMaxLength(30).IsRequired();
+        builder.Property(e => e.SoLine).HasColumnName("SOLine");
+        builder.Property(e => e.CustRel);
+        builder.Property(e => e.LinkDo).IsRequired();
+        builder.Property(e => e.DoNo).HasColumnName("DONo").HasMaxLength(30).IsRequired();
+        builder.Property(e => e.DoLine).HasColumnName("DOLine");
+        builder.Property(e => e.SoConsumedQty).HasPrecision(18, 4);
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.InvNo, e.Line })
             .IsUnique()
             .HasDatabaseName("UQ_SaInvoiceDetail_Company_Branch_InvNo_Line");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.SoNo, e.SoLine })
+            .HasDatabaseName("IX_SaInvoiceDetail_Company_Branch_SoNo_SoLine");
     }
 }

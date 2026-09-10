@@ -137,6 +137,8 @@ public interface IIvInventoryLookupService
 
     Task<IvInventoryLookupResult> ListActiveTypesAsync(CancellationToken cancellationToken = default);
 
+    Task<IvInventoryLookupResult> ListClassificationsAsync(CancellationToken cancellationToken = default);
+
     Task<IvInventoryLookupResult> ListActiveSubClassesAsync(
         string iClassCode,
         CancellationToken cancellationToken = default);
@@ -376,6 +378,23 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
         {
             Code = x.TypeCode,
             Desc = x.TypeName ?? x.TypeDesc
+        }).ToList());
+    }
+
+    public async Task<IvInventoryLookupResult> ListClassificationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = Authorize();
+        if (ctx.Error is not null)
+        {
+            return IvInventoryLookupResult.Fail(ctx.Error);
+        }
+
+        var rows = await _common.ListClassificationsAsync(cancellationToken);
+        return IvInventoryLookupResult.OkRows(rows.Select(x => new IvCodeLookupRow
+        {
+            Code = x.Code,
+            Desc = x.Description
         }).ToList());
     }
 

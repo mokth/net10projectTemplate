@@ -16,6 +16,9 @@ public static class SaInvoiceCalc
     public const string HomeCurrency = "MYR";
     public const string ExcludedDiscountOrderType = "EXCLD DIS";
     public const int TaxDecimalPlaces = 2;
+    public const decimal TaxEpsilon = 0.01m;
+
+    public static bool HasTax(decimal taxes) => Math.Abs(taxes) >= TaxEpsilon;
 
     public static decimal Money(decimal value, int decimals = 2) =>
         decimal.Round(value, decimals, MidpointRounding.AwayFromZero);

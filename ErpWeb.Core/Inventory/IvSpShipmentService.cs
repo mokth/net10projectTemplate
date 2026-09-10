@@ -33,8 +33,12 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var company = command.CompanyCode.Trim();
         var branch = command.BranchCode.Trim();
         var location = command.LocationCode.Trim();
-        var invNo = command.InvNo.Trim();
-        var invDate = command.InvDate.Date;
+        var documentNo = command.DocumentNo.Trim();
+        var documentDate = command.DocumentDate.Date;
+        var detailDoNo = string.IsNullOrWhiteSpace(command.DoNo) ? null : command.DoNo.Trim();
+        // DO: DocumentNo is DO/{doNo} for RefNo; InvNo/DoNo on detail stay bare doNo.
+        // Invoice: DocumentNo is InvNo; detail InvNo matches.
+        var detailInvNo = detailDoNo ?? documentNo;
         var uid = Truncate(command.UserId, 10);
         var now = DateTime.UtcNow;
 
@@ -43,7 +47,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             .OrderBy(x => x.Line)
             .ToList();
 
-        var batch = await _postingRepo.LockSpBatchByInvoiceRefAsync(db, company, branch, invNo, cancellationToken);
+        var batch = await _postingRepo.LockSpBatchByRefAsync(db, company, branch, documentNo, cancellationToken);
         if (batch is not null
             && string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
@@ -90,7 +94,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         foreach (var line in required)
         {
             var piles = await DiscoverFifoPilesAsync(
-                db, company, branch, location, line.ICode, line.FrWarehouse, invDate, cancellationToken);
+                db, company, branch, location, line.ICode, line.FrWarehouse, documentDate, cancellationToken);
             foreach (var pile in piles)
             {
                 candidateIds.Add(pile.Id);
@@ -120,7 +124,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             company,
             branch,
             location,
-            invDate);
+            documentDate);
 
         if (batch is null)
         {
@@ -130,10 +134,10 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                 CompanyCode = company,
                 BranchCode = branch,
                 BatchNo = batchNo,
-                TrxDtTime = invDate,
+                TrxDtTime = documentDate,
                 TrxType = IvTrxTypes.SalesOut,
                 BatchStatus = IvBatchStatuses.New,
-                RefNo = invNo,
+                RefNo = documentNo,
                 LocationCode = location,
                 CreatedDate = now,
                 CreatedBy = uid
@@ -142,7 +146,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         }
         else
         {
-            batch.TrxDtTime = invDate;
+            batch.TrxDtTime = documentDate;
             batch.ModifiedDate = now;
             batch.ModifiedBy = uid;
             batch.LocationCode = location;
@@ -172,7 +176,8 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                 FrStdUom = line.StdUom,
                 IStatus = pile.IStatus,
                 FromBalLocId = pile.Id,
-                InvNo = invNo,
+                InvNo = detailInvNo,
+                DoNo = detailDoNo,
                 SoLineNo = (short)take.SoLineNo,
                 LocationCode = location,
                 UnitPrice = line.UnitPrice
@@ -206,7 +211,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var company = query.CompanyCode.Trim();
         var branch = query.BranchCode.Trim();
         var location = query.LocationCode.Trim();
-        var invNo = query.InvNo.Trim();
+        var invNo = query.DocumentNo.Trim();
 
         var batch = await db.IvTrxBatches.AsNoTracking()
             .Where(x =>
@@ -260,7 +265,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         }
 
         var piles = await DiscoverFifoPilesAsync(
-            db, company, branch, location, query.ICode, query.FrWarehouse, query.InvDate.Date, cancellationToken);
+            db, company, branch, location, query.ICode, query.FrWarehouse, query.DocumentDate.Date, cancellationToken);
         foreach (var pile in piles)
         {
             if (!seenBalLocIds.Add(pile.Id))
@@ -325,8 +330,10 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var company = command.CompanyCode.Trim();
         var branch = command.BranchCode.Trim();
         var location = command.LocationCode.Trim();
-        var invNo = command.InvNo.Trim();
-        var invDate = command.InvDate.Date;
+        var documentNo = command.DocumentNo.Trim();
+        var documentDate = command.DocumentDate.Date;
+        var detailDoNo = string.IsNullOrWhiteSpace(command.DoNo) ? null : command.DoNo.Trim();
+        var detailInvNo = detailDoNo ?? documentNo;
         var uid = Truncate(command.UserId, 10);
         var now = DateTime.UtcNow;
         var persistedStdQty = IvQty.Round(command.PersistedStdQty);
@@ -356,7 +363,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             return IvSpShipmentResult.Fail("Issue quantity must be greater than zero.", IvSpShipmentErrorKind.Validation);
         }
 
-        var batch = await _postingRepo.LockSpBatchByInvoiceRefAsync(db, company, branch, invNo, cancellationToken);
+        var batch = await _postingRepo.LockSpBatchByRefAsync(db, company, branch, documentNo, cancellationToken);
         if (batch is null)
         {
             return IvSpShipmentResult.Fail("Add shipment before editing.", IvSpShipmentErrorKind.BusinessRule);
@@ -393,7 +400,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             }
 
             if (!IvSpFifoEligibility.MatchesCandidate(
-                    row, company, branch, location, command.ICode, command.FrWarehouse, invDate))
+                    row, company, branch, location, command.ICode, command.FrWarehouse, documentDate))
             {
                 evaluated.Add(SubmittedLotResult(command, lot, IvQty.Round(row.StdQty), IvSpLotFailReason.LotNoLongerEligible));
                 continue;
@@ -474,7 +481,8 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                 FrStdUom = command.StdUom,
                 IStatus = pile.IStatus,
                 FromBalLocId = pile.Id,
-                InvNo = invNo,
+                InvNo = detailInvNo,
+                DoNo = detailDoNo,
                 SoLineNo = (short)command.SoLineNo,
                 LocationCode = location,
                 UnitPrice = command.UnitPrice
@@ -520,8 +528,8 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var company = query.CompanyCode.Trim();
         var branch = query.BranchCode.Trim();
         var location = query.LocationCode.Trim();
-        var invNo = query.InvNo.Trim();
-        var invDate = query.InvDate.Date;
+        var documentNo = query.DocumentNo.Trim();
+        var documentDate = query.DocumentDate.Date;
         var batch = query.Batch;
         var details = query.Details;
 
@@ -530,9 +538,9 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             || !string.Equals(batch.LocationCode ?? string.Empty, location, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(batch.TrxType, IvTrxTypes.SalesOut, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(batch.RefNo, invNo, StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(batch.RefNo, documentNo, StringComparison.OrdinalIgnoreCase))
         {
-            return IvSpValidatePostResult.Fail("Shipment batch does not match the invoice.");
+            return IvSpValidatePostResult.Fail("Shipment batch does not match the document.");
         }
 
         if (details.Any(d => d.BatchId != batch.Id))
@@ -548,15 +556,17 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             return IvSpValidatePostResult.Fail("Shipment detail tenant does not match.");
         }
 
-        var required = query.InvoiceLines
+        var required = query.RequiredLines
             .Where(x => IvSpFifoEligibility.IsShipmentRequired(x.StockControl, x.StdQty))
             .OrderBy(x => x.Line)
             .ToList();
 
         foreach (var line in required)
         {
+            // Batch already scoped by RefNo=DocumentNo; match line by SoLineNo only
+            // (DO stamps bare DoNo on InvNo while RefNo uses DO/{doNo}).
             var lineDetails = details
-                .Where(d => d.SoLineNo == line.Line && string.Equals(d.InvNo, invNo, StringComparison.OrdinalIgnoreCase))
+                .Where(d => d.SoLineNo == line.Line)
                 .ToList();
             var shipped = IvQty.Round(lineDetails.Sum(d => d.FrStdQty ?? 0m));
             var needed = IvQty.Round(line.StdQty);
@@ -589,7 +599,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                         location,
                         line.ICode ?? string.Empty,
                         line.FrWarehouse ?? string.Empty,
-                        invDate))
+                        documentDate))
                 {
                     return IvSpValidatePostResult.Fail(
                         $"Shipment lot on line {line.Line} is no longer eligible.");
@@ -638,7 +648,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var branch = (branchCode ?? string.Empty).Trim();
         var no = (invNo ?? string.Empty).Trim();
 
-        var batch = await _postingRepo.LockSpBatchByInvoiceRefAsync(db, company, branch, no, cancellationToken);
+        var batch = await _postingRepo.LockSpBatchByRefAsync(db, company, branch, no, cancellationToken);
         if (batch is null)
         {
             return;

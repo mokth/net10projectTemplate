@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>so_do_inv_docs.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="so--do--inv-allocation-and-shipment-documentation">SO / DO / INV Allocation and Shipment Documentation</h1>
+<h2 id="deliverable">Deliverable</h2>
+<p>Create one reference doc at <a href="plans/so_do_inv_allocation_and_shipment.md"><code>plans/so_do_inv_allocation_and_shipment.md</code></a>.</p>
+<p>This documents <strong>current ErpWeb (Blazor) behavior</strong>, not WebForms. Cross-link older notes (<a href="plans/ERP-DO-logic.md"><code>plans/ERP-DO-logic.md</code></a>, <a href="plans/shared_sp_shipment.md"><code>plans/shared_sp_shipment.md</code></a>) only as historical context; the new file is the source of truth for the allocation rewrite.</p>
+<p>Do <strong>not</strong> edit the Cursor plan file <code>so_do_invoice_allocations_b5d3c347.plan.md</code>.</p>
+<h2 id="document-outline-write-these-sections-in-full">Document outline (write these sections in full)</h2>
+<h3 id="1-purpose-and-mental-model">1. Purpose and mental model</h3>
+<ul>
+<li>Delivery and billing are independent.</li>
+<li><code>SaDocApplication</code> is the only author of relationships + applied qty.</li>
+<li>Projections (<code>DeliveredQty</code> / <code>InvoicedQty</code> / dual statuses) are derived, never client-authored.</li>
+</ul>
+<pre><code class="language-mermaid"><div class="mermaid">flowchart LR
+  SO[SaSoDetail]
+  DO[SaDoDetail]
+  INV[SaInvoiceDetail]
+  SO -->|"SO_DO at DO post"| DO
+  SO -->|"SO_INV at invoice post"| INV
+  DO -->|"DO_INV plus RelatedSO snapshot"| INV
+</div></code></pre>
+<h3 id="2-domain-vocabulary">2. Domain vocabulary</h3>
+<ul>
+<li>Doc types: <code>SO</code> / <code>DO</code> / <code>INV</code> (<a href="ErpWeb.Core/Sales/ISaDocApplication.cs"><code>ISaDocApplication.cs</code></a>)</li>
+<li>Dual statuses: <code>NONE</code> / <code>PARTIAL</code> / <code>FULL</code></li>
+<li>SO status: <code>NEW</code> / <code>SHIPPED</code> / <code>CLOSED</code> + closed reasons <code>FULLY_CONSUMED</code> / <code>FORCE_CLOSED</code></li>
+<li>DO status: <code>NEW</code> / <code>POSTED</code> / <code>CLOSED</code></li>
+<li>Reason codes table (<code>ALLOC_*</code>, plus <code>SO_FORCE_CLOSED</code> on reverse)</li>
+</ul>
+<h3 id="3-ledger-schema">3. Ledger schema</h3>
+<ul>
+<li>Entity fields and CustRel write conventions</li>
+<li>Exact unique/indexes from <a href="scripts/create-sadocapplication.sql"><code>scripts/create-sadocapplication.sql</code></a> and EF config</li>
+<li>Related projection columns from <a href="scripts/alter-saso-allocation-columns.sql"><code>scripts/alter-saso-allocation-columns.sql</code></a></li>
+<li>Backfill + <code>SaDocApplicationBackfillSkip</code> (<a href="scripts/backfill-sadocapplication.sql"><code>scripts/backfill-sadocapplication.sql</code></a>)</li>
+</ul>
+<h3 id="4-projection-and-status-derivation">4. Projection and status derivation</h3>
+<ul>
+<li>Line formulas: Delivered / Invoiced / Shipped / Balance</li>
+<li>Header <code>FulfillmentStatus</code> / <code>BillingStatus</code> / when SO becomes <code>CLOSED</code></li>
+<li>Effective-ledger recalc (include Added, exclude Deleted before caller <code>SaveChanges</code>)</li>
+<li>Worked examples (direct invoice, DO then invoice, full both)</li>
+</ul>
+<h3 id="5-tx-ownership-and-lock-order">5. TX ownership and lock order</h3>
+<ul>
+<li>Caller (<code>SaDoService</code> / <code>SaInvoiceService</code>) owns TX; <code>ISaDocApplication</code> participates only</li>
+<li>Discover-all-keys → lock DO keys then SO keys → SUM remaining → validate (never clamp) → insert → recalc</li>
+<li>Caps: SO OrderQty deliverable, SO OrderQty billable, DO Qty billable; DO→INV checks both DO and RelatedSO</li>
+</ul>
+<h3 id="6-end-to-end-flows">6. End-to-end flows</h3>
+<p><strong>SO → DO → INV (LinkDo)</strong></p>
+<ol>
+<li>DO AddShipment (stock) → DO post → <code>AllocateSOToDO</code> + stock OUT (<code>RefNo = DO/{doNo}</code>)</li>
+<li>INV Add from DO → post → <code>AllocateDOToInvoice</code> only; <strong>no second SP</strong></li>
+</ol>
+<p><strong>SO → INV (direct)</strong></p>
+<ol>
+<li>INV AddShipment (stock) → post → <code>AllocateSOToInvoice</code> + stock OUT (<code>RefNo = InvNo</code>)</li>
+</ol>
+<p><strong>Standalone DO</strong></p>
+<ul>
+<li>Post OK, no SO_DO; cannot be LinkDo / DO_INV source</li>
+</ul>
+<p>Include rollback sequences (allocations first, then stock reverse) and force-close (status only; no ledger/stock reverse).</p>
+<h3 id="7-shipment-sp-interaction--detail">7. Shipment (SP) interaction — detail</h3>
+<ul>
+<li>Eligibility: <code>IvSpFifoEligibility.IsShipmentRequired</code></li>
+<li>DO: all keep-stock lines need SP before post</li>
+<li>INV: only <code>!LinkDo</code> keep-stock lines need SP</li>
+<li>Mix forbid implies a pure LinkDo invoice never needs AddShipment</li>
+<li>Known quirk to document for enhancers: UI stamps <code>ShipmentComplete=true</code> on Add from DO, but server <code>MapDocument</code> still computes complete from INV SP qty vs StdQty (LinkDo stock lines can look “Open” after reload even though post is allowed)</li>
+<li><code>AddShipmentAsync</code> on invoice still passes all details into SP create (no LinkDo filter)—enhancement risk if user clicks Add Shipment on a LinkDo invoice</li>
+</ul>
+<h3 id="8-lifecycle-and-edit-guards">8. Lifecycle and edit guards</h3>
+<ul>
+<li>SO OrderQty floor vs Delivered/Invoiced; cannot delete allocated lines/docs</li>
+<li>DO lineage freeze when allocation exists; qty floor vs <code>SumDoInvoicedQty</code></li>
+<li>Force-closed SO blocks allocate and reverse</li>
+</ul>
+<h3 id="9-api--ui-surface">9. API / UI surface</h3>
+<ul>
+<li>Remaining deliverable: <code>GetRemainingLinesAsync</code> (BalanceQty)</li>
+<li>Remaining billable SO: <code>GetBillableLinesAsync</code></li>
+<li>Billable DO: <code>SaDoService.GetBillableLinesAsync</code></li>
+<li>UI: SO list Fulfill%/Bill%; invoice Add from DO vs Add from SO guards</li>
+</ul>
+<h3 id="10-file-map-anchors-for-future-work">10. File map (anchors for future work)</h3>
+<ul>
+<li>Core: <a href="ErpWeb.Core/Sales/SaDocApplicationService.cs"><code>SaDocApplicationService.cs</code></a>, <a href="ErpWeb.Core/Sales/SaDoService.cs"><code>SaDoService.cs</code></a>, <a href="ErpWeb.Core/Sales/SaInvoiceService.cs"><code>SaInvoiceService.cs</code></a>, <a href="ErpWeb.Core/Inventory/IvSpShipmentService.cs"><code>IvSpShipmentService.cs</code></a></li>
+<li>Model/scripts/tests as listed above</li>
+<li>Obsolete: <a href="ErpWeb.Core/Sales/SaSoFulfillment.cs"><code>SaSoFulfillment.cs</code></a></li>
+</ul>
+<h3 id="11-extension-catalog-for-future-enhancement">11. Extension catalog (for future enhancement)</h3>
+<p>Explicit “safe to extend / must not break” list, e.g.:</p>
+<ul>
+<li>Mixing SO_INV + DO_INV on one invoice (Phase 1 forbidden)</li>
+<li>UOM conversion</li>
+<li>SO as allocation target (would require TargetCustRel in UQ)</li>
+<li>DocFlow UI / Create DO-Invoice from SO list</li>
+<li>LinkDo <code>ShipmentComplete</code> MapDocument honesty</li>
+<li>Prevent AddShipment on pure LinkDo invoices</li>
+<li>Multi-company / authz beyond existing MenuCodes</li>
+<li>SQL Server index-plan / concurrency tests already sketched in the original plan</li>
+</ul>
+<h3 id="12-test-anchors">12. Test anchors</h3>
+<ul>
+<li><a href="ErpWeb.Tests/SaDocApplicationTests.cs"><code>ErpWeb.Tests/SaDocApplicationTests.cs</code></a></li>
+<li>LinkDo / mix / direct SO_INV shipped-qty tests in <a href="ErpWeb.Tests/SaSoServiceTests.cs"><code>SaSoServiceTests.cs</code></a></li>
+</ul>
+<h2 id="implementation-approach">Implementation approach</h2>
+<ol>
+<li>Draft the markdown file with the sections above, using concrete method/file citations from the current code (not aspirational plan language).</li>
+<li>Keep diagrams as mermaid (edge labels with special chars quoted).</li>
+<li>Prefer tables for codes, columns, and shipment rules.</li>
+<li>No code changes; documentation only.</li>
+</ol>
+<h2 id="out-of-scope">Out of scope</h2>
+<ul>
+<li>Implementing any enhancement listed in section 11</li>
+<li>Editing Cursor plan files</li>
+<li>Regenerating SQL or changing runtime behavior</li>
+</ul>
+
+</body>
+</html>

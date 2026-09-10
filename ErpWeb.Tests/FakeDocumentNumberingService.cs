@@ -11,6 +11,8 @@ internal sealed class FakeDocumentNumberingService : IDocumentNumberingService
 {
     private int _seq;
 
+    public int IssuedCount => _seq;
+
     public Task<DocumentNumberResult> NextAsync(
         AppDbContext db,
         string module,

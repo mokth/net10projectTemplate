@@ -1955,6 +1955,7 @@ public sealed class SaSalesRefService : ISaSalesRefService
                     TaxGrCode = code,
                     TaxGrDesc = desc,
                     Percentage = model.Percentage,
+                    TaxGlCode = TruncateOptional(model.TaxGlCode, 20),
                     CreatedDate = now,
                     CreatedBy = user,
                     ModifiedDate = now,
@@ -1990,6 +1991,7 @@ public sealed class SaSalesRefService : ISaSalesRefService
 
             tracked.TaxGrDesc = desc;
             tracked.Percentage = model.Percentage;
+            tracked.TaxGlCode = TruncateOptional(model.TaxGlCode, 20);
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
@@ -3567,6 +3569,7 @@ public sealed class SaSalesRefService : ISaSalesRefService
         Code = x.TaxGrCode,
         Desc = x.TaxGrDesc,
         Percentage = x.Percentage,
+        TaxGlCode = x.TaxGlCode,
         CompanyCode = x.CompanyCode,
         BranchCode = x.BranchCode,
         LocationCode = x.LocationCode

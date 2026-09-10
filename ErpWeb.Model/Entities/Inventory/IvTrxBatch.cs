@@ -12,6 +12,8 @@ public class IvTrxBatch
     public string? RefNo { get; set; }
     public string? Remarks { get; set; }
     public string? LocationCode { get; set; }
+    /// <summary>SHA-256 hex of CN stock-return snapshot for CN-generated CR batches.</summary>
+    public string? SourceFingerprint { get; set; }
 
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
