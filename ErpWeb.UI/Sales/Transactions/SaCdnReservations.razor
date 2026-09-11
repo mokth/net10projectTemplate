@@ -1,0 +1,91 @@
+@page "/sales/cn-reservations"
+
+@inherits PageBase
+
+<PageTitle>Credit Note Reservations</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCode">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(LoadError))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@LoadError</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-bookmark"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Diagnostics</p>
+                <h1 class="iv-title">Credit Note Reservations</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Report only</span>
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (OverReservedCount > 0)
+                    {
+                        <span class="iv-chip iv-chip--warn">@OverReservedCount over-reserved</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Invoices held</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@CustCode"
+                               TextChanged="OnCustCodeChanged"
+                               NullText="Customer code"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxCheckBox @bind-Checked="@DraftsOnly" @bind-Checked:after="OnFilterChanged">Drafts only</DxCheckBox>
+                <DxCheckBox @bind-Checked="@OverReservedOnly" @bind-Checked:after="OnFilterChanged">Over-reserved only</DxCheckBox>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="REFRESH"
+                          IconCssClass="fa-solid fa-rotate"
+                          Click="@ReloadAsync" />
+            </div>
+
+            @if (IsLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Rows.Count == 0)
+            {
+                <p class="text-muted mb-0">No credit-note reservations match the current filters.</p>
+            }
+            else
+            {
+                <DxGrid Data="@Rows" CssClass="w-100">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.InvNo)" Caption="Invoice" Width="140px" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.InvDate)" Caption="Date" Width="110px" DisplayFormat="dd/MM/yyyy" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.CustCode)" Caption="Customer" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.CustName)" Caption="Name" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.InvoiceTotal)" Caption="Invoice total" Width="120px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.PostedCnTotal)" Caption="Posted CN" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.DraftCnTotal)" Caption="Draft CN" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.Remaining)" Caption="Remaining" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnReservationReportRow.DraftIndicator)" Caption="Reservation" Width="280px" />
+                    </Columns>
+                </DxGrid>
+            }
+
+            <p class="text-muted mb-0">
+                Diagnostic only. Held balances are the sum of NEW and POSTED credit notes referencing a
+                posted invoice; nothing on this screen changes any document.
+            </p>
+        </section>
+    </div>
+</MenuAuthorize>

@@ -9,6 +9,11 @@ internal sealed class SaSoRevisionUsage
     public bool HasDeliveredQty { get; init; }
     public bool HasInvoicedQty { get; init; }
     public bool HasShippedQty { get; init; }
+    /// <summary>
+    /// D15: non-zero <c>SaSoDetail.WrittenOffQty</c>. Revision rebuilds fresh details via
+    /// <c>AddDetails</c> and would silently drop the write-off, so revision must be blocked.
+    /// </summary>
+    public bool HasWrittenOffQty { get; init; }
     public bool HasAllocation { get; init; }
     public bool HasDraftDeliveryOrder { get; init; }
     public bool HasDraftInvoice { get; init; }
@@ -16,7 +21,7 @@ internal sealed class SaSoRevisionUsage
     public bool HasInvoiceReference { get; init; }
 
     public bool IsUnused =>
-        !(HasDeliveredQty || HasInvoicedQty || HasShippedQty
+        !(HasDeliveredQty || HasInvoicedQty || HasShippedQty || HasWrittenOffQty
           || HasAllocation || HasDraftDeliveryOrder || HasDraftInvoice
           || HasDeliveryOrderReference || HasInvoiceReference);
 
@@ -29,6 +34,16 @@ internal sealed class SaSoRevisionUsage
     public string BlockMessage(SaSoUsageMutation mutation)
     {
         var revise = mutation == SaSoUsageMutation.Revise;
+
+        // D15: this is an irreversible quantity outcome from a force-closed DO — surface it first so
+        // the operator is never told the revision is merely "in use".
+        if (HasWrittenOffQty)
+        {
+            return revise
+                ? "This Sales Order cannot be revised because quantity was written off by a force-closed Delivery Order."
+                : "This Sales Order cannot be deleted because quantity was written off by a force-closed Delivery Order.";
+        }
+
         if (IsDraftDeliveryOrderOnly())
         {
             return revise

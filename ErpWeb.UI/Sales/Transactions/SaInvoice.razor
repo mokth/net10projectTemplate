@@ -488,6 +488,8 @@
                 </div>
             </section>
 
+            <SaDocFlowPanel DocType="INV" DocNo="@InvNo" />
+
             <footer class="sdoc-footer">
                 <p class="sdoc-footer__hint">@FooterHint</p>
                 <div class="sdoc-footer__actions">
@@ -508,7 +510,7 @@
                                       Text="Add shipment"
                                       IconCssClass="fa-solid fa-truck"
                                       Click="@OnAddShipmentAsync"
-                                      Enabled="@(!IsSubmitting && Lines.Count > 0 && HasCustomer)" />
+                                      Enabled="@(!IsSubmitting && Lines.Count > 0 && HasCustomer && HasShipmentLines)" />
                         }
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
                                   Text="@(IsSubmitting ? "Saving…" : "Save")"

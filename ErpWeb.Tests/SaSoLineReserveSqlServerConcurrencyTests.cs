@@ -292,6 +292,221 @@ public class SaSoLineReserveSqlServerConcurrencyTests
         Assert.True(billed <= 10m);
     }
 
+    // ─────────────────────────── R3 write-off concurrency ───────────────────────────
+
+    /// <summary>
+    /// I10: two concurrent force-closes against the same SO line must not lose an increment.
+    /// <c>WrittenOffQty</c> is a read-modify-write on one <c>SaSoDetail</c> row.
+    /// </summary>
+    [Fact]
+    public async Task SqlServer_Concurrent_force_close_of_two_DOs_same_SO_line()
+    {
+        if (!IsSqlServerAvailable())
+        {
+            return;
+        }
+
+        var factory = CreateFactory();
+        if (!await EnsureNumberingAsync(factory, "SO") || !await EnsureNumberingAsync(factory, "DO"))
+        {
+            return;
+        }
+
+        var so = CreateSo(factory);
+        var soSave = await so.SaveNewAsync(SoRequest(100m));
+        if (!soSave.Succeeded)
+        {
+            return;
+        }
+
+        var dosA = CreateDo(factory);
+        var dosB = CreateDo(factory);
+        var doA = await dosA.SaveNewAsync(DoRequest(60m, soSave.SoNo!));
+        var doB = await dosB.SaveNewAsync(DoRequest(40m, soSave.SoNo!));
+        if (!doA.Succeeded || !doB.Succeeded)
+        {
+            return;
+        }
+
+        Assert.True((await dosA.PostAsync([DoKeyed(doA.DoNo!, doA.Document!.RowVersion)])).Succeeded);
+        Assert.True((await dosB.PostAsync([DoKeyed(doB.DoNo!, doB.Document!.RowVersion)])).Succeeded);
+
+        var fc = await Task.WhenAll(
+            dosA.ForceCloseAsync([DoKeyed(doA.DoNo!, GetDoRowVersion(factory, doA.DoNo!))]),
+            dosB.ForceCloseAsync([DoKeyed(doB.DoNo!, GetDoRowVersion(factory, doB.DoNo!))]));
+
+        Assert.True(fc[0].Succeeded, fc[0].ErrorMessage);
+        Assert.True(fc[1].Succeeded, fc[1].ErrorMessage);
+
+        await using var db = factory.CreateDbContext();
+        var line = await db.SaSoDetails.SingleAsync(x =>
+            x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SoNo == soSave.SoNo && x.CustRel == 1);
+
+        // No lost update: both force-closes accrued.
+        Assert.Equal(100m, line.WrittenOffQty);
+    }
+
+    /// <summary>
+    /// I3 + I8: force-close and DO→INV allocation are mutually exclusive for the same quantity. Both
+    /// paths take the DO header lock, so exactly one wins and the contested qty is accounted once.
+    /// </summary>
+    [Fact]
+    public async Task SqlServer_ForceClose_vs_InvoiceAllocation_concurrency()
+    {
+        if (!IsSqlServerAvailable())
+        {
+            return;
+        }
+
+        var factory = CreateFactory();
+        if (!await EnsureNumberingAsync(factory, "SO")
+            || !await EnsureNumberingAsync(factory, "DO")
+            || !await EnsureNumberingAsync(factory, "INV"))
+        {
+            return;
+        }
+
+        var so = CreateSo(factory);
+        var soSave = await so.SaveNewAsync(SoRequest(100m));
+        if (!soSave.Succeeded)
+        {
+            return;
+        }
+
+        var dos = CreateDo(factory);
+        var doSave = await dos.SaveNewAsync(DoRequest(100m, soSave.SoNo!));
+        if (!doSave.Succeeded)
+        {
+            return;
+        }
+
+        Assert.True((await dos.PostAsync([DoKeyed(doSave.DoNo!, doSave.Document!.RowVersion)])).Succeeded);
+
+        var inv = CreateInvoice(factory);
+        var invSave = await inv.SaveNewAsync(InvoiceFromDo(100m, soSave.SoNo!, doSave.DoNo!));
+        if (!invSave.Succeeded)
+        {
+            return;
+        }
+
+        var forceCloseTask = dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(factory, doSave.DoNo!))]);
+        var postTask = inv.PostAsync([invSave.InvNo!]);
+        await Task.WhenAll(forceCloseTask, postTask);
+        var forceClose = await forceCloseTask;
+        var post = await postTask;
+
+        await using var db = factory.CreateDbContext();
+        var line = await db.SaSoDetails.SingleAsync(x =>
+            x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SoNo == soSave.SoNo && x.CustRel == 1);
+
+        // Whichever wins, the contested 100 is never both invoiced and written off.
+        Assert.True(line.InvoicedQty + line.WrittenOffQty <= 100m);
+        // Both succeeding would mean the same quantity was consumed twice.
+        Assert.False(forceClose.Succeeded && post.Succeeded);
+    }
+
+    /// <summary>
+    /// I3: total posted <c>DO → INV</c> for a DO line can never exceed the DO line qty, even when two
+    /// invoices are submitted concurrently. The unique index is duplicate-record protection only —
+    /// capacity is enforced by the lock-and-revalidate protocol.
+    /// </summary>
+    [Fact]
+    public async Task SqlServer_Do_inv_allocation_capacity_exceeded_rejected()
+    {
+        if (!IsSqlServerAvailable())
+        {
+            return;
+        }
+
+        var factory = CreateFactory();
+        if (!await EnsureNumberingAsync(factory, "SO")
+            || !await EnsureNumberingAsync(factory, "DO")
+            || !await EnsureNumberingAsync(factory, "INV"))
+        {
+            return;
+        }
+
+        var so = CreateSo(factory);
+        var soSave = await so.SaveNewAsync(SoRequest(100m));
+        if (!soSave.Succeeded)
+        {
+            return;
+        }
+
+        var dos = CreateDo(factory);
+        var doSave = await dos.SaveNewAsync(DoRequest(100m, soSave.SoNo!));
+        if (!doSave.Succeeded)
+        {
+            return;
+        }
+
+        Assert.True((await dos.PostAsync([DoKeyed(doSave.DoNo!, doSave.Document!.RowVersion)])).Succeeded);
+
+        var inv1 = CreateInvoice(factory);
+        var inv2 = CreateInvoice(factory);
+        var save1 = await inv1.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!));
+        var save2 = await inv2.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!));
+        if (!save1.Succeeded || !save2.Succeeded)
+        {
+            return;
+        }
+
+        var posts = await Task.WhenAll(inv1.PostAsync([save1.InvNo!]), inv2.PostAsync([save2.InvNo!]));
+
+        Assert.Equal(1, posts.Count(x => x.Succeeded));
+        Assert.Equal(1, posts.Count(x => !x.Succeeded));
+
+        await using var db = factory.CreateDbContext();
+        var billed = await db.SaDocApplications
+            .Where(x =>
+                x.CompanyCode == "DEMO"
+                && x.BranchCode == "HQ"
+                && x.SourceDocType == SaDocTypes.Do
+                && x.SourceDocId == doSave.DoNo
+                && x.TargetDocType == SaDocTypes.Inv)
+            .SumAsync(x => x.AppliedQty);
+        Assert.True(billed <= 100m);
+    }
+
+    private static byte[] GetDoRowVersion(IDbContextFactory<AppDbContext> factory, string doNo)
+    {
+        using var db = factory.CreateDbContext();
+        return db.SaDos.AsNoTracking().Single(x => x.DoNo == doNo).RowVersion ?? [];
+    }
+
+    private static SaDoKeyedRequest DoKeyed(string doNo, byte[] rowVersion) =>
+        new() { DoNo = doNo, RowVersion = rowVersion };
+
+    private static SaInvoiceSaveRequest InvoiceFromDo(decimal qty, string soNo, string doNo) =>
+        new()
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            InvName = "Alpha",
+            InvAddress1 = "INV ADDR 1",
+            InvCity = "INV CITY",
+            InvPostalCode = "50000",
+            InvCountry = "MY",
+            InvTel = "123",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = qty,
+                    UnitPrice = 10m,
+                    SoNo = soNo,
+                    SoLine = 1,
+                    LinkDo = true,
+                    DoNo = doNo,
+                    DoLine = 1
+                }
+            ]
+        };
+
     private static async Task<bool> EnsureNumberingAsync(IDbContextFactory<AppDbContext> factory, string numCd)
     {
         await using var db = factory.CreateDbContext();

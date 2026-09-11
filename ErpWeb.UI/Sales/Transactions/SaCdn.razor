@@ -180,7 +180,7 @@
                                         @if (IsCreditNote)
                                         {
                                             <div class="sdoc-field-row">
-                                                <DxTextBox @bind-Text="@InvNo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" NullText="Invoice no." />
+                                                <DxTextBox @bind-Text="@InvNo" @bind-Text:after="OnInvNoChangedAsync" Enabled="@CanEditDocument" NullText="Invoice no." />
                                                 @if (ShowSourceCard && CanEditDocument)
                                                 {
                                                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -190,6 +190,10 @@
                                                               Enabled="@HasCustomer" />
                                                 }
                                             </div>
+                                            @if (!string.IsNullOrWhiteSpace(ReservationIndicator))
+                                            {
+                                                <p class="sdoc-hint" role="status">@ReservationIndicator</p>
+                                            }
                                         }
                                         <DxTextBox @bind-Text="@DoNo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" NullText="DO no." />
                                         <DxTextBox @bind-Text="@Dept" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="20" NullText="Dept" />
@@ -354,6 +358,8 @@
                     <div><span>TOTAL INCL TAX</span><strong>@TotAmnt.ToString("n2")</strong></div>
                 </div>
             </section>
+
+            <SaDocFlowPanel DocType="CN" DocNo="@DocNo" />
 
             <footer class="sdoc-footer">
                 <p class="sdoc-footer__hint">@(_isDirty ? "Unsaved changes" : "Ready") · @LineCountLabel</p>

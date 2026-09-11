@@ -629,11 +629,11 @@ public class SaDoServiceTests : IAsyncLifetime
     }
 
     // ───────────────────────────────────────────────────────
-    // 8. ForceClose: POSTED→CLOSED; SP gone; balances UNCHANGED
+    // 8. ForceClose: POSTED→CLOSED; SP retained + stamped; balances UNCHANGED
     // ───────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ForceClose_POSTED_to_CLOSED_SP_deleted_balance_unchanged()
+    public async Task ForceClose_POSTED_to_CLOSED_SP_retained_and_stamped()
     {
         var balId = await SeedBalLocAsync(100m);
         var sut = CreateSut();
@@ -656,18 +656,119 @@ public class SaDoServiceTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
         {
             Assert.Equal(SaDoStatuses.Closed, (await db.SaDos.SingleAsync()).Status);
-            // SP batch and its details are deleted
-            Assert.Equal(0, await db.IvTrxBatches.CountAsync(x => x.TrxType == IvTrxTypes.SalesOut));
+
+            // R4: the SP batch is RETAINED and stamped — status stays POSTED, ForceCloseDate is the tombstone.
+            var doRef = SaDoSpRefs.ToRefNo(save.DoNo!);
+            var batch = await db.IvTrxBatches.SingleAsync(x =>
+                x.TrxType == IvTrxTypes.SalesOut && x.RefNo == doRef);
+            Assert.Equal(IvBatchStatuses.Posted, batch.BatchStatus);
+            Assert.NotNull(batch.ForceCloseDate);
+            Assert.Equal(SaDoService.ForceCloseReason, batch.ForceCloseReason);
+            Assert.False(string.IsNullOrWhiteSpace(batch.ForceCloseBy));
+            Assert.NotEmpty(await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync());
+
             // Balance is NOT restored — physical shipment already occurred
             Assert.Equal(80m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
         }
     }
 
+    [Fact]
+    public async Task ForceClose_guards_reject_batch_mutation()
+    {
+        await SeedBalLocAsync(100m);
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 20m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await ShipAsync(sut, save.DoNo!)).Succeeded);
+        Assert.True((await sut.PostAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))])).Succeeded);
+        Assert.True((await sut.ForceCloseAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))])).Succeeded);
+
+        // Repeat force-close fails deterministically (DO is CLOSED, not POSTED).
+        var repeat = await sut.ForceCloseAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))]);
+        Assert.False(repeat.Succeeded);
+
+        // Rollback must not reverse the retained batch.
+        var rollback = await sut.RollbackAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))]);
+        Assert.False(rollback.Succeeded);
+
+        var doRef = SaDoSpRefs.ToRefNo(save.DoNo!);
+
+        // Shipment layer refuses to rebuild the retained batch.
+        var shipments = new IvSpShipmentService(
+            new IvStockPostingRepository(), new IvStockTransactionRepository(), new RunningNumberService());
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var rebuild = await shipments.CreateOrReplaceShipmentAsync(
+                db,
+                new IvSpCreateOrReplaceCommand
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    LocationCode = "SITE",
+                    UserId = "admin",
+                    DocumentNo = doRef,
+                    DocumentDate = FixedToday,
+                    RequiredLines =
+                    [
+                        new IvSpRequiredLine
+                        {
+                            Line = 1, ICode = "A100", StdQty = 1m, StdUom = "EA",
+                            FrWarehouse = "MAIN", StockControl = true
+                        }
+                    ]
+                });
+            Assert.False(rebuild.Succeeded);
+            Assert.Contains("force-close", rebuild.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Inventory rollback refuses the retained batch.
+        var posting = CreatePosting();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batch = await db.IvTrxBatches.SingleAsync(x =>
+                x.TrxType == IvTrxTypes.SalesOut && x.RefNo == doRef);
+            var rb = await posting.RollBackStockOutInTransactionAsync(
+                db, "DEMO", "HQ", "admin", batch.BatchNo, IvTrxTypes.SalesOut);
+            Assert.False(rb.Succeeded);
+        }
+    }
+
     // ───────────────────────────────────────────────────────
-    // 9. Authorization: POST denied, CLOSE denied
+    // R7: DO header totals follow the invoice convention
     // ───────────────────────────────────────────────────────
 
     [Fact]
+    public async Task Do_header_totals_follow_invoice_convention()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            Lines =
+            [
+                new SaDoLineRequest
+                {
+                    ICode = "A100", Qty = 2m, UnitPrice = 100m,
+                    FrWarehouse = "MAIN", TaxGrCode = "SR"
+                }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var doc = save.Document!;
+        Assert.Equal(200m, doc.GrossAmnt);   // ex-tax, matching INVOICE/CN/SO
+        Assert.Equal(12m, doc.Taxes);        // 6%
+        Assert.Equal(212m, doc.TotAmnt);     // Gross + Tax, not the bare net
+        Assert.Equal(doc.GrossAmnt + doc.Taxes, doc.TotAmnt);
+    }
+
+    // ───────────────────────────────────────────────────────
+    // 9. Authorization: POST denied, CLOSE denied
+    // ───────────────────────────────────────────────────────    [Fact]
     public async Task Post_denied_authz_fails()
     {
         var sut = CreateSut(access: DenyPermission(PermissionCodes.Post));
@@ -1326,10 +1427,15 @@ public class SaDoServiceTests : IAsyncLifetime
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            Assert.True(await db.IvTrxBatches.AnyAsync(x =>
-                x.CompanyCode == "OTHER" && x.RefNo == doRef && x.TrxType == IvTrxTypes.SalesOut));
-            Assert.False(await db.IvTrxBatches.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.RefNo == doRef && x.TrxType == IvTrxTypes.SalesOut));
+            // The other-company row must be untouched (never stamped).
+            var other = await db.IvTrxBatches.SingleAsync(x =>
+                x.CompanyCode == "OTHER" && x.RefNo == doRef && x.TrxType == IvTrxTypes.SalesOut);
+            Assert.Null(other.ForceCloseDate);
+
+            // R4: the DEMO/HQ batch is retained (not deleted) and stamped.
+            var mine = await db.IvTrxBatches.SingleAsync(x =>
+                x.CompanyCode == "DEMO" && x.RefNo == doRef && x.TrxType == IvTrxTypes.SalesOut);
+            Assert.NotNull(mine.ForceCloseDate);
         }
     }
 
@@ -1420,8 +1526,12 @@ public class SaDoServiceTests : IAsyncLifetime
         {
             Assert.True(await db.IvTrxBatches.AnyAsync(x => x.BatchNo == 9101 && x.RefNo == save.DoNo));
             Assert.True(await db.IvTrxBatches.AnyAsync(x => x.BatchNo == 9102 && x.RefNo == "INV2609-0001"));
-            Assert.False(await db.IvTrxBatches.AnyAsync(x =>
-                x.RefNo == SaDoSpRefs.ToRefNo(save.DoNo!) && x.CompanyCode == "DEMO" && x.BranchCode == "HQ"));
+            // R4: the matching DO/{doNo} batch is retained and stamped; the bare/INV rows are untouched.
+            var matching = await db.IvTrxBatches.SingleAsync(x =>
+                x.RefNo == SaDoSpRefs.ToRefNo(save.DoNo!) && x.CompanyCode == "DEMO" && x.BranchCode == "HQ");
+            Assert.NotNull(matching.ForceCloseDate);
+            Assert.Null((await db.IvTrxBatches.SingleAsync(x => x.BatchNo == 9101)).ForceCloseDate);
+            Assert.Null((await db.IvTrxBatches.SingleAsync(x => x.BatchNo == 9102)).ForceCloseDate);
         }
     }
 

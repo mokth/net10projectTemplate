@@ -247,6 +247,12 @@
     font-size: 0.8rem;
 }
 
+.sdoc-page ::deep .sdoc-field-hint {
+    margin: 4px 0 0;
+    color: color-mix(in srgb, currentColor 65%, transparent);
+    font-size: 0.8rem;
+}
+
 /* ---- Items ---- */
 
 .sdoc-page ::deep .sdoc-items {

@@ -117,6 +117,8 @@ public sealed class IvSpRequiredLine
     public string FrWarehouse { get; init; } = string.Empty;
     public decimal UnitPrice { get; init; }
     public bool StockControl { get; init; }
+    /// <summary>True when the line is linked to a delivery order (already shipped on the DO).</summary>
+    public bool LinkDo { get; init; }
 }
 
 public sealed class IvSpCreateOrReplaceCommand

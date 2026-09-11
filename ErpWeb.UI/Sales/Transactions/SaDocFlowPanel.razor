@@ -1,0 +1,75 @@
+@* E3 — shared read-only document-flow panel. Embedded by SO / DO / INV / CN entry screens. *@
+@if (_result is not null && _result.HasAny)
+{
+    <section class="sdoc-flow" aria-label="Document flow">
+        <h3 class="sdoc-flow__title">Document flow</h3>
+        <div class="sdoc-flow__columns">
+            <div class="sdoc-flow__column">
+                <h4 class="sdoc-flow__heading">Fed by</h4>
+                @if (_result.Upstream.Count == 0)
+                {
+                    <p class="sdoc-flow__empty">No upstream documents.</p>
+                }
+                else
+                {
+                    <ul class="sdoc-flow__list">
+                        @foreach (var node in _result.Upstream)
+                        {
+                            <li class="sdoc-flow__item">
+                                <span class="sdoc-flow__doc">@node.Display</span>
+                                <span class="sdoc-flow__edge">@node.Relationship</span>
+                                <span class="sdoc-flow__meta">
+                                    @if (node.Status is not null)
+                                    {
+                                        <span class="sdoc-flow__status">@node.Status</span>
+                                    }
+                                    @if (node.DocDate is not null)
+                                    {
+                                        <span>@node.DocDate.Value.ToString("dd/MM/yyyy")</span>
+                                    }
+                                    @if (node.Qty != 0m)
+                                    {
+                                        <span>qty @node.Qty.ToString("n4")</span>
+                                    }
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+            <div class="sdoc-flow__column">
+                <h4 class="sdoc-flow__heading">Fed into</h4>
+                @if (_result.Downstream.Count == 0)
+                {
+                    <p class="sdoc-flow__empty">No downstream documents.</p>
+                }
+                else
+                {
+                    <ul class="sdoc-flow__list">
+                        @foreach (var node in _result.Downstream)
+                        {
+                            <li class="sdoc-flow__item">
+                                <span class="sdoc-flow__doc">@node.Display</span>
+                                <span class="sdoc-flow__edge">@node.Relationship</span>
+                                <span class="sdoc-flow__meta">
+                                    @if (node.Status is not null)
+                                    {
+                                        <span class="sdoc-flow__status">@node.Status</span>
+                                    }
+                                    @if (node.DocDate is not null)
+                                    {
+                                        <span>@node.DocDate.Value.ToString("dd/MM/yyyy")</span>
+                                    }
+                                    @if (node.Qty != 0m)
+                                    {
+                                        <span>qty @node.Qty.ToString("n4")</span>
+                                    }
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    </section>
+}

@@ -82,6 +82,29 @@ public class SaDocApplicationTests : IAsyncLifetime
             SellingGlCode = "GLSVC",
             Classification = "CLASS-S"
         });
+        db.IvStockMasters.Add(new IvStockMaster
+        {
+            CompanyCode = "DEMO",
+            ICode = "STK1",
+            IDesc = "Stock item",
+            IClassCode = "RAW",
+            StdUom = "EA",
+            SellingUom = "EA",
+            StockControl = true,
+            IsActive = true,
+            SellingPrice = 10m,
+            SellingGlCode = "GLSTK",
+            Classification = "CLASS-K",
+            DefWarehouse = "MAIN"
+        });
+        db.IvLocations.Add(new IvLocation
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WarehouseCode = "MAIN",
+            LocCode = "BIN1",
+            IsActive = true
+        });
         db.SaCusts.Add(new SaCust
         {
             CompanyCode = "DEMO",
@@ -409,6 +432,147 @@ public class SaDocApplicationTests : IAsyncLifetime
         var post = await dos.PostAsync([DoKeyed(mismatch.DoNo!, mismatch.Document!.RowVersion)]);
         Assert.False(post.Succeeded);
         Assert.Equal(SaDocAllocationReasonCodes.UomMismatch, post.Posting[0].ReasonCode);
+    }
+
+    [Fact]
+    public async Task Pure_LinkDo_invoice_AddShipment_creates_no_batch()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 50m);
+
+        var soSave = await so.SaveNewAsync(SoRequest(5m, iCode: "STK1"));
+        Assert.True(soSave.Succeeded, soSave.ErrorMessage);
+        var doSave = await dos.SaveNewAsync(DoRequest(5m, soSave.SoNo!, 1, iCode: "STK1"));
+        Assert.True(doSave.Succeeded, doSave.ErrorMessage);
+
+        var doShip = await dos.AddShipmentAsync(doSave.DoNo!, false, doSave.Document!.RowVersion);
+        Assert.True(doShip.Succeeded, doShip.ErrorMessage);
+        var doReload = await dos.GetAsync(doSave.DoNo!);
+        var doPost = await dos.PostAsync([DoKeyed(doSave.DoNo!, doReload.Document!.RowVersion)]);
+        Assert.True(doPost.Succeeded, string.Join("; ", doPost.Posting.Select(x => $"{x.Outcome}:{x.ErrorMessage}")));
+
+        var link = await inv.SaveNewAsync(InvoiceFromDo(5m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+
+        var addShip = await inv.AddShipmentAsync(link.InvNo!, false, link.Document!.RowVersion);
+        Assert.True(addShip.Succeeded, addShip.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.IvTrxBatches.AnyAsync(x => x.RefNo == link.InvNo));
+    }
+
+    [Fact]
+    public async Task Mixed_invoice_LinkDo_plus_plain_does_not_double_deduct()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 50m);
+
+        var soSave = await so.SaveNewAsync(SoRequest(5m, iCode: "STK1"));
+        Assert.True(soSave.Succeeded, soSave.ErrorMessage);
+        var doSave = await dos.SaveNewAsync(DoRequest(5m, soSave.SoNo!, 1, iCode: "STK1"));
+        Assert.True(doSave.Succeeded, doSave.ErrorMessage);
+        Assert.True((await dos.AddShipmentAsync(doSave.DoNo!, false, doSave.Document!.RowVersion)).Succeeded);
+        var doReload = await dos.GetAsync(doSave.DoNo!);
+        Assert.True((await dos.PostAsync([DoKeyed(doSave.DoNo!, doReload.Document!.RowVersion)])).Succeeded);
+
+        var save = await inv.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            InvName = "Alpha",
+            InvAddress1 = "INV ADDR 1",
+            InvCity = "INV CITY",
+            InvPostalCode = "50000",
+            InvCountry = "MY",
+            InvTel = "123",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "STK1", Qty = 5m, UnitPrice = 10m,
+                    SoNo = soSave.SoNo, SoLine = 1,
+                    LinkDo = true, DoNo = doSave.DoNo, DoLine = 1
+                },
+                new SaInvoiceLineRequest { ICode = "STK1", Qty = 3m, UnitPrice = 10m, FrWarehouse = "MAIN" }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var addShip = await inv.AddShipmentAsync(save.InvNo!, false, save.Document!.RowVersion);
+        Assert.True(addShip.Succeeded, addShip.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.RefNo == save.InvNo);
+        var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync();
+        // Only the plain (non-LinkDo) line is shipped; the LinkDo line was already shipped on the DO.
+        Assert.Equal(3m, details.Sum(x => x.FrStdQty ?? 0m));
+        Assert.All(details, d => Assert.Equal((short?)2, d.SoLineNo));
+    }
+
+    [Fact]
+    public async Task Shipment_layer_ignores_LinkDo_required_lines()
+    {
+        var postingRepo = new IvStockPostingRepository();
+        var shipments = new IvSpShipmentService(
+            postingRepo, new IvStockTransactionRepository(), new RunningNumberService());
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "SITE");
+        _ = tenant;
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var result = await shipments.CreateOrReplaceShipmentAsync(
+            db,
+            new IvSpCreateOrReplaceCommand
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                LocationCode = "SITE",
+                UserId = "tester",
+                DocumentNo = "INV-LINKDO",
+                DocumentDate = FixedToday,
+                RequiredLines =
+                [
+                    new IvSpRequiredLine
+                    {
+                        Line = 1, ICode = "STK1", StdQty = 5m, StdUom = "EA",
+                        FrWarehouse = "MAIN", StockControl = true, LinkDo = true
+                    }
+                ]
+            });
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal(0, result.BatchId);
+        Assert.False(await db.IvTrxBatches.AnyAsync(x => x.RefNo == "INV-LINKDO"));
+    }
+
+    private async Task SeedStockAsync(string iCode, decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.IvBalLocs.Add(new IvBalLoc
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            ICode = iCode,
+            WhCode = "MAIN",
+            LocCode = "BIN1",
+            LotNo = "",
+            IStatus = "ACTIVE",
+            StdQty = qty,
+            StdUom = "EA",
+            TransDate = FixedToday,
+            LocationCode = "SITE"
+        });
+        await db.SaveChangesAsync();
     }
 
     [Fact]
@@ -930,6 +1094,469 @@ public class SaDocApplicationTests : IAsyncLifetime
         Assert.Equal(SaDoErrorKind.Authorization, post.ErrorKind);
     }
 
+    // ────────────────────────────── R3 write-off (force-close) ──────────────────────────────
+
+    [Fact]
+    public async Task ForceClose_full_do_writes_off_full_qty()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(10m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 10m);
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+        Assert.Equal(10m, line.WrittenOffQty);
+
+        var header = await db.SaSos.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.IsCurrent);
+        Assert.Equal(SaDualStatuses.WrittenOff, header.BillingStatus);
+        Assert.Equal(SaSoStatuses.Closed, header.Status);
+        Assert.Equal(SaSoClosedReasons.FullyConsumed, header.ClosedReason);
+
+        await AssertBillableIdentityAsync(soSave.SoNo!, 10m);
+    }
+
+    [Fact]
+    public async Task ForceClose_partially_billed_do_writes_off_remainder()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 100m);
+
+        // Bill 60 of the 100 through the DO.
+        var link = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+        var linkPost = await inv.PostAsync([link.InvNo!]);
+        Assert.True(linkPost.Succeeded, string.Join("; ", linkPost.Posting.Select(x => x.ErrorMessage)));
+
+        // Partial billing is the normal case, not an error: the unallocated 40 is written off.
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+        Assert.Equal(40m, line.WrittenOffQty);
+        Assert.Equal(60m, line.InvoicedQty);
+
+        var header = await db.SaSos.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.IsCurrent);
+        Assert.Equal(SaDualStatuses.WrittenOff, header.BillingStatus);
+
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);
+    }
+
+    [Fact]
+    public async Task ForceClose_fully_billed_do_writes_off_nothing()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(10m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 10m);
+
+        var link = await inv.SaveNewAsync(InvoiceFromDo(10m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+        Assert.True((await inv.PostAsync([link.InvNo!])).Succeeded);
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+        Assert.Equal(0m, line.WrittenOffQty);
+
+        var header = await db.SaSos.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.IsCurrent);
+        Assert.Equal(SaDualStatuses.Full, header.BillingStatus);
+
+        await AssertBillableIdentityAsync(soSave.SoNo!, 10m);
+    }
+
+    [Fact]
+    public async Task ForceClose_one_of_two_dos_does_not_write_off_the_other()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var do1 = await PostDoAsync(dos, soSave.SoNo!, 40m);
+        var do2 = await PostDoAsync(dos, soSave.SoNo!, 60m);
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(do1.DoNo!, GetDoRowVersion(do1.DoNo!))])).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+            Assert.Equal(40m, line.WrittenOffQty);
+            // DO2 remains POSTED and billable — its 60 must not have been written off.
+            var do2Header = await db.SaDos.AsNoTracking().SingleAsync(x => x.DoNo == do2.DoNo);
+            Assert.Equal(SaDoStatuses.Posted, do2Header.Status);
+        }
+
+        // Direct SO invoicing is fully blocked (LiveDoQty includes the CLOSED DO by design), but DO2
+        // remains billable through the DO path — its 60 must not have been written off.
+        var direct = await so.GetBillableLinesAsync(soSave.SoNo!);
+        Assert.Empty(direct.RemainingLines);
+
+        var doBillable = await dos.GetBillableLinesAsync("CUST01", "MYR");
+        Assert.True(doBillable.Succeeded, doBillable.ErrorMessage);
+        var do2Line = Assert.Single(doBillable.BillableLines, x => x.DoNo == do2.DoNo);
+        Assert.Equal(60m, do2Line.RemainingBillableQty);
+
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);
+    }
+
+    [Fact]
+    public async Task ForceClose_is_irreversible()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(10m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 10m);
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        var rv = GetDoRowVersion(doSave.DoNo!);
+
+        // Repeat force-close fails deterministically (no silent no-op) so a double-submit surfaces.
+        Assert.False((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, rv)])).Succeeded);
+        // Rollback requires POSTED.
+        Assert.False((await dos.RollbackAsync([DoKeyed(doSave.DoNo!, rv)])).Succeeded);
+        // Delete requires NEW.
+        Assert.False((await dos.DeleteAsync([DoKeyed(doSave.DoNo!, rv)])).Succeeded);
+        // Re-post requires NEW.
+        Assert.False((await dos.PostAsync([DoKeyed(doSave.DoNo!, rv)])).Succeeded);
+        // Edit requires NEW.
+        Assert.False((await dos.UpdateAsync(
+            doSave.DoNo!,
+            DoRequest(10m, soSave.SoNo!, 1, rowVersion: rv, iCode: "STK1"))).Succeeded);
+    }
+
+    [Fact]
+    public async Task So_revision_blocked_when_written_off()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+
+        // SO of 100, but only 40 delivered and then force-closed: the SO stays SHIPPED (not CLOSED),
+        // so the D15 usage guard — not the status gate — is what must block the revision.
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 40m);
+
+        // Baseline: an unused NEW revision is revisable.
+        var unusedSo = await so.SaveNewAsync(SoRequest(5m, iCode: "STK1"));
+        Assert.True((await so.ReviseAsync(
+            unusedSo.SoNo!,
+            SoRequest(6m, rowVersion: GetSoRowVersion(unusedSo.SoNo!), line: 1, iCode: "STK1"))).Succeeded);
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.SaSos.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.IsCurrent);
+            Assert.Equal(SaSoStatuses.Shipped, header.Status);
+            var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+            Assert.Equal(40m, line.WrittenOffQty);
+        }
+
+        // D15 — the write-off must survive a revision/delete attempt. A write-off can only arise from a
+        // posted DO, which already makes the SO non-NEW, so the status gate blocks these today; the
+        // SaSoRevisionUsage guard is the defence-in-depth layer (unit-tested in SaSoRevisionUsageTests).
+        var revise = await so.ReviseAsync(
+            soSave.SoNo!,
+            SoRequest(101m, rowVersion: GetSoRowVersion(soSave.SoNo!), line: 1, iCode: "STK1"));
+        Assert.False(revise.Succeeded);
+
+        var delete = await so.DeleteAsync(
+            [new SaSoKeyedRequest { SoNo = soSave.SoNo!, CustRel = 1, RowVersion = GetSoRowVersion(soSave.SoNo!) }]);
+        Assert.False(delete.Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+            Assert.Equal(40m, line.WrittenOffQty);
+        }
+    }
+
+    /// <summary>
+    /// §3.3: the billable accounting identity must hold for the SO line at every lifecycle step.
+    /// </summary>
+    [Fact]
+    public async Task Billable_identity_holds_at_every_step()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);                    // fresh
+
+        var draftDo = await dos.SaveNewAsync(DoRequest(100m, soSave.SoNo!, 1, iCode: "STK1"));
+        Assert.True(draftDo.Succeeded, draftDo.ErrorMessage);
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);                    // draft DO reservation
+
+        Assert.True((await dos.AddShipmentAsync(draftDo.DoNo!, false, draftDo.Document!.RowVersion)).Succeeded);
+        var reload = await dos.GetAsync(draftDo.DoNo!);
+        Assert.True((await dos.PostAsync([DoKeyed(draftDo.DoNo!, reload.Document!.RowVersion)])).Succeeded);
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);                    // posted, nothing billed
+
+        var link60 = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, draftDo.DoNo!, iCode: "STK1"));
+        Assert.True(link60.Succeeded, link60.ErrorMessage);
+        Assert.True((await inv.PostAsync([link60.InvNo!])).Succeeded);
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);                    // 60 billed through the DO
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(draftDo.DoNo!, GetDoRowVersion(draftDo.DoNo!))])).Succeeded);
+        await AssertBillableIdentityAsync(soSave.SoNo!, 100m);                    // 40 written off
+    }
+
+    // ────────────────────────────── E8 allocation reconciliation ──────────────────────────────
+
+    [Fact]
+    public async Task Allocation_reconciliation_seeded_has_no_findings()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 100m);
+
+        var link = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+        Assert.True((await inv.PostAsync([link.InvNo!])).Succeeded);
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        var result = await CreateReconciler().ReconcileAsync(soSave.SoNo!);
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal("OK", result.Status);
+        Assert.True(
+            result.Findings.Count == 0,
+            string.Join(" | ", result.Findings.Select(f => $"{f.Code}/{f.Severity}: {f.Explanation}")));
+    }
+
+    [Fact]
+    public async Task Reconciliation_reports_no_findings_at_every_lifecycle_step()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+        var reconcile = CreateReconciler();
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);                    // fresh
+
+        var draftDo = await dos.SaveNewAsync(DoRequest(100m, soSave.SoNo!, 1, iCode: "STK1"));
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);                    // draft DO
+
+        Assert.True((await dos.AddShipmentAsync(draftDo.DoNo!, false, draftDo.Document!.RowVersion)).Succeeded);
+        var reloadDraft = await dos.GetAsync(draftDo.DoNo!);
+        Assert.True((await dos.PostAsync([DoKeyed(draftDo.DoNo!, reloadDraft.Document!.RowVersion)])).Succeeded);
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);                    // posted
+
+        var link60 = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, draftDo.DoNo!, iCode: "STK1"));
+        Assert.True(link60.Succeeded, link60.ErrorMessage);
+        Assert.True((await inv.PostAsync([link60.InvNo!])).Succeeded);
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);                    // partially billed
+
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(draftDo.DoNo!, GetDoRowVersion(draftDo.DoNo!))])).Succeeded);
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);                    // written off
+    }
+
+    [Fact]
+    public async Task WrittenOffQty_reconciles_to_force_closed_do_contributions()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+        var reconcile = CreateReconciler();
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 100m);
+
+        var link = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+        Assert.True((await inv.PostAsync([link.InvNo!])).Succeeded);
+        Assert.True((await dos.ForceCloseAsync([DoKeyed(doSave.DoNo!, GetDoRowVersion(doSave.DoNo!))])).Succeeded);
+
+        // Clean state: no reconciliation findings at all.
+        await AssertNoFindingsAsync(reconcile, soSave.SoNo!);
+
+        // Corrupt the denormalised column: the mismatch must be detected and must not be silently absorbed.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.SaSoDetails.SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+            line.WrittenOffQty = 35m;
+            await db.SaveChangesAsync();
+        }
+
+        var mismatched = await reconcile.ReconcileAsync(soSave.SoNo!);
+        var finding = Assert.Single(mismatched.Findings, f => f.Code == SaAllocationFindingCodes.WrittenOffQtyMismatch);
+        Assert.Equal(SaAllocationSeverities.Warning, finding.Severity);
+        Assert.Equal(40m, finding.Expected);
+        Assert.Equal(35m, finding.Actual);
+    }
+
+    [Fact]
+    public async Task Reconciliation_flags_write_off_without_audit()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+
+        var soSave = await so.SaveNewAsync(SoRequest(10m, iCode: "STK1"));
+
+        // A write-off with no force-closed DO as its origin — the stamp/guards in §5.4 failed.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.SaSoDetails.SingleAsync(x => x.SoNo == soSave.SoNo && x.CustRel == 1);
+            line.WrittenOffQty = 10m;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await CreateReconciler().ReconcileAsync(soSave.SoNo!);
+        Assert.Contains(result.Findings, f => f.Code == SaAllocationFindingCodes.WrittenOffNoAudit);
+        // A write-off with no originating DO is doubly wrong: nothing blocks those units, so the
+        // §3.3 identity fails too and is (correctly) reported as an ERROR.
+        Assert.Contains(result.Findings, f => f.Code == SaAllocationFindingCodes.BillableIdentityMismatch);
+    }
+
+    private static async Task AssertNoFindingsAsync(SaAllocationReconciliationService reconcile, string soNo)
+    {
+        var result = await reconcile.ReconcileAsync(soNo);
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.True(
+            result.Findings.Count == 0,
+            $"{soNo}: " + string.Join(" | ", result.Findings.Select(f => $"{f.Code}/{f.Severity}: {f.Explanation}")));
+    }
+
+    private SaAllocationReconciliationService CreateReconciler() =>
+        new(_factory, InventoryTenantTestHelper.CreateTenantContext(location: "SITE"));
+
+    // ────────────────────────────── E3 document flow ──────────────────────────────
+
+    [Fact]
+    public void Doc_flow_types_normalize()
+    {
+        Assert.Equal("SO", SaDocFlowTypes.Normalize("so"));
+        Assert.Equal("DO", SaDocFlowTypes.Normalize(" DeliveryOrder "));
+        Assert.Equal("INV", SaDocFlowTypes.Normalize("invoice"));
+        Assert.Equal("CN", SaDocFlowTypes.Normalize("dn"));
+        Assert.Equal(string.Empty, SaDocFlowTypes.Normalize(null));
+    }
+
+    [Fact]
+    public async Task Doc_flow_query_walks_SO_DO_INV_and_CN()
+    {
+        var numbering = new FakeSalesDocumentNumberingService();
+        var so = CreateSo(numbering);
+        var dos = CreateDo(numbering);
+        var inv = CreateInvoice(numbering);
+
+        await SeedStockAsync("STK1", 100m);
+        var soSave = await so.SaveNewAsync(SoRequest(100m, iCode: "STK1"));
+        var doSave = await PostDoAsync(dos, soSave.SoNo!, 100m);
+
+        var link = await inv.SaveNewAsync(InvoiceFromDo(60m, soSave.SoNo!, doSave.DoNo!, iCode: "STK1"));
+        Assert.True(link.Succeeded, link.ErrorMessage);
+        Assert.True((await inv.PostAsync([link.InvNo!])).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCdns.Add(new SaCdn
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocNo = "CN0001",
+                DocDate = FixedToday,
+                Status = ErpWeb.Core.Sales.SaCdnStatuses.New,
+                Type = ErpWeb.Core.Sales.SaCdnTypes.CreditNote,
+                CustCode = "CUST01",
+                InvNo = link.InvNo
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var flow = CreateFlowQuery();
+
+        var soFlow = await flow.QueryAsync("SO", soSave.SoNo!);
+        Assert.Equal("SO", soFlow.DocType);
+        Assert.Contains(soFlow.Downstream, x => x.DocType == "DO" && x.DocNo == doSave.DoNo);
+        Assert.Contains(soFlow.Downstream, x => x.Relationship == "SO → DO");
+        Assert.Equal("POSTED", soFlow.Downstream.First(x => x.DocType == "DO").Status);
+
+        var doFlow = await flow.QueryAsync("DO", doSave.DoNo!);
+        Assert.Contains(doFlow.Upstream, x => x.DocType == "SO" && x.DocNo == soSave.SoNo);
+        Assert.Contains(doFlow.Downstream, x => x.DocType == "INV" && x.DocNo == link.InvNo);
+
+        var invFlow = await flow.QueryAsync("INV", link.InvNo!);
+        Assert.Contains(invFlow.Upstream, x => x.DocType == "DO" && x.DocNo == doSave.DoNo);
+        Assert.Contains(invFlow.Downstream, x => x.DocType == "CN" && x.DocNo == "CN0001");
+        Assert.Contains(invFlow.Downstream, x => x.Relationship == "INV → CN (NEW)");
+
+        var cnFlow = await flow.QueryAsync("CN", "CN0001");
+        Assert.Contains(cnFlow.Upstream, x => x.DocType == "INV" && x.DocNo == link.InvNo);
+
+        // Unknown document → empty flow, never a throw.
+        var missing = await flow.QueryAsync("INV", "NOPE");
+        Assert.False(missing.HasAny);
+    }
+
+    private SaDocFlowQuery CreateFlowQuery() =>
+        new(_factory, InventoryTenantTestHelper.CreateTenantContext(location: "SITE"));
+
+    private async Task AssertBillableIdentityAsync(string soNo, decimal expectedOrderQty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var line = await db.SaSoDetails.AsNoTracking().SingleAsync(x => x.SoNo == soNo && x.CustRel == 1);
+        var map = await SaSoLineReserve.SumBySoLinesAsync(db, "DEMO", "HQ", [soNo]);
+        var sums = SaSoLineReserve.GetSums(map, soNo, line.CustRel, line.Line);
+        var eval = SaSoLineReserve.Evaluate(
+            soNo, line.Line, line.OrderQty, line.DeliveredQty, sums, thisDoQty: 0m, thisSoInvQty: 0m);
+
+        Assert.Equal(expectedOrderQty, eval.OrderQty);
+        Assert.True(
+            eval.BillableIdentityHolds,
+            $"§3.3 identity broken for {soNo}: invoiced={eval.InvoicedQty} writtenOff={eval.WrittenOffQty} "
+            + $"postedDoOpen={eval.PostedDoOpenQty} newDo={eval.NewDoQty} newSoInv={eval.NewSoInvQty} "
+            + $"remainingBillable={eval.RemainingBillable} total={eval.BillableIdentityTotal} order={eval.OrderQty}");
+    }
+
+    /// <summary>Creates, ships and posts a DO of <paramref name="qty"/> for the STK1 line of an SO.</summary>
+    private async Task<SaDoOperationResult> PostDoAsync(SaDoService dos, string soNo, decimal qty)
+    {
+        var save = await dos.SaveNewAsync(DoRequest(qty, soNo, 1, iCode: "STK1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var ship = await dos.AddShipmentAsync(save.DoNo!, false, save.Document!.RowVersion);
+        Assert.True(ship.Succeeded, ship.ErrorMessage);
+        var reload = await dos.GetAsync(save.DoNo!);
+        var post = await dos.PostAsync([DoKeyed(save.DoNo!, reload.Document!.RowVersion)]);
+        Assert.True(post.Succeeded, string.Join("; ", post.Posting.Select(x => x.ErrorMessage)));
+        return save;
+    }
+
     private async Task AssertProjectionOracleAsync(string soNo)
     {
         await using var db = await _factory.CreateDbContextAsync();
@@ -974,7 +1601,7 @@ public class SaDocApplicationTests : IAsyncLifetime
         return db.SaDos.AsNoTracking().Single(x => x.DoNo == doNo).RowVersion ?? [];
     }
 
-    private static SaSoSaveRequest SoRequest(decimal qty, byte[]? rowVersion = null, int line = 0) =>
+    private static SaSoSaveRequest SoRequest(decimal qty, byte[]? rowVersion = null, int line = 0, string iCode = "SVC1") =>
         new()
         {
             SoDate = FixedToday,
@@ -986,7 +1613,7 @@ public class SaDocApplicationTests : IAsyncLifetime
             RowVersion = rowVersion,
             Lines =
             [
-                new SaSoLineRequest { Line = line, ICode = "SVC1", OrderQty = qty, UnitPrice = 10m }
+                new SaSoLineRequest { Line = line, ICode = iCode, OrderQty = qty, UnitPrice = 10m }
             ]
         };
 
@@ -994,7 +1621,8 @@ public class SaDocApplicationTests : IAsyncLifetime
         decimal qty,
         string soNo = "",
         short? soLine = null,
-        byte[]? rowVersion = null) =>
+        byte[]? rowVersion = null,
+        string iCode = "SVC1") =>
         new()
         {
             DoDate = FixedToday,
@@ -1007,7 +1635,7 @@ public class SaDocApplicationTests : IAsyncLifetime
             [
                 new SaDoLineRequest
                 {
-                    ICode = "SVC1",
+                    ICode = iCode,
                     Qty = qty,
                     UnitPrice = 10m,
                     SoNo = soNo,
@@ -1043,7 +1671,7 @@ public class SaDocApplicationTests : IAsyncLifetime
             ]
         };
 
-    private static SaInvoiceSaveRequest InvoiceFromDo(decimal qty, string soNo, string doNo) =>
+    private static SaInvoiceSaveRequest InvoiceFromDo(decimal qty, string soNo, string doNo, string iCode = "SVC1") =>
         new()
         {
             InvDate = FixedToday,
@@ -1061,7 +1689,7 @@ public class SaDocApplicationTests : IAsyncLifetime
             [
                 new SaInvoiceLineRequest
                 {
-                    ICode = "SVC1",
+                    ICode = iCode,
                     Qty = qty,
                     UnitPrice = 10m,
                     SoNo = soNo,

@@ -427,8 +427,10 @@
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Warehouse)" Caption="Warehouse" Width="110px" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.OrderQty)" Caption="Order qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.DeliveryDate)" Caption="Delivery" Width="110px" DisplayFormat="dd/MM/yyyy" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.DeliveredQty)" Caption="Delivered" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.InvoicedQty)" Caption="Invoiced" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.WrittenOffQty)" Caption="Written off" Width="105px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.ShippedQty)" Caption="Shipped" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.BalanceQty)" Caption="Balance" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -450,6 +452,8 @@
                     <div><span>TOTAL INCL TAX</span><strong>@TotAmnt.ToString("n2")</strong></div>
                 </div>
             </section>
+
+            <SaDocFlowPanel DocType="SO" DocNo="@SoNoDisplay" />
 
             <footer class="sdoc-footer">
                 <p class="sdoc-footer__hint">@(_isDirty ? "Unsaved changes" : "Ready") · @LineCountLabel</p>
@@ -529,24 +533,39 @@
                                 <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Shipped qty" ColSpanMd="3">
+                        @if (IsEditingLine && PopupAllocatedFloor > 0m)
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                                <Template>
+                                    <p class="sdoc-field-hint">Order quantity cannot go below @PopupAllocatedFloor.ToString("n4") already allocated.</p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        <DxFormLayoutItem Caption="Delivery date" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit Value="@Popup.ShippedQty" ReadOnly="true" Increment="0.0001m" />
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.DeliveryDate"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Delivered qty" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="ETD" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit Value="@Popup.DeliveredQty" ReadOnly="true" Increment="0.0001m" />
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.Etd"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Invoiced qty" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="ETA" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit Value="@Popup.InvoicedQty" ReadOnly="true" Increment="0.0001m" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Balance qty" ColSpanMd="3">
-                            <Template>
-                                <DxSpinEdit Value="@Popup.BalanceQty" ReadOnly="true" Increment="0.0001m" />
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.Eta"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">

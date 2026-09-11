@@ -41,6 +41,7 @@
       <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="2" />
       <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="3" />
       <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="4" />
+      <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="5" />
     </Menu>
   </Menu>
   <Menu Code="OPERATIONS" Name="Operations" SortOrder="4">

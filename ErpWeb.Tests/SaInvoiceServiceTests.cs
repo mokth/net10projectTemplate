@@ -13,6 +13,8 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using CdnStatuses = ErpWeb.Core.Sales.SaCdnStatuses;
+using CdnTypes = ErpWeb.Core.Sales.SaCdnTypes;
 
 namespace ErpWeb.Tests;
 
@@ -2061,6 +2063,87 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True(save.Succeeded, save.ErrorMessage);
         Assert.Equal(10.05m, save.Document!.Lines[0].Amount);
         Assert.Equal(10m, save.Document.TotAmnt);
+    }
+
+    [Fact]
+    public async Task Invoice_delete_requires_rowversion()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var noToken = await sut.DeleteAsync([new SaInvoiceKeyedRequest { InvNo = save.InvNo! }]);
+        Assert.False(noToken.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Concurrency, noToken.ErrorKind);
+
+        var stale = await sut.DeleteAsync(
+            [new SaInvoiceKeyedRequest { InvNo = save.InvNo!, RowVersion = [9, 9, 9, 9, 9, 9, 9, 9] }]);
+        Assert.False(stale.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Concurrency, stale.ErrorKind);
+
+        var ok = await sut.DeleteAsync(
+            [new SaInvoiceKeyedRequest { InvNo = save.InvNo!, RowVersion = save.Document!.RowVersion }]);
+        Assert.True(ok.Succeeded, ok.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Invoice_rollback_blocked_by_posted_credit_note()
+    {
+        var sut = CreateSut();
+        await SeedBalLocAsync(10m);
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await ShipAsync(sut, save.InvNo!)).Succeeded);
+        Assert.True((await sut.PostAsync([save.InvNo!])).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCdns.Add(new SaCdn
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocNo = "CN0001",
+                DocDate = FixedToday,
+                Status = CdnStatuses.Posted,
+                Type = CdnTypes.CreditNote,
+                CustCode = "CUST01",
+                InvNo = save.InvNo
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var rollback = await sut.RollbackAsync([save.InvNo!]);
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("CN0001", rollback.Posting[0].ErrorMessage ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task Invoice_delete_blocked_by_draft_credit_note()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCdns.Add(new SaCdn
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocNo = "CN0009",
+                DocDate = FixedToday,
+                Status = CdnStatuses.New,
+                Type = CdnTypes.CreditNote,
+                CustCode = "CUST01",
+                InvNo = save.InvNo
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var del = await sut.DeleteAsync(
+            [new SaInvoiceKeyedRequest { InvNo = save.InvNo!, RowVersion = save.Document!.RowVersion }]);
+        Assert.False(del.Succeeded);
+        Assert.Contains("CN0009", del.ErrorMessage ?? string.Empty);
     }
 
     private async Task<int> SeedBalLocAsync(

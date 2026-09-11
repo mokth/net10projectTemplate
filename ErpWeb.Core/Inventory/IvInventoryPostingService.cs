@@ -1345,6 +1345,15 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutOnlyPostedCanRollbackMessage(expectedTrxType));
         }
 
+        // §5.4: a force-closed DO retains its SP batch as an immutable tombstone. Rolling it back
+        // would reverse stock that was already physically shipped and destroy the write-off audit.
+        if (batch.IsForceClosed)
+        {
+            return IvInventoryPostingBatchResult.Fail(
+                batchNo,
+                "This batch was retained by a delivery-order force-close and cannot be rolled back.");
+        }
+
         var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
         var history = await _posting.LoadHistoryForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (history.Count == 0)

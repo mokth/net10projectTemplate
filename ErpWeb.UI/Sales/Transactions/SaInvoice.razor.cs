@@ -154,6 +154,8 @@ public partial class SaInvoice : PageBase, IDisposable
     protected bool CanMutateLines => CanEditDocument && HasCustomer && CurrRateValid && !IsSubmitting;
     protected bool CanOpenSoPicker => CanMutateLines && HasCustomer;
     protected bool CanOpenDoPicker => CanMutateLines && HasCustomer;
+    /// <summary>True when at least one line still needs an SP batch (not a LinkDo line already shipped on a DO).</summary>
+    protected bool HasShipmentLines => Lines.Any(x => !x.LinkDo && x.StockControl && x.Qty > 0m);
     protected bool TaxGroupRequired => _taxable == true;
     protected bool HasContact =>
         !string.IsNullOrWhiteSpace(InvTel) || !string.IsNullOrWhiteSpace(InvEmail);
@@ -1487,7 +1489,7 @@ public partial class SaInvoice : PageBase, IDisposable
             states.Add(state);
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states);
         for (var i = 0; i < Lines.Count; i++)
         {
             Lines[i].Amount = states[i].Amount;
@@ -1744,6 +1746,7 @@ public sealed class SaInvoiceLineVm
     public SaInvoiceLineCalcState ToCalcState() =>
         new()
         {
+            Line = Line,
             Qty = Qty,
             UnitPrice = UnitPrice,
             ItemDiscount = ItemDiscount,

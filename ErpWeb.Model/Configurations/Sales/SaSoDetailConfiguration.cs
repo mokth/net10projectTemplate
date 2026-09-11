@@ -23,6 +23,7 @@ public class SaSoDetailConfiguration : IEntityTypeConfiguration<SaSoDetail>
         builder.Property(e => e.BalanceQty).HasPrecision(18, 4);
         builder.Property(e => e.DeliveredQty).HasPrecision(18, 4);
         builder.Property(e => e.InvoicedQty).HasPrecision(18, 4);
+        builder.Property(e => e.WrittenOffQty).HasPrecision(18, 4);
         builder.Property(e => e.UnitPrice).HasPrecision(18, 4);
         builder.Property(e => e.SellingUom).HasColumnName("SellingUOM").HasMaxLength(10);
         builder.Property(e => e.StdUom).HasColumnName("StdUOM").HasMaxLength(10);
@@ -50,5 +51,8 @@ public class SaSoDetailConfiguration : IEntityTypeConfiguration<SaSoDetail>
         builder.Property(e => e.TaxGroup).HasMaxLength(20);
         builder.Property(e => e.LocalAmount).HasPrecision(18, 2);
         builder.Property(e => e.Classification).HasMaxLength(50);
+        builder.Property(e => e.DeliveryDate).HasColumnType("datetime2");
+        builder.Property(e => e.Eta).HasColumnName("ETA").HasColumnType("datetime2");
+        builder.Property(e => e.Etd).HasColumnName("ETD").HasColumnType("datetime2");
     }
 }

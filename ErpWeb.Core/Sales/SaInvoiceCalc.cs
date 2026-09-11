@@ -56,6 +56,22 @@ public static class SaInvoiceCalc
         return (unitPrice - remaining) + amounts;
     }
 
+    /// <summary>
+    /// Calculates one line's ex-tax money columns.
+    /// <para>
+    /// <b>R2 / D2 — inclusive lines:</b> the entered <see cref="SaInvoiceLineCalcState.UnitPrice"/>
+    /// <i>includes</i> tax (legacy semantics). It is un-taxed to derive the net and tax:
+    /// <c>exclusiveUnitPrice = UnitPrice / (1 + t)</c>,
+    /// <c>exclusiveDiscountPerUnit = discountPerUnit / (1 + t)</c>, then
+    /// <c>Amount</c>/<c>NetAmount</c>/<c>TaxAmt</c> are all ex-tax.
+    /// <c>TaxAmt</c> is derived as <c>inclusiveLineTotal − NetAmount</c> so that
+    /// <c>NetAmount + TaxAmt</c> preserves the tax-inclusive line total exactly.
+    /// </para>
+    /// <para>
+    /// <see cref="SaInvoiceLineCalcState.DiscountPerUnit"/> keeps the <i>raw</i> per-unit discount
+    /// (tax-inclusive for inclusive lines) so the identity above is checkable.
+    /// </para>
+    /// </summary>
     public static void CalculateLine(
         SaInvoiceLineCalcState line,
         decimal taxPercent,
@@ -65,7 +81,7 @@ public static class SaInvoiceCalc
         var qty = line.Qty;
         var unitPrice = line.UnitPrice;
         line.TaxPercent = taxPercent;
-        line.Amount = Money(qty * unitPrice);
+        var factor = 1m + (taxPercent / 100m);
 
         var discountPerUnit = CalculateDiscountPerUnit(
             unitPrice,
@@ -78,48 +94,48 @@ public static class SaInvoiceCalc
             line.ItemDiscAmount,
             line.ItemDiscAmount1,
             discMethod);
-
-        decimal net;
-        if (discountPerUnit != 0m)
-        {
-            if (line.IsInclusive)
-            {
-                var factor = 1m + (taxPercent / 100m);
-                var totalDiscount = factor == 0m
-                    ? 0m
-                    : Money(qty * (discountPerUnit / factor));
-                net = Money(qty * unitPrice) - totalDiscount;
-            }
-            else
-            {
-                var totalDiscount = Money(qty * discountPerUnit);
-                net = Money(qty * unitPrice) - totalDiscount;
-            }
-        }
-        else
-        {
-            net = Money(qty * unitPrice);
-        }
-
-        if (!decPoint)
-        {
-            net = Money(net, 4);
-        }
-
-        line.NetAmount = Money(net);
         line.DiscountPerUnit = discountPerUnit;
 
         if (line.IsInclusive)
         {
-            line.TaxAmt = Money((unitPrice - discountPerUnit) * qty, TaxDecimalPlaces) - line.NetAmount;
+            // Un-tax to legacy semantics: the entered unit price includes tax.
+            var exclusiveUnitPrice = factor == 0m ? unitPrice : unitPrice / factor;
+            var exclusiveDiscountPerUnit = factor == 0m ? discountPerUnit : discountPerUnit / factor;
+
+            var amount = Money(qty * exclusiveUnitPrice);
+            var net = amount - Money(qty * exclusiveDiscountPerUnit);
+            if (!decPoint)
+            {
+                net = Money(net, 4);
+            }
+
+            line.Amount = amount;
+            line.NetAmount = Money(net);
+
+            // Preserve the tax-inclusive line total exactly (row 2 of §9.1: 90 + 9 = 99).
+            var inclusiveLineTotal = Money(qty * (unitPrice - discountPerUnit));
+            line.TaxAmt = inclusiveLineTotal - line.NetAmount;
+            return;
         }
-        else
+
+        var exAmount = Money(qty * unitPrice);
+        var exNet = exAmount - Money(qty * discountPerUnit);
+        if (!decPoint)
         {
-            line.TaxAmt = Money(line.NetAmount * taxPercent / 100m, TaxDecimalPlaces);
+            exNet = Money(exNet, 4);
         }
+
+        line.Amount = exAmount;
+        line.NetAmount = Money(exNet);
+        line.TaxAmt = Money(line.NetAmount * taxPercent / 100m, TaxDecimalPlaces);
     }
 
-    public static void ApplyTaxAdaptiveRounding(IReadOnlyList<SaInvoiceLineCalcState> lines, decimal taxPercent)
+    /// <summary>
+    /// Redistributes rounding residue across the header tax so that per-line tax sums to the
+    /// header figure. The tax rate is read from each line's <see cref="SaInvoiceLineCalcState.TaxPercent"/>
+    /// (R10.1 removed the previously-unused <c>taxPercent</c> parameter).
+    /// </summary>
+    public static void ApplyTaxAdaptiveRounding(IReadOnlyList<SaInvoiceLineCalcState> lines)
     {
         if (lines.Count == 0)
         {
@@ -129,13 +145,18 @@ public static class SaInvoiceCalc
         var inclusive = lines[0].IsInclusive;
         if (inclusive)
         {
+            // R2: per-line tax is derived as (inclusive line total − ex-tax net) in CalculateLine,
+            // so NetAmount + TaxAmt already preserves the tax-inclusive line total exactly. Re-assert
+            // it here as an idempotent self-heal so adaptive rounding can never corrupt an inclusive
+            // line. This is order-independent by construction; callers should still pass lines in
+            // ascending Line order (§9.3) so any future document-level residual stays deterministic.
             foreach (var line in lines)
             {
-                var left = Money(line.Amount + line.TaxAmt);
-                var right = Money(line.NetAmount + line.TaxAmt);
-                if (left != right)
+                var inclusiveLineTotal = Money(line.Qty * (line.UnitPrice - line.DiscountPerUnit));
+                var delta = inclusiveLineTotal - Money(line.NetAmount + line.TaxAmt);
+                if (delta != 0m)
                 {
-                    line.Amount += left - right;
+                    line.TaxAmt += delta;
                 }
             }
 
@@ -189,6 +210,11 @@ public static class SaInvoiceCalc
 
 public sealed class SaInvoiceLineCalcState
 {
+    /// <summary>
+    /// Persisted line ordinal. Authority for the inclusive residual redistribution tie-break
+    /// (plan §9.3); callers should also pass lines ordered by <see cref="Line"/> ascending.
+    /// </summary>
+    public int Line { get; set; }
     public decimal Qty { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal ItemDiscount { get; set; }

@@ -1038,21 +1038,29 @@ public sealed class SaDocApplicationService : ISaDocApplication
 
         var anyDelivered = salesOrder.Details.Any(x => SaSoQty.RoundQty(x.DeliveredQty) > 0m);
         var allDelivered = salesOrder.Details.All(x => SaSoQty.RoundQty(x.DeliveredQty) >= SaSoQty.RoundQty(x.OrderQty));
-        var anyInvoiced = salesOrder.Details.Any(x => SaSoQty.RoundQty(x.InvoicedQty) > 0m);
-        var allInvoiced = salesOrder.Details.All(x => SaSoQty.RoundQty(x.InvoicedQty) >= SaSoQty.RoundQty(x.OrderQty));
+
+        // R3: billing is terminal when a line is fully invoiced OR its remainder was written off by a
+        // DO force-close. WrittenOffQty must never be counted as revenue — only as consumed capacity.
+        var anyBillingProgress = salesOrder.Details.Any(x =>
+            SaSoQty.RoundQty(x.InvoicedQty + x.WrittenOffQty) > 0m);
+        var allBillingTerminal = salesOrder.Details.All(x =>
+            SaSoQty.RoundQty(x.InvoicedQty + x.WrittenOffQty) >= SaSoQty.RoundQty(x.OrderQty));
+        var anyWrittenOff = salesOrder.Details.Any(x => SaSoQty.RoundQty(x.WrittenOffQty) > 0m);
 
         salesOrder.FulfillmentStatus = allDelivered
             ? SaDualStatuses.Full
             : anyDelivered
                 ? SaDualStatuses.Partial
                 : SaDualStatuses.None;
-        salesOrder.BillingStatus = allInvoiced
-            ? SaDualStatuses.Full
-            : anyInvoiced
+        salesOrder.BillingStatus = allBillingTerminal
+            ? anyWrittenOff
+                ? SaDualStatuses.WrittenOff
+                : SaDualStatuses.Full
+            : anyBillingProgress
                 ? SaDualStatuses.Partial
                 : SaDualStatuses.None;
 
-        if (allDelivered && allInvoiced)
+        if (allDelivered && allBillingTerminal)
         {
             salesOrder.Status = SaSoStatuses.Closed;
             salesOrder.ClosedReason = SaSoClosedReasons.FullyConsumed;

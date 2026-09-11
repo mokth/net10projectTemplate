@@ -189,7 +189,14 @@ public sealed class SaDoListRow
     public string Status { get; init; } = string.Empty;
     public string CustCode { get; init; } = string.Empty;
     public string? CustName { get; init; }
+    /// <summary>Tax-inclusive total (legacy <c>TotAmnt</c>). See <see cref="Totals"/> for the split.</summary>
     public decimal TotAmnt { get; init; }
+    /// <summary>R7: ex-tax gross.</summary>
+    public decimal GrossExTax { get; init; }
+    /// <summary>R7: tax portion.</summary>
+    public decimal Tax { get; init; }
+    /// <summary>R7: the full money projection (ex-tax gross / tax / tax-inclusive total).</summary>
+    public SalesDocTotals Totals { get; init; }
     public int LineCount { get; init; }
     public bool ShipmentComplete { get; init; }
     public DateTime? CreatedDate { get; init; }

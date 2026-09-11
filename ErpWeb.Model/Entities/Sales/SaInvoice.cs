@@ -9,6 +9,11 @@ public class SaInvoice
     public string CustCode { get; set; } = string.Empty;
     public DateTime InvDate { get; set; }
     public string Status { get; set; } = string.Empty;
+    /// <summary>
+    /// Legacy column reuse (R10.7): <c>SaveNewAsync</c> stores the invoice number here
+    /// (<c>DoNo = invNo</c>). This is <b>not</b> a delivery-order reference — use
+    /// <see cref="SaInvoiceDetail.LinkDo"/> / <see cref="SaInvoiceDetail.DoNo"/> for DO linkage.
+    /// </summary>
     public string DoNo { get; set; } = string.Empty;
     public string? Currency { get; set; }
     public decimal CurrRate { get; set; } = 1m;

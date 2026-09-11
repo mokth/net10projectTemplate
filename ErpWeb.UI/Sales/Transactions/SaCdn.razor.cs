@@ -46,6 +46,11 @@ public partial class SaCdn : PageBase, IDisposable
     protected string? SalesmanCode;
     protected string? InvNo;
     protected string? DoNo;
+    /// <summary>
+    /// R9: "Reserved by draft CN(s) …" indicator. Read-only/advisory — the authoritative gate is
+    /// still CDN_REMAINING on save and post.
+    /// </summary>
+    protected string? ReservationIndicator;
     protected bool ReturnStock;
     protected string? RefNo;
     protected string? ExternalDocNo;
@@ -255,6 +260,7 @@ public partial class SaCdn : PageBase, IDisposable
         ApplyDocument(result.Document);
         await ApplyCustomerDefaultsAsync(result.Document.CustCode, addressApply: false, seq: _customerApplySeq);
         RecalcDocument();
+        await RefreshReservationIndicatorAsync();
         IsLoading = false;
     }
 
@@ -275,6 +281,7 @@ public partial class SaCdn : PageBase, IDisposable
         SalesmanCode = null;
         InvNo = null;
         DoNo = null;
+        ReservationIndicator = null;
         ReturnStock = false;
         RefNo = null;
         ExternalDocNo = null;
@@ -335,6 +342,7 @@ public partial class SaCdn : PageBase, IDisposable
         SalesmanCode = doc.SalesmanCode;
         InvNo = doc.InvNo;
         DoNo = doc.DoNo;
+        ReservationIndicator = null;
         ReturnStock = doc.ReturnStock;
         RefNo = doc.RefNo;
         ExternalDocNo = doc.ExternalDocNo;
@@ -356,6 +364,38 @@ public partial class SaCdn : PageBase, IDisposable
         TotAmnt = doc.TotAmnt;
         _rowVersion = doc.RowVersion;
         Lines = doc.Lines.Select(SaCdnLineVm.FromDto).ToList();
+    }
+
+    /// <summary>R9: refresh the draft-CN reservation indicator for the linked invoice.</summary>
+    protected async Task OnInvNoChangedAsync()
+    {
+        MarkDirty();
+        await RefreshReservationIndicatorAsync();
+    }
+
+    private async Task RefreshReservationIndicatorAsync()
+    {
+        ReservationIndicator = null;
+        var no = (InvNo ?? string.Empty).Trim();
+        if (!IsCreditNote || no.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await Cdns.GetInvoiceReservationsAsync(no, IsNewMode ? null : DocNo, _cts.Token);
+            if (!result.Succeeded || result.Reservations is not { } summary || !summary.HasDraftReservation)
+            {
+                return;
+            }
+
+            ReservationIndicator = $"{summary.DraftIndicator} Remaining {summary.Remaining:n2}.";
+        }
+        catch (OperationCanceledException)
+        {
+            // navigation / re-entry — the indicator is advisory only.
+        }
     }
 
     private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
@@ -724,6 +764,7 @@ public partial class SaCdn : PageBase, IDisposable
         ApplyDocument(result.Document);
         await ApplyCustomerDefaultsAsync(result.Document.CustCode, addressApply: false, seq: _customerApplySeq);
         RecalcDocument();
+        await RefreshReservationIndicatorAsync();
         _isDirty = false;
         ValidationErrors.Clear();
         StatusMessage = "Loaded latest version.";
@@ -883,7 +924,7 @@ public partial class SaCdn : PageBase, IDisposable
             states.Add(state);
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states);
         for (var i = 0; i < Lines.Count; i++)
         {
             Lines[i].Amount = states[i].Amount;
@@ -1020,6 +1061,7 @@ public sealed class SaCdnLineVm
 
     public SaInvoiceLineCalcState ToCalcState() => new()
     {
+        Line = Line,
         Qty = Qty,
         UnitPrice = UnitPrice,
         ItemDiscount = ItemDiscount,

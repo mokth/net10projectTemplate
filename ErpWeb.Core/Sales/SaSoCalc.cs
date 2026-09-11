@@ -82,6 +82,12 @@ public static class SaSoQty
             throw new InvalidOperationException("OrderQty cannot be less than ShippedQty.");
         }
 
+        // I1: WrittenOffQty is an irreversible consumption outcome — it may never exceed OrderQty.
+        if (detail.WrittenOffQty > order)
+        {
+            throw new InvalidOperationException("OrderQty cannot be less than WrittenOffQty.");
+        }
+
         detail.OrderQty = order;
         detail.BalanceQty = RoundQty(order - detail.DeliveredQty);
     }

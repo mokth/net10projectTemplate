@@ -423,11 +423,16 @@ public sealed class SaCdnService : ISaCdnService
                     return SaCdnOperationResult.Fail("Invoice does not belong to this tenant.");
                 }
 
-                var otherAmounts = await _cdns.ListOtherCnTotAmntsAsync(
+                var otherRows = await _cdns.ListOtherCreditNotesAsync(
                     db, context.CompanyCode!, context.BranchCode!, invNo, excludeDocNo: null, cancellationToken);
                 var decPoint = prepared.Customer!.DecPoint == true;
                 var candidateTotal = SaCdnCalc.MoneyNormalize(prepared.TotAmnt, decPoint);
-                var eval = SaCdnCalc.EvaluateRemaining(locked.Invoice.TotAmnt, otherAmounts, candidateTotal, decPoint);
+                var eval = SaCdnCalc.EvaluateRemaining(
+                    locked.Invoice.TotAmnt,
+                    otherRows.Select(x => x.TotAmnt).ToList(),
+                    candidateTotal,
+                    decPoint,
+                    otherRows.Where(x => x.IsDraft).Select(x => x.DocNo).ToList());
                 if (!eval.Ok)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -691,10 +696,15 @@ public sealed class SaCdnService : ISaCdnService
             // Remaining check for CN with InvNo
             if (docType == SaCdnTypes.CreditNote && !string.IsNullOrWhiteSpace(request.InvNo) && locked.Invoice is not null)
             {
-                var otherAmounts = await _cdns.ListOtherCnTotAmntsAsync(
-                    db, context.CompanyCode!, context.BranchCode!, locked.Invoice.InvNo, no, cancellationToken);
+                var otherRows = await _cdns.ListOtherCreditNotesAsync(
+                    db, context.CompanyCode!, context.BranchCode!, locked.Invoice.InvNo ?? string.Empty, no, cancellationToken);
                 var decPoint = prepared.Customer!.DecPoint == true;
-                var eval = SaCdnCalc.EvaluateRemaining(locked.Invoice.TotAmnt, otherAmounts, prepared.TotAmnt, decPoint);
+                var eval = SaCdnCalc.EvaluateRemaining(
+                    locked.Invoice.TotAmnt,
+                    otherRows.Select(x => x.TotAmnt).ToList(),
+                    prepared.TotAmnt,
+                    decPoint,
+                    otherRows.Where(x => x.IsDraft).Select(x => x.DocNo).ToList());
                 if (!eval.Ok)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -1053,6 +1063,173 @@ public sealed class SaCdnService : ISaCdnService
 
     // ─────────────────────────── Copy from invoice ───────────────────────────
 
+    // ─────────────────────────── R9 / E7 reservation reporting ───────────────────────────
+
+    public async Task<SaCdnOperationResult> GetInvoiceReservationsAsync(
+        string invNo,
+        string? excludeDocNo = null,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return SaCdnOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(SaCdnTypes.CreditNote, PermissionCodes.Access, cancellationToken))
+        {
+            return SaCdnOperationResult.Fail("Not authorized.", SaCdnErrorKind.Authorization);
+        }
+
+        var no = (invNo ?? string.Empty).Trim();
+        if (no.Length == 0)
+        {
+            return SaCdnOperationResult.FailValidation("Invoice number is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var invoice = await db.SaInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.InvNo == no)
+            .Select(x => new { x.InvNo, x.TotAmnt })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (invoice is null)
+        {
+            return SaCdnOperationResult.Fail($"Invoice {no} was not found.", SaCdnErrorKind.NotFound);
+        }
+
+        var rows = await _cdns.ListOtherCreditNotesAsync(
+            db, context.CompanyCode!, context.BranchCode!, no, excludeDocNo, cancellationToken);
+        return SaCdnOperationResult.OkReservations(BuildReservationSummary(no, invoice.TotAmnt, rows));
+    }
+
+    public async Task<SaCdnOperationResult> GetReservationReportAsync(
+        SaCdnReservationReportQuery? query = null,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return SaCdnOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(SaCdnTypes.CreditNote, PermissionCodes.Access, cancellationToken))
+        {
+            return SaCdnOperationResult.Fail("Not authorized.", SaCdnErrorKind.Authorization);
+        }
+
+        query ??= new SaCdnReservationReportQuery();
+        var take = query.Take <= 0 ? 200 : Math.Min(query.Take, 500);
+        var custFilter = string.IsNullOrWhiteSpace(query.CustCode) ? null : query.CustCode.Trim();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // Report-only: never locks and never mutates.
+        var cnRows = await db.SaCdns.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Type == SaCdnTypes.CreditNote
+                && x.InvNo != null && x.InvNo != string.Empty
+                && (x.Status == SaCdnStatuses.New || x.Status == SaCdnStatuses.Posted)
+                && (custFilter == null || x.CustCode == custFilter))
+            .Select(x => new { InvNo = x.InvNo!, x.DocNo, x.Status, x.TotAmnt })
+            .ToListAsync(cancellationToken);
+
+        if (cnRows.Count == 0)
+        {
+            return SaCdnOperationResult.OkReservationReport(new SaCdnReservationReportPage());
+        }
+
+        var invNos = cnRows.Select(x => x.InvNo).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var invoices = await db.SaInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Status == SaInvoiceStatuses.Posted
+                && invNos.Contains(x.InvNo))
+            .Select(x => new { x.InvNo, x.InvDate, x.CustCode, x.CustName, x.TotAmnt })
+            .ToListAsync(cancellationToken);
+        var invoiceByNo = invoices.ToDictionary(x => x.InvNo, StringComparer.OrdinalIgnoreCase);
+
+        var rows = new List<SaCdnReservationReportRow>();
+        foreach (var group in cnRows.GroupBy(x => x.InvNo, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!invoiceByNo.TryGetValue(group.Key, out var invoice))
+            {
+                continue;
+            }
+
+            var drafts = group
+                .Where(x => string.Equals(x.Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var postedTotal = SaInvoiceCalc.Money(group.Except(drafts).Sum(x => x.TotAmnt));
+            var draftTotal = SaInvoiceCalc.Money(drafts.Sum(x => x.TotAmnt));
+            var draftNos = drafts
+                .Select(x => x.DocNo)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (query.DraftsOnly && draftNos.Count == 0)
+            {
+                continue;
+            }
+
+            if (query.OverReservedOnly && postedTotal + draftTotal <= SaInvoiceCalc.Money(invoice.TotAmnt))
+            {
+                continue;
+            }
+
+            rows.Add(new SaCdnReservationReportRow
+            {
+                InvNo = invoice.InvNo,
+                InvDate = invoice.InvDate,
+                CustCode = invoice.CustCode,
+                CustName = invoice.CustName,
+                InvoiceTotal = SaInvoiceCalc.Money(invoice.TotAmnt),
+                PostedCnTotal = postedTotal,
+                DraftCnTotal = draftTotal,
+                Remaining = SaInvoiceCalc.Money(invoice.TotAmnt - postedTotal - draftTotal),
+                DraftCnNos = draftNos
+            });
+        }
+
+        var ordered = rows
+            .OrderByDescending(x => x.OverReserved)
+            .ThenBy(x => x.InvNo, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return SaCdnOperationResult.OkReservationReport(new SaCdnReservationReportPage
+        {
+            Rows = ordered.Take(take).ToList(),
+            TotalCount = ordered.Count
+        });
+    }
+
+    private static SaCdnInvoiceReservationSummary BuildReservationSummary(
+        string invNo,
+        decimal invoiceTotal,
+        IReadOnlyList<SaCdnReservationRow> rows)
+    {
+        var posted = SaInvoiceCalc.Money(rows.Where(x => !x.IsDraft).Sum(x => x.TotAmnt));
+        var draft = SaInvoiceCalc.Money(rows.Where(x => x.IsDraft).Sum(x => x.TotAmnt));
+        return new SaCdnInvoiceReservationSummary
+        {
+            InvNo = invNo,
+            InvoiceTotal = SaInvoiceCalc.Money(invoiceTotal),
+            PostedCnTotal = posted,
+            DraftCnTotal = draft,
+            Remaining = SaInvoiceCalc.Money(invoiceTotal - posted - draft),
+            DraftCnNos = rows
+                .Where(x => x.IsDraft)
+                .Select(x => x.DocNo)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            Reservations = rows
+                .Select(x => new SaCdnReservationLine { DocNo = x.DocNo, Status = x.Status, TotAmnt = x.TotAmnt })
+                .ToList()
+        };
+    }
+
     public async Task<SaCdnOperationResult> CopyFromInvoiceAsync(
         string invNo,
         CancellationToken cancellationToken = default)
@@ -1224,10 +1401,18 @@ public sealed class SaCdnService : ISaCdnService
                     return SaCdnPostingItemResult.Failed(docNo, $"Invoice {cdn.InvNo} was not found.");
                 }
 
-                var decPoint = false; // Will check properly below
-                var otherAmounts = await _cdns.ListOtherCnTotAmntsAsync(
-                    db, context.CompanyCode!, context.BranchCode!, cdn.InvNo, docNo, cancellationToken);
-                var eval = SaCdnCalc.EvaluateRemaining(locked.Invoice.TotAmnt, otherAmounts, cdn.TotAmnt, decPoint);
+                var decPoint = await db.SaCusts.AsNoTracking()
+                    .Where(x => x.CompanyCode == context.CompanyCode && x.CustCode == cdn.CustCode)
+                    .Select(x => x.DecPoint == true)
+                    .FirstOrDefaultAsync(cancellationToken);
+                var otherRows = await _cdns.ListOtherCreditNotesAsync(
+                    db, context.CompanyCode!, context.BranchCode!, cdn.InvNo!, docNo, cancellationToken);
+                var eval = SaCdnCalc.EvaluateRemaining(
+                    locked.Invoice.TotAmnt,
+                    otherRows.Select(x => x.TotAmnt).ToList(),
+                    cdn.TotAmnt,
+                    decPoint,
+                    otherRows.Where(x => x.IsDraft).Select(x => x.DocNo).ToList());
                 if (!eval.Ok)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -1713,6 +1898,7 @@ public sealed class SaCdnService : ISaCdnService
 
             var calcState = new SaInvoiceLineCalcState
             {
+                Line = lineNo,
                 Qty = qty,
                 UnitPrice = line.UnitPrice,
                 ItemDiscount = line.ItemDiscount,
@@ -1798,7 +1984,7 @@ public sealed class SaCdnService : ISaCdnService
         }
 
         // Apply adaptive tax rounding
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates, calcStates.Count > 0 ? calcStates[0].TaxPercent : 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates);
 
         var header = SaInvoiceCalc.CalculateHeader(calcStates, decPoint);
         return PreparedLinesResult.Ok(customer, currency, currRate, header.Taxes, header.TotAmnt, prepared);

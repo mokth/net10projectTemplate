@@ -130,7 +130,20 @@ public static class SaCdnCalc
         decimal invoiceTotAmnt,
         IReadOnlyList<decimal> otherCnTotAmnts,
         decimal candidateTotAmnt,
-        bool decPoint)
+        bool decPoint) =>
+        EvaluateRemaining(invoiceTotAmnt, otherCnTotAmnts, candidateTotAmnt, decPoint, draftCnNos: null);
+
+    /// <summary>
+    /// R9: when <paramref name="draftCnNos"/> names the NEW credit notes that are holding part of
+    /// the invoice's remaining balance, the over-credit error says so instead of leaving the operator
+    /// to guess where the balance went.
+    /// </summary>
+    public static (bool Ok, decimal Remaining, string? Error) EvaluateRemaining(
+        decimal invoiceTotAmnt,
+        IReadOnlyList<decimal> otherCnTotAmnts,
+        decimal candidateTotAmnt,
+        bool decPoint,
+        IReadOnlyList<string>? draftCnNos)
     {
         var invTotal = MoneyNormalize(invoiceTotAmnt, decPoint);
         var otherSum = SumNormalized(otherCnTotAmnts, decPoint);
@@ -144,10 +157,33 @@ public static class SaCdnCalc
 
         if (thisTotal > remaining)
         {
-            return (false, remaining, $"Credit note total {thisTotal:0.00} exceeds invoice remaining {remaining:0.00}.");
+            var reserved = FormatDraftReservation(draftCnNos);
+            return (false, remaining, $"Credit note total {thisTotal:0.00} exceeds invoice remaining {remaining:0.00}.{reserved}");
         }
 
         return (true, remaining, null);
+    }
+
+    /// <summary>
+    /// R9: " Reserved by draft CN(s) X, Y." — or an empty string when no draft holds the balance.
+    /// Kept public so the UI indicator and the error message cannot drift apart.
+    /// </summary>
+    public static string FormatDraftReservation(IReadOnlyList<string>? draftCnNos)
+    {
+        if (draftCnNos is null || draftCnNos.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var named = draftCnNos
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return named.Count == 0
+            ? string.Empty
+            : $" Reserved by draft CN(s) {string.Join(", ", named)}.";
     }
 
     public static string? ValidateQtyGates(SaCdnDetail detail)

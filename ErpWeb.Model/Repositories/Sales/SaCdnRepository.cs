@@ -45,6 +45,29 @@ public interface ISaCdnRepository
         string invNo,
         string? excludeDocNo,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// R9: the other credit notes (NEW or POSTED) holding part of the invoice's remaining balance,
+    /// with their document numbers and statuses so the operator can be told <i>which</i> drafts
+    /// reserved the balance — not merely that the total was exceeded.
+    /// </summary>
+    Task<IReadOnlyList<SaCdnReservationRow>> ListOtherCreditNotesAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        string? excludeDocNo,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>A credit note reserving part of a posted invoice's remaining balance (R9).</summary>
+public sealed class SaCdnReservationRow
+{
+    public string DocNo { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public decimal TotAmnt { get; init; }
+
+    public bool IsDraft => string.Equals(Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class SaCdnRepository : ISaCdnRepository
@@ -220,6 +243,45 @@ WHERE CompanyCode = {company}
         }
 
         return await query.Select(x => x.TotAmnt).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<SaCdnReservationRow>> ListOtherCreditNotesAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        string? excludeDocNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var invoice = (invNo ?? string.Empty).Trim();
+        var exclude = (excludeDocNo ?? string.Empty).Trim();
+
+        var query = db.SaCdns.AsNoTracking()
+            .Where(x =>
+                x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.Type == SaCdnTypes.CreditNote
+                && x.InvNo == invoice
+                && (x.Status == SaCdnStatuses.New || x.Status == SaCdnStatuses.Posted));
+
+        if (exclude.Length > 0)
+        {
+            query = query.Where(x => x.DocNo != exclude);
+        }
+
+        return await query
+            .OrderBy(x => x.Status)
+            .ThenBy(x => x.DocNo)
+            .Select(x => new SaCdnReservationRow
+            {
+                DocNo = x.DocNo,
+                Status = x.Status,
+                TotAmnt = x.TotAmnt
+            })
+            .ToListAsync(cancellationToken);
     }
 }
 

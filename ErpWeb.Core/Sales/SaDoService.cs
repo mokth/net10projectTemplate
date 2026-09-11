@@ -321,19 +321,26 @@ public sealed class SaDoService : ISaDoService
         return SaDoOperationResult.OkList(new SaDoListPage
         {
             TotalCount = total,
-            Rows = rows.Select(x => new SaDoListRow
+            Rows = rows.Select(x =>
             {
-                DoNo = x.DoNo,
-                DoDate = x.DoDate,
-                Status = x.Status,
-                CustCode = x.CustCode,
-                CustName = x.CustName,
-                TotAmnt = x.TotAmnt,
-                LineCount = countByDo.GetValueOrDefault(x.DoNo),
-                ShipmentComplete = false, // computed in GetAsync per document
-                CreatedDate = x.CreatedDate,
-                CreatedBy = x.CreatedBy,
-                RowVersion = x.RowVersion ?? []
+                var totals = SalesDocTotals.FromDeliveryOrder(x.GrossAmnt, x.Taxes, x.TotAmnt);
+                return new SaDoListRow
+                {
+                    DoNo = x.DoNo,
+                    DoDate = x.DoDate,
+                    Status = x.Status,
+                    CustCode = x.CustCode,
+                    CustName = x.CustName,
+                    TotAmnt = x.TotAmnt,
+                    GrossExTax = totals.GrossExTax,
+                    Tax = totals.Tax,
+                    Totals = totals,
+                    LineCount = countByDo.GetValueOrDefault(x.DoNo),
+                    ShipmentComplete = false, // computed in GetAsync per document
+                    CreatedDate = x.CreatedDate,
+                    CreatedBy = x.CreatedBy,
+                    RowVersion = x.RowVersion ?? []
+                };
             }).ToList()
         });
     }
@@ -493,7 +500,7 @@ public sealed class SaDoService : ISaDoService
 
             TouchRowVersion(db, deliveryOrder);
             ApplyHeaderSnapshots(deliveryOrder, request);
-            ApplyCalculatedTotals(deliveryOrder, prepared.Lines!);
+            ApplyCalculatedTotals(deliveryOrder, prepared.Lines!, prepared.Customer!.DecPoint == true);
             db.SaDos.Add(deliveryOrder);
             AddDetails(deliveryOrder, prepared.Lines!);
 
@@ -527,6 +534,13 @@ public sealed class SaDoService : ISaDoService
 
     // ─────────────────────────── Update ───────────────────────────
 
+    /// <summary>
+    /// Edits a NEW delivery order. Details are deleted and re-inserted, renumbering from 1
+    /// (R10.6). Safe today because edit is restricted to NEW DOs and the allocation ledger only
+    /// keys <c>TargetLineId</c> for posted documents. <b>Pre-condition:</b> this becomes unsafe
+    /// if NEW-DO allocation is ever introduced — the ledger would then reference line numbers
+    /// that are renumbered here.
+    /// </summary>
     public async Task<SaDoOperationResult> UpdateAsync(
         string doNo,
         SaDoSaveRequest? request,
@@ -694,7 +708,7 @@ public sealed class SaDoService : ISaDoService
             db.SaDoDetails.RemoveRange(deliveryOrder.Details);
             deliveryOrder.Details.Clear();
             AddDetails(deliveryOrder, prepared.Lines!);
-            ApplyCalculatedTotals(deliveryOrder, prepared.Lines!);
+            ApplyCalculatedTotals(deliveryOrder, prepared.Lines!, prepared.Customer!.DecPoint == true);
 
             if (!customerChanged && !IdentityEquals(previousIdentity, SnapshotIdentity(deliveryOrder.Details)))
             {
@@ -983,6 +997,15 @@ public sealed class SaDoService : ISaDoService
         if (deliveryOrder is null)
         {
             return SaDoOperationResult.Fail("Delivery order was not found.", SaDoErrorKind.NotFound);
+        }
+
+        // §5.4: a force-closed DO retains its shipment batch as an immutable tombstone. The editor
+        // must not offer to change it — surface the read-only state instead.
+        if (string.Equals(deliveryOrder.Status, SaDoStatuses.Closed, StringComparison.OrdinalIgnoreCase))
+        {
+            return SaDoOperationResult.Fail(
+                "This delivery order was force-closed; its shipment is read-only.",
+                SaDoErrorKind.BusinessRule);
         }
 
         var line = deliveryOrder.Details.FirstOrDefault(x => x.Line == soLineNo);
@@ -1781,7 +1804,10 @@ public sealed class SaDoService : ISaDoService
     // ─────────────────────────── Private: ForceCloseOneAsync ───────────────────────────
 
     /// <summary>
-    /// POSTED → CLOSED. Deletes SP batch and details. Does NOT reverse stock.
+    /// POSTED → CLOSED. The SP batch and its details are <b>retained</b> and stamped with the
+    /// force-close audit (R4) so the immutable origin of the close survives; <c>BatchStatus</c>
+    /// deliberately stays <c>POSTED</c> and <see cref="IvTrxBatch.ForceCloseDate"/> is the tombstone.
+    /// Does NOT reverse stock — the physical shipment has already occurred.
     /// </summary>
     private async Task<SaDoPostingItemResult> ForceCloseOneAsync(
         UserContext context,
@@ -1803,6 +1829,8 @@ public sealed class SaDoService : ISaDoService
 
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
+                // Covers the repeat force-close of a CLOSED (force-closed) DO: fail deterministically
+                // rather than silently no-op so a double-submit surfaces as a business error (§5.3.1).
                 await tx.RollbackAsync(cancellationToken);
                 return SaDoPostingItemResult.Failed(doNo, "Only POSTED delivery orders can be force-closed.");
             }
@@ -1816,24 +1844,114 @@ public sealed class SaDoService : ISaDoService
                     "Delivery order was changed by another user.");
             }
 
-            // Delete SP batch and details scoped to Company+Branch+TrxType=SP+RefNo=DO/{doNo}.
-            // No stock reversal — the physical shipment has already occurred.
+            var now = DateTime.UtcNow;
+            var uid = Truncate(context.UserId!, 10);
+
+            await db.Entry(deliveryOrder).Collection(x => x.Details).LoadAsync(cancellationToken);
+
+            // ── §5.5 global lock order: DO (held above) → SO ────────────────────────────────
+            // The SO set is derived from the locked DO details, which is why SOs cannot be locked
+            // first. WrittenOffQty is a read-modify-write on a shared Shared SO row, so the SO
+            // header must be locked before it is read or incremented (D14, I10).
+            var soNos = deliveryOrder.Details
+                .Where(d => !string.IsNullOrWhiteSpace(d.SoNo) && d.SoLine is > 0)
+                .Select(d => d.SoNo!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, SaSoLockOrder.Comparer)
+                .ToList();
+
+            var soHeaders = new Dictionary<string, SaSo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var soNo in soNos)
+            {
+                var salesOrder = await _salesOrders.LockForUpdateAsync(
+                    db, context.CompanyCode!, context.BranchCode!, soNo, cancellationToken);
+                if (salesOrder is null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaDoPostingItemResult.Failed(doNo, $"Sales Order {soNo} was not found.");
+                }
+
+                if (!salesOrder.IsCurrent)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaDoPostingItemResult.Failed(doNo, SaSoReasonCodes.RevisedMessage);
+                }
+
+                await db.Entry(salesOrder).Collection(x => x.Details).LoadAsync(cancellationToken);
+                soHeaders[soNo] = salesOrder;
+            }
+
+            // ── §5.1 write-off: W_l = max(0, DO line Qty − Σ posted DO→INV allocations) ─────
+            foreach (var detail in deliveryOrder.Details)
+            {
+                var soNo = (detail.SoNo ?? string.Empty).Trim();
+                if (soNo.Length == 0 || detail.SoLine is not > 0 || !soHeaders.TryGetValue(soNo, out var salesOrder))
+                {
+                    // Standalone DO line (no SO) — contributes nothing to any SO.
+                    continue;
+                }
+
+                var invoiced = await SumDoLineInvoicedQtyAsync(
+                    db, context.CompanyCode!, context.BranchCode!, doNo, detail.Line, cancellationToken);
+                var writeOff = Math.Max(0m, SaSoQty.RoundQty(detail.Qty) - invoiced);
+                if (writeOff == 0m)
+                {
+                    // Fully invoiced — contributes nothing and must not block the close.
+                    continue;
+                }
+
+                var custRel = detail.CustRel is > 0 ? detail.CustRel!.Value : (short)1;
+                var soLine = salesOrder.Details.FirstOrDefault(
+                    x => x.Line == detail.SoLine!.Value && x.CustRel == custRel);
+                if (soLine is null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaDoPostingItemResult.Failed(
+                        doNo, $"Sales Order {soNo} line {detail.SoLine} was not found.");
+                }
+
+                // Additive: force-closing a second DO on the same SO line accrues further write-off.
+                // The result is committed in the SAME transaction as the status flip — force-close is
+                // irreversible (D8), so there is no compensating path.
+                soLine.WrittenOffQty = SaSoQty.RoundQty(soLine.WrittenOffQty + writeOff);
+            }
+
+            // R4: retain the SP batch — do NOT delete it or its details. Stamp the tombstone so the
+            // retained batch can never be mistaken for a live reservation (guards live in §5.4).
             var doRef = SaDoSpRefs.ToRefNo(doNo);
             var batch = await _postingRepo.LockSpBatchByRefAsync(
                 db, context.CompanyCode!, context.BranchCode!, doRef, cancellationToken);
             if (batch is not null)
             {
-                var spDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-                db.IvTrxBatchDetails.RemoveRange(spDetails);
-                db.IvTrxBatches.Remove(batch);
+                if (batch.IsForceClosed)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaDoPostingItemResult.Failed(doNo, "This shipment batch has already been force-closed.");
+                }
+
+                batch.ForceCloseDate = now;
+                batch.ForceCloseBy = uid;
+                batch.ForceCloseReason = ForceCloseReason;
+                batch.ModifiedDate = now;
+                batch.ModifiedBy = uid;
+                // BatchStatus deliberately stays POSTED — the stamp is the tombstone, not the status.
             }
 
-            var now = DateTime.UtcNow;
-            var uid = Truncate(context.UserId!, 10);
             deliveryOrder.Status = SaDoStatuses.Closed;
             deliveryOrder.ModifiedDate = now;
             deliveryOrder.ModifiedBy = uid;
             TouchRowVersion(db, deliveryOrder);
+
+            // Project the SO/DO quantities from the ledger under the locks already held. It takes no
+            // locks of its own and does not touch WrittenOffQty, so it cannot clobber the write-off.
+            await _docApplication.RecalculateAffectedLinesAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                uid,
+                soHeaders.Keys.ToList(),
+                [doNo],
+                cancellationToken);
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -1848,6 +1966,32 @@ public sealed class SaDoService : ISaDoService
                 "Delivery order changed during force-close.");
         }
     }
+
+    /// <summary>
+    /// Σ posted <c>DO → INV</c> applied qty for one DO line — the authority for the force-close
+    /// write-off remainder (§3.2). Never use <c>SaDoDetail.SoConsumedQty</c> for this.
+    /// </summary>
+    private static async Task<decimal> SumDoLineInvoicedQtyAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string doNo,
+        short doLine,
+        CancellationToken cancellationToken)
+    {
+        var sum = await db.SaDocApplications.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.SourceDocType == SaDocTypes.Do
+                && x.SourceDocId == doNo
+                && x.SourceLineId == doLine
+                && x.TargetDocType == SaDocTypes.Inv)
+            .SumAsync(x => (decimal?)x.AppliedQty, cancellationToken) ?? 0m;
+        return SaSoQty.RoundQty(sum);
+    }
+
+    /// <summary>Default audit reason stamped on a retained batch by <see cref="ForceCloseOneAsync"/>.</summary>
+    internal const string ForceCloseReason = "DO_FORCE_CLOSE";
 
     // ─────────────────────────── Private: PrepareLinesAsync ───────────────────────────
 
@@ -2133,6 +2277,7 @@ public sealed class SaDoService : ISaDoService
 
             var state = new SaInvoiceLineCalcState
             {
+                Line = lineNo,
                 Qty = qty,
                 UnitPrice = line.UnitPrice,
                 ItemDiscount = line.ItemDiscount,
@@ -2203,7 +2348,7 @@ public sealed class SaDoService : ISaDoService
             return reserveGate;
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates);
         foreach (var row in prepared)
         {
             row.Calc.LocalAmount = SaInvoiceCalc.Money(row.Calc.NetAmount * rateResult.Rate);
@@ -2328,14 +2473,19 @@ public sealed class SaDoService : ISaDoService
         deliveryOrder.InvFax = TruncateOptional(request.InvFax, 50);
     }
 
-    private static void ApplyCalculatedTotals(SaDo deliveryOrder, IReadOnlyList<PreparedLine> lines)
+    /// <summary>
+    /// R7: DO header totals must follow the same convention as INVOICE/CN/SO — i.e.
+    /// <see cref="SaInvoiceCalc.CalculateHeader"/> where <c>GrossAmnt</c> is ex-tax and
+    /// <c>TotAmnt = GrossAmnt + Taxes</c>. The previous hand-rolled aggregate summed
+    /// <c>Amount</c> into gross and <c>NetAmount</c> into total, so the DO disagreed with every
+    /// other document kind and dropped tax from the total.
+    /// </summary>
+    private static void ApplyCalculatedTotals(SaDo deliveryOrder, IReadOnlyList<PreparedLine> lines, bool decPoint)
     {
-        var grossAmnt = lines.Sum(x => x.Calc.Amount);
-        var taxes = lines.Sum(x => x.Calc.TaxAmt);
-        var totAmnt = lines.Sum(x => x.Calc.NetAmount);
-        deliveryOrder.GrossAmnt = SaInvoiceCalc.Money(grossAmnt);
-        deliveryOrder.Taxes = SaInvoiceCalc.Money(taxes);
-        deliveryOrder.TotAmnt = SaInvoiceCalc.Money(totAmnt);
+        var header = SaInvoiceCalc.CalculateHeader(lines.Select(x => x.Calc).ToList(), decPoint);
+        deliveryOrder.GrossAmnt = header.GrossAmnt;
+        deliveryOrder.Taxes = header.Taxes;
+        deliveryOrder.TotAmnt = header.TotAmnt;
     }
 
     private static void AddDetails(SaDo deliveryOrder, IReadOnlyList<PreparedLine> lines)

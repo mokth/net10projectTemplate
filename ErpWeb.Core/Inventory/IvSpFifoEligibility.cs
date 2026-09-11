@@ -11,6 +11,13 @@ internal static class IvSpFifoEligibility
     public static bool IsShipmentRequired(bool stockControl, decimal stdQty) =>
         stockControl && IvQty.Round(stdQty) > 0m;
 
+    /// <summary>
+    /// LinkDo keep-stock lines were already shipped on the source delivery order, so they never
+    /// require a second SP batch. This overload makes the shipment layer self-defending (E4/R1).
+    /// </summary>
+    public static bool IsShipmentRequired(bool linkDo, bool stockControl, decimal stdQty) =>
+        !linkDo && IsShipmentRequired(stockControl, stdQty);
+
     public static bool MatchesCandidate(
         string companyCode,
         string branchCode,

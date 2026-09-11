@@ -1238,7 +1238,7 @@ public partial class SaDo : PageBase, IDisposable
             states.Add(state);
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states);
         for (var i = 0; i < Lines.Count; i++)
         {
             Lines[i].Amount = states[i].Amount;
@@ -1460,6 +1460,7 @@ public sealed class SaDoLineVm
     public SaInvoiceLineCalcState ToCalcState() =>
         new()
         {
+            Line = Line,
             Qty = Qty,
             UnitPrice = UnitPrice,
             ItemDiscount = ItemDiscount,

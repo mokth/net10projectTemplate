@@ -21,8 +21,21 @@ public static class SaSoLineReserve
     {
         public decimal NewDoQty { get; init; }
         public decimal LiveDoQty { get; init; }
+        /// <summary>R3: DO-path qty sitting in a POSTED, not-yet-force-closed DO (NEW/CLOSED excluded).</summary>
+        public decimal PostedDoQty { get; init; }
         public decimal NewSoInvQty { get; init; }
         public decimal PostedSoInv { get; init; }
+        /// <summary>R3: quantity declared non-billable by DO force-close (persisted <c>SaSoDetail</c> column).</summary>
+        public decimal WrittenOffQty { get; init; }
+        /// <summary>R3: historic quantity ever invoiced (persisted <c>SaSoDetail.InvoicedQty</c>, monotonic).</summary>
+        public decimal InvoicedQty { get; init; }
+        /// <summary>
+        /// R3: Σ posted <c>DO → INV</c> applied qty for this SO line <b>from POSTED DOs only</b>,
+        /// attributed via <c>RelatedSo*</c>. Restricted to POSTED so it reconciles with
+        /// <see cref="PostedDoQty"/>; allocations from force-closed DOs are already represented by
+        /// <see cref="WrittenOffQty"/>.
+        /// </summary>
+        public decimal DoInvAllocatedQty { get; init; }
     }
 
     /// <summary>
@@ -37,7 +50,11 @@ public static class SaSoLineReserve
         public decimal PostedSoInv { get; init; }
         public decimal NewDoQty { get; init; }
         public decimal LiveDoQty { get; init; }
+        public decimal PostedDoQty { get; init; }
         public decimal NewSoInvQty { get; init; }
+        public decimal WrittenOffQty { get; init; }
+        public decimal InvoicedQty { get; init; }
+        public decimal DoInvAllocatedQty { get; init; }
         public decimal ThisDoQty { get; init; }
         public decimal ThisSoInvQty { get; init; }
         public decimal RemainingDeliverable { get; init; }
@@ -45,12 +62,41 @@ public static class SaSoLineReserve
         public string? ErrorCode { get; init; }
 
         public bool Succeeded => ErrorCode is null;
+
+        /// <summary>
+        /// §3.3: quantity sitting in a POSTED, not-yet-force-closed DO that has not yet been invoiced.
+        /// </summary>
+        public decimal PostedDoOpenQty => SaSoQty.RoundQty(PostedDoQty - DoInvAllocatedQty);
+
+        /// <summary>
+        /// §3.3 billable accounting identity total:
+        /// <c>Invoiced + WrittenOff + PostedDoOpen + NewDo + NewSoInv + RemainingBillable</c>.
+        /// Enough for a settled projection only — see <see cref="BillableIdentityHolds"/>.
+        /// </summary>
+        public decimal BillableIdentityTotal => SaSoQty.RoundQty(
+            InvoicedQty + WrittenOffQty + PostedDoOpenQty + NewDoQty + NewSoInvQty + RemainingBillable);
+
+        /// <summary>
+        /// True when this result is a settled projection (no in-flight document) and the §3.3 identity
+        /// equals <see cref="OrderQty"/>, i.e. no quantity has been lost or double-counted.
+        /// </summary>
+        public bool BillableIdentityHolds =>
+            ThisDoQty == 0m
+            && ThisSoInvQty == 0m
+            && BillableIdentityTotal == OrderQty;
     }
 
     /// <summary>
     /// Invariant A: DeliveredQty + NewDoQty + thisDoQty &lt;= OrderQty.
     /// Invariant B: PostedSoInv + NewSoInvQty + LiveDoQty + thisDoQty + thisSoInvQty &lt;= OrderQty
     /// (thisDoQty fills the gap when LiveDoQty excludes the document being saved/posted).
+    /// <para>
+    /// <b>R3 note:</b> a force-closed DO is still counted in <see cref="SoLineSums.LiveDoQty"/> by
+    /// design, so its whole quantity continues to block direct SO invoicing. The unallocated
+    /// remainder of that DO becomes <see cref="SoLineSums.WrittenOffQty"/> — the two are <i>not</i>
+    /// both subtracted, which would double-count. <see cref="EvaluateResult.BillableIdentityHolds"/>
+    /// proves the projection is lossless.
+    /// </para>
     /// </summary>
     public static EvaluateResult Evaluate(
         string soNo,
@@ -65,8 +111,12 @@ public static class SaSoLineReserve
         var delivered = SaSoQty.RoundQty(deliveredQty);
         var newDo = SaSoQty.RoundQty(sums.NewDoQty);
         var liveDo = SaSoQty.RoundQty(sums.LiveDoQty);
+        var postedDo = SaSoQty.RoundQty(sums.PostedDoQty);
         var newSoInv = SaSoQty.RoundQty(sums.NewSoInvQty);
         var postedSoInv = SaSoQty.RoundQty(sums.PostedSoInv);
+        var writtenOff = SaSoQty.RoundQty(sums.WrittenOffQty);
+        var invoiced = SaSoQty.RoundQty(sums.InvoicedQty);
+        var doInvAllocated = SaSoQty.RoundQty(sums.DoInvAllocatedQty);
         var thisDo = SaSoQty.RoundQty(thisDoQty);
         var thisInv = SaSoQty.RoundQty(thisSoInvQty);
 
@@ -89,7 +139,11 @@ public static class SaSoLineReserve
             PostedSoInv = postedSoInv,
             NewDoQty = newDo,
             LiveDoQty = liveDo,
+            PostedDoQty = postedDo,
             NewSoInvQty = newSoInv,
+            WrittenOffQty = writtenOff,
+            InvoicedQty = invoiced,
+            DoInvAllocatedQty = doInvAllocated,
             ThisDoQty = thisDo,
             ThisSoInvQty = thisInv,
             RemainingDeliverable = remainingDeliverable,
@@ -136,28 +190,43 @@ public static class SaSoLineReserve
         }
 
         var newDo = await SumDoQtyAsync(
-            db, company, branch, keys, newOnly: true, excludeDo, cancellationToken);
+            db, company, branch, keys, DoStatusFilter.NewOnly, excludeDo, cancellationToken);
         var liveDo = await SumDoQtyAsync(
-            db, company, branch, keys, newOnly: false, excludeDo, cancellationToken);
+            db, company, branch, keys, DoStatusFilter.Live, excludeDo, cancellationToken);
+        // R3: POSTED-only, so the §3.3 identity never silently absorbs a status-filter bug.
+        var postedDo = await SumDoQtyAsync(
+            db, company, branch, keys, DoStatusFilter.PostedOnly, excludeDo, cancellationToken);
         var newSoInv = await SumNewSoInvQtyAsync(
             db, company, branch, keys, excludeInv, cancellationToken);
         var postedSoInv = await SumPostedSoInvAsync(
             db, company, branch, keys, cancellationToken);
+        var soDetail = await SumSoDetailQtyAsync(
+            db, company, branch, keys, cancellationToken);
+        var doInv = await SumPostedDoInvAsync(
+            db, company, branch, keys, cancellationToken);
 
         var allLines = newDo.Keys
             .Concat(liveDo.Keys)
+            .Concat(postedDo.Keys)
             .Concat(newSoInv.Keys)
             .Concat(postedSoInv.Keys)
+            .Concat(soDetail.Keys)
+            .Concat(doInv.Keys)
             .Distinct();
 
         foreach (var key in allLines)
         {
+            var detail = soDetail.GetValueOrDefault(key);
             result[key] = new SoLineSums
             {
                 NewDoQty = newDo.GetValueOrDefault(key),
                 LiveDoQty = liveDo.GetValueOrDefault(key),
+                PostedDoQty = postedDo.GetValueOrDefault(key),
                 NewSoInvQty = newSoInv.GetValueOrDefault(key),
-                PostedSoInv = postedSoInv.GetValueOrDefault(key)
+                PostedSoInv = postedSoInv.GetValueOrDefault(key),
+                WrittenOffQty = detail.WrittenOffQty,
+                InvoicedQty = detail.InvoicedQty,
+                DoInvAllocatedQty = doInv.GetValueOrDefault(key)
             };
         }
 
@@ -171,12 +240,98 @@ public static class SaSoLineReserve
         short soLine) =>
         map.TryGetValue((soNo, custRel, soLine), out var sums) ? sums : new SoLineSums();
 
+    /// <summary>R3: persisted <c>SaSoDetail</c> projections that are not ledger-derived sums.</summary>
+    private static async Task<Dictionary<(string, short, short), (decimal WrittenOffQty, decimal InvoicedQty)>> SumSoDetailQtyAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        IReadOnlyList<string> soNos,
+        CancellationToken cancellationToken)
+    {
+        var rows = await db.SaSoDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                && x.BranchCode == branch
+                && soNos.Contains(x.SoNo))
+            .Select(x => new
+            {
+                x.SoNo,
+                CustRel = x.CustRel > 0 ? x.CustRel : (short)1,
+                x.Line,
+                x.WrittenOffQty,
+                x.InvoicedQty
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(
+            x => (x.SoNo, x.CustRel, x.Line),
+            x => (SaSoQty.RoundQty(x.WrittenOffQty), SaSoQty.RoundQty(x.InvoicedQty)),
+            new SoLineKeyComparer());
+    }
+
+    /// <summary>
+    /// R3: Σ posted <c>DO → INV</c> applied qty attributed to the SO line via <c>RelatedSo*</c>,
+    /// restricted to allocations whose source DO is still POSTED. This is what makes
+    /// <c>PostedDoOpenQty = PostedDoQty − DoInvAllocatedQty</c> non-negative and exact: once a DO is
+    /// force-closed its unallocated remainder lives in <c>WrittenOffQty</c> instead.
+    /// </summary>
+    private static async Task<Dictionary<(string, short, short), decimal>> SumPostedDoInvAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        IReadOnlyList<string> soNos,
+        CancellationToken cancellationToken)
+    {
+        var rows = await (
+                from a in db.SaDocApplications.AsNoTracking()
+                join h in db.SaDos.AsNoTracking()
+                    on new { a.CompanyCode, a.BranchCode, DoNo = a.SourceDocId }
+                    equals new { h.CompanyCode, h.BranchCode, h.DoNo }
+                where a.CompanyCode == company
+                    && a.BranchCode == branch
+                    && a.SourceDocType == SaDocTypes.Do
+                    && a.TargetDocType == SaDocTypes.Inv
+                    && a.RelatedSoLine > 0
+                    && soNos.Contains(a.RelatedSoNo)
+                    && h.Status == SaDoStatuses.Posted
+                group a by new
+                {
+                    a.RelatedSoNo,
+                    CustRel = a.RelatedCustRel > 0 ? a.RelatedCustRel : (short)1,
+                    a.RelatedSoLine
+                }
+                into g
+                select new
+                {
+                    SoNo = g.Key.RelatedSoNo,
+                    g.Key.CustRel,
+                    SoLine = g.Key.RelatedSoLine,
+                    Qty = g.Sum(x => x.AppliedQty)
+                })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(
+            x => (x.SoNo, x.CustRel, x.SoLine),
+            x => SaSoQty.RoundQty(x.Qty),
+            new SoLineKeyComparer());
+    }
+
+    /// <summary>R3: which DO statuses a <see cref="SumDoQtyAsync"/> call should include.</summary>
+    private enum DoStatusFilter
+    {
+        /// <summary>NEW draft DOs only — the soft deliverable reservation.</summary>
+        NewOnly,
+        /// <summary>POSTED DOs only — the basis of <c>PostedDoOpenQty</c>.</summary>
+        PostedOnly,
+        /// <summary>NEW + POSTED + CLOSED — the live DO-path capacity that blocks direct SO invoicing.</summary>
+        Live
+    }
+
     private static async Task<Dictionary<(string, short, short), decimal>> SumDoQtyAsync(
         AppDbContext db,
         string company,
         string branch,
         IReadOnlyList<string> soNos,
-        bool newOnly,
+        DoStatusFilter filter,
         DocIdentity? excludeDo,
         CancellationToken cancellationToken)
     {
@@ -197,11 +352,13 @@ public static class SaSoLineReserve
                   && d.SoNo != string.Empty
                   && d.SoLine != null
                   && d.SoLine > 0
-                  && (newOnly
+                  && (filter == DoStatusFilter.NewOnly
                       ? h.Status == SaDoStatuses.New
-                      : (h.Status == SaDoStatuses.New
-                         || h.Status == SaDoStatuses.Posted
-                         || h.Status == SaDoStatuses.Closed))
+                      : filter == DoStatusFilter.PostedOnly
+                          ? h.Status == SaDoStatuses.Posted
+                          : (h.Status == SaDoStatuses.New
+                             || h.Status == SaDoStatuses.Posted
+                             || h.Status == SaDoStatuses.Closed))
                   && (excludeNo.Length == 0 || d.DoNo != excludeNo)
             group d by new
             {

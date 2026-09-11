@@ -8,6 +8,10 @@ public class SaCdn
     public DateTime DocDate { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? InvNo { get; set; }
+    /// <summary>
+    /// Genuine-looking but never validated (R10.4): the write path persists this field without
+    /// checking that the DO exists or belongs to the same customer. Do not rely on it.
+    /// </summary>
     public string? DoNo { get; set; }
     public string Type { get; set; } = string.Empty;
     public string CustCode { get; set; } = string.Empty;

@@ -15,6 +15,11 @@ public static class SaDualStatuses
     public const string None = "NONE";
     public const string Partial = "PARTIAL";
     public const string Full = "FULL";
+    /// <summary>
+    /// R3: every remaining unit of the line was either invoiced or written off by a DO force-close.
+    /// Terminal for billing — no further invoicing is possible and none is outstanding.
+    /// </summary>
+    public const string WrittenOff = "WRITTEN_OFF";
 }
 
 public static class SaDocAllocationReasonCodes

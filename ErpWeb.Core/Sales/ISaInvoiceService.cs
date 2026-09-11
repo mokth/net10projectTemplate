@@ -175,6 +175,12 @@ public sealed class SaInvoiceListQuery
     public int Take { get; set; } = 20;
 }
 
+public sealed class SaInvoiceKeyedRequest
+{
+    public string InvNo { get; init; } = string.Empty;
+    public byte[] RowVersion { get; init; } = [];
+}
+
 public sealed class SaInvoiceListRow
 {
     public string InvNo { get; init; } = string.Empty;
@@ -187,6 +193,7 @@ public sealed class SaInvoiceListRow
     public bool ShipmentComplete { get; init; }
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
+    public byte[] RowVersion { get; init; } = [];
 }
 
 public sealed class SaInvoiceListPage
@@ -499,7 +506,7 @@ public interface ISaInvoiceService
         CancellationToken cancellationToken = default);
 
     Task<SaInvoiceOperationResult> DeleteAsync(
-        IReadOnlyList<string> invNos,
+        IReadOnlyList<SaInvoiceKeyedRequest> items,
         CancellationToken cancellationToken = default);
 
     Task<SaInvoiceOperationResult> AddShipmentAsync(

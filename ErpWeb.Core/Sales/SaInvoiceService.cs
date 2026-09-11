@@ -357,7 +357,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 TotAmnt = x.TotAmnt,
                 LineCount = countByInv.GetValueOrDefault(x.InvNo),
                 CreatedDate = x.CreatedDate,
-                CreatedBy = x.CreatedBy
+                CreatedBy = x.CreatedBy,
+                RowVersion = x.RowVersion
             }).ToList()
         });
     }
@@ -737,7 +738,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
     }
 
     public async Task<SaInvoiceOperationResult> DeleteAsync(
-        IReadOnlyList<string>? invNos,
+        IReadOnlyList<SaInvoiceKeyedRequest>? items,
         CancellationToken cancellationToken = default)
     {
         var context = ValidateWriteContext();
@@ -751,8 +752,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
             return SaInvoiceOperationResult.Fail("Not authorized.", SaInvoiceErrorKind.Authorization);
         }
 
-        var nos = (invNos ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (nos.Count == 0)
+        var keyed = (items ?? [])
+            .Where(x => x is not null && !string.IsNullOrWhiteSpace(x.InvNo))
+            .Select(x => new SaInvoiceKeyedRequest { InvNo = x.InvNo.Trim(), RowVersion = x.RowVersion ?? [] })
+            .GroupBy(x => x.InvNo, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+        if (keyed.Count == 0)
         {
             return SaInvoiceOperationResult.Fail("Select at least one invoice.");
         }
@@ -760,17 +766,38 @@ public sealed class SaInvoiceService : ISaInvoiceService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        foreach (var no in nos)
+        foreach (var item in keyed)
         {
-            var invoice = await _invoices.LockForUpdateAsync(db, context.CompanyCode!, context.BranchCode!, no, cancellationToken);
+            if (item.RowVersion.Length == 0)
+            {
+                return SaInvoiceOperationResult.Fail(
+                    $"Invoice {item.InvNo}: row version is required for delete.",
+                    SaInvoiceErrorKind.Concurrency);
+            }
+
+            var invoice = await _invoices.LockForUpdateAsync(db, context.CompanyCode!, context.BranchCode!, item.InvNo, cancellationToken);
             if (invoice is null)
             {
-                return SaInvoiceOperationResult.Fail($"Invoice {no} was not found.");
+                return SaInvoiceOperationResult.Fail($"Invoice {item.InvNo} was not found.");
             }
 
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
-                return SaInvoiceOperationResult.Fail($"Invoice {no} cannot be deleted because it is not NEW.");
+                return SaInvoiceOperationResult.Fail($"Invoice {item.InvNo} cannot be deleted because it is not NEW.");
+            }
+
+            if (!RowVersionsEqual(invoice.RowVersion, item.RowVersion))
+            {
+                return SaInvoiceOperationResult.Fail(
+                    $"Invoice {item.InvNo} was changed by another user. Reload before deleting.",
+                    SaInvoiceErrorKind.Concurrency);
+            }
+
+            var cnBlocker = await FindCreditNoteBlockerAsync(
+                db, context.CompanyCode!, context.BranchCode!, item.InvNo, cancellationToken);
+            if (cnBlocker is not null)
+            {
+                return SaInvoiceOperationResult.Fail(cnBlocker, SaInvoiceErrorKind.BusinessRule);
             }
 
             await _shipments.ReleaseShipmentReservationAsync(
@@ -778,7 +805,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 context.CompanyCode!,
                 context.BranchCode!,
                 context.LocationCode!,
-                no,
+                item.InvNo,
                 removeBatch: true,
                 cancellationToken);
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -789,6 +816,79 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
         await tx.CommitAsync(cancellationToken);
         return SaInvoiceOperationResult.Ok();
+    }
+
+    /// <summary>
+    /// R5: an invoice cannot be rolled back or deleted while a credit note depends on it.
+    /// A POSTED CN is a hard block; a NEW draft is named so the user can clean it up.
+    /// Returns the blocking message, or <c>null</c> when the invoice is clear.
+    /// </summary>
+    private async Task<string?> FindCreditNoteBlockerAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        CancellationToken cancellationToken)
+    {
+        var cns = await db.SaCdns.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.InvNo == invNo
+                && (x.Status == SaCdnStatuses.New || x.Status == SaCdnStatuses.Posted))
+            .Select(x => new { x.DocNo, x.Status })
+            .ToListAsync(cancellationToken);
+
+        var posted = cns
+            .Where(x => string.Equals(x.Status, SaCdnStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.DocNo)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (posted.Count > 0)
+        {
+            return $"Invoice {invNo} cannot be changed because posted credit note(s) {string.Join(", ", posted)} depend on it.";
+        }
+
+        var drafts = cns
+            .Where(x => string.Equals(x.Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.DocNo)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (drafts.Count > 0)
+        {
+            return $"Invoice {invNo} cannot be changed because draft credit note(s) {string.Join(", ", drafts)} reference it. Delete or post the draft first.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// §5.4: returns the first CLOSED (force-closed) delivery order referenced by a LinkDo line of
+    /// the invoice, or <c>null</c> when every LinkDo source is still open.
+    /// </summary>
+    private static async Task<string?> FindClosedLinkDoAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IEnumerable<SaInvoiceDetail> details,
+        CancellationToken cancellationToken)
+    {
+        var doNos = details
+            .Where(x => x.LinkDo && !string.IsNullOrWhiteSpace(x.DoNo))
+            .Select(x => x.DoNo!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (doNos.Count == 0)
+        {
+            return null;
+        }
+
+        return await db.SaDos.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && doNos.Contains(x.DoNo)
+                && x.Status == SaDoStatuses.Closed)
+            .Select(x => x.DoNo)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<SaInvoiceOperationResult> AddShipmentAsync(
@@ -849,6 +949,18 @@ public sealed class SaInvoiceService : ISaInvoiceService
             db.Entry(invoice).Property(x => x.RowVersion).OriginalValue = rowVersion;
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
 
+            // §5.4: a LinkDo line draws from a DO that was already shipped. If the source DO has been
+            // closed (force-closed), its shipment batch is a retained tombstone — reject.
+            var closedDo = await FindClosedLinkDoAsync(
+                db, context.CompanyCode!, context.BranchCode!, invoice.Details, cancellationToken);
+            if (closedDo is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(
+                    $"Invoice {no} references closed delivery order {closedDo} and cannot add shipment.",
+                    SaInvoiceErrorKind.BusinessRule);
+            }
+
             var batch = await _postingRepo.LockSpBatchByRefAsync(
                 db, context.CompanyCode!, context.BranchCode!, invoice.InvNo, cancellationToken);
 
@@ -891,6 +1003,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                     OverwriteExisting = true,
                     AfterSpDelete = TestHookAfterSpDelete,
                     RequiredLines = invoice.Details
+                        .Where(x => !x.LinkDo)
                         .OrderBy(x => x.Line)
                         .Select(x => new IvSpRequiredLine
                         {
@@ -901,7 +1014,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                             StdUom = x.StdUom,
                             FrWarehouse = x.FrWarehouse ?? string.Empty,
                             UnitPrice = x.UnitPrice,
-                            StockControl = x.StockControl
+                            StockControl = x.StockControl,
+                            LinkDo = x.LinkDo
                         })
                         .ToList()
                 },
@@ -1420,17 +1534,20 @@ public sealed class SaInvoiceService : ISaInvoiceService
                         DocumentDate = invoice.InvDate.Date,
                         Batch = batch,
                         Details = spDetails,
-                        RequiredLines = invoice.Details.Select(d => new IvSpRequiredLine
-                        {
-                            Line = d.Line,
-                            ICode = d.ICode ?? string.Empty,
-                            IDesc = d.IDesc,
-                            StdQty = d.StdQty,
-                            StdUom = d.StdUom,
-                            FrWarehouse = d.FrWarehouse ?? string.Empty,
-                            UnitPrice = d.UnitPrice,
-                            StockControl = d.StockControl
-                        }).ToList(),
+                        RequiredLines = invoice.Details
+                            .Where(d => !d.LinkDo)
+                            .Select(d => new IvSpRequiredLine
+                            {
+                                Line = d.Line,
+                                ICode = d.ICode ?? string.Empty,
+                                IDesc = d.IDesc,
+                                StdQty = d.StdQty,
+                                StdUom = d.StdUom,
+                                FrWarehouse = d.FrWarehouse ?? string.Empty,
+                                UnitPrice = d.UnitPrice,
+                                StockControl = d.StockControl,
+                                LinkDo = d.LinkDo
+                            }).ToList(),
                         LockedBalances = lockedBalances
                     },
                     cancellationToken);
@@ -1519,6 +1636,14 @@ public sealed class SaInvoiceService : ISaInvoiceService
             }
 
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
+
+            var cnBlocker = await FindCreditNoteBlockerAsync(
+                db, context.CompanyCode!, context.BranchCode!, invNo, cancellationToken);
+            if (cnBlocker is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(invNo, cnBlocker);
+            }
 
             var reverse = await _docApplication.ReverseDocumentAllocationsAsync(
                 db,
@@ -1997,6 +2122,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
             var state = new SaInvoiceLineCalcState
             {
+                Line = lineNo,
                 Qty = qty,
                 UnitPrice = line.UnitPrice,
                 ItemDiscount = line.ItemDiscount,
@@ -2084,7 +2210,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             return reserveGate;
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates);
         foreach (var row in prepared)
         {
             row.Calc.LocalAmount = SaInvoiceCalc.Money(row.Calc.NetAmount * rateResult.Rate);
@@ -2390,6 +2516,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 TargetLineId = (short)x.Line,
                 AppliedQty = SaSoQty.RoundQty(x.Qty),
                 AppliedAmount = x.NetAmount,
+                // R10.2: SaInvoiceDetail has no SellingUom column, so the allocation UOM check is a
+                // no-op here. UOM integrity is guaranteed only at PrepareLinesAsync (save/update).
                 SellingUom = null,
                 CustCode = invoice.CustCode,
                 Currency = invoice.Currency
@@ -2407,6 +2535,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 TargetLineId = (short)x.Line,
                 AppliedQty = SaSoQty.RoundQty(x.Qty),
                 AppliedAmount = x.NetAmount,
+                // R10.2: see note on the SO→INV projection above — UOM is not persisted on invoice lines.
                 SellingUom = null,
                 CustCode = invoice.CustCode,
                 Currency = invoice.Currency
@@ -2469,7 +2598,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
         var lines = invoice.Details.OrderBy(x => x.Line).Select(x =>
         {
             var shipped = shippedByLine.GetValueOrDefault(x.Line);
-            var complete = !x.StockControl || shipped == IvQty.Round(x.StdQty);
+            // LinkDo lines were already shipped on the source DO — shipment is inherently complete.
+            var complete = x.LinkDo || !x.StockControl || shipped == IvQty.Round(x.StdQty);
             return new SaInvoiceLineDto
             {
                 Line = x.Line,

@@ -127,6 +127,9 @@ BEGIN
         LocalAmount decimal(18,2) NOT NULL CONSTRAINT DF_SaSODetail_LocalAmount DEFAULT (0),
         StockControl bit NOT NULL CONSTRAINT DF_SaSODetail_StockControl DEFAULT (1),
         Classification nvarchar(50) NULL,
+        DeliveryDate datetime2 NULL,
+        ETA datetime2 NULL,
+        ETD datetime2 NULL,
         CONSTRAINT PK_SaSODetail PRIMARY KEY CLUSTERED (CompanyCode, BranchCode, SONo, CustRel, Line),
         CONSTRAINT FK_SaSODetail_SaSO FOREIGN KEY (CompanyCode, BranchCode, SONo, CustRel)
             REFERENCES dbo.SaSO (CompanyCode, BranchCode, SONo, CustRel) ON DELETE CASCADE,

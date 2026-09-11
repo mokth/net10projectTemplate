@@ -38,6 +38,8 @@ public static class MenuCodes
     public const string SalesOrder = "SA_SO";
     public const string SalesCreditNote = "SA_CN";
     public const string SalesDebitNote = "SA_DN";
+    /// <summary>E7: report-only credit-note reservation screen.</summary>
+    public const string SalesCdnReservations = "SA_CN_RESERVATIONS";
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

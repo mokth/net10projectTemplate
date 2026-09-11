@@ -150,6 +150,35 @@ public class SaCdnCalcTests
         Assert.False(fail);
         Assert.Contains("negative", err!, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Draft_reservation_text_is_empty_without_drafts()
+    {
+        Assert.Equal(string.Empty, SaCdnCalc.FormatDraftReservation(null));
+        Assert.Equal(string.Empty, SaCdnCalc.FormatDraftReservation([]));
+        Assert.Equal(string.Empty, SaCdnCalc.FormatDraftReservation([" ", ""]));
+        Assert.Equal(
+            " Reserved by draft CN(s) CN0001, CN0002.",
+            SaCdnCalc.FormatDraftReservation(["CN0002", "CN0001", "cn0001"]));
+    }
+
+    [Fact]
+    public void Over_credit_error_appends_the_draft_reservation()
+    {
+        var (ok, remaining, error) = SaCdnCalc.EvaluateRemaining(
+            invoiceTotAmnt: 100m,
+            otherCnTotAmnts: [90m],
+            candidateTotAmnt: 20m,
+            decPoint: false,
+            draftCnNos: ["CN0007"]);
+        Assert.False(ok);
+        Assert.Equal(10m, remaining);
+        Assert.Contains("Reserved by draft CN(s) CN0007.", error);
+
+        var clean = SaCdnCalc.EvaluateRemaining(100m, [90m], 10m, decPoint: false, draftCnNos: null);
+        Assert.True(clean.Ok);
+        Assert.Null(clean.Error);
+    }
 }
 
 // ─────────────────────────── Service tests ───────────────────────────
@@ -1112,8 +1141,115 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.Equal(10m, save.Document!.TotAmnt);
     }
 
-    // ─────────────────────────── Helpers ───────────────────────────
+    [Fact]
+    public async Task Cdn_post_and_save_agree_on_decpoint_rounding()
+    {
+        var sut = CreateSut();
+        var invNo = await SeedPostedInvoiceAsync(100m);
 
+        // A 0.40 draft CN is invisible at 0 dp (DecPoint customer) but consumes 0.40 remaining at
+        // 2 dp. Before R6 the post path hard-coded decPoint=false, so save accepted this CN and
+        // post rejected it.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCdns.Add(new SaCdn
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocNo = "CN-DRAFT",
+                DocDate = FixedToday,
+                Status = CdnStatuses.New,
+                Type = CdnTypes.CreditNote,
+                CustCode = "CUSTDEC",
+                InvNo = invNo,
+                TotAmnt = 0.40m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var save = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 10m, price: 10m, cust: "CUSTDEC"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.Equal(100m, save.Document!.TotAmnt);
+
+        var post = await sut.PostAsync(
+            [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = save.Document.RowVersion }]);
+        Assert.True(post.Succeeded, string.Join("; ", post.Posting.Select(x => x.ErrorMessage)));
+    }
+
+    // ─────────────────────────── 23. R9 draft CN reservations ───────────────────────────
+
+    [Fact]
+    public async Task Cdn_remaining_error_names_draft_reservations()
+    {
+        var sut = CreateSut();
+        var invNo = await SeedPostedInvoiceAsync(100m);
+
+        // A draft CN of 100 takes the whole remaining balance.
+        var draft = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 10m, price: 10m));
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        Assert.Equal(100m, draft.Document!.TotAmnt);
+
+        // A second CN now exceeds the remaining balance and must name the draft holding it.
+        var over = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 1m, price: 10m));
+        Assert.False(over.Succeeded);
+        Assert.Contains("exceeds invoice remaining", over.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(draft.DocNo!, over.ErrorMessage ?? string.Empty);
+        Assert.Contains("Reserved by draft CN(s)", over.ErrorMessage ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task Cdn_invoice_reservations_reports_draft_and_posted_holdings()
+    {
+        var sut = CreateSut();
+        var invNo = await SeedPostedInvoiceAsync(100m);
+
+        var posted = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 4m, price: 10m));
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        Assert.True((await sut.PostAsync(
+            [new SaCdnKeyedRequest { DocNo = posted.DocNo!, RowVersion = posted.Document!.RowVersion }])).Succeeded);
+
+        var draft = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 3m, price: 10m));
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        var summary = await sut.GetInvoiceReservationsAsync(invNo);
+        Assert.True(summary.Succeeded, summary.ErrorMessage);
+        var s = summary.Reservations!;
+        Assert.Equal(100m, s.InvoiceTotal);
+        Assert.Equal(40m, s.PostedCnTotal);
+        Assert.Equal(30m, s.DraftCnTotal);
+        Assert.Equal(30m, s.Remaining);
+        Assert.True(s.HasDraftReservation);
+        Assert.Equal(draft.DocNo, Assert.Single(s.DraftCnNos));
+        Assert.Contains(draft.DocNo!, s.DraftIndicator);
+        Assert.DoesNotContain(posted.DocNo!, s.DraftIndicator);
+    }
+
+    [Fact]
+    public async Task Cdn_reservation_report_lists_held_invoices()
+    {
+        var sut = CreateSut();
+        var invNo = await SeedPostedInvoiceAsync(100m);
+
+        var draft = await sut.SaveNewAsync(CdnRequest("CN", invNo: invNo, qty: 6m, price: 10m));
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        var report = await sut.GetReservationReportAsync(new SaCdnReservationReportQuery { DraftsOnly = true });
+        Assert.True(report.Succeeded, report.ErrorMessage);
+        var row = Assert.Single(report.ReservationReport!.Rows, x => x.InvNo == invNo);
+        Assert.Equal(100m, row.InvoiceTotal);
+        Assert.Equal(0m, row.PostedCnTotal);
+        Assert.Equal(60m, row.DraftCnTotal);
+        Assert.Equal(40m, row.Remaining);
+        Assert.False(row.OverReserved);
+        Assert.Equal(draft.DocNo, Assert.Single(row.DraftCnNos));
+
+        // No over-reserved invoices in a clean dataset.
+        var overOnly = await sut.GetReservationReportAsync(new SaCdnReservationReportQuery { OverReservedOnly = true });
+        Assert.True(overOnly.Succeeded, overOnly.ErrorMessage);
+        Assert.Empty(overOnly.ReservationReport!.Rows);
+    }
+
+    // ─────────────────────────── Helpers ───────────────────────────
     private SaCdnService CreateSut(Mock<IAccessRightService>? access = null)
     {
         access ??= AlwaysAllowed();

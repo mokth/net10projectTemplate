@@ -346,7 +346,8 @@ public sealed class SaSoService : ISaSoService
                     InvoicedQty = g.Sum(x => x.InvoicedQty),
                     HasDeliveredQty = g.Any(x => x.DeliveredQty != 0m),
                     HasInvoicedQty = g.Any(x => x.InvoicedQty != 0m),
-                    HasShippedQty = g.Any(x => x.ShippedQty != 0m)
+                    HasShippedQty = g.Any(x => x.ShippedQty != 0m),
+                    HasWrittenOffQty = g.Any(x => x.WrittenOffQty != 0m)
                 })
                 .ToListAsync(cancellationToken);
 
@@ -365,13 +366,14 @@ public sealed class SaSoService : ISaSoService
                 usage ??= SaSoRevisionUsage.Empty;
                 // Merge consumption flags from the line-stats query (same round-trip as percents).
                 if (stats is not null
-                    && (stats.HasDeliveredQty || stats.HasInvoicedQty || stats.HasShippedQty))
+                    && (stats.HasDeliveredQty || stats.HasInvoicedQty || stats.HasShippedQty || stats.HasWrittenOffQty))
                 {
                     usage = new SaSoRevisionUsage
                     {
                         HasDeliveredQty = usage.HasDeliveredQty || stats.HasDeliveredQty,
                         HasInvoicedQty = usage.HasInvoicedQty || stats.HasInvoicedQty,
                         HasShippedQty = usage.HasShippedQty || stats.HasShippedQty,
+                        HasWrittenOffQty = usage.HasWrittenOffQty || stats.HasWrittenOffQty,
                         HasAllocation = usage.HasAllocation,
                         HasDraftDeliveryOrder = usage.HasDraftDeliveryOrder,
                         HasDraftInvoice = usage.HasDraftInvoice,
@@ -1751,6 +1753,19 @@ public sealed class SaSoService : ISaSoService
                 errors[$"Lines[{index}].Warehouse"] = $"Warehouse '{warehouse}' was not found.";
             }
 
+            var deliveryDate = NormalizePlanningDate(line.DeliveryDate);
+            var eta = NormalizePlanningDate(line.Eta);
+            var etd = NormalizePlanningDate(line.Etd);
+            if (etd is { } etdVal && eta is { } etaVal && etdVal > etaVal)
+            {
+                errors[$"Lines[{index}].Etd"] = "ETD cannot be after ETA.";
+            }
+
+            if (eta is { } etaAfter && deliveryDate is { } deliveryVal && etaAfter > deliveryVal)
+            {
+                errors[$"Lines[{index}].Eta"] = "ETA cannot be after delivery date.";
+            }
+
             var discError = ValidateLineDiscount(line, index, customer!.DiscountMethod);
             if (discError is not null)
             {
@@ -1781,6 +1796,7 @@ public sealed class SaSoService : ISaSoService
 
             var state = new SaInvoiceLineCalcState
             {
+                Line = index + 1,
                 Qty = orderQty,
                 UnitPrice = line.UnitPrice,
                 ItemDiscount = line.ItemDiscount,
@@ -1825,6 +1841,9 @@ public sealed class SaSoService : ISaSoService
                 Remarks = TruncateOptional(line.Remarks, 250),
                 StockControl = item.StockControl,
                 Classification = TruncateOptional(line.Classification, 50),
+                DeliveryDate = deliveryDate,
+                Eta = eta,
+                Etd = etd,
                 Calc = state
             });
         }
@@ -1834,7 +1853,7 @@ public sealed class SaSoService : ISaSoService
             return PrepareOutcome.Validation("Validation failed.", errors);
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates);
         foreach (var row in prepared)
         {
             row.Calc.LocalAmount = SaInvoiceCalc.Money(row.Calc.NetAmount * rateResult.Rate);
@@ -1921,7 +1940,10 @@ public sealed class SaSoService : ISaSoService
                 IsInclusive = line.IsInclusive,
                 LocalAmount = line.Calc.LocalAmount,
                 StockControl = line.StockControl,
-                Classification = line.Classification
+                Classification = line.Classification,
+                DeliveryDate = line.DeliveryDate,
+                Eta = line.Eta,
+                Etd = line.Etd
             };
             SaSoQty.SetOrderQty(detail, line.OrderQty);
             salesOrder.Details.Add(detail);
@@ -1958,6 +1980,9 @@ public sealed class SaSoService : ISaSoService
         detail.LocalAmount = line.Calc.LocalAmount;
         detail.StockControl = line.StockControl;
         detail.Classification = line.Classification;
+        detail.DeliveryDate = line.DeliveryDate;
+        detail.Eta = line.Eta;
+        detail.Etd = line.Etd;
         SaSoQty.SetOrderQty(detail, line.OrderQty);
     }
 
@@ -2126,7 +2151,10 @@ public sealed class SaSoService : ISaSoService
                     OrderType = x.OrderType,
                     StockControl = x.StockControl,
                     Classification = x.Classification,
-                    Remarks = x.Remarks
+                    Remarks = x.Remarks,
+                    DeliveryDate = x.DeliveryDate,
+                    Eta = x.Eta,
+                    Etd = x.Etd
                 })
                 .ToList(),
             Revisions = current.Revisions
@@ -2150,6 +2178,7 @@ public sealed class SaSoService : ISaSoService
             BalanceQty = balanceQtyOverride ?? detail.BalanceQty,
             DeliveredQty = detail.DeliveredQty,
             InvoicedQty = detail.InvoicedQty,
+            WrittenOffQty = detail.WrittenOffQty,
             RemainingBillableQty = remainingBillableOverride
                 ?? SaSoQty.RoundQty(detail.OrderQty - detail.InvoicedQty),
             StdQty = detail.StdQty,
@@ -2175,7 +2204,10 @@ public sealed class SaSoService : ISaSoService
             OrderType = detail.OrderType,
             StockControl = detail.StockControl,
             Classification = detail.Classification,
-            Remarks = detail.Remarks
+            Remarks = detail.Remarks,
+            DeliveryDate = detail.DeliveryDate,
+            Eta = detail.Eta,
+            Etd = detail.Etd
         };
 
     private async Task<SaSoOperationResult?> CheckRevisionUnusedAsync(
@@ -2235,6 +2267,7 @@ public sealed class SaSoService : ISaSoService
         var hasDelivered = new HashSet<SaDocSoRevisionKey>();
         var hasInvoiced = new HashSet<SaDocSoRevisionKey>();
         var hasShipped = new HashSet<SaDocSoRevisionKey>();
+        var hasWrittenOff = new HashSet<SaDocSoRevisionKey>();
         if (includeLineConsumption)
         {
             var consumption = await db.SaSoDetails.AsNoTracking()
@@ -2243,7 +2276,7 @@ public sealed class SaSoService : ISaSoService
                     && x.BranchCode == branchCode
                     && soNos.Contains(x.SoNo)
                     && custRels.Contains(x.CustRel)
-                    && (x.DeliveredQty != 0m || x.InvoicedQty != 0m || x.ShippedQty != 0m))
+                    && (x.DeliveredQty != 0m || x.InvoicedQty != 0m || x.ShippedQty != 0m || x.WrittenOffQty != 0m))
                 .GroupBy(x => new { x.SoNo, x.CustRel })
                 .Select(g => new
                 {
@@ -2251,7 +2284,8 @@ public sealed class SaSoService : ISaSoService
                     g.Key.CustRel,
                     HasDeliveredQty = g.Any(x => x.DeliveredQty != 0m),
                     HasInvoicedQty = g.Any(x => x.InvoicedQty != 0m),
-                    HasShippedQty = g.Any(x => x.ShippedQty != 0m)
+                    HasShippedQty = g.Any(x => x.ShippedQty != 0m),
+                    HasWrittenOffQty = g.Any(x => x.WrittenOffQty != 0m)
                 })
                 .ToListAsync(cancellationToken);
 
@@ -2276,6 +2310,11 @@ public sealed class SaSoService : ISaSoService
                 if (row.HasShippedQty)
                 {
                     hasShipped.Add(matched.Value);
+                }
+
+                if (row.HasWrittenOffQty)
+                {
+                    hasWrittenOff.Add(matched.Value);
                 }
             }
         }
@@ -2362,6 +2401,7 @@ public sealed class SaSoService : ISaSoService
                 HasDeliveredQty = hasDelivered.Contains(key),
                 HasInvoicedQty = hasInvoiced.Contains(key),
                 HasShippedQty = hasShipped.Contains(key),
+                HasWrittenOffQty = hasWrittenOff.Contains(key),
                 HasAllocation = allocated.Contains(key)
                     || allocated.Any(a =>
                         a.CustRel == key.CustRel
@@ -2463,6 +2503,9 @@ public sealed class SaSoService : ISaSoService
 
         return (null, decimalRate);
     }
+
+    private static DateTime? NormalizePlanningDate(DateTime? value) =>
+        value is { } d && d != default ? d.Date : null;
 
     private static KeyValuePair<string, string>? ValidateLineDiscount(
         SaSoLineRequest line,
@@ -2648,6 +2691,9 @@ public sealed class SaSoService : ISaSoService
         public string? Remarks { get; init; }
         public bool StockControl { get; init; }
         public string? Classification { get; init; }
+        public DateTime? DeliveryDate { get; init; }
+        public DateTime? Eta { get; init; }
+        public DateTime? Etd { get; init; }
         public SaInvoiceLineCalcState Calc { get; init; } = new();
     }
 

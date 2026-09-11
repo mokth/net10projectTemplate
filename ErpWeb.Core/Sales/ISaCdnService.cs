@@ -37,6 +37,10 @@ public sealed class SaCdnOperationResult
     public IReadOnlyList<SaCdnTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
     public IReadOnlyList<SaCdnInvoicePickerRow> InvoicePickerRows { get; init; } = [];
+    /// <summary>R9: reservation breakdown for a posted invoice (indicator / report).</summary>
+    public SaCdnInvoiceReservationSummary? Reservations { get; init; }
+    /// <summary>E7: report-only reservation page.</summary>
+    public SaCdnReservationReportPage? ReservationReport { get; init; }
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -83,6 +87,12 @@ public sealed class SaCdnOperationResult
 
     public static SaCdnOperationResult OkInvoicePicker(IReadOnlyList<SaCdnInvoicePickerRow> rows) =>
         new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None, InvoicePickerRows = rows };
+
+    public static SaCdnOperationResult OkReservations(SaCdnInvoiceReservationSummary summary) =>
+        new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None, Reservations = summary };
+
+    public static SaCdnOperationResult OkReservationReport(SaCdnReservationReportPage page) =>
+        new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None, ReservationReport = page };
 
     public static SaCdnOperationResult OkPosting(IReadOnlyList<SaCdnPostingItemResult> posting)
     {
@@ -476,9 +486,23 @@ public interface ISaCdnService
         CancellationToken cancellationToken = default);
 
     /// <summary>Search POSTED invoices for the given customer (for CN copy picker).</summary>
-    Task<SaCdnOperationResult> SearchPostedInvoicesAsync(
-        string? custCode,
+    Task<SaCdnOperationResult> SearchPostedInvoicesAsync(        string? custCode,
         string? searchText,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// R9: how much of a posted invoice's balance is already held, and by which credit notes.
+    /// Read-only; drives the "Reserved by draft CN(s)" indicator. Returns a zeroed summary when the
+    /// invoice has no credit notes.
+    /// </summary>
+    Task<SaCdnOperationResult> GetInvoiceReservationsAsync(
+        string invNo,
+        string? excludeDocNo = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>E7: report-only list of posted invoices whose remaining balance is held by credit notes.</summary>
+    Task<SaCdnOperationResult> GetReservationReportAsync(
+        SaCdnReservationReportQuery? query = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -488,4 +512,65 @@ public interface ISaCdnService
     Task<SaCdnOperationResult> CopyFromInvoiceAsync(
         string invNo,
         CancellationToken cancellationToken = default);
+}
+
+// ─────────────────────────── R9 / E7 reservation reporting ───────────────────────────
+
+/// <summary>R9: one credit note holding part of a posted invoice's remaining balance.</summary>
+public sealed class SaCdnReservationLine
+{
+    public string DocNo { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public decimal TotAmnt { get; init; }
+    public bool IsDraft => string.Equals(Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>R9: reservation breakdown for a single posted invoice.</summary>
+public sealed class SaCdnInvoiceReservationSummary
+{
+    public string InvNo { get; init; } = string.Empty;
+    public decimal InvoiceTotal { get; init; }
+    public decimal PostedCnTotal { get; init; }
+    public decimal DraftCnTotal { get; init; }
+    public decimal Remaining { get; init; }
+    public IReadOnlyList<string> DraftCnNos { get; init; } = [];
+    public IReadOnlyList<SaCdnReservationLine> Reservations { get; init; } = [];
+
+    public bool HasDraftReservation => DraftCnNos.Count > 0;
+
+    /// <summary>Indicator text, e.g. <c>Reserved by draft CN(s) CN0001, CN0002.</c> — empty when none.</summary>
+    public string DraftIndicator => SaCdnCalc.FormatDraftReservation(DraftCnNos).Trim();
+}
+
+public sealed class SaCdnReservationReportQuery
+{
+    public string? CustCode { get; set; }
+    /// <summary>When true, only invoices with at least one NEW draft credit note are listed.</summary>
+    public bool DraftsOnly { get; set; }
+    /// <summary>When true, only invoices whose reservations exceed the invoice total are listed.</summary>
+    public bool OverReservedOnly { get; set; }
+    public int Take { get; set; } = 200;
+}
+
+public sealed class SaCdnReservationReportRow
+{
+    public string InvNo { get; init; } = string.Empty;
+    public DateTime InvDate { get; init; }
+    public string CustCode { get; init; } = string.Empty;
+    public string? CustName { get; init; }
+    public decimal InvoiceTotal { get; init; }
+    public decimal PostedCnTotal { get; init; }
+    public decimal DraftCnTotal { get; init; }
+    public decimal Remaining { get; init; }
+    public IReadOnlyList<string> DraftCnNos { get; init; } = [];
+
+    public decimal ReservedTotal => PostedCnTotal + DraftCnTotal;
+    public bool OverReserved => ReservedTotal > InvoiceTotal;
+    public string DraftIndicator => SaCdnCalc.FormatDraftReservation(DraftCnNos).Trim();
+}
+
+public sealed class SaCdnReservationReportPage
+{
+    public IReadOnlyList<SaCdnReservationReportRow> Rows { get; init; } = [];
+    public int TotalCount { get; init; }
 }

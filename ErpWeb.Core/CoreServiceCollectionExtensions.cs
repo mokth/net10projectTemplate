@@ -113,6 +113,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
 
         services.AddScoped<IIvInventoryReconciliationService, IvInventoryReconciliationService>();
+        services.AddScoped<ISaAllocationReconciliationService, SaAllocationReconciliationService>();
+        services.AddScoped<ISaDocFlowQuery, SaDocFlowQuery>();
 
         services.AddScoped<IIvStockMasterService, IvStockMasterService>();
 

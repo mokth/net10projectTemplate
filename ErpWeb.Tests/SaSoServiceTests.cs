@@ -261,6 +261,58 @@ public class SaSoServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SaveNew_persists_line_planning_dates_and_strips_time()
+    {
+        var sut = CreateSoSut();
+        var request = SoRequest(qty: 10m, price: 12m);
+        request.Lines![0].DeliveryDate = new DateTime(2026, 10, 20, 15, 45, 0);
+        request.Lines[0].Eta = new DateTime(2026, 10, 18, 9, 0, 0);
+        request.Lines[0].Etd = new DateTime(2026, 10, 15, 18, 30, 0);
+
+        var save = await sut.SaveNewAsync(request);
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single(save.Document!.Lines);
+        Assert.Equal(new DateTime(2026, 10, 20), line.DeliveryDate);
+        Assert.Equal(new DateTime(2026, 10, 18), line.Eta);
+        Assert.Equal(new DateTime(2026, 10, 15), line.Etd);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var stored = await db.SaSoDetails.SingleAsync();
+        Assert.Equal(new DateTime(2026, 10, 20), stored.DeliveryDate);
+        Assert.Equal(new DateTime(2026, 10, 18), stored.Eta);
+        Assert.Equal(new DateTime(2026, 10, 15), stored.Etd);
+
+        var draft = await sut.GetReviseDraftAsync(save.SoNo!);
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var draftLine = Assert.Single(draft.Document!.Lines);
+        Assert.Equal(new DateTime(2026, 10, 20), draftLine.DeliveryDate);
+        Assert.Equal(new DateTime(2026, 10, 18), draftLine.Eta);
+        Assert.Equal(new DateTime(2026, 10, 15), draftLine.Etd);
+    }
+
+    [Fact]
+    public async Task SaveNew_rejects_etd_after_eta_and_eta_after_delivery()
+    {
+        var sut = CreateSoSut();
+        var etdAfterEta = SoRequest(qty: 10m, price: 12m);
+        etdAfterEta.Lines![0].Etd = new DateTime(2026, 10, 20);
+        etdAfterEta.Lines[0].Eta = new DateTime(2026, 10, 18);
+
+        var etdResult = await sut.SaveNewAsync(etdAfterEta);
+        Assert.False(etdResult.Succeeded);
+        Assert.True(etdResult.ValidationErrors.ContainsKey("Lines[0].Etd"));
+
+        var etaAfterDelivery = SoRequest(qty: 10m, price: 12m);
+        etaAfterDelivery.Lines![0].Eta = new DateTime(2026, 10, 22);
+        etaAfterDelivery.Lines[0].DeliveryDate = new DateTime(2026, 10, 20);
+
+        var etaResult = await sut.SaveNewAsync(etaAfterDelivery);
+        Assert.False(etaResult.Succeeded);
+        Assert.True(etaResult.ValidationErrors.ContainsKey("Lines[0].Eta"));
+    }
+
+    [Fact]
     public async Task Revise_clones_current_and_supersedes_previous()
     {
         var sut = CreateSoSut();

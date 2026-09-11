@@ -310,6 +310,8 @@ public sealed class SaSoLineDto
     public decimal BalanceQty { get; init; }
     public decimal DeliveredQty { get; init; }
     public decimal InvoicedQty { get; init; }
+    /// <summary>R3: quantity written off by a DO force-close. Monotonic; never revenue.</summary>
+    public decimal WrittenOffQty { get; init; }
     public decimal RemainingBillableQty { get; init; }
     public decimal StdQty { get; init; }
     public decimal StdPsize { get; init; }
@@ -335,6 +337,9 @@ public sealed class SaSoLineDto
     public bool StockControl { get; init; }
     public string? Classification { get; init; }
     public string? Remarks { get; init; }
+    public DateTime? DeliveryDate { get; init; }
+    public DateTime? Eta { get; init; }
+    public DateTime? Etd { get; init; }
 }
 
 public sealed class SaSoSaveRequest
@@ -401,6 +406,9 @@ public sealed class SaSoLineRequest
     public string? OrderType { get; set; }
     public string? Classification { get; set; }
     public string? Remarks { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+    public DateTime? Eta { get; set; }
+    public DateTime? Etd { get; set; }
 }
 
 public interface ISaSoService

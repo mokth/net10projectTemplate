@@ -22,6 +22,8 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
         builder.Property(e => e.SourceFingerprint).HasMaxLength(64);
         builder.Property(e => e.PostedBy).HasMaxLength(10);
         builder.Property(e => e.RollbackBy).HasMaxLength(10);
+        builder.Property(e => e.ForceCloseBy).HasMaxLength(10);
+        builder.Property(e => e.ForceCloseReason).HasMaxLength(250);
         builder.Property(e => e.PostedCount).HasDefaultValue(0);
         builder.Property(e => e.RollbackCount).HasDefaultValue(0);
         builder.Property(e => e.CreatedDate).HasColumnName("Created");

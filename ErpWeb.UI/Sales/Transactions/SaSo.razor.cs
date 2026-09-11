@@ -145,6 +145,12 @@ public partial class SaSo : PageBase, IDisposable
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
     protected string PopupPrimaryText => IsEditingLine ? "Update line" : "Add line";
+    protected decimal PopupAllocatedFloor =>
+        _editingLine is null
+            ? 0m
+            : Math.Max(
+                _editingLine.DeliveredQty,
+                Math.Max(_editingLine.InvoicedQty, _editingLine.ShippedQty));
     protected bool PopupInclusiveLocked =>
         Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
     protected SaInvoiceLineCalcState PopupCalc => BuildPopupCalc();
@@ -769,15 +775,27 @@ public partial class SaSo : PageBase, IDisposable
             return;
         }
 
-        if (_editingLine is not null)
+        if (_editingLine is not null && Popup.OrderQty < PopupAllocatedFloor)
         {
-            var floor = Math.Max(_editingLine.DeliveredQty, _editingLine.InvoicedQty);
-            if (Popup.OrderQty < floor)
-            {
-                PopupError = $"Order quantity cannot be lower than allocated quantity {floor:n4}.";
-                return;
-            }
+            PopupError = $"Order quantity cannot be lower than allocated quantity {PopupAllocatedFloor:n4}.";
+            return;
         }
+
+        if (Popup.Etd is { } etd && Popup.Eta is { } eta && etd.Date > eta.Date)
+        {
+            PopupError = "ETD cannot be after ETA.";
+            return;
+        }
+
+        if (Popup.Eta is { } etaDate && Popup.DeliveryDate is { } deliveryDate && etaDate.Date > deliveryDate.Date)
+        {
+            PopupError = "ETA cannot be after delivery date.";
+            return;
+        }
+
+        Popup.DeliveryDate = Popup.DeliveryDate?.Date;
+        Popup.Etd = Popup.Etd?.Date;
+        Popup.Eta = Popup.Eta?.Date;
 
         if (Lines.Count > 0)
         {
@@ -1012,7 +1030,7 @@ public partial class SaSo : PageBase, IDisposable
             states.Add(state);
         }
 
-        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states, 0m);
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(states);
         for (var i = 0; i < Lines.Count; i++)
         {
             Lines[i].Amount = states[i].Amount;
@@ -1089,6 +1107,8 @@ public sealed class SaSoLineVm
     public decimal BalanceQty { get; set; }
     public decimal DeliveredQty { get; set; }
     public decimal InvoicedQty { get; set; }
+    /// <summary>R3: written off by a DO force-close.</summary>
+    public decimal WrittenOffQty { get; set; }
     public decimal? StdPackSize { get; set; }
     public string? SellingUom { get; set; }
     public string? StdUom { get; set; }
@@ -1111,6 +1131,9 @@ public sealed class SaSoLineVm
     public bool StockControl { get; set; } = true;
     public string? Classification { get; set; }
     public string? Remarks { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+    public DateTime? Eta { get; set; }
+    public DateTime? Etd { get; set; }
 
     public SaSoLineVm Clone() => new()
     {
@@ -1124,6 +1147,7 @@ public sealed class SaSoLineVm
         BalanceQty = BalanceQty,
         DeliveredQty = DeliveredQty,
         InvoicedQty = InvoicedQty,
+        WrittenOffQty = WrittenOffQty,
         StdPackSize = StdPackSize,
         SellingUom = SellingUom,
         StdUom = StdUom,
@@ -1145,7 +1169,10 @@ public sealed class SaSoLineVm
         OrderType = OrderType,
         StockControl = StockControl,
         Classification = Classification,
-        Remarks = Remarks
+        Remarks = Remarks,
+        DeliveryDate = DeliveryDate,
+        Eta = Eta,
+        Etd = Etd
     };
 
     public SaSoLineRequest ToRequest() =>
@@ -1170,12 +1197,16 @@ public sealed class SaSoLineVm
             TaxGrCode = TaxGrCode,
             OrderType = OrderType,
             Classification = Classification,
-            Remarks = Remarks
+            Remarks = Remarks,
+            DeliveryDate = DeliveryDate,
+            Eta = Eta,
+            Etd = Etd
         };
 
     public SaInvoiceLineCalcState ToCalcState() =>
         new()
         {
+            Line = Line,
             Qty = OrderQty,
             UnitPrice = UnitPrice,
             ItemDiscount = ItemDiscount,
@@ -1202,6 +1233,7 @@ public sealed class SaSoLineVm
             BalanceQty = dto.BalanceQty,
             DeliveredQty = dto.DeliveredQty,
             InvoicedQty = dto.InvoicedQty,
+            WrittenOffQty = dto.WrittenOffQty,
             StdPackSize = dto.StdPsize > 0m ? dto.StdPsize : (decimal?)null,
             SellingUom = dto.SellingUom,
             StdUom = dto.StdUom,
@@ -1223,6 +1255,9 @@ public sealed class SaSoLineVm
             OrderType = dto.OrderType,
             StockControl = dto.StockControl,
             Classification = dto.Classification,
-            Remarks = dto.Remarks
+            Remarks = dto.Remarks,
+            DeliveryDate = dto.DeliveryDate,
+            Eta = dto.Eta,
+            Etd = dto.Etd
         };
 }

@@ -80,7 +80,7 @@ public partial class SaInvoiceList : PageBase, IDisposable
         new() { Caption = "Status", FieldName = nameof(SaInvoiceListRow.Status), Width = "100px", VisibleIndex = 3 },
         new() { Caption = "Customer", FieldName = nameof(SaInvoiceListRow.CustCode), Width = "120px", VisibleIndex = 4 },
         new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 5 },
-        new() { Caption = "Total", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 6 },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 6 },
         new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 7 }
     ];
 
@@ -242,7 +242,9 @@ public partial class SaInvoiceList : PageBase, IDisposable
             {
                 "POST" => await Invoices.PostAsync(nos),
                 "ROLLBACK" => await Invoices.RollbackAsync(nos),
-                _ => await Invoices.DeleteAsync(nos)
+                _ => await Invoices.DeleteAsync(_selectedRows
+                    .Select(x => new SaInvoiceKeyedRequest { InvNo = x.InvNo, RowVersion = x.RowVersion })
+                    .ToList())
             };
 
             if (result.Posting.Count > 0)

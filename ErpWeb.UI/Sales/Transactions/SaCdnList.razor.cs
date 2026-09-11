@@ -129,7 +129,7 @@ public partial class SaCdnList : PageBase, IDisposable
         new() { Caption = "Customer", FieldName = nameof(SaCdnListRow.CustCode), Width = "120px", VisibleIndex = 4 },
         new() { Caption = "Name", FieldName = nameof(SaCdnListRow.CustName), VisibleIndex = 5 },
         new() { Caption = "Invoice", FieldName = nameof(SaCdnListRow.InvNo), Width = "130px", VisibleIndex = 6 },
-        new() { Caption = "Amount", FieldName = nameof(SaCdnListRow.TotAmnt), Width = "120px", VisibleIndex = 7 },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 7 },
         new() { Caption = "Lines", FieldName = nameof(SaCdnListRow.LineCount), Width = "80px", VisibleIndex = 8 }
     ];
 

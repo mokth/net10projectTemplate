@@ -43,11 +43,22 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var now = DateTime.UtcNow;
 
         var required = command.RequiredLines
-            .Where(x => IvSpFifoEligibility.IsShipmentRequired(x.StockControl, x.StdQty))
+            .Where(x => IvSpFifoEligibility.IsShipmentRequired(x.LinkDo, x.StockControl, x.StdQty))
             .OrderBy(x => x.Line)
             .ToList();
 
         var batch = await _postingRepo.LockSpBatchByRefAsync(db, company, branch, documentNo, cancellationToken);
+
+        // §5.4 data-level guard: a force-closed DO retains its batch as a tombstone
+        // (ForceCloseDate != NULL, status still POSTED). Never rebuild or delete it. Checked before
+        // the generic POSTED rule so the operator gets the accurate reason.
+        if (batch is not null && batch.IsForceClosed)
+        {
+            return IvSpShipmentResult.Fail(
+                "This shipment was retained by a delivery-order force-close and cannot be rebuilt.",
+                IvSpShipmentErrorKind.BusinessRule);
+        }
+
         if (batch is not null
             && string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
@@ -538,6 +549,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             || !string.Equals(batch.LocationCode ?? string.Empty, location, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(batch.TrxType, IvTrxTypes.SalesOut, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase)
+            || batch.IsForceClosed
             || !string.Equals(batch.RefNo, documentNo, StringComparison.OrdinalIgnoreCase))
         {
             return IvSpValidatePostResult.Fail("Shipment batch does not match the document.");
@@ -557,7 +569,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         }
 
         var required = query.RequiredLines
-            .Where(x => IvSpFifoEligibility.IsShipmentRequired(x.StockControl, x.StdQty))
+            .Where(x => IvSpFifoEligibility.IsShipmentRequired(x.LinkDo, x.StockControl, x.StdQty))
             .OrderBy(x => x.Line)
             .ToList();
 
@@ -653,7 +665,14 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         {
             return;
         }
+// §5.4: a force-closed DO retains its batch as an immutable tombstone. Never release it —
+        // the physical shipment already occurred and the write-off reconciliation depends on it.
+        if (batch.IsForceClosed)
+        {
+            return;
+        }
 
+        
         var details = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
         await LockReleasedBalancesAsync(db, company, branch, details, cancellationToken);
         db.IvTrxBatchDetails.RemoveRange(details);
