@@ -1,0 +1,45 @@
+/* Relies on SaDocPage.razor.css for sdoc-* chrome. */
+
+.sdoc-section-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sdoc-muted-text, #667085);
+    margin-bottom: 8px;
+}
+
+.popr-attachments {
+    display: grid;
+    gap: 12px;
+}
+
+.popr-attach-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.popr-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+}
+
+.popr-attach-file {
+    font-size: 0.85rem;
+    color: var(--sdoc-muted-text, #667085);
+}
+
+.popr-link {
+    color: var(--sdoc-accent, #0b57d0);
+    text-decoration: none;
+}
+
+.popr-link:hover {
+    text-decoration: underline;
+}

@@ -1,0 +1,8 @@
+/* Page-specific tweaks; shared chrome lives in /css/inventory-chrome.css */
+
+.iv-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-start;
+}

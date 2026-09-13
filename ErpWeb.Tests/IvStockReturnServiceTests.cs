@@ -912,6 +912,7 @@ public class IvStockReturnServiceTests : IAsyncLifetime
             access.Object,
             postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvStockReturnService(

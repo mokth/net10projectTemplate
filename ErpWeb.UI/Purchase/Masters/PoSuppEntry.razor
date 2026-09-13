@@ -1,0 +1,960 @@
+@page "/purchase/suppliers/{Mode:regex(^(new|edit|view)$)}"
+@page "/purchase/suppliers/{Mode:regex(^(new|edit|view)$)}/{*SuppCode}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseSupplierProfile">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-building"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase · Supplier Profile</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    @if (!IsNewMode && !string.IsNullOrWhiteSpace(Model.SuppCode))
+                    {
+                        <span class="iv-chip">@Model.SuppCode</span>
+                    }
+                    <span class="iv-status @(Model.IsActive ? "is-on" : "is-off")">
+                        @(Model.IsActive ? "Active" : "Inactive")
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            </section>
+        }
+        else if (IsViewMode)
+        {
+            <section class="iv-card po-supp-card--identity">
+                <h2 class="iv-card__title">Identity</h2>
+                <div class="po-supp-identity">
+                    <div class="po-supp-identity__col">
+                        <div class="iv-detail-grid">
+                            @Detail("Supplier code", Model.SuppCode)
+                            @Detail("Supplier name", Model.SuppName)
+                            @Detail("Short name", Model.SuppShortName)
+                            @Detail("COM REG NO", Model.SupplierBrn)
+                            @Detail("Group", Model.CategoryCode)
+                            @Detail("Area", Model.AreaCode)
+                            @Detail("Reg type", Model.RegType)
+                        </div>
+                    </div>
+                    <div class="po-supp-identity__divider" aria-hidden="true"></div>
+                    <div class="po-supp-identity__col">
+                        <div class="iv-detail-grid">
+                            @Detail("Type", Model.SuppType)
+                            @Detail("PO prefix", Model.PoPrefix)
+                            @Detail("Active", Model.IsActive ? "Yes" : "No")
+                            @Detail("LMW/ATS", FormatBool(Model.Lmw))
+                            @Detail("Sub group", Model.CreditorSubGroup)
+                            @Detail("MSIC code", Model.MiscCode)
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                    <DxTabPage Text="GENERAL">
+                        <div class="po-supp-tab">
+                            <div class="iv-detail-grid">
+                                @Detail("Address 1", Model.Address1)
+                                @Detail("Address 2", Model.Address2)
+                                @Detail("Address 3", Model.Address3)
+                                @Detail("Address 4", Model.Address4)
+                                @Detail("Tel", Model.Tel)
+                                @Detail("Email", Model.Email)
+                                @Detail("Website", Model.Website)
+                                @Detail("Postal code", Model.PostalCode)
+                                @Detail("City", Model.City)
+                                @Detail("State", Model.State)
+                                @Detail("Country", Model.Country)
+                                @Detail("Fax", Model.Fax)
+                                @Detail("Telex", Model.Telex)
+                            </div>
+                        </div>
+                    </DxTabPage>
+
+                    <DxTabPage Text="SHIPPING ADDRESS">
+                        <div class="po-supp-tab">
+                            <DxGrid Data="@Model.Addresses"
+                                    KeyFieldName="@nameof(PoSupplierAddressVm.Line)"
+                                    ShowFilterRow="false"
+                                    ShowGroupPanel="false"
+                                    ShowSearchBox="false"
+                                    TextWrapEnabled="false"
+                                    PageSize="20"
+                                    CssClass="po-supp-grid">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Line)" Caption="#" Width="56px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.SuppName)" Caption="Name" MinWidth="140" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address1)" Caption="Address 1" MinWidth="180" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address2)" Caption="Address 2" MinWidth="160" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address3)" Caption="Address 3" MinWidth="160" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address4)" Caption="Address 4" MinWidth="160" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.PostalCode)" Caption="Postal" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.City)" Caption="City" Width="120px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.State)" Caption="State" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Country)" Caption="Country" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Tel)" Caption="Tel" Width="120px" />
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Fax)" Caption="Fax" Width="120px" />
+                                </Columns>
+                            </DxGrid>
+                        </div>
+                    </DxTabPage>
+
+                    <DxTabPage Text="CONTACT">
+                        <div class="po-supp-tab po-supp-contact-grid">
+                            <section class="po-supp-contact-card">
+                                <h3 class="po-supp-contact-card__title">FIRST</h3>
+                                <div class="iv-detail-grid">
+                                    @Detail("Contact person", Model.ContactPerson)
+                                    @Detail("Title", Model.Title)
+                                    @Detail("Department", Model.Department)
+                                    @Detail("Email", Model.ContactEmail)
+                                    @Detail("Tel", Model.ContactTelp)
+                                    @Detail("Fax", Model.ContactFax)
+                                </div>
+                            </section>
+                            <section class="po-supp-contact-card">
+                                <h3 class="po-supp-contact-card__title">SECOND</h3>
+                                <div class="iv-detail-grid">
+                                    @Detail("Contact person", Model.ContactPerson2)
+                                    @Detail("Title", Model.Title2)
+                                    @Detail("Department", Model.Department2)
+                                    @Detail("Email", Model.ContactEmail2)
+                                    @Detail("Tel", Model.ContactTelp2)
+                                    @Detail("Fax", Model.ContactFax2)
+                                </div>
+                            </section>
+                            <section class="po-supp-contact-card">
+                                <h3 class="po-supp-contact-card__title">THIRD</h3>
+                                <div class="iv-detail-grid">
+                                    @Detail("Contact person", Model.ContactPerson3)
+                                    @Detail("Title", Model.Title3)
+                                    @Detail("Department", Model.Department3)
+                                    @Detail("Email", Model.ContactEmail3)
+                                    @Detail("Tel", Model.ContactTelp3)
+                                    @Detail("Fax", Model.ContactFax3)
+                                </div>
+                            </section>
+                            <section class="po-supp-contact-card">
+                                <h3 class="po-supp-contact-card__title">FOURTH</h3>
+                                <div class="iv-detail-grid">
+                                    @Detail("Contact person", Model.ContactPerson4)
+                                    @Detail("Title", Model.Title4)
+                                    @Detail("Department", Model.Department4)
+                                    @Detail("Email", Model.ContactEmail4)
+                                    @Detail("Tel", Model.ContactTelp4)
+                                    @Detail("Fax", Model.ContactFax4)
+                                </div>
+                            </section>
+                        </div>
+                    </DxTabPage>
+
+                    <DxTabPage Text="PAYMENT INFORMATION">
+                        <div class="po-supp-tab">
+                            <div class="po-supp-identity">
+                                <div class="po-supp-identity__col">
+                                    <div class="iv-detail-grid iv-form-grid--single">
+                                        @Detail("Taxable", FormatBool(Model.Taxable))
+                                        @Detail("Tax group", Model.TaxGrCode)
+                                        @Detail("GST reg no", Model.GstregNo)
+                                        @Detail("Bank name", Model.BankName)
+                                        @Detail("Account no", Model.AccountNo)
+                                        @Detail("Statement type", Model.StatementType)
+                                    </div>
+                                </div>
+                                <div class="po-supp-identity__divider" aria-hidden="true"></div>
+                                <div class="po-supp-identity__col">
+                                    <div class="iv-detail-grid iv-form-grid--single">
+                                        @Detail("Payment term", Model.PayCode)
+                                        @Detail("Currency", Model.Currency)
+                                        @Detail("Buying term", Model.BuyingTerm)
+                                        @Detail("GL code", Model.GlCode)
+                                        @Detail("Aging type", Model.AgingType)
+                                        @Detail("Credit limit", FormatDec(Model.CreditLimit))
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </DxTabPage>
+
+                    <DxTabPage Text="REMARK">
+                        <div class="po-supp-tab">
+                            <div class="iv-detail-grid iv-form-grid--single">
+                                @Detail("Remark", Model.Remark)
+                                @Detail("Business description", Model.BizDesc)
+                            </div>
+                        </div>
+                    </DxTabPage>
+
+                    <DxTabPage Text="ATTACHMENT">
+                        <div class="po-supp-tab">
+                            <DxGrid Data="@AttachmentRows"
+                                    KeyFieldName="@nameof(PoSupplierAttachmentRow.DocName)"
+                                    ShowFilterRow="false"
+                                    ShowGroupPanel="false"
+                                    ShowSearchBox="false"
+                                    TextWrapEnabled="false"
+                                    PageSize="20"
+                                    CssClass="po-supp-grid">
+                                <Columns>
+                                    <DxGridDataColumn Caption="#" Width="56px">
+                                        <CellDisplayTemplate Context="cellContext">
+                                            @(cellContext.VisibleIndex + 1)
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAttachmentRow.DocName)" Caption="File Name" MinWidth="220">
+                                        <CellDisplayTemplate Context="cellContext">
+                                            @{
+                                                var row = (PoSupplierAttachmentRow)cellContext.DataItem;
+                                            }
+                                            <a class="po-supp-link" href="@BuildAttachmentDownloadUrl(row.DocName)">@row.DocName</a>
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                    <DxGridDataColumn FieldName="@nameof(PoSupplierAttachmentRow.CreatedDate)"
+                                                      Caption="Uploaded On"
+                                                      DisplayFormat="dd/MM/yyyy HH:mm"
+                                                      Width="170px" />
+                                </Columns>
+                            </DxGrid>
+                        </div>
+                    </DxTabPage>
+                </DxTabs>
+            </section>
+
+            <section class="iv-card">
+                <h2 class="iv-card__title">Audit</h2>
+                <div class="iv-audit">
+                    <span>Created @(Model.CreatedBy ?? "—") · @FormatUtc(Model.CreatedDate)</span>
+                    <span>Updated @(Model.ModifiedBy ?? "—") · @FormatUtc(Model.ModifiedDate)</span>
+                </div>
+            </section>
+
+            <footer class="iv-footer">
+                <p class="iv-footer__hint">Read-only view</p>
+                <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CLOSE"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@OnCloseAsync" />
+                    @if (CanEdit)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="EDIT"
+                                  IconCssClass="far fa-edit"
+                                  Click="@OnEditFromView" />
+                    }
+                </div>
+            </footer>
+        }
+        else
+        {
+            <EditForm Model="@Model" OnValidSubmit="@OnSaveAsync">
+                <section class="iv-card po-supp-card--identity">
+                    <h2 class="iv-card__title">Identity</h2>
+                    <div class="po-supp-identity" id="po-supp-identity">
+                        <div class="po-supp-identity__col">
+                            <div class="iv-form-grid iv-form-grid--single">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Supplier code <span class="po-supp-req">*</span></label>
+                                    <DxTextBox @bind-Text="@Model.SuppCode"
+                                               maxlength="60"
+                                               ReadOnly="@(!IsNewMode)"
+                                               InputCssClass="required-field"
+                                               NullText="Required" />
+                                    @FieldError("SuppCode")
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Supplier name <span class="po-supp-req">*</span></label>
+                                    <DxTextBox @bind-Text="@Model.SuppName" maxlength="200" InputCssClass="required-field" NullText="Required" />
+                                    @FieldError("SuppName")
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Short name</label>
+                                    <DxTextBox @bind-Text="@Model.SuppShortName" maxlength="100" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">COM REG NO</label>
+                                    <DxTextBox @bind-Text="@Model.SupplierBrn" maxlength="50" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Group</label>
+                                    <DxTextBox @bind-Text="@Model.CategoryCode" maxlength="20" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Area</label>
+                                    <IvCodeComboBox Data="@Areas" @bind-Value="@Model.AreaCode" NullText="Select area" />
+                                    @FieldError("AreaCode")
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Reg type</label>
+                                    <DxTextBox @bind-Text="@Model.RegType" maxlength="20" />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="po-supp-identity__divider" aria-hidden="true"></div>
+                        <div class="po-supp-identity__col">
+                            <div class="iv-form-grid iv-form-grid--single">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Type</label>
+                                    <DxTextBox @bind-Text="@Model.SuppType" maxlength="20" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">PO prefix</label>
+                                    <DxTextBox @bind-Text="@Model.PoPrefix" maxlength="20" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Active</label>
+                                    <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">LMW/ATS</label>
+                                    <DxCheckBox @bind-Checked="@LmwValue" AllowIndeterminateState="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Sub group</label>
+                                    <DxTextBox @bind-Text="@Model.CreditorSubGroup" maxlength="20" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">MSIC code</label>
+                                    <DxTextBox @bind-Text="@Model.MiscCode" maxlength="20" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="iv-card">
+                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                        <DxTabPage Text="GENERAL">
+                            <div class="po-supp-tab">
+                                <div class="iv-form-grid">
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Address 1</label>
+                                        <DxTextBox @bind-Text="@Model.Address1" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Address 2</label>
+                                        <DxTextBox @bind-Text="@Model.Address2" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Address 3</label>
+                                        <DxTextBox @bind-Text="@Model.Address3" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Address 4</label>
+                                        <DxTextBox @bind-Text="@Model.Address4" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Tel</label>
+                                        <DxTextBox @bind-Text="@Model.Tel" maxlength="50" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Email</label>
+                                        <DxTextBox @bind-Text="@Model.Email" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Website</label>
+                                        <DxTextBox @bind-Text="@Model.Website" maxlength="100" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Postal code</label>
+                                        <DxTextBox @bind-Text="@Model.PostalCode" maxlength="20" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">City</label>
+                                        <DxTextBox @bind-Text="@Model.City" maxlength="50" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">State</label>
+                                        <IvCodeComboBox Data="@States" @bind-Value="@Model.State" NullText="Select state" />
+                                        @FieldError("State")
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Country</label>
+                                        <IvCodeComboBox Data="@Countries" @bind-Value="@Model.Country" NullText="Select country" />
+                                        @FieldError("Country")
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Fax</label>
+                                        <DxTextBox @bind-Text="@Model.Fax" maxlength="50" />
+                                    </div>
+                                    <div class="iv-field">
+                                        <label class="iv-field__label">Telex</label>
+                                        <DxTextBox @bind-Text="@Model.Telex" maxlength="50" />
+                                    </div>
+                                </div>
+                            </div>
+                        </DxTabPage>
+
+                        <DxTabPage Text="SHIPPING ADDRESS">
+                            <div class="po-supp-tab">
+                                <div class="po-supp-tab__toolbar">
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="NEW"
+                                              IconCssClass="fa-solid fa-plus"
+                                              Click="@OnNewAddressClick"
+                                              Enabled="@(!IsSubmitting)" />
+                                </div>
+                                <DxGrid Data="@Model.Addresses"
+                                        KeyFieldName="@nameof(PoSupplierAddressVm.Line)"
+                                        ShowFilterRow="false"
+                                        ShowGroupPanel="false"
+                                        ShowSearchBox="false"
+                                        TextWrapEnabled="false"
+                                        PageSize="20"
+                                        CssClass="po-supp-grid"
+                                        RowDoubleClick="@OnAddressRowDoubleClick">
+                                    <Columns>
+                                        <DxGridCommandColumn Width="96px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                            <CellDisplayTemplate Context="cellContext">
+                                                @{
+                                                    var address = (PoSupplierAddressVm)cellContext.DataItem;
+                                                }
+                                                <div class="po-supp-row-actions">
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                              IconCssClass="fa-solid fa-pen"
+                                                              title="Edit"
+                                                              Click="@(() => OnEditAddress(address))"
+                                                              Enabled="@(!IsSubmitting)" />
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                              IconCssClass="fa-solid fa-trash"
+                                                              title="Remove"
+                                                              Click="@(() => OnDeleteAddress(address))"
+                                                              Enabled="@(!IsSubmitting)" />
+                                                </div>
+                                            </CellDisplayTemplate>
+                                        </DxGridCommandColumn>
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Line)" Caption="#" Width="56px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.SuppName)" Caption="Name" MinWidth="140" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address1)" Caption="Address 1" MinWidth="180" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address2)" Caption="Address 2" MinWidth="160" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address3)" Caption="Address 3" MinWidth="160" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Address4)" Caption="Address 4" MinWidth="160" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.PostalCode)" Caption="Postal" Width="100px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.City)" Caption="City" Width="120px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.State)" Caption="State" Width="100px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Country)" Caption="Country" Width="110px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Tel)" Caption="Tel" Width="120px" />
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAddressVm.Fax)" Caption="Fax" Width="120px" />
+                                    </Columns>
+                                </DxGrid>
+                            </div>
+                        </DxTabPage>
+
+                        <DxTabPage Text="CONTACT">
+                            <div class="po-supp-tab po-supp-contact-grid">
+                                <section class="po-supp-contact-card">
+                                    <h3 class="po-supp-contact-card__title">FIRST</h3>
+                                    <div class="iv-form-grid iv-form-grid--single">
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Contact person</label>
+                                            <DxTextBox @bind-Text="@Model.ContactPerson" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Title</label>
+                                            <DxTextBox @bind-Text="@Model.Title" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Department</label>
+                                            <DxTextBox @bind-Text="@Model.Department" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Email</label>
+                                            <DxTextBox @bind-Text="@Model.ContactEmail" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Tel</label>
+                                            <DxTextBox @bind-Text="@Model.ContactTelp" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Fax</label>
+                                            <DxTextBox @bind-Text="@Model.ContactFax" maxlength="50" />
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="po-supp-contact-card">
+                                    <h3 class="po-supp-contact-card__title">SECOND</h3>
+                                    <div class="iv-form-grid iv-form-grid--single">
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Contact person</label>
+                                            <DxTextBox @bind-Text="@Model.ContactPerson2" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Title</label>
+                                            <DxTextBox @bind-Text="@Model.Title2" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Department</label>
+                                            <DxTextBox @bind-Text="@Model.Department2" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Email</label>
+                                            <DxTextBox @bind-Text="@Model.ContactEmail2" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Tel</label>
+                                            <DxTextBox @bind-Text="@Model.ContactTelp2" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Fax</label>
+                                            <DxTextBox @bind-Text="@Model.ContactFax2" maxlength="50" />
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="po-supp-contact-card">
+                                    <h3 class="po-supp-contact-card__title">THIRD</h3>
+                                    <div class="iv-form-grid iv-form-grid--single">
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Contact person</label>
+                                            <DxTextBox @bind-Text="@Model.ContactPerson3" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Title</label>
+                                            <DxTextBox @bind-Text="@Model.Title3" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Department</label>
+                                            <DxTextBox @bind-Text="@Model.Department3" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Email</label>
+                                            <DxTextBox @bind-Text="@Model.ContactEmail3" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Tel</label>
+                                            <DxTextBox @bind-Text="@Model.ContactTelp3" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Fax</label>
+                                            <DxTextBox @bind-Text="@Model.ContactFax3" maxlength="50" />
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="po-supp-contact-card">
+                                    <h3 class="po-supp-contact-card__title">FOURTH</h3>
+                                    <div class="iv-form-grid iv-form-grid--single">
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Contact person</label>
+                                            <DxTextBox @bind-Text="@Model.ContactPerson4" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Title</label>
+                                            <DxTextBox @bind-Text="@Model.Title4" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Department</label>
+                                            <DxTextBox @bind-Text="@Model.Department4" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Email</label>
+                                            <DxTextBox @bind-Text="@Model.ContactEmail4" maxlength="100" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Tel</label>
+                                            <DxTextBox @bind-Text="@Model.ContactTelp4" maxlength="50" />
+                                        </div>
+                                        <div class="iv-field">
+                                            <label class="iv-field__label">Fax</label>
+                                            <DxTextBox @bind-Text="@Model.ContactFax4" maxlength="50" />
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </DxTabPage>
+
+                        <DxTabPage Text="PAYMENT INFORMATION">
+                            <div class="po-supp-tab">
+                                <div class="po-supp-identity">
+                                    <div class="po-supp-identity__col">
+                                        <div class="po-supp-pay-stack">
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Taxable</label>
+                                                <DxCheckBox @bind-Checked="@TaxableValue" AllowIndeterminateState="false" />
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Tax group</label>
+                                                <div class="po-supp-pay-control">
+                                                    <IvCodeComboBox Data="@TaxGroups" @bind-Value="@Model.TaxGrCode" NullText="Select tax group" />
+                                                    @FieldError("TaxGrCode")
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">GST reg no</label>
+                                                <DxTextBox @bind-Text="@Model.GstregNo" maxlength="50" />
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Bank name</label>
+                                                <DxTextBox @bind-Text="@Model.BankName" maxlength="100" />
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Account no</label>
+                                                <DxTextBox @bind-Text="@Model.AccountNo" maxlength="50" />
+                                            </div>
+                                            <div class="po-supp-pay-field po-supp-pay-field--top">
+                                                <label class="iv-field__label">Statement type</label>
+                                                <div class="po-supp-radio-box" role="radiogroup" aria-label="Statement type">
+                                                    <label class="po-supp-radio">
+                                                        <input type="radio"
+                                                               name="po-supp-statement-type"
+                                                               checked="@IsStatementOpenItem"
+                                                               @onchange="@(() => SetStatementType(PoSupplierPaymentOptions.StatementOpenItem))" />
+                                                        OPEN ITEM
+                                                    </label>
+                                                    <label class="po-supp-radio">
+                                                        <input type="radio"
+                                                               name="po-supp-statement-type"
+                                                               checked="@IsStatementBalanceForward"
+                                                               @onchange="@(() => SetStatementType(PoSupplierPaymentOptions.StatementBalanceForward))" />
+                                                        BALANCE FORWARD
+                                                    </label>
+                                                    <label class="po-supp-radio">
+                                                        <input type="radio"
+                                                               name="po-supp-statement-type"
+                                                               checked="@IsStatementNone"
+                                                               @onchange="@(() => SetStatementType(PoSupplierPaymentOptions.StatementNone))" />
+                                                        NO STATEMENT
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="po-supp-identity__divider" aria-hidden="true"></div>
+                                    <div class="po-supp-identity__col">
+                                        <div class="po-supp-pay-stack">
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Payment term</label>
+                                                <div class="po-supp-pay-control">
+                                                    <IvCodeComboBox Data="@PayCodes" @bind-Value="@Model.PayCode" NullText="Select payment term" />
+                                                    @FieldError("PayCode")
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Currency <span class="po-supp-req">*</span></label>
+                                                <div class="po-supp-pay-control">
+                                                    <IvCodeComboBox Data="@Currencies" @bind-Value="@Model.Currency" NullText="Select currency" InputCssClass="required-field" />
+                                                    @FieldError("Currency")
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Buying term</label>
+                                                <div class="po-supp-pay-control">
+                                                    <IvCodeComboBox Data="@BuyingTerms" @bind-Value="@Model.BuyingTerm" NullText="Select buying term" />
+                                                    @FieldError("BuyingTerm")
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">GL code <span class="po-supp-req">*</span></label>
+                                                <div class="po-supp-pay-control">
+                                                    <DxTextBox @bind-Text="@Model.GlCode" maxlength="20" InputCssClass="required-field" />
+                                                    @FieldError("GlCode")
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Aging type</label>
+                                                <div class="po-supp-radios" role="radiogroup" aria-label="Aging type">
+                                                    <label class="po-supp-radio">
+                                                        <input type="radio"
+                                                               name="po-supp-aging-type"
+                                                               checked="@IsAgingInvoice"
+                                                               @onchange="@(() => SetAgingType(PoSupplierPaymentOptions.AgingInvoice))" />
+                                                        INVOICE DATE
+                                                    </label>
+                                                    <label class="po-supp-radio">
+                                                        <input type="radio"
+                                                               name="po-supp-aging-type"
+                                                               checked="@IsAgingDue"
+                                                               @onchange="@(() => SetAgingType(PoSupplierPaymentOptions.AgingDue))" />
+                                                        DUE DATE
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="po-supp-pay-field">
+                                                <label class="iv-field__label">Credit limit</label>
+                                                <DxSpinEdit @bind-Value="@Model.CreditLimit" MinValue="0m" DisplayFormat="n2" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </DxTabPage>
+
+                        <DxTabPage Text="REMARK">
+                            <div class="po-supp-tab po-supp-remark-grid">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Remark</label>
+                                    <DxMemo @bind-Text="@Model.Remark" Rows="5" maxlength="500" NullText="Supplier remark" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Business description</label>
+                                    <DxMemo @bind-Text="@Model.BizDesc" Rows="5" maxlength="500" NullText="Business description" />
+                                </div>
+                            </div>
+                        </DxTabPage>
+
+                        <DxTabPage Text="ATTACHMENT">
+                            <div class="po-supp-tab">
+                                <div class="po-supp-attach-toolbar">
+                                    <input id="po-supp-attach-input"
+                                           class="po-supp-file-input"
+                                           type="file"
+                                           @ref="AttachmentInputRef"
+                                           @onchange="OnAttachmentInputChanged" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="BROWSE"
+                                              IconCssClass="fa-solid fa-folder-open"
+                                              Click="@OnBrowseAttachmentAsync"
+                                              Enabled="@(!AttachmentUploadDisabled)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsUploadingAttachment ? "Uploading…" : "UPLOAD")"
+                                              IconCssClass="fa-solid fa-upload"
+                                              Click="@OnUploadAttachmentAsync"
+                                              Enabled="@(!AttachmentUploadDisabled)" />
+                                    <span class="po-supp-attach-file">@(SelectedAttachmentName ?? "No file selected")</span>
+                                </div>
+                                @if (IsNewMode)
+                                {
+                                    <p class="po-supp-hint">Save the supplier first before uploading attachments.</p>
+                                }
+
+                                <DxGrid Data="@AttachmentRows"
+                                        KeyFieldName="@nameof(PoSupplierAttachmentRow.DocName)"
+                                        ShowFilterRow="false"
+                                        ShowGroupPanel="false"
+                                        ShowSearchBox="false"
+                                        TextWrapEnabled="false"
+                                        PageSize="20"
+                                        CssClass="po-supp-grid">
+                                    <Columns>
+                                        @if (!IsViewMode)
+                                        {
+                                            <DxGridCommandColumn Width="72px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                                <CellDisplayTemplate Context="cellContext">
+                                                    @{
+                                                        var row = (PoSupplierAttachmentRow)cellContext.DataItem;
+                                                    }
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                              IconCssClass="fa-solid fa-trash"
+                                                              title="Delete"
+                                                              Click="@(() => OnDeleteAttachmentAsync(row))"
+                                                              Enabled="@(!IsSubmitting && !IsUploadingAttachment && !IsNewMode)" />
+                                                </CellDisplayTemplate>
+                                            </DxGridCommandColumn>
+                                        }
+                                        <DxGridDataColumn Caption="#" Width="56px">
+                                            <CellDisplayTemplate Context="cellContext">
+                                                @(cellContext.VisibleIndex + 1)
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAttachmentRow.DocName)" Caption="File Name" MinWidth="220">
+                                            <CellDisplayTemplate Context="cellContext">
+                                                @{
+                                                    var row = (PoSupplierAttachmentRow)cellContext.DataItem;
+                                                }
+                                                <a class="po-supp-link" href="@BuildAttachmentDownloadUrl(row.DocName)">@row.DocName</a>
+                                            </CellDisplayTemplate>
+                                        </DxGridDataColumn>
+                                        <DxGridDataColumn FieldName="@nameof(PoSupplierAttachmentRow.CreatedDate)"
+                                                          Caption="Uploaded On"
+                                                          DisplayFormat="dd/MM/yyyy HH:mm"
+                                                          Width="170px" />
+                                    </Columns>
+                                </DxGrid>
+                            </div>
+                        </DxTabPage>
+                    </DxTabs>
+                </section>
+
+                @if (ValidationErrors.Count > 0)
+                {
+                    <section class="iv-card">
+                        <h2 class="iv-card__title">Validation</h2>
+                        <ul class="iv-validation-list">
+                            @foreach (var pair in ValidationErrors)
+                            {
+                                <li><strong>@pair.Key</strong>: @pair.Value</li>
+                            }
+                        </ul>
+                    </section>
+                }
+
+                <footer class="iv-footer">
+                    <p class="iv-footer__hint">@(IsDirty ? "Unsaved changes" : "Ready")</p>
+                    <div class="iv-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CANCEL"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.PurchaseSupplierProfile" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "SAVE")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      SubmitFormOnClick="true"
+                                      Enabled="@(!IsSubmitting)" />
+                        </PermissionAuthorize>
+                    </div>
+                </footer>
+            </EditForm>
+        }
+    </div>
+
+    <DxPopup HeaderText="Discard changes?"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="iv-confirm__copy">You have unsaved changes. Discard them and leave this page?</p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Concurrency conflict"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@ConcurrencyVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                This supplier was changed by another user. Reload the latest version, or keep your edits and overwrite on the next save.
+            </p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Keep my changes"
+                              Click="@KeepMyChangesAsync"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Reload latest"
+                              Click="@ReloadLatestAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@AddressPopupTitle"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@AddressPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <div class="iv-form-grid">
+                    <div class="iv-field">
+                        <label class="iv-field__label">Name</label>
+                        <DxTextBox @bind-Text="@AddressPopup.SuppName" maxlength="100" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Address 1</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Address1" maxlength="100" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Address 2</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Address2" maxlength="100" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Address 3</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Address3" maxlength="100" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Address 4</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Address4" maxlength="100" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Postal</label>
+                        <DxTextBox @bind-Text="@AddressPopup.PostalCode" maxlength="20" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">City</label>
+                        <DxTextBox @bind-Text="@AddressPopup.City" maxlength="50" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">State</label>
+                        <IvCodeComboBox Data="@States" @bind-Value="@AddressPopup.State" NullText="Select state" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Country</label>
+                        <IvCodeComboBox Data="@Countries" @bind-Value="@AddressPopup.Country" NullText="Select country" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Tel</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Tel" maxlength="50" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Fax</label>
+                        <DxTextBox @bind-Text="@AddressPopup.Fax" maxlength="50" />
+                    </div>
+                </div>
+            </div>
+            <div class="iv-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(AddressPopupError))
+                {
+                    <p class="iv-popup-error">@AddressPopupError</p>
+                }
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnAddressPopupCancel" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save" Click="@OnAddressCommit" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>
+
+@code {
+    private RenderFragment Detail(string label, string? value) => __builder =>
+    {
+        <div class="iv-detail-row">
+            <span class="iv-detail-row__label">@label</span>
+            <span class="iv-detail-row__value">@(string.IsNullOrWhiteSpace(value) ? "—" : value)</span>
+        </div>
+    };
+
+    private RenderFragment FieldError(string field) => __builder =>
+    {
+        if (ValidationErrors.TryGetValue(field, out var message) && !string.IsNullOrWhiteSpace(message))
+        {
+            <p class="iv-field__error">@message</p>
+        }
+    };
+}

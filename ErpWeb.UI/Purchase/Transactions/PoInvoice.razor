@@ -1,0 +1,168 @@
+@page "/purchase/invoices/{Mode:regex(^(new|edit|view)$)}"
+@page "/purchase/invoices/{Mode:regex(^(new|edit|view)$)}/{DocNo}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseInvoice">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-invoice"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@(Model.Status.Length == 0 ? "DRAFT" : Model.Status)</span>
+                    <span class="iv-chip">@Model.Type</span>
+                </div>
+            </div>
+            <div class="iv-hero__actions">
+                <DxButton Text="Back" RenderStyle="ButtonRenderStyle.Secondary" Click="@GoBack" />
+                @if (IsEditable)
+                {
+                    <DxButton Text="Save" RenderStyle="ButtonRenderStyle.Primary" Click="@SaveAsync" Enabled="@(!IsSubmitting)" />
+                }
+                @if (Model.CanPost)
+                {
+                    <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting)" />
+                }
+                @if (Model.CanRollback)
+                {
+                    <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
+                }
+            </div>
+        </header>
+
+        @if (IsLoading)
+        {
+            <p>Loading…</p>
+        }
+        else
+        {
+            <section class="iv-card mb-3">
+                <div class="row g-3">
+                    <div class="col-md-2">
+                        <label class="form-label">Type</label>
+                        <DxComboBox Data="@(new[] { "INV", "CN" })"
+                                    @bind-Value="Model.Type"
+                                    Enabled="@IsNew"
+                                    CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Doc No</label>
+                        <DxTextBox Text="@(string.IsNullOrWhiteSpace(Model.DocNo) ? "AUTO" : Model.DocNo)" ReadOnly="true" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Date</label>
+                        <DxDateEdit @bind-Date="Model.DocDate" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@(Model.Type == "CN" ? "Invoice Doc No" : "Supplier Invoice No")</label>
+                        <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Vendor</label>
+                        <DxComboBox Data="@Vendors"
+                                    ValueFieldName="@nameof(PoInvoiceVendorLookupRow.SuppCode)"
+                                    TextFieldName="@nameof(PoInvoiceVendorLookupRow.DisplayText)"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                    Value="@Model.VendorCode"
+                                    ValueChanged="@(EventCallback.Factory.Create<string>(this, OnVendorChanged))"
+                                    Enabled="@IsEditable"
+                                    CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Currency</label>
+                        <DxTextBox @bind-Text="Model.Currency" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Rate</label>
+                        <DxSpinEdit @bind-Value="Model.CurrRate" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Price Tol %</label>
+                        <DxSpinEdit @bind-Value="PriceToleranceEdit" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label">Remarks</label>
+                        <DxTextBox @bind-Text="Model.Remarks" Enabled="@IsEditable" CssClass="w-100" />
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h2 class="h5 mb-0">Lines</h2>
+                    @if (IsEditable)
+                    {
+                        <div class="d-flex gap-2">
+                            <DxButton Text="Add PO line" RenderStyle="ButtonRenderStyle.Secondary" Click="@OpenPoPickerAsync" />
+                            @if (Model.Type == "CN")
+                            {
+                                <DxButton Text="Copy from INV" RenderStyle="ButtonRenderStyle.Secondary" Click="@CopyFromInvAsync" />
+                            }
+                        </div>
+                    }
+                </div>
+
+                <DxGrid Data="@EditLines" KeyFieldName="ClientKey" PageSize="20">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.PoNo)" Caption="PO" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.PoRelNo)" Caption="Rev" Width="60px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.PoLineNo)" Caption="Line" Width="60px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.ICode)" Caption="Item" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.IDesc)" Caption="Description" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.SellingUom)" Caption="UOM" Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.Qty)" Caption="Qty" Width="100px" DisplayFormat="n4" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.UnitPrice)" Caption="Price" Width="110px" DisplayFormat="n6" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.NetAmount)" Caption="Net" Width="110px" DisplayFormat="n2" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" />
+                    </Columns>
+                </DxGrid>
+
+                <div class="d-flex justify-content-end gap-4 mt-3">
+                    <div><span class="text-muted">Gross</span> <strong>@Model.GrossAmnt.ToString("n2")</strong></div>
+                    <div><span class="text-muted">Tax</span> <strong>@Model.Taxes.ToString("n2")</strong></div>
+                    <div><span class="text-muted">Total</span> <strong>@Model.TotAmnt.ToString("n2")</strong></div>
+                </div>
+            </section>
+        }
+    </div>
+
+    <DxPopup @bind-Visible="PoPickerVisible" HeaderText="Invoiceable PO lines" Width="900px" CloseOnOutsideClick="false">
+        <BodyTemplate>
+            <DxGrid Data="@PoPickerRows" KeyFieldName="@nameof(PoInvoicePoLinePickerRow.DisplayText)" PageSize="10"
+                    SelectionMode="GridSelectionMode.Multiple" @bind-SelectedDataItems="SelectedPoLines">
+                <Columns>
+                    <DxGridSelectionColumn Width="40px" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoNo)" Caption="PO" Width="120px" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.Line)" Caption="Line" Width="60px" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.ICode)" Caption="Item" Width="100px" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PurchaseUom)" Caption="UOM" Width="70px" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.InvoiceableQty)" Caption="Invoiceable" Width="110px" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoUnitPrice)" Caption="PO Price" Width="110px" DisplayFormat="n6" />
+                </Columns>
+            </DxGrid>
+        </BodyTemplate>
+        <FooterTemplate>
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PoPickerVisible = false)" />
+            <DxButton Text="Add selected" RenderStyle="ButtonRenderStyle.Primary" Click="@AddSelectedPoLines" />
+        </FooterTemplate>
+    </DxPopup>
+</MenuAuthorize>

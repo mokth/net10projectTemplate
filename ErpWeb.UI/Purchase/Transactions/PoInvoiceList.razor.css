@@ -1,0 +1,15 @@
+/* Page-specific tweaks; shared chrome lives in /css/inventory-chrome.css */
+
+.iv-page ::deep .common-datagrid-ex {
+    min-height: 280px;
+}
+
+.iv-page ::deep .dxbl-grid {
+    border: 0;
+}
+
+.po-invoice-type-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}

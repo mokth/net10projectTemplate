@@ -686,6 +686,7 @@ public class SaSoLineReserveSqlServerConcurrencyTests
             access.Object,
             postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         return new SaDoService(
             factory,
@@ -719,6 +720,7 @@ public class SaSoLineReserveSqlServerConcurrencyTests
             access.Object,
             postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         return new SaInvoiceService(
             factory,

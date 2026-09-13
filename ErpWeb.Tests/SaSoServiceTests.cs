@@ -2238,6 +2238,7 @@ public class SaSoServiceTests : IAsyncLifetime
             Access().Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
     private static Mock<IAccessRightService> Access()

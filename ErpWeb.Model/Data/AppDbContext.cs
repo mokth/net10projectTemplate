@@ -1,6 +1,7 @@
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
@@ -65,6 +66,27 @@ public class AppDbContext : DbContext
     public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();
     public DbSet<SaPaymentTerm> SaPaymentTerms => Set<SaPaymentTerm>();
     public DbSet<SaSalesRep> SaSalesReps => Set<SaSalesRep>();
+
+    public DbSet<PoOrder> PoOrders => Set<PoOrder>();
+    public DbSet<PoOrderDetail> PoOrderDetails => Set<PoOrderDetail>();
+    public DbSet<PoPr> PoPrs => Set<PoPr>();
+    public DbSet<PoPrDetail> PoPrDetails => Set<PoPrDetail>();
+    public DbSet<PoInvoice> PoInvoices => Set<PoInvoice>();
+    public DbSet<PoInvoiceDetail> PoInvoiceDetails => Set<PoInvoiceDetail>();
+    public DbSet<PoCj> PoCjs => Set<PoCj>();
+    public DbSet<PoCjDetail> PoCjDetails => Set<PoCjDetail>();
+    public DbSet<PoVendor> PoVendors => Set<PoVendor>();
+    public DbSet<PoSupplier> PoSuppliers => Set<PoSupplier>();
+    public DbSet<PoSupplierAdd> PoSupplierAdds => Set<PoSupplierAdd>();
+    public DbSet<PoVendorByItem> PoVendorByItems => Set<PoVendorByItem>();
+    public DbSet<PoPurItem> PoPurItems => Set<PoPurItem>();
+    public DbSet<PoBuyer> PoBuyers => Set<PoBuyer>();
+    public DbSet<PoBuyingTerm> PoBuyingTerms => Set<PoBuyingTerm>();
+    public DbSet<PoCategory> PoCategories => Set<PoCategory>();
+    public DbSet<PoAuthorised> PoAuthoriseds => Set<PoAuthorised>();
+    public DbSet<PoAttachFile> PoAttachFiles => Set<PoAttachFile>();
+    public DbSet<PoPrAttachFile> PoPrAttachFiles => Set<PoPrAttachFile>();
+    public DbSet<PoDesc> PoDescs => Set<PoDesc>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

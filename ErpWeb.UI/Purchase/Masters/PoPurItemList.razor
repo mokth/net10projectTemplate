@@ -1,0 +1,157 @@
+@page "/purchase/items"
+@inherits PoRefListPageBase<PoPurItemListRow, PoPurItemEditVm>
+
+<PageTitle>Purchase Items</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchasePurItem">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-packing"></i></div>
+        <div>
+            <p class="iv-eyebrow">Purchase</p>
+            <h1 class="iv-title">Purchase Items</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading purchase items…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(PoPurItemListRow.Id)"
+                      GridKey="po-pur-item-list"
+                      Title="Purchase Items"
+                      T="PoPurItemListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Purchase Item" : "View Purchase Item") : "New Purchase Item")"
+             CloseOnOutsideClick="false"
+             Width="80vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="purItemForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item Code" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.ICode" maxlength="30"
+                                       InputCssClass="required-field code-style" ReadOnly="@IsEditMode" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Vendor" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Vendor" maxlength="60"
+                                       InputCssClass="required-field code-style" ReadOnly="@IsEditMode" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Currency" ColSpanMd="2">
+                        <Template><DxTextBox @bind-Text="@EditModel.Currency" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Unit Price" ColSpanMd="2">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.UnitPrice" MinValue="0" ShowSpinButtons="false" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                        <Template><DxTextBox @bind-Text="@EditModel.IDesc" maxlength="200" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Vendor Name" ColSpanMd="6" BeginRow="true">
+                        <Template><DxTextBox @bind-Text="@EditModel.VendName" maxlength="200" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Vendor Part No" ColSpanMd="6">
+                        <Template><DxTextBox @bind-Text="@EditModel.VendorPartNo" maxlength="50" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Category" ColSpanMd="3" BeginRow="true">
+                        <Template><DxTextBox @bind-Text="@EditModel.Category" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Sub Category" ColSpanMd="3">
+                        <Template><DxTextBox @bind-Text="@EditModel.SubCategory" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Dept" ColSpanMd="3">
+                        <Template><DxTextBox @bind-Text="@EditModel.Dept" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="3">
+                        <Template><DxTextBox @bind-Text="@EditModel.Status" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pur Qty" ColSpanMd="3" BeginRow="true">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.PurQty" MinValue="0" ShowSpinButtons="false" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pur UOM" ColSpanMd="3">
+                        <Template><DxTextBox @bind-Text="@EditModel.PurUom" maxlength="10" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="MOQ" ColSpanMd="3">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.Moq" MinValue="0" ShowSpinButtons="false" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Lead Time" ColSpanMd="3">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.LeadTime" MinValue="0" ShowSpinButtons="false" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Purchase GL" ColSpanMd="4" BeginRow="true">
+                        <Template><DxTextBox @bind-Text="@EditModel.PurchaseGlCode" maxlength="20" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Remarks" ColSpanMd="8">
+                        <Template><DxTextBox @bind-Text="@EditModel.Remarks" maxlength="250" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsSubmitting ? "Saving…" : "Save")" SubmitFormOnClick="true" Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@ClosePopup" Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template><small class="text-danger">@ErrorMessage</small></Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style" HeaderText="Confirm Delete" CloseOnOutsideClick="false" Width="420px" CssClass="common-popup" @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="@(IsSubmitting ? "Deleting…" : "Delete")" Click="@ConfirmDeleteAsync" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CloseConfirmDelete" Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

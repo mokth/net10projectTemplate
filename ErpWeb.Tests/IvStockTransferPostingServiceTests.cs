@@ -559,6 +559,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvStockTransferService(
@@ -578,6 +579,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             Access().Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
     private static Mock<IAccessRightService> Access()

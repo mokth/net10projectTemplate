@@ -374,6 +374,7 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvMiscIssueService(
@@ -393,6 +394,7 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             Access().Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
     private IIvInventoryLookupService CreateLookups()

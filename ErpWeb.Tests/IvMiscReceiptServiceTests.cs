@@ -827,6 +827,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             access.Object,
             postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvMiscReceiptService(

@@ -14,11 +14,13 @@
     </Menu>
     <Menu Code="INV_TRANSACTIONS" Name="Transactions" SortOrder="2">
       <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="1" />
-      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="2" />
-      <Menu Code="INV_STOCK_TRANSFER" Name="Stock Transfer" Route="/inventory/stock-transfer" SortOrder="3" />
-      <Menu Code="INV_SCRAP" Name="Scrap" Route="/inventory/scrap" SortOrder="4" />
-      <Menu Code="INV_STOCK_RETURN" Name="Stock Return" Route="/inventory/stock-return" SortOrder="5" />
-      <Menu Code="INV_STOCK_ADJUSTMENT" Name="Stock Adjustment" Route="/inventory/stock-adjustment" SortOrder="6" />
+      <Menu Code="INV_GOODS_RECEIPT" Name="Goods Receipt" Route="/inventory/goods-receipts" SortOrder="2" />
+      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="3" />
+      <Menu Code="INV_STOCK_TRANSFER" Name="Stock Transfer" Route="/inventory/stock-transfer" SortOrder="4" />
+      <Menu Code="INV_SCRAP" Name="Scrap" Route="/inventory/scrap" SortOrder="5" />
+      <Menu Code="INV_STOCK_RETURN" Name="Stock Return" Route="/inventory/stock-return" SortOrder="6" />
+      <Menu Code="INV_VENDOR_RETURN" Name="Vendor Return" Route="/inventory/vendor-return" SortOrder="7" />
+      <Menu Code="INV_STOCK_ADJUSTMENT" Name="Stock Adjustment" Route="/inventory/stock-adjustment" SortOrder="8" />
     </Menu>
   </Menu>
   <Menu Code="SALES" Name="Sales" SortOrder="3">
@@ -44,14 +46,31 @@
       <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="5" />
     </Menu>
   </Menu>
-  <Menu Code="OPERATIONS" Name="Operations" SortOrder="4">
+
+  <Menu Code="PURCHASE" Name="Purchase" SortOrder="4">
+    <Menu Code="PO_MASTER" Name="Master" SortOrder="1">
+      <Menu Code="PO_SUPPLIER" Name="Supplier" Route="/purchase/suppliers" SortOrder="1" />
+      <Menu Code="PO_BUYER" Name="Buyers" Route="/purchase/buyers" SortOrder="2" />
+      <Menu Code="PO_BUYING_TERM" Name="Buying Terms" Route="/purchase/buying-terms" SortOrder="3" />
+      <Menu Code="PO_CATEGORY" Name="Categories" Route="/purchase/categories" SortOrder="4" />
+      <Menu Code="PO_AUTHORISED" Name="Authorised Persons" Route="/purchase/authorised" SortOrder="5" />
+      <Menu Code="PO_PUR_ITEM" Name="Purchase Items" Route="/purchase/items" SortOrder="6" />
+    </Menu>
+    <Menu Code="PO_TRANSACTIONS" Name="Transactions" SortOrder="2">
+      <Menu Code="PO_PR" Name="Purchase Requisition" Route="/purchase/requisitions" SortOrder="1" />
+      <Menu Code="PO_ORDER" Name="Purchase Order" Route="/purchase/orders" SortOrder="2" />
+      <Menu Code="PO_CDN" Name="Purchase Invoice" Route="/purchase/invoices" SortOrder="3" />
+    </Menu>
+  </Menu>
+
+  <Menu Code="OPERATIONS" Name="Operations" SortOrder="5">
     <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
       <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
       <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
     </Menu>
   </Menu>
 
-  <Menu Code="SECURITY" Name="Security" SortOrder="5">
+  <Menu Code="SECURITY" Name="Security" SortOrder="6">
     <Menu Code="ADMIN" Name="Administration" SortOrder="1">
       <Menu Code="ADMIN_DEMO" Name="Admin" Route="/admin-demo" SortOrder="1" />
       <Menu Code="ADMIN_USERS" Name="User Accounts" Route="/adminuser" SortOrder="2" />
@@ -66,5 +85,5 @@
     </Menu>
   </Menu>
 
-  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="6" AlwaysVisible="true" />
+  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="7" AlwaysVisible="true" />
 </Menus>

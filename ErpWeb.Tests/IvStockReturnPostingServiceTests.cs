@@ -526,6 +526,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvMiscReceiptService(
@@ -545,6 +546,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvStockReturnService(
@@ -564,6 +566,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             Access(true, true, MenuCodes.InventoryStockReturn).Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
     private static Mock<IAccessRightService> Access(

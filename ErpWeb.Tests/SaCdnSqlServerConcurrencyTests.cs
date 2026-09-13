@@ -300,6 +300,7 @@ public class SaCdnSqlServerConcurrencyTests
             access.Object,
             postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         return new SaCdnService(
             factory,
@@ -330,6 +331,7 @@ public class SaCdnSqlServerConcurrencyTests
             access.Object,
             postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         return new SaInvoiceService(
             factory,
@@ -599,6 +601,7 @@ public class SaCdnSqlServerConcurrencyTests
                 AllowAll().Object,
                 new IvStockPostingRepository(),
                 new IvStockCommonRepository(factory),
+                new PoOrderRepository(),
                 NullLogger<IvInventoryPostingService>.Instance));
 
         var failSut = CreateCdnSut(factory, failPosting);

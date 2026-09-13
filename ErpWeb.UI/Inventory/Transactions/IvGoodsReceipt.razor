@@ -1,0 +1,513 @@
+@page "/inventory/goods-receipts/{Mode:regex(^(new|edit|view)$)}"
+@page "/inventory/goods-receipts/{Mode:regex(^(new|edit|view)$)}/{BatchNo:int}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryGoodsReceipt">
+    <div class="mr-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="mr-toast mr-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="mr-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="mr-toast mr-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="mr-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="mr-card">
+                <p class="mb-0">Loading goods receipt…</p>
+            </div>
+        }
+        else
+        {
+            <header class="mr-hero">
+                <div class="mr-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-truck-ramp-box"></i>
+                </div>
+                <div class="mr-hero__copy">
+                    <p class="mr-eyebrow">Inventory</p>
+                    <h1 class="mr-title">@PageHeading</h1>
+                    <div class="mr-chips">
+                        <span class="mr-chip">@ModeChip</span>
+                        <span class="mr-chip">Batch @BatchNoDisplay</span>
+                        <span class="mr-chip">@TrxTypeLabel(Header.TrxType)</span>
+                        <span class="mr-chip">@LineCountLabel</span>
+                        <span class="mr-chip">@BatchStatusDisplay</span>
+                    </div>
+                </div>
+                <div class="mr-hero__kpi">
+                    <span>Document total</span>
+                    <strong>@DocumentTotal.ToString("n2")</strong>
+                </div>
+            </header>
+
+            <section class="mr-card">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
+                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="3">
+                        <Template>
+                            <DxDateEdit @bind-Date="@Header.TrxDate"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        Enabled="@CanEditDocument" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Receipt type" ColSpanMd="3">
+                        <Template>
+                            <DxComboBox Data="@TrxTypeOptions"
+                                        TData="IvGoodsReceiptTrxTypeOption"
+                                        TValue="string"
+                                        TextFieldName="@nameof(IvGoodsReceiptTrxTypeOption.Label)"
+                                        ValueFieldName="@nameof(IvGoodsReceiptTrxTypeOption.Code)"
+                                        Value="@TrxTypeDisplay"
+                                        ValueChanged="@OnTrxTypeChangedAsync"
+                                        Enabled="@CanEditDocument"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
+                                        NullText="Select type" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Ref No" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.RefNo"
+                                       NullText="AUTO"
+                                       maxlength="50"
+                                       ReadOnly="@(!CanEditDocument)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@Header.Remark"
+                                    Rows="2"
+                                    maxlength="250"
+                                    ReadOnly="@(!CanEditDocument)"
+                                    NullText="Optional notes for this goods receipt" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            <section class="mr-card mr-lines">
+                <div class="mr-lines__head">
+                    <div>
+                        <p class="mr-eyebrow">Lines</p>
+                        <h2 class="mr-lines__title">PO receipt lines</h2>
+                    </div>
+                    @if (CanEditDocument)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Add from PO"
+                                  IconCssClass="fa-solid fa-file-invoice"
+                                  Click="@OpenPoPickerAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                </div>
+
+                <DxGrid Data="@Lines"
+                        KeyFieldName="@nameof(IvGoodsReceiptLineVm.LineNo)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="mr-line-grid"
+                        RowDoubleClick="@OnLineRowDoubleClick">
+                    <Columns>
+                        @if (CanEditDocument)
+                        {
+                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (IvGoodsReceiptLineVm)context.DataItem;
+                                    }
+                                    <div class="mr-row-actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  title="Edit"
+                                                  Click="@(() => EditLineAsync(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  title="Remove"
+                                                  Click="@(() => RemoveLine(line))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        }
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.PoNo)" Caption="PO No" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.PoRelNo)" Caption="Rel" Width="56px" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.PoLineNo)" Caption="PO Line" Width="80px" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ICode)" Caption="Item" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToWarehouse)" Caption="Warehouse" Width="110px">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvGoodsReceiptLineVm)context.DataItem).ToWarehouse)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.FrPurQty)" Caption="FrPurQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToRecvQty)" Caption="ToRecvQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToStdQty)" Caption="StdQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.Uom)" Caption="UOM" Width="72px" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.Amount)" Caption="Amount" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                    <TotalSummary>
+                        <DxGridSummaryItem FieldName="@nameof(IvGoodsReceiptLineVm.Amount)"
+                                           SummaryType="GridSummaryItemType.Sum"
+                                           ValueDisplayFormat="n2"
+                                           FooterColumnName="@nameof(IvGoodsReceiptLineVm.Amount)" />
+                    </TotalSummary>
+                    <EmptyDataAreaTemplate>
+                        <div class="mr-empty">
+                            <div class="mr-empty__icon" aria-hidden="true">
+                                <i class="fa-solid fa-file-invoice"></i>
+                            </div>
+                            <h3>No PO lines yet</h3>
+                            <p>@(CanEditDocument ? "Add remaining purchase order lines to receive stock or indirect items." : "This goods receipt has no lines.")</p>
+                            @if (CanEditDocument)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Add from PO"
+                                          IconCssClass="fa-solid fa-file-invoice"
+                                          Click="@OpenPoPickerAsync"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+            </section>
+
+            <footer class="mr-footer">
+                <p class="mr-footer__hint">
+                    @if (IsViewMode)
+                    {
+                        @($"{LineCountLabel} · Total {DocumentTotal:n2}")
+                    }
+                    else
+                    {
+                        @(Lines.Count == 0 ? "Add at least one PO line to save this goods receipt." : $"{LineCountLabel} · Total {DocumentTotal:n2}")
+                    }
+                </p>
+                <div class="mr-footer__actions">
+                    @if (IsViewMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Close"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCloseAsync" />
+                        @if (CanEditFromView)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.InventoryGoodsReceipt" Permission="@PermissionCodes.Edit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Edit"
+                                          IconCssClass="fa-solid fa-pen"
+                                          Click="@OnEditFromView" />
+                            </PermissionAuthorize>
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.InventoryGoodsReceipt" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      Click="@OnSaveAsync"
+                                      Enabled="@CanSave" />
+                        </PermissionAuthorize>
+                    }
+                </div>
+            </footer>
+        }
+    </div>
+
+    <DxPopup HeaderText="Add from purchase order"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="860px"
+             CssClass="mr-popup common-popup"
+             @bind-Visible="@PoPickerVisible">
+        <Content>
+            <div class="mr-popup-body">
+                @if (!string.IsNullOrWhiteSpace(PoPickerError))
+                {
+                    <p class="mr-popup-error">@PoPickerError</p>
+                }
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form">
+                    <DxFormLayoutItem Caption="Search PO lines" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox Text="@PoPickerSearchText"
+                                       TextChanged="@OnPoPickerSearchChangedAsync"
+                                       NullText="PO no, vendor, item code or description…"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                       Enabled="@(!PoPickerLoading)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+
+                @if (PoPickerLoading)
+                {
+                    <p class="mb-0">Searching purchase order lines…</p>
+                }
+                else if (PoPickerRows.Count > 0)
+                {
+                    <p class="mr-popup-hint mb-2">Select PO lines to receive. Default quantity is the remaining balance.</p>
+                    <DxGrid Data="@PoPickerRows"
+                            KeyFieldName="@nameof(IvGoodsReceiptPoPickerRow.RowKey)"
+                            SelectionMode="GridSelectionMode.Multiple"
+                            AllowSelectRowByClick="true"
+                            SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
+                            SelectedDataItems="@SelectedPoPickerRows"
+                            SelectedDataItemsChanged="@OnSelectedPoPickerRowsChanged"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            PageSize="10"
+                            CssClass="mr-line-grid">
+                        <Columns>
+                            <DxGridSelectionColumn Width="48px" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.PoNo)" Caption="PO No" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.PoRelNo)" Caption="Rel" Width="56px" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.PoLineNo)" Caption="Line" Width="64px" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.ICode)" Caption="Item" Width="120px" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.IDesc)" Caption="Description" MinWidth="140" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.BalanceQty)" Caption="Balance" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.DraftQty)" Caption="Draft" Width="90px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.AvailableQty)" Caption="Available" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.PurchaseUom)" Caption="UOM" Width="72px" />
+                            @if (IsStockGr)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptPoPickerRow.ToWarehouse)" Caption="Warehouse" Width="100px">
+                                    <CellDisplayTemplate>
+                                        @DisplayOrDash(((IvGoodsReceiptPoPickerRow)context.DataItem).ToWarehouse)
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            }
+                        </Columns>
+                    </DxGrid>
+                }
+            </div>
+            <div class="mr-popup-footer">
+                <div class="mr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Close"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@ClosePoPicker" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Add selected"
+                              IconCssClass="fa-solid fa-plus"
+                              Click="@AddFromPo"
+                              Enabled="@(!PoPickerLoading && SelectedPoPickerRows.Count > 0)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@LinePopupTitle"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="640px"
+             CssClass="mr-popup common-popup"
+             @bind-Visible="@LinePopupVisible">
+        <Content>
+            <div class="mr-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form">
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>PO line</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="PO" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@($"{LinePopup.PoNo}/{LinePopup.PoRelNo}")" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="PO line" ColSpanMd="4">
+                                <Template>
+                                    <DxTextBox Text="@LinePopup.PoLineNo.ToString()" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Balance qty" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit Value="@LinePopup.FrPurQty"
+                                                DisplayFormat="n4"
+                                                ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox Text="@LinePopup.ICode" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox Text="@LinePopup.IDesc" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Receive quantity</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="To receive qty" ColSpanMd="6">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@LinePopup.ToRecvQty"
+                                                Increment="1m"
+                                                MinValue="0m"
+                                                MaxValue="@LinePopup.FrPurQty"
+                                                DisplayFormat="n4"
+                                                BindValueMode="BindValueMode.OnInput"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="UOM" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox Text="@LinePopup.Uom" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    @if (IsStockGr)
+                    {
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>Receive to</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                                    <Template>
+                                        <IvCodeComboBox Data="@Warehouses"
+                                                        Value="@LinePopup.ToWarehouse"
+                                                        ValueChanged="OnLineWarehouseChangedAsync"
+                                                        InputCssClass="required-field"
+                                                        NullText="Select warehouse" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                                    <Template>
+                                        <IvCodeComboBox Data="@Locations"
+                                                        @bind-Value="@LinePopup.ToLocation"
+                                                        IsLoading="@LocationsLoading"
+                                                        Enabled="@(!string.IsNullOrWhiteSpace(LinePopup.ToWarehouse))"
+                                                        InputCssClass="@(Locations.Count > 0 ? "required-field" : null)"
+                                                        NullText="Select location" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Lot number" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@LinePopup.ToLotNo"
+                                                   maxlength="50"
+                                                   Enabled="@LinePopup.LotControl"
+                                                   InputCssClass="@(LinePopup.LotControl ? "required-field" : null)"
+                                                   NullText="@(LinePopup.LotControl ? "Required for lot-controlled item" : "Not lot-controlled")" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">
+                                    <Template>
+                                        <DxDateEdit @bind-Date="@LinePopup.ExpiryDate"
+                                                    DisplayFormat="dd/MM/yyyy"
+                                                    MinDate="@AppToday"
+                                                    Enabled="@LinePopup.LotControl"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                                    <Template>
+                                        <IvCodeComboBox Data="@Statuses"
+                                                        @bind-Value="@LinePopup.IStatus"
+                                                        InputCssClass="required-field"
+                                                        NullText="Select status" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+                    }
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Notes</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="@LinePopup.Remarks" Rows="3" NullText="Optional notes for this line" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+            </div>
+
+            <div class="mr-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(LinePopupError))
+                {
+                    <p class="mr-popup-error">@LinePopupError</p>
+                }
+                <div class="mr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@CancelLineEdit" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@LinePopupPrimaryText"
+                              IconCssClass="fa-solid fa-check"
+                              Click="@CommitLineEdit" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard this goods receipt?"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="440px"
+             CssClass="mr-confirm common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="mr-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Keep editing"
+                          Click="@OnKeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Discard"
+                          IconCssClass="fa-solid fa-trash"
+                          Click="@ConfirmDiscardAsync" />
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Change receipt type?"
+             CloseOnOutsideClick="false"
+             CloseOnEscape="true"
+             Width="460px"
+             CssClass="mr-confirm common-popup"
+             @bind-Visible="@ConfirmTrxTypeVisible">
+        <Content>
+            <p class="mr-confirm__copy">Changing receipt type will clear all PO lines. Stock GR and indirect NG pull different PO lines.</p>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CancelTrxTypeChange" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Change type"
+                          IconCssClass="fa-solid fa-arrows-rotate"
+                          Click="@ConfirmTrxTypeChange" />
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

@@ -1,8 +1,11 @@
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -15,6 +18,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
     private readonly IAccessRightService _accessRights;
     private readonly IIvStockPostingRepository _posting;
     private readonly IIvStockCommonRepository _common;
+    private readonly IPoOrderRepository _poOrders;
     private readonly ILogger<IvInventoryPostingService> _logger;
 
     public IvInventoryPostingService(
@@ -23,6 +27,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         IAccessRightService accessRights,
         IIvStockPostingRepository posting,
         IIvStockCommonRepository common,
+        IPoOrderRepository poOrders,
         ILogger<IvInventoryPostingService> logger)
     {
         _dbFactory = dbFactory;
@@ -30,6 +35,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         _accessRights = accessRights;
         _posting = posting;
         _common = common;
+        _poOrders = poOrders;
         _logger = logger;
     }
 
@@ -54,11 +60,14 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         var type = (trxType ?? string.Empty).Trim().ToUpperInvariant();
         var isMr = string.Equals(type, IvTrxTypes.MiscellaneousReceipt, StringComparison.OrdinalIgnoreCase);
         var isCr = string.Equals(type, IvTrxTypes.CustomerReturn, StringComparison.OrdinalIgnoreCase);
+        var isGr = string.Equals(type, IvTrxTypes.GoodsReceive, StringComparison.OrdinalIgnoreCase);
+        var isNg = string.Equals(type, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
         var isMi = string.Equals(type, IvTrxTypes.MiscellaneousIssue, StringComparison.OrdinalIgnoreCase);
         var isSc = string.Equals(type, IvTrxTypes.Scrap, StringComparison.OrdinalIgnoreCase);
+        var isVr = string.Equals(type, IvTrxTypes.VendorReturn, StringComparison.OrdinalIgnoreCase);
         var isTr = string.Equals(type, IvTrxTypes.StockTransfer, StringComparison.OrdinalIgnoreCase);
         var isAdj = string.Equals(type, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase);
-        if (!isMr && !isCr && !isMi && !isSc && !isTr && !isAdj)
+        if (!isMr && !isCr && !isGr && !isNg && !isMi && !isSc && !isVr && !isTr && !isAdj)
         {
             return IvInventoryPostingResult.Fail($"Posting is not implemented for transaction type '{type}'.");
         }
@@ -84,13 +93,17 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             ? MenuCodes.InventoryMiscReceipt
             : isCr
                 ? MenuCodes.InventoryStockReturn
-                : isMi
-                    ? MenuCodes.InventoryMiscIssue
-                    : isSc
-                        ? MenuCodes.InventoryScrap
-                        : isAdj
-                            ? MenuCodes.InventoryStockAdjustment
-                            : MenuCodes.InventoryStockTransfer;
+                : isGr || isNg
+                    ? MenuCodes.InventoryGoodsReceipt
+                    : isMi
+                        ? MenuCodes.InventoryMiscIssue
+                        : isSc
+                            ? MenuCodes.InventoryScrap
+                            : isVr
+                                ? MenuCodes.InventoryVendorReturn
+                                : isAdj
+                                    ? MenuCodes.InventoryStockAdjustment
+                                    : MenuCodes.InventoryStockTransfer;
         var permission = post ? PermissionCodes.Post : PermissionCodes.Rollback;
         if (!await _accessRights.CanAsync(menuCode, permission, cancellationToken))
         {
@@ -110,9 +123,20 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                         ? await PostInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
                         : await RollBackInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
                 }
-                else if (isMi || isSc)
+                else if (isGr || isNg)
                 {
-                    var expectedTrxType = isSc ? IvTrxTypes.Scrap : IvTrxTypes.MiscellaneousIssue;
+                    var expectedTrxType = isNg ? IvTrxTypes.NonStockGoodsReceive : IvTrxTypes.GoodsReceive;
+                    batchResult = post
+                        ? await PostGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
+                        : await RollBackGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
+                }
+                else if (isMi || isSc || isVr)
+                {
+                    var expectedTrxType = isSc
+                        ? IvTrxTypes.Scrap
+                        : isVr
+                            ? IvTrxTypes.VendorReturn
+                            : IvTrxTypes.MiscellaneousIssue;
                     batchResult = post
                         ? await PostInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
                         : await RollBackInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
@@ -375,7 +399,12 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                 ToLotNo = detail.ToLotNo,
                 ToStdQty = detail.ToStdQty,
                 ToStdUom = detail.ToStdUom,
+                ToPurQty = detail.ToPurQty,
+                ToPurUom = detail.ToPurUom,
                 IStatus = detail.IStatus,
+                PoNo = detail.PoNo,
+                PoRelNo = detail.PoRelNo,
+                PoLineNo = detail.PoLineNo,
                 Remarks = detail.Remarks,
                 UnitPrice = detail.UnitPrice,
                 Cost = detail.Cost,
@@ -541,6 +570,221 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
 
+        return IvInventoryPostingBatchResult.Ok(batchNo, opId);
+    }
+
+    private async Task<IvInventoryPostingBatchResult> PostGoodsReceiptAsync(
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
+        if (snapshot.Error is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, snapshot.Error);
+        }
+
+        var locked = await LockGoodsReceiptPurchaseOrdersAsync(db, companyCode, branchCode, snapshot.Details!, cancellationToken);
+        if (locked.Error is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
+        }
+
+        var poValidation = await ValidateGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, sign: +1, expectedTrxType, cancellationToken);
+        if (poValidation is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
+        }
+
+        var result = string.Equals(expectedTrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
+            ? await PostNonStockGoodsReceiptCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken)
+            : await PostInventoryMRCoreAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Posted goods receipt. TrxType={TrxType} Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            expectedTrxType, companyCode, branchCode, batchNo, result.OperationId, Truncate(userId, 10));
+        return result;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> RollBackGoodsReceiptAsync(
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
+        if (snapshot.Error is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, snapshot.Error);
+        }
+
+        var locked = await LockGoodsReceiptPurchaseOrdersAsync(db, companyCode, branchCode, snapshot.Details!, cancellationToken);
+        if (locked.Error is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
+        }
+
+        var poValidation = await ValidateGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, sign: -1, expectedTrxType, cancellationToken);
+        if (poValidation is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
+        }
+
+        var result = string.Equals(expectedTrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
+            ? await RollBackNonStockGoodsReceiptCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken)
+            : await RollBackInventoryMRCoreAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, -1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Rolled back goods receipt. TrxType={TrxType} Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            expectedTrxType, companyCode, branchCode, batchNo, result.OperationId, Truncate(userId, 10));
+        return result;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> PostNonStockGoodsReceiptCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken)
+    {
+        var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+        if (batch is null || !string.Equals(batch.TrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
+        }
+
+        if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Only NEW goods receipts can be posted.");
+        }
+
+        var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        if (details.Count == 0)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Goods receipt has no lines.");
+        }
+
+        if (await _posting.HistoryExistsForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken))
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "History already exists for this batch.");
+        }
+
+        var now = DateTime.UtcNow;
+        var uid = Truncate(userId, 10);
+        var opId = Guid.NewGuid();
+        foreach (var detail in details)
+        {
+            _posting.AddHistory(db, new IvTrxHistory
+            {
+                CompanyCode = companyCode,
+                BranchCode = branchCode,
+                BatchNo = batchNo,
+                TrxLineNo = detail.TrxLineNo,
+                TrxDtTime = batch.TrxDtTime,
+                TrxType = IvTrxTypes.NonStockGoodsReceive,
+                BatchStatus = IvBatchStatuses.Posted,
+                RefNo = batch.RefNo,
+                ProdCode = detail.ProdCode ?? detail.ICode,
+                ProdDesc = detail.ProdDesc ?? detail.IDesc,
+                ICode = detail.ICode ?? string.Empty,
+                IDesc = detail.IDesc,
+                ToStdQty = detail.ToStdQty,
+                ToStdUom = detail.ToStdUom,
+                ToPurQty = detail.ToPurQty,
+                ToPurUom = detail.ToPurUom,
+                PoNo = detail.PoNo,
+                PoRelNo = detail.PoRelNo,
+                PoLineNo = detail.PoLineNo,
+                Remarks = detail.Remarks,
+                UnitPrice = detail.UnitPrice,
+                LocationCode = detail.LocationCode,
+                CreatedDate = now,
+                CreatedBy = uid
+            });
+        }
+
+        batch.BatchStatus = IvBatchStatuses.Posted;
+        batch.PostedDate = now;
+        batch.PostedBy = uid;
+        batch.PostedCount += 1;
+        batch.PostingOperationId = opId;
+        batch.ModifiedDate = now;
+        batch.ModifiedBy = uid;
+        return IvInventoryPostingBatchResult.Ok(batchNo, opId);
+    }
+
+    private async Task<IvInventoryPostingBatchResult> RollBackNonStockGoodsReceiptCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken)
+    {
+        var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+        if (batch is null || !string.Equals(batch.TrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
+        }
+
+        if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Only POSTED goods receipts can be rolled back.");
+        }
+
+        var history = await _posting.LoadHistoryForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+        if (history.Count == 0)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, "No posted history found for this batch.");
+        }
+
+        _posting.RemoveHistory(db, history);
+        var now = DateTime.UtcNow;
+        var uid = Truncate(userId, 10);
+        var opId = Guid.NewGuid();
+        batch.BatchStatus = IvBatchStatuses.New;
+        batch.RollbackDate = now;
+        batch.RollbackBy = uid;
+        batch.RollbackCount += 1;
+        batch.RollbackOperationId = opId;
+        batch.ModifiedDate = now;
+        batch.ModifiedBy = uid;
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
 
@@ -1113,6 +1357,21 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return result;
         }
 
+        if (string.Equals(expectedTrxType, IvTrxTypes.VendorReturn, StringComparison.OrdinalIgnoreCase))
+        {
+            var details = await _posting.LoadDetailsForBatchAsync(
+                db,
+                (await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken))!.Id,
+                cancellationToken);
+            var poError = await ApplyVendorReturnPoQtyAsync(
+                db, companyCode, branchCode, details, sign: +1, userId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
+        }
+
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1312,6 +1571,19 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         {
             await tx.RollbackAsync(cancellationToken);
             return result;
+        }
+
+        if (string.Equals(expectedTrxType, IvTrxTypes.VendorReturn, StringComparison.OrdinalIgnoreCase))
+        {
+            var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+            var details = await _posting.LoadDetailsForBatchAsync(db, batch!.Id, cancellationToken);
+            var poError = await ApplyVendorReturnPoQtyAsync(
+                db, companyCode, branchCode, details, sign: -1, userId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -2438,6 +2710,345 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         });
     }
 
+    private async Task<(string? Error, IvTrxBatch? Batch, IReadOnlyList<IvTrxBatchDetail>? Details)> LoadGoodsReceiptSnapshotAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
+        var batch = await db.IvTrxBatches.AsNoTracking()
+            .Include(x => x.Details)
+            .FirstOrDefaultAsync(
+                x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.BatchNo == batchNo,
+                cancellationToken);
+        if (batch is null || !string.Equals(batch.TrxType, expectedTrxType, StringComparison.OrdinalIgnoreCase))
+        {
+            return ($"{GoodsReceiptName(expectedTrxType)} was not found.", null, null);
+        }
+
+        if (batch.Details.Count == 0)
+        {
+            return ("Goods receipt has no lines.", null, null);
+        }
+
+        if (batch.Details.Any(x => string.IsNullOrWhiteSpace(x.PoNo) || x.PoRelNo is null || x.PoLineNo is null))
+        {
+            return ("Goods receipt lines must be linked to a purchase order line.", null, null);
+        }
+
+        return (null, batch, batch.Details.OrderBy(x => x.PoNo).ThenBy(x => x.PoRelNo).ThenBy(x => x.PoLineNo).ToList());
+    }
+
+    private async Task<(string? Error, Dictionary<string, PoOrder>? Orders)> LockGoodsReceiptPurchaseOrdersAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyList<IvTrxBatchDetail> details,
+        CancellationToken cancellationToken)
+    {
+        var orders = new Dictionary<string, PoOrder>(StringComparer.OrdinalIgnoreCase);
+        var poNos = details
+            .Select(x => (x.PoNo ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var poNo in poNos)
+        {
+            var po = await _poOrders.LockLatestForUpdateAsync(db, companyCode, branchCode, poNo, cancellationToken);
+            if (po is null)
+            {
+                return ($"Purchase Order {poNo} was not found.", null);
+            }
+
+            await db.Entry(po).Collection(x => x.Details).LoadAsync(cancellationToken);
+            orders[poNo] = po;
+        }
+
+        return (null, orders);
+    }
+
+    private async Task<string?> ValidateGoodsReceiptPoQtyAsync(
+        AppDbContext db,
+        IReadOnlyDictionary<string, PoOrder> orders,
+        IReadOnlyList<IvTrxBatchDetail> details,
+        int sign,
+        string expectedTrxType,
+        CancellationToken cancellationToken)
+    {
+        var indirect = string.Equals(expectedTrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
+        var itemTypes = await LoadPoItemTypesAsync(db, orders.Values, cancellationToken);
+        foreach (var detail in details.OrderBy(x => x.PoNo).ThenBy(x => x.PoRelNo).ThenBy(x => x.PoLineNo))
+        {
+            var poNo = (detail.PoNo ?? string.Empty).Trim();
+            if (!orders.TryGetValue(poNo, out var po))
+            {
+                return $"Purchase Order {poNo} was not found.";
+            }
+
+            if (detail.PoRelNo != po.PoRelNo)
+            {
+                return $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
+            }
+
+            if (sign > 0 && !PoStatusPolicy.IsGrPickable(po.Status))
+            {
+                return $"Purchase Order {poNo} is not available for goods receipt.";
+            }
+
+            if (sign > 0 && PoStatusPolicy.IsForceClosed(po, d => IsServiceLine(d, itemTypes)))
+            {
+                return $"Purchase Order {poNo} is force-closed and cannot be posted against.";
+            }
+
+            var poLine = po.Details.FirstOrDefault(x => x.Line == detail.PoLineNo);
+            if (poLine is null)
+            {
+                return $"Purchase Order {poNo} line {detail.PoLineNo} was not found.";
+            }
+
+            if ((poLine.OneTime ?? po.OneTime ?? false) != indirect)
+            {
+                return $"Purchase Order {poNo} line {detail.PoLineNo} does not match this receipt type.";
+            }
+
+            var qty = PoOrderCalc.RoundQty(detail.ToPurQty ?? 0m);
+            if (qty <= 0m)
+            {
+                return $"Line {detail.TrxLineNo}: receive quantity must be greater than zero.";
+            }
+
+            if (sign > 0)
+            {
+                var tolerance = await PoToleranceLookup.GetQtyToleranceAsync(db, po, poLine, cancellationToken);
+                if (!PoOrderCalc.ValidateReceiptAgainstTolerance(
+                        poLine.PoPurQty,
+                        poLine.RecvQty,
+                        poLine.ReturnQty,
+                        qty,
+                        tolerance,
+                        out var recvError))
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line}: {recvError}";
+                }
+            }
+            else
+            {
+                if (qty > poLine.RecvQty)
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line} cannot roll back more than received.";
+                }
+
+                var newRecv = PoOrderCalc.RoundQty(poLine.RecvQty - qty);
+                if (newRecv < poLine.ReturnQty)
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line} cannot roll back below returned quantity.";
+                }
+
+                var newNet = PoOrderCalc.ComputeNetReceived(newRecv, poLine.ReturnQty);
+                if (poLine.InvoicedQty > newNet)
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line} cannot roll back receipt below invoiced quantity. Reverse the invoice or credit note first.";
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Vendor return PO write-back inside the same transaction as stock-out.
+    /// sign=+1 on post (ReturnQty +=), sign=-1 on rollback (ReturnQty -=).
+    /// </summary>
+    private async Task<string?> ApplyVendorReturnPoQtyAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyList<IvTrxBatchDetail> details,
+        int sign,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        if (details.Any(x => string.IsNullOrWhiteSpace(x.PoNo) || x.PoRelNo is null || x.PoLineNo is null))
+        {
+            return "Vendor return lines must be linked to a purchase order line.";
+        }
+
+        var (lockError, orders) = await LockGoodsReceiptPurchaseOrdersAsync(
+            db, companyCode, branchCode, details, cancellationToken);
+        if (lockError is not null)
+        {
+            return lockError;
+        }
+
+        var itemTypes = await LoadPoItemTypesAsync(db, orders!.Values, cancellationToken);
+        var wasForceClosed = orders.ToDictionary(
+            x => x.Key,
+            x => PoStatusPolicy.IsForceClosed(x.Value, d => IsServiceLine(d, itemTypes)),
+            StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
+        var uid = Truncate(userId, 20);
+
+        foreach (var detail in details.OrderBy(x => x.PoNo).ThenBy(x => x.PoRelNo).ThenBy(x => x.PoLineNo))
+        {
+            var poNo = (detail.PoNo ?? string.Empty).Trim();
+            if (!orders.TryGetValue(poNo, out var po))
+            {
+                return $"Purchase Order {poNo} was not found.";
+            }
+
+            if (detail.PoRelNo != po.PoRelNo)
+            {
+                return $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
+            }
+
+            var poLine = po.Details.FirstOrDefault(x => x.Line == detail.PoLineNo);
+            if (poLine is null)
+            {
+                return $"Purchase Order {poNo} line {detail.PoLineNo} was not found.";
+            }
+
+            if ((poLine.OneTime ?? po.OneTime ?? false) || IsServiceLine(poLine, itemTypes))
+            {
+                return $"Purchase Order {poNo} line {poLine.Line} cannot be returned (service or non-stock).";
+            }
+
+            var qty = PoOrderCalc.RoundQty(detail.FrPurQty ?? detail.FrStdQty ?? 0m);
+            if (qty <= 0m)
+            {
+                return $"Line {detail.TrxLineNo}: return quantity must be greater than zero.";
+            }
+
+            if (sign > 0)
+            {
+                var remaining = PoOrderCalc.RoundQty(poLine.RecvQty - poLine.ReturnQty);
+                if (qty > remaining)
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line}: return quantity exceeds remaining receivable return ({remaining:n4}).";
+                }
+
+                poLine.ReturnQty = PoOrderCalc.RoundQty(poLine.ReturnQty + qty);
+            }
+            else
+            {
+                if (qty > poLine.ReturnQty)
+                {
+                    return $"Purchase Order {poNo} line {poLine.Line} cannot roll back more than returned.";
+                }
+
+                poLine.ReturnQty = PoOrderCalc.RoundQty(poLine.ReturnQty - qty);
+            }
+
+            PoOrderCalc.ApplyComputedQtyFields(poLine);
+        }
+
+        foreach (var po in orders.Values)
+        {
+            if (!wasForceClosed.GetValueOrDefault(po.PoNo)
+                && string.Equals(po.Status, PoOrderStatuses.Closed, StringComparison.OrdinalIgnoreCase)
+                && po.Details.Any(x => x.BalanceQty > 0m))
+            {
+                po.Status = PoOrderStatuses.Received;
+            }
+
+            po.Status = PoStatusPolicy.CalculateOperationalStatus(po, d => IsServiceLine(d, itemTypes));
+            PoOrderCalc.RecalculateFinClosed(po, po.Details, uid, now);
+            po.ModifiedDate = now;
+            po.ModifiedBy = uid;
+            TouchPoRowVersion(db, po);
+        }
+
+        return null;
+    }
+
+    private async Task ApplyGoodsReceiptPoQtyAsync(
+        AppDbContext db,
+        IReadOnlyDictionary<string, PoOrder> orders,
+        IReadOnlyList<IvTrxBatchDetail> details,
+        int sign,
+        DateTime receiveDate,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var itemTypes = await LoadPoItemTypesAsync(db, orders.Values, cancellationToken);
+        var wasForceClosed = orders.ToDictionary(
+            x => x.Key,
+            x => PoStatusPolicy.IsForceClosed(x.Value, d => IsServiceLine(d, itemTypes)),
+            StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
+        var uid = Truncate(userId, 20);
+
+        foreach (var detail in details.OrderBy(x => x.PoNo).ThenBy(x => x.PoRelNo).ThenBy(x => x.PoLineNo))
+        {
+            var po = orders[(detail.PoNo ?? string.Empty).Trim()];
+            var poLine = po.Details.First(x => x.Line == detail.PoLineNo);
+            var qty = PoOrderCalc.RoundQty(detail.ToPurQty ?? 0m);
+            poLine.RecvQty = PoOrderCalc.RoundQty(poLine.RecvQty + (sign * qty));
+            PoOrderCalc.ApplyComputedQtyFields(poLine);
+            poLine.RecvDate = poLine.RecvQty > 0m ? receiveDate.Date : null;
+        }
+
+        foreach (var po in orders.Values)
+        {
+            if (!wasForceClosed.GetValueOrDefault(po.PoNo)
+                && string.Equals(po.Status, PoOrderStatuses.Closed, StringComparison.OrdinalIgnoreCase)
+                && po.Details.Any(x => x.BalanceQty > 0m))
+            {
+                po.Status = PoOrderStatuses.Received;
+            }
+
+            po.Status = PoStatusPolicy.CalculateOperationalStatus(po, d => IsServiceLine(d, itemTypes));
+            PoOrderCalc.RecalculateFinClosed(po, po.Details, uid, now);
+            po.ModifiedDate = now;
+            po.ModifiedBy = uid;
+            TouchPoRowVersion(db, po);
+        }
+    }
+
+    private async Task<Dictionary<string, string?>> LoadPoItemTypesAsync(
+        AppDbContext db,
+        IEnumerable<PoOrder> orders,
+        CancellationToken cancellationToken)
+    {
+        var codes = orders
+            .SelectMany(x => x.Details)
+            .Select(x => (x.ICode ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (codes.Count == 0)
+        {
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return await db.IvStockMasters.AsNoTracking()
+            .Where(x => codes.Contains(x.ICode))
+            .Select(x => new { x.ICode, x.IType })
+            .ToDictionaryAsync(x => x.ICode, x => x.IType, StringComparer.OrdinalIgnoreCase, cancellationToken);
+    }
+
+    private static bool IsServiceLine(PoOrderDetail detail, IReadOnlyDictionary<string, string?> itemTypes) =>
+        itemTypes.TryGetValue((detail.ICode ?? string.Empty).Trim(), out var iType)
+        && PoOrderCalc.IsServiceIType(iType);
+
+    private static void TouchPoRowVersion(AppDbContext db, PoOrder header)
+    {
+        if (!db.Database.IsSqlServer())
+        {
+            header.RowVersion = Guid.NewGuid().ToByteArray();
+        }
+    }
+
+    private static string GoodsReceiptName(string trxType) =>
+        string.Equals(trxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
+            ? "Non-stock goods receipt"
+            : "Goods receipt";
+
     private static bool IsUniqueViolation(DbUpdateException ex)
     {
         var message = ex.InnerException?.Message ?? ex.Message;
@@ -2483,30 +3094,43 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
     private static bool IsScrapTrxType(string expectedTrxType) =>
         string.Equals(expectedTrxType, IvTrxTypes.Scrap, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsVendorReturnTrxType(string expectedTrxType) =>
+        string.Equals(expectedTrxType, IvTrxTypes.VendorReturn, StringComparison.OrdinalIgnoreCase);
+
     private static string StockOutNotFoundMessage(string expectedTrxType) =>
         IsScrapTrxType(expectedTrxType)
             ? "Scrap was not found."
-            : "Miscellaneous issue was not found.";
+            : IsVendorReturnTrxType(expectedTrxType)
+                ? "Vendor return was not found."
+                : "Miscellaneous issue was not found.";
 
     private static string StockOutOnlyNewCanPostMessage(string expectedTrxType) =>
         IsScrapTrxType(expectedTrxType)
             ? "Only NEW scrap documents can be posted."
-            : "Only NEW issues can be posted.";
+            : IsVendorReturnTrxType(expectedTrxType)
+                ? "Only NEW vendor returns can be posted."
+                : "Only NEW issues can be posted.";
 
     private static string StockOutNoLinesMessage(string expectedTrxType) =>
         IsScrapTrxType(expectedTrxType)
             ? "Scrap has no lines."
-            : "Issue has no lines.";
+            : IsVendorReturnTrxType(expectedTrxType)
+                ? "Vendor return has no lines."
+                : "Issue has no lines.";
 
     private static string StockOutOnlyPostedCanRollbackMessage(string expectedTrxType) =>
         IsScrapTrxType(expectedTrxType)
             ? "Only POSTED scrap documents can be rolled back."
-            : "Only POSTED issues can be rolled back.";
+            : IsVendorReturnTrxType(expectedTrxType)
+                ? "Only POSTED vendor returns can be rolled back."
+                : "Only POSTED issues can be rolled back.";
 
     private static string StockOutSourceMismatchMessage(string expectedTrxType, int balLocId) =>
         IsScrapTrxType(expectedTrxType)
             ? $"Source balance Id {balLocId} no longer matches the scrap line (item/warehouse/location/lot/status)."
-            : $"Source balance Id {balLocId} no longer matches the issue line (item/warehouse/location/lot/status).";
+            : IsVendorReturnTrxType(expectedTrxType)
+                ? $"Source balance Id {balLocId} no longer matches the vendor return line (item/warehouse/location/lot/status)."
+                : $"Source balance Id {balLocId} no longer matches the issue line (item/warehouse/location/lot/status).";
 
     private sealed class MrLinePlan
     {

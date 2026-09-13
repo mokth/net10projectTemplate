@@ -2,6 +2,8 @@ using ErpWeb.Core.Inventory;
 
 using ErpWeb.Core.Sales;
 
+using ErpWeb.Core.Purchase;
+
 using ErpWeb.Core.Menus;
 
 using ErpWeb.Core.Numbering;
@@ -52,6 +54,22 @@ public static class CoreServiceCollectionExtensions
 
 
 
+        services.AddOptions<AttachmentStorageOptions>()
+
+            .Bind(configuration.GetSection(AttachmentStorageOptions.SectionName));
+
+
+
+        services.AddOptions<PoPrOptions>()
+
+            .Bind(configuration.GetSection(PoPrOptions.SectionName));
+
+        services.AddOptions<PoOrderOptions>()
+
+            .Bind(configuration.GetSection(PoOrderOptions.SectionName));
+
+
+
         services.AddSingleton<IPasswordPolicy, PasswordPolicy>();
 
         services.AddSingleton<IMenuDefinitionService, MenuDefinitionService>();
@@ -98,7 +116,11 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvMiscReceiptService, IvMiscReceiptService>();
 
+        services.AddScoped<IIvGoodsReceiptService, IvGoodsReceiptService>();
+
         services.AddScoped<IIvMiscIssueService, IvMiscIssueService>();
+
+        services.AddScoped<IIvVendorReturnService, IvVendorReturnService>();
 
         services.AddScoped<IIvStockTransferService, IvStockTransferService>();
 
@@ -123,6 +145,27 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaCustService, SaCustService>();
 
         services.AddScoped<ISaCustLookupService, SaCustLookupService>();
+
+        services.AddScoped<IPoSupplierService, PoSupplierService>();
+
+        services.AddScoped<IPoSupplierLookupService, PoSupplierLookupService>();
+
+        services.AddScoped<IPoSupplierAttachmentService, PoSupplierAttachmentService>();
+
+        services.AddScoped<IPoSupplierAttachmentFileCleanup>(sp =>
+            (IPoSupplierAttachmentFileCleanup)sp.GetRequiredService<IPoSupplierAttachmentService>());
+
+        services.AddScoped<IPoMasterRefService, PoMasterRefService>();
+
+        services.AddScoped<IPoPrService, PoPrService>();
+
+        services.AddScoped<IPoPrAttachmentService, PoPrAttachmentService>();
+
+        services.AddScoped<IPoOrderService, PoOrderService>();
+
+        services.AddScoped<IPoOrderAttachmentService, PoOrderAttachmentService>();
+
+        services.AddScoped<IPoInvoiceService, PoInvoiceService>();
 
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
 

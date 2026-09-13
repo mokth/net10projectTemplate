@@ -396,3 +396,25 @@ WHERE r.CompanyCode = N'DEMO' AND r.RoleCode = N'USER'
       SELECT 1 FROM dbo.RoleMenuPermission x
       WHERE x.RoleId = r.RoleId AND x.MenuId = m.MenuId AND x.PermissionId = p.PermissionId);
 GO
+
+-- Vendor Return (INV_VENDOR_RETURN): ACCESS/ADD/EDIT/DELETE/POST/ROLLBACK/CANCEL
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CANCEL')
+WHERE m.MenuCode = N'INV_VENDOR_RETURN'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+GO
+
+-- Purchase Invoice (PO_CDN): ACCESS/ADD/EDIT/DELETE/POST/ROLLBACK
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
+WHERE m.MenuCode = N'PO_CDN'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+GO

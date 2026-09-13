@@ -682,6 +682,7 @@ public class SaInvoiceSqlServerConcurrencyTests
             access.Object,
             postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new SaInvoiceService(

@@ -5,6 +5,7 @@ public static class IvTrxTypes
     public const string MiscellaneousReceipt = "MR";
     public const string CustomerReturn = "CR";
     public const string GoodsReceive = "GR";
+    public const string NonStockGoodsReceive = "NG";
     public const string FinishedGoods = "FG";
     public const string VendorReturn = "VR";
     public const string StockTransfer = "TR";

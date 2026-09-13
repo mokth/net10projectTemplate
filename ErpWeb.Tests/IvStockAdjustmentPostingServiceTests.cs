@@ -428,6 +428,7 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvStockAdjustmentService(
@@ -453,6 +454,7 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             access.Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
     }
 

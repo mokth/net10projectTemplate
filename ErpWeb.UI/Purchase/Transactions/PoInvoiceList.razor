@@ -1,0 +1,135 @@
+@page "/purchase/invoices"
+@inherits PageBase
+
+<PageTitle>Purchase Invoice</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseInvoice">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-file-invoice"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase</p>
+                <h1 class="iv-title">Purchase Invoice</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Documents</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="po-invoice-type-tabs">
+                <DxButton RenderStyle="@(AppliedType == "INV" ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                          Text="Invoices" Click="@(() => SetTypeAsync("INV"))" />
+                <DxButton RenderStyle="@(AppliedType == "CN" ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                          Text="Credit Notes" Click="@(() => SetTypeAsync("CN"))" />
+                <DxButton RenderStyle="@(string.IsNullOrEmpty(AppliedType) ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                          Text="All" Click="@(() => SetTypeAsync(null))" />
+            </div>
+
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search doc no, vendor, invoice…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <CommonDataGridEx T="PoInvoiceListRow"
+                                  Columns="@Columns"
+                                  Buttons="@Buttons"
+                                  ActionButtons="@ActionButtons"
+                                  KeyName="@nameof(PoInvoiceListRow.DocNo)"
+                                  GridKey="po-invoice-list"
+                                  Title="Purchase Invoices"
+                                  CustomDataSource="@DataSource"
+                                  ShowToolbarText="true"
+                                  ShowResetLayoutButton="true"
+                                  UseBuiltInExport="false"
+                                  ShowSearchBox="false"
+                                  ShowFilterRow="false"
+                                  ShowGroupPanel="false"
+                                  allowSelect="true"
+                                  OnGridInstance="@OnGridInstance"
+                                  OnSelectionsEventHandle="@OnSelectionsEvent"
+                                  OnButtonEventHandle="@OnButtonClick"
+                                  OnActionEventHandle="@OnActionClick" />
+            }
+        </section>
+    </div>
+
+    <DxPopup @bind-Visible="FilterPopupVisible" HeaderText="Filter documents" Width="420px" CloseOnOutsideClick="false">
+        <BodyTemplate>
+            <div class="mb-3">
+                <label class="form-label">Status</label>
+                <DxComboBox Data="@StatusFilterOptions"
+                            ValueFieldName="Key"
+                            TextFieldName="Name"
+                            @bind-Value="DraftStatusKey"
+                            CssClass="w-100" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Date from</label>
+                <DxDateEdit @bind-Date="DraftDateFrom" CssClass="w-100" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Date to</label>
+                <DxDateEdit @bind-Date="DraftDateTo" CssClass="w-100" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+            </div>
+        </BodyTemplate>
+        <FooterTemplate>
+            <DxButton Text="Clear" RenderStyle="ButtonRenderStyle.Secondary" Click="@ClearFiltersAsync" />
+            <DxButton Text="Apply" RenderStyle="ButtonRenderStyle.Primary" Click="@ApplyFiltersAsync" />
+        </FooterTemplate>
+    </DxPopup>
+
+    <DxPopup @bind-Visible="ConfirmVisible" HeaderText="Confirm" Width="420px" CloseOnOutsideClick="false">
+        <BodyTemplate>
+            <p class="mb-0">@ConfirmMessage</p>
+        </BodyTemplate>
+        <FooterTemplate>
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => ConfirmVisible = false)" Enabled="@(!IsSubmitting)" />
+            <DxButton Text="@ConfirmButtonText" RenderStyle="@ConfirmButtonStyle" Click="@ConfirmActionAsync" Enabled="@(!IsSubmitting)" />
+        </FooterTemplate>
+    </DxPopup>
+</MenuAuthorize>

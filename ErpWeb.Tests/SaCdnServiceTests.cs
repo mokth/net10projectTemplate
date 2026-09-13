@@ -1279,6 +1279,7 @@ public class SaCdnServiceTests : IAsyncLifetime
             access.Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
     }
 
@@ -1347,6 +1348,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 access.Object,
                 postingRepo,
                 new IvStockCommonRepository(_factory),
+                new PoOrderRepository(),
                 NullLogger<IvInventoryPostingService>.Instance),
             new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
             salesOrders,

@@ -109,6 +109,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var posting = new IvInventoryPostingService(
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -198,6 +199,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var posting = new IvInventoryPostingService(
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -333,6 +335,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var posting = new IvInventoryPostingService(
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         var cr = new IvStockReturnService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -433,6 +436,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var posting = new IvInventoryPostingService(
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),

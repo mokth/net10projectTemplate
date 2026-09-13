@@ -3,6 +3,7 @@ using ErpWeb.Components;
 using ErpWeb.Core;
 using ErpWeb.Core.Menus;
 using ErpWeb.Inventory;
+using ErpWeb.Purchase;
 using ErpWeb.Sales;
 using ErpWeb.Model;
 using ErpWeb.UI;
@@ -102,6 +103,11 @@ try
     app.MapMenuAdminEndpoints();
     app.MapIvStockMasterExportEndpoints();
     app.MapSaCustExportEndpoints();
+    app.MapPoSupplierExportEndpoints();
+    app.MapPoMasterRefExportEndpoints();
+    app.MapPoSupplierAttachmentEndpoints();
+    app.MapPoPrAttachmentEndpoints();
+    app.MapPoOrderAttachmentEndpoints();
     app.MapStaticAssets().AllowAnonymous();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode()

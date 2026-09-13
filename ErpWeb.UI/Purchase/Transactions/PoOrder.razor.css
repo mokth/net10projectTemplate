@@ -1,0 +1,92 @@
+/* Relies on SaDocPage.razor.css for sdoc-* chrome. */
+
+.sdoc-section-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sdoc-muted-text, #667085);
+    margin-bottom: 8px;
+}
+
+.poorder-item-actions,
+.poorder-attach-toolbar,
+.poorder-pr-search {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.poorder-attachments {
+    display: grid;
+    gap: 12px;
+}
+
+.poorder-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+}
+
+.poorder-attach-file {
+    font-size: 0.85rem;
+    color: var(--sdoc-muted-text, #667085);
+}
+
+.poorder-link {
+    color: var(--sdoc-accent, #0b57d0);
+    text-decoration: none;
+}
+
+.poorder-link:hover {
+    text-decoration: underline;
+}
+
+.poorder-pr-picker {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+    gap: 12px;
+    margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+    .poorder-pr-picker {
+        grid-template-columns: 1fr;
+    }
+}
+
+.poorder-line-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.poorder-flag {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    line-height: 1.35;
+}
+
+.poorder-flag--overrecv {
+    color: #9a3412;
+    background: #ffedd5;
+}
+
+.poorder-flag--partial-inv {
+    color: #1e40af;
+    background: #dbeafe;
+}
+
+.poorder-flag--overinv {
+    color: #9f1239;
+    background: #ffe4e6;
+}

@@ -9,10 +9,12 @@ public static class MenuCodes
     public const string Inventory = "INVENTORY";
     public const string InventoryDemo = "INVENTORY_DEMO";
     public const string InventoryMiscReceipt = "INV_MISC_RECEIPT";
+    public const string InventoryGoodsReceipt = "INV_GOODS_RECEIPT";
     public const string InventoryMiscIssue = "INV_MISC_ISSUE";
     public const string InventoryStockTransfer = "INV_STOCK_TRANSFER";
     public const string InventoryScrap = "INV_SCRAP";
     public const string InventoryStockReturn = "INV_STOCK_RETURN";
+    public const string InventoryVendorReturn = "INV_VENDOR_RETURN";
     public const string InventoryStockAdjustment = "INV_STOCK_ADJUSTMENT";
     public const string InventoryItemMaster = "INV_ITEM_MASTER";
     public const string InventoryWarehouse = "INV_WAREHOUSE";
@@ -40,6 +42,18 @@ public static class MenuCodes
     public const string SalesDebitNote = "SA_DN";
     /// <summary>E7: report-only credit-note reservation screen.</summary>
     public const string SalesCdnReservations = "SA_CN_RESERVATIONS";
+    public const string Purchase = "PURCHASE";
+    public const string PurchaseMaster = "PO_MASTER";
+    public const string PurchaseSupplierProfile = "PO_SUPPLIER";
+    public const string PurchaseBuyer = "PO_BUYER";
+    public const string PurchaseBuyingTerm = "PO_BUYING_TERM";
+    public const string PurchaseCategory = "PO_CATEGORY";
+    public const string PurchaseAuthorised = "PO_AUTHORISED";
+    public const string PurchasePurItem = "PO_PUR_ITEM";
+    public const string PurchaseTransactions = "PO_TRANSACTIONS";
+    public const string PurchaseRequisition = "PO_PR";
+    public const string PurchaseOrder = "PO_ORDER";
+    public const string PurchaseInvoice = "PO_CDN";
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

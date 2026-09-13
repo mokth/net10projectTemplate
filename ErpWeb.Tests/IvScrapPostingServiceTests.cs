@@ -397,6 +397,7 @@ public class IvScrapPostingServiceTests : IAsyncLifetime
         var posting = new IvInventoryPostingService(
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
         return new IvScrapService(
@@ -416,6 +417,7 @@ public class IvScrapPostingServiceTests : IAsyncLifetime
             Access().Object,
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance);
 
     private static Mock<IAccessRightService> Access()
