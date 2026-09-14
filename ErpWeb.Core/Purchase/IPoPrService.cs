@@ -160,6 +160,8 @@ public sealed class PoPrLookups
     public IReadOnlyList<PoPrCodeLookupRow> AuthorisedPersons { get; init; } = [];
     public IReadOnlyList<IvWarehouseLookupRow> Warehouses { get; init; } = [];
     public IReadOnlyList<PoPrCodeLookupRow> Categories { get; init; } = [];
+    public IReadOnlyList<PoPrCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<PoPrCodeLookupRow> Projects { get; init; } = [];
     public bool DefaultInclusive { get; init; }
     public bool UseWeight { get; init; }
     public bool CanViewCost { get; init; }

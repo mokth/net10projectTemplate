@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
@@ -187,6 +189,21 @@ public sealed class PoPrService : IPoPrService
 
         var canViewCost = await CanAsync(PermissionCodes.ViewCost, cancellationToken);
 
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new PoPrCodeLookupRow { Code = x.DeptCode, Name = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new PoPrCodeLookupRow { Code = x.ProjCode, Name = x.ProjName })
+            .ToListAsync(cancellationToken);
+
         return PoPrOperationResult.OkLookups(new PoPrLookups
         {
             DirectItems = direct,
@@ -199,6 +216,8 @@ public sealed class PoPrService : IPoPrService
             AuthorisedPersons = authorised,
             Warehouses = warehouses,
             Categories = categories,
+            Departments = departments,
+            Projects = projects,
             DefaultInclusive = _options.PurchaseItemTaxInclusive,
             UseWeight = _options.UseWeight,
             CanViewCost = canViewCost
@@ -378,6 +397,16 @@ public sealed class PoPrService : IPoPrService
 
         try
         {
+            // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+            var refErrors = await ValidateDeptProjectAsync(
+                db, context.CompanyCode!, context.BranchCode!, priorDeptCode: null, priorProjId: null,
+                request.DeptCode, request.ProjId, cancellationToken);
+            if (refErrors is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.FailValidation("Validation failed.", refErrors);
+            }
+
             var lines = StripEmptyLines(request.Lines);
             var prepared = await PrepareLinesAsync(
                 db,
@@ -615,6 +644,17 @@ public sealed class PoPrService : IPoPrService
 
             var existingByLine = header.Details.ToDictionary(x => x.Line, x => x);
             var lines = StripEmptyLines(request.Lines);
+
+            // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+            var refErrors = await ValidateDeptProjectAsync(
+                db, context.CompanyCode!, context.BranchCode!, header.DeptCode, header.ProjId,
+                request.DeptCode, request.ProjId, cancellationToken);
+            if (refErrors is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.FailValidation("Validation failed.", refErrors);
+            }
+
             var prepared = await PrepareLinesAsync(
                 db,
                 context.CompanyCode!,
@@ -1101,6 +1141,39 @@ public sealed class PoPrService : IPoPrService
             await tx.RollbackAsync(cancellationToken);
             return PoPrOperationResult.Fail("Unable to delete the Purchase Requisition.", PoPrErrorKind.Unexpected);
         }
+    }
+
+    /// <summary>
+    /// Legacy-aware Department / Project validation for the PR header (shared rule —
+    /// see MsRefLookupRules). Returns null when valid, otherwise the field error map.
+    /// </summary>
+    private static async Task<Dictionary<string, string>?> ValidateDeptProjectAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string? priorDeptCode,
+        string? priorProjId,
+        string? deptCode,
+        string? projId,
+        CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var deptError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Department, priorDeptCode, deptCode, cancellationToken);
+        if (deptError is not null)
+        {
+            errors["DeptCode"] = deptError;
+        }
+
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Project, priorProjId, projId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
+        }
+
+        return errors.Count == 0 ? null : errors;
     }
 
     private async Task<PrepareOutcome> PrepareLinesAsync(

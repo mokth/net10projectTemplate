@@ -162,7 +162,12 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox @bind-Text="@ProjId" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="20" />
+                                    <IvCodeComboBox Data="@Projects"
+                                                    Value="@ProjId"
+                                                    ValueChanged="@(v => { ProjId = v; MarkDirtyOnly(); })"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select project" />
+                                    @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ship via" ColSpanMd="4">

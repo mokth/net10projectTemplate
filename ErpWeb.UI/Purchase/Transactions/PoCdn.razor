@@ -145,6 +145,24 @@
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Department" ColSpanMd="12">
+                                <Template>
+                                    <IvCodeComboBox Data="@Departments"
+                                                    @bind-Value="Dept"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select department" />
+                                    @FieldError("Dept")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Project" ColSpanMd="12">
+                                <Template>
+                                    <IvCodeComboBox Data="@Projects"
+                                                    @bind-Value="ProjId"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select project" />
+                                    @FieldError("ProjId")
+                                </Template>
+                            </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@SelectableReasons"

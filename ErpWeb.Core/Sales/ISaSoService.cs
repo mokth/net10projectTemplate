@@ -31,6 +31,8 @@ public sealed class SaSoOperationResult
     public IReadOnlyList<SaSoCustomerLookupRow> Customers { get; init; } = [];
     public IReadOnlyList<SaSoTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -54,7 +56,9 @@ public sealed class SaSoOperationResult
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
         IReadOnlyList<SaSoCustomerLookupRow> customers,
         IReadOnlyList<SaSoTaxGroupLookupRow> taxGroups,
-        IReadOnlyList<IvCodeLookupRow> payCodes) =>
+        IReadOnlyList<IvCodeLookupRow> payCodes,
+        IReadOnlyList<IvCodeLookupRow>? departments = null,
+        IReadOnlyList<IvCodeLookupRow>? projects = null) =>
         new()
         {
             Succeeded = true,
@@ -63,7 +67,9 @@ public sealed class SaSoOperationResult
             Warehouses = warehouses,
             Customers = customers,
             TaxGroups = taxGroups,
-            PayCodes = payCodes
+            PayCodes = payCodes,
+            Departments = departments ?? [],
+            Projects = projects ?? []
         };
 
     public static SaSoOperationResult OkDefaults(SaSoCustomerDefaults defaults) =>

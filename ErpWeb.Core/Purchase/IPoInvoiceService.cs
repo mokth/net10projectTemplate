@@ -185,6 +185,8 @@ public sealed class PoInvoiceLookups
     public IReadOnlyList<PoInvoiceTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> Currencies { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
 }
 
 public sealed class PoInvoiceVendorDefaults

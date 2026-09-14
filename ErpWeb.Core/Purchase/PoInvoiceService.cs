@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.SqlClient;
@@ -97,12 +99,31 @@ public sealed class PoInvoiceService : IPoInvoiceService
             .Select(x => new IvCodeLookupRow { Code = x.CurrCode, Desc = x.CurrDesc })
             .ToListAsync(cancellationToken);
 
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new IvCodeLookupRow { Code = x.DeptCode, Desc = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new IvCodeLookupRow { Code = x.ProjCode, Desc = x.ProjName })
+            .ToListAsync(cancellationToken);
+
         return PoInvoiceOperationResult.OkLookups(new PoInvoiceLookups
         {
             Vendors = vendors,
             TaxGroups = taxGroups,
             PayCodes = payCodes,
-            Currencies = currencies
+            Currencies = currencies,
+            Departments = departments,
+            Projects = projects
         });
     }
 
@@ -1334,6 +1355,40 @@ public sealed class PoInvoiceService : IPoInvoiceService
         if (sourceLines.Count == 0)
         {
             errors["Lines"] = "At least one line is required.";
+        }
+
+        // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+        // A stored orphan may stay untouched; a new or changed code must exist and be active.
+        string? priorDept = null;
+        string? priorProj = null;
+        var editDocNo = (excludeDocNo ?? string.Empty).Trim();
+        if (editDocNo.Length > 0)
+        {
+            var prior = await db.PoInvoices.AsNoTracking()
+                .Where(x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.DocNo == editDocNo)
+                .Select(x => new { x.Dept, x.ProjId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (prior is not null)
+            {
+                priorDept = prior.Dept;
+                priorProj = prior.ProjId;
+            }
+        }
+
+        var deptError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Department, priorDept, request.Dept, cancellationToken);
+        if (deptError is not null)
+        {
+            errors["Dept"] = deptError;
+        }
+
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Project, priorProj, request.ProjId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
         }
 
         if (errors.Count > 0)

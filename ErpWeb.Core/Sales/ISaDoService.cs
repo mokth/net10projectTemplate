@@ -34,6 +34,8 @@ public sealed class SaDoOperationResult
     public IReadOnlyList<SaDoCustomerLookupRow> Customers { get; init; } = [];
     public IReadOnlyList<SaDoTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyList<SaDoBillableLineDto> BillableLines { get; init; } = [];
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -61,7 +63,9 @@ public sealed class SaDoOperationResult
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
         IReadOnlyList<SaDoCustomerLookupRow> customers,
         IReadOnlyList<SaDoTaxGroupLookupRow> taxGroups,
-        IReadOnlyList<IvCodeLookupRow> payCodes) =>
+        IReadOnlyList<IvCodeLookupRow> payCodes,
+        IReadOnlyList<IvCodeLookupRow>? departments = null,
+        IReadOnlyList<IvCodeLookupRow>? projects = null) =>
         new()
         {
             Succeeded = true,
@@ -70,7 +74,9 @@ public sealed class SaDoOperationResult
             Warehouses = warehouses,
             Customers = customers,
             TaxGroups = taxGroups,
-            PayCodes = payCodes
+            PayCodes = payCodes,
+            Departments = departments ?? [],
+            Projects = projects ?? []
         };
 
     public static SaDoOperationResult OkDefaults(SaDoCustomerDefaults defaults) =>

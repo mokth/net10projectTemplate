@@ -4,7 +4,9 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -149,6 +151,63 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
                 IsActive = true
             });
 
+        db.PoSuppliers.AddRange(
+            new PoSupplier
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SuppCode = "SUP01",
+                SuppName = "Alpha Supplier",
+                Currency = "MYR",
+                GlCode = "AP001",
+                IsActive = true,
+                RowVersion = Guid.NewGuid().ToByteArray()
+            },
+            new PoSupplier
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SuppCode = "SUP02",
+                SuppName = "Beta Supplier",
+                Currency = "MYR",
+                GlCode = "AP001",
+                IsActive = true,
+                RowVersion = Guid.NewGuid().ToByteArray()
+            },
+            new PoSupplier
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SuppCode = "SUPOFF",
+                SuppName = "Inactive Supplier",
+                Currency = "MYR",
+                GlCode = "AP001",
+                IsActive = false,
+                RowVersion = Guid.NewGuid().ToByteArray()
+            },
+            new PoSupplier
+            {
+                CompanyCode = "OTHER",
+                BranchCode = "HQ",
+                SuppCode = "SUP01",
+                SuppName = "Other Co Supplier",
+                Currency = "MYR",
+                GlCode = "AP001",
+                IsActive = true,
+                RowVersion = Guid.NewGuid().ToByteArray()
+            },
+            new PoSupplier
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "BR2",
+                SuppCode = "SUPBR2",
+                SuppName = "Branch Two Supplier",
+                Currency = "MYR",
+                GlCode = "AP001",
+                IsActive = true,
+                RowVersion = Guid.NewGuid().ToByteArray()
+            });
+
         await db.SaveChangesAsync();
     }
 
@@ -223,6 +282,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         var result = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines = [Clone(line), Clone(line)]
         });
 
@@ -240,6 +300,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             TrxDate = FixedToday,
             RefNo = "GRN-9",
             Remark = "  found in aisle  ",
+            VendCode = "SUP01",
             Lines = [ValidNonLotLineRequest()]
         });
 
@@ -259,6 +320,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         var result = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines = [req]
         });
 
@@ -479,6 +541,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         var result = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = new DateTime(2026, 8, 20),
+            VendCode = "SUP01",
             Lines = [req]
         });
         Assert.False(result.Succeeded);
@@ -515,8 +578,8 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
     {
         var sut = CreateSut();
         Assert.False((await sut.SaveNewAsync(null!)).Succeeded);
-        Assert.False((await sut.SaveNewAsync(new IvMiscReceiptSaveRequest { Lines = [] })).Succeeded);
-        Assert.False((await sut.SaveNewAsync(new IvMiscReceiptSaveRequest { Lines = [null!] })).Succeeded);
+        Assert.False((await sut.SaveNewAsync(new IvMiscReceiptSaveRequest { VendCode = "SUP01", Lines = [] })).Succeeded);
+        Assert.False((await sut.SaveNewAsync(new IvMiscReceiptSaveRequest { VendCode = "SUP01", Lines = [null!] })).Succeeded);
 
         var missingItem = ValidNonLotLineRequest();
         missingItem.ICode = "";
@@ -630,8 +693,10 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         Assert.Equal("A100", result.Document.Lines[0].ICode);
         Assert.Equal("BIN1", result.Document.Lines[0].ToLocation);
         Assert.False(result.Document.Lines[0].LotControl);
-        Assert.Null(result.Document.Lines[0].Reason);
-        Assert.Equal("ADJ: found stock", result.Document.Lines[0].Remarks);
+        Assert.Equal("ADJ", result.Document.Lines[0].Reason);
+        Assert.Equal("found stock", result.Document.Lines[0].Remarks);
+        Assert.Equal("SUP01", result.Document.VendCode);
+        Assert.Equal("Alpha Supplier", result.Document.VendName);
     }
 
     [Fact]
@@ -676,6 +741,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             TrxDate = FixedToday,
             RefNo = "REF-UPD",
             Remark = "header note",
+            VendCode = "SUP01",
             Lines = [updatedLine]
         });
         Assert.True(update.Succeeded, update.ErrorMessage);
@@ -725,11 +791,285 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         Assert.True((await sut.GetAsync(second.BatchNo)).Succeeded);
     }
 
+    [Fact]
+    public async Task Save_allows_blank_vendor_and_rejects_inactive_or_foreign_when_provided()
+    {
+        var sut = CreateSut();
+        var noVendor = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [ValidNonLotLineRequest()]
+        });
+        Assert.True(noVendor.Succeeded, noVendor.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == noVendor.BatchNo);
+            Assert.Null(batch.VendCode);
+            Assert.Null(batch.VendName);
+        }
+
+        var inactive = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUPOFF",
+            Lines = [ValidNonLotLineRequest()]
+        });
+        Assert.False(inactive.Succeeded);
+
+        var otherBranch = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUPBR2",
+            Lines = [ValidNonLotLineRequest()]
+        });
+        Assert.False(otherBranch.Succeeded);
+    }
+
+    [Fact]
+    public async Task Save_snapshots_vendor_name_and_ignores_later_rename()
+    {
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(Wrap(ValidNonLotLineRequest()));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var supplier = await db.PoSuppliers.SingleAsync(x =>
+                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == "SUP01");
+            supplier.SuppName = "Renamed Alpha";
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = await sut.GetAsync(saved.BatchNo);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        Assert.Equal("SUP01", loaded.Document!.VendCode);
+        Assert.Equal("Alpha Supplier", loaded.Document.VendName);
+    }
+
+    [Fact]
+    public async Task Save_requires_reason_and_keeps_remarks_separate()
+    {
+        var sut = CreateSut();
+        var missing = ValidNonLotLineRequest();
+        missing.Reason = "   ";
+        Assert.False((await sut.SaveNewAsync(Wrap(missing))).Succeeded);
+
+        var tooLong = ValidNonLotLineRequest();
+        tooLong.Reason = new string('R', 51);
+        Assert.False((await sut.SaveNewAsync(Wrap(tooLong))).Succeeded);
+
+        var withColon = ValidNonLotLineRequest();
+        withColon.Reason = "ADJ:SPECIAL";
+        withColon.Remarks = "note";
+        var saved = await sut.SaveNewAsync(Wrap(withColon));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var detail = await db.IvTrxBatchDetails.SingleAsync();
+        Assert.Equal("ADJ:SPECIAL", detail.Reason);
+        Assert.Equal("note", detail.Remarks);
+    }
+
+    [Fact]
+    public async Task Save_copies_supplier_do_to_all_details_and_rejects_overlength()
+    {
+        var sut = CreateSut();
+        var tooLong = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUP01",
+            SupplierDoNo = new string('D', 31),
+            Lines = [ValidNonLotLineRequest()]
+        });
+        Assert.False(tooLong.Succeeded);
+
+        var line = ValidNonLotLineRequest();
+        var saved = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUP01",
+            SupplierDoNo = "  DO-001  ",
+            Lines = [Clone(line), Clone(line)]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var dos = await db.IvTrxBatchDetails.Select(x => x.DoNo).ToListAsync();
+        Assert.Equal(2, dos.Count);
+        Assert.All(dos, x => Assert.Equal("DO-001", x));
+    }
+
+    [Fact]
+    public async Task Update_changes_vendor_reason_and_recopies_do()
+    {
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUP01",
+            SupplierDoNo = "DO-001",
+            Lines = [ValidNonLotLineRequest(), ValidNonLotLineRequest()]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        var updatedLine = ValidNonLotLineRequest();
+        updatedLine.Reason = "SAMPLE";
+        updatedLine.Remarks = "keep me";
+        var update = await sut.UpdateAsync(saved.BatchNo, new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUP02",
+            SupplierDoNo = "DO-002",
+            Lines = [updatedLine, Clone(updatedLine)]
+        });
+        Assert.True(update.Succeeded, update.ErrorMessage);
+
+        var loaded = await sut.GetAsync(saved.BatchNo);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        Assert.Equal("SUP02", loaded.Document!.VendCode);
+        Assert.Equal("Beta Supplier", loaded.Document.VendName);
+        Assert.Equal("DO-002", loaded.Document.SupplierDoNo);
+        Assert.All(loaded.Document.Lines, x => Assert.Equal("SAMPLE", x.Reason));
+        Assert.All(loaded.Document.Lines, x => Assert.Equal("keep me", x.Remarks));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.IvTrxBatchDetails.Where(x => x.BatchNo == saved.BatchNo).ToListAsync(),
+            x => Assert.Equal("DO-002", x.DoNo));
+    }
+
+    [Fact]
+    public async Task Get_legacy_null_vendor_does_not_mutate_and_can_post_when_reason_present()
+    {
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(Wrap(ValidNonLotLineRequest()));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batch = await db.IvTrxBatches.Include(x => x.Details).SingleAsync(x => x.BatchNo == saved.BatchNo);
+            batch.VendCode = null;
+            batch.VendName = null;
+            foreach (var d in batch.Details)
+            {
+                d.Remarks = "legacy free text";
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = await sut.GetAsync(saved.BatchNo);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        Assert.Null(loaded.Document!.VendCode);
+        Assert.Null(loaded.Document.VendName);
+        Assert.Equal("ADJ", loaded.Document.Lines[0].Reason);
+        Assert.Equal("legacy free text", loaded.Document.Lines[0].Remarks);
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Post_fails_when_line_reason_missing()
+    {
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(Wrap(ValidNonLotLineRequest()));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var detail = await db.IvTrxBatchDetails.SingleAsync(x => x.BatchNo == saved.BatchNo);
+            detail.Reason = null;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("reason", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Post_succeeds_when_supplier_inactive_after_save_and_sets_lot_supplier()
+    {
+        var sut = CreateSut();
+        var req = ValidLotLineRequest();
+        var saved = await sut.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday,
+            VendCode = "SUP01",
+            SupplierDoNo = new string('D', 30),
+            Lines = [req]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var supplier = await db.PoSuppliers.SingleAsync(x =>
+                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == "SUP01");
+            supplier.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+            Assert.Equal("SUP01", batch.VendCode);
+            Assert.Equal("Alpha Supplier", batch.VendName);
+
+            var lot = await db.IvLots.SingleAsync();
+            Assert.Equal("SUP01", lot.SupplierCode);
+
+            var history = await db.IvTrxHistories.SingleAsync();
+            Assert.Equal(new string('D', 30), history.DoNo);
+        }
+
+        var rb = await sut.RollbackAsync([saved.BatchNo]);
+        Assert.True(rb.Succeeded, rb.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var batch = await db.IvTrxBatches.Include(x => x.Details).SingleAsync(x => x.BatchNo == saved.BatchNo);
+            Assert.Equal("SUP01", batch.VendCode);
+            Assert.Equal("Alpha Supplier", batch.VendName);
+            Assert.Equal("FOUND", batch.Details.Single().Reason);
+            Assert.Equal(new string('D', 30), batch.Details.Single().DoNo);
+        }
+    }
+
+    [Fact]
+    public async Task Post_does_not_overwrite_existing_lot_supplier_code()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvLots.Add(new IvLot
+            {
+                CompanyCode = "DEMO",
+                ICode = "LOT1",
+                LotNo = "260824001",
+                SupplierCode = "OLD-SUP",
+                IsActive = true
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(Wrap(ValidLotLineRequest()));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await sut.PostAsync([saved.BatchNo])).Succeeded);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var lot = await verify.IvLots.SingleAsync(x => x.LotNo == "260824001");
+        Assert.Equal("OLD-SUP", lot.SupplierCode);
+    }
+
     private static IvMiscReceiptSaveRequest ValidNonLotLine(DateTime trxDate) =>
-        new() { TrxDate = trxDate, RefNo = "AUTO", Lines = [ValidNonLotLineRequest()] };
+        new() { TrxDate = trxDate, RefNo = "AUTO", VendCode = "SUP01", Lines = [ValidNonLotLineRequest()] };
 
     private static IvMiscReceiptSaveRequest Wrap(IvMiscReceiptLineRequest line) =>
-        new() { TrxDate = FixedToday, Lines = [line] };
+        new() { TrxDate = FixedToday, VendCode = "SUP01", Lines = [line] };
 
     private static IvMiscReceiptLineRequest ValidNonLotLineRequest() =>
         new()
@@ -758,7 +1098,8 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             Uom = "KG",
             IClassCode = "FG",
             IStatus = IvItemStatuses.Active,
-            ExpiryDate = FixedToday.AddDays(10)
+            ExpiryDate = FixedToday.AddDays(10),
+            Reason = "FOUND"
         };
 
     private static IvMiscReceiptLineRequest Clone(IvMiscReceiptLineRequest x) =>
@@ -841,6 +1182,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             new IvStockTransactionRepository(),
             postingRepo,
             posting,
+            new PoSupplierRepository(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 }

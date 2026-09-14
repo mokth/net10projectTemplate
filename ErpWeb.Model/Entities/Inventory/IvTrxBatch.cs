@@ -11,6 +11,10 @@ public class IvTrxBatch
     public string BatchStatus { get; set; } = string.Empty;
     public string? RefNo { get; set; }
     public string? Remarks { get; set; }
+    /// <summary>Supplier code snapshot for Misc Receipt (MR). Null for other trx types / legacy rows.</summary>
+    public string? VendCode { get; set; }
+    /// <summary>Supplier name snapshot at MR save. Null for other trx types / legacy rows.</summary>
+    public string? VendName { get; set; }
     public string? LocationCode { get; set; }
     /// <summary>SHA-256 hex of CN stock-return snapshot for CN-generated CR batches.</summary>
     public string? SourceFingerprint { get; set; }

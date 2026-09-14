@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 
 using ErpWeb.Core.Sales;
@@ -109,6 +110,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IDocumentNumberingService, DocumentNumberingService>();
 
         services.AddScoped<IAdSmNumAdminService, AdSmNumAdminService>();
+
+        services.AddScoped<IMsRefService, MsRefService>();
 
         services.AddScoped<ICurrentDateService, CurrentDateService>();
 

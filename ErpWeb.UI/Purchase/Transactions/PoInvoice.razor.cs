@@ -28,6 +28,8 @@ public partial class PoInvoice : PageBase
     protected List<PoInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
     protected List<IvCodeLookupRow> Currencies { get; set; } = [];
+    protected List<IvCodeLookupRow> Departments { get; set; } = [];
+    protected List<IvCodeLookupRow> Projects { get; set; } = [];
     protected List<LineEdit> EditLines { get; set; } = [];
     protected List<PoInvoicePoLinePickerRow> PoPickerRows { get; set; } = [];
     protected IReadOnlyList<object> SelectedPoLines { get; set; } = [];
@@ -105,6 +107,8 @@ public partial class PoInvoice : PageBase
             TaxGroups = lookups.Lookups.TaxGroups.ToList();
             PayCodes = lookups.Lookups.PayCodes.ToList();
             Currencies = lookups.Lookups.Currencies.ToList();
+            Departments = lookups.Lookups.Departments.ToList();
+            Projects = lookups.Lookups.Projects.ToList();
         }
 
         if (!IsNew && !string.IsNullOrWhiteSpace(DocNo))
@@ -296,8 +300,7 @@ public partial class PoInvoice : PageBase
                 return;
             }
 
-            StatusMessage = "Saved.";
-            Navigation.NavigateTo($"/purchase/invoices/edit/{result.Document.DocNo}");
+            Navigation.NavigateTo("/purchase/invoices");
         }
         finally
         {

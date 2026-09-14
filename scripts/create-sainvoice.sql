@@ -2,6 +2,13 @@
 -- Target database: ERPWeb (ConnectionStrings:DefaultConnection). Do not USE ERPLiteEx.
 -- Idempotent: IF OBJECT_ID / COL_LENGTH / sys.indexes.
 -- Option A PK: (CompanyCode, BranchCode, InvNo).
+--
+-- Filtered indexes created below require ANSI_NULLS ON and QUOTED_IDENTIFIER ON.
+-- SSMS sets both, but sqlcmd defaults QUOTED_IDENTIFIER OFF, which makes
+-- CREATE INDEX ... WHERE fail with Msg 1934. Set them explicitly so the script behaves
+-- the same no matter which client runs it.
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
 IF OBJECT_ID(N'dbo.SaTaxGroup', N'U') IS NULL
@@ -42,19 +49,105 @@ IF COL_LENGTH(N'dbo.SaTaxGroup', N'LocationCode') IS NULL
     ALTER TABLE dbo.SaTaxGroup ADD LocationCode nvarchar(20) NULL;
 GO
 
-IF EXISTS (
-    SELECT 1
-    FROM sys.key_constraints kc
-    INNER JOIN sys.index_columns ic
-        ON ic.object_id = kc.parent_object_id AND ic.index_id = kc.unique_index_id
-    WHERE kc.parent_object_id = OBJECT_ID(N'dbo.SaTaxGroup')
-      AND kc.[type] = N'PK'
-    GROUP BY kc.[name]
-    HAVING COUNT(*) = 1
-)
+-- Re-align the SaTaxGroup PK to (CompanyCode, TaxGrCode) to match SaTaxGroupConfiguration.
+-- Three hazards are handled here:
+--   1. CompanyCode is NULLABLE in databases created before this script (restored/legacy schemas).
+--      ADD PRIMARY KEY on a nullable column fails with Msg 8111, surfaced as
+--      Msg 1750 "Could not create constraint or index". Backfill + NOT NULL fixes it.
+--   2. ADD CONSTRAINT ... PRIMARY KEY is validated when the batch is *compiled*, so a nullable
+--      CompanyCode raises Msg 8111 before the batch starts running: TRY/CATCH cannot catch it and
+--      even PRINT output is lost. Every DDL statement below therefore runs through
+--      sp_executesql, which is compiled at execution time and is genuinely catchable.
+--   3. The rebuild used to DROP the existing PK before attempting the ADD, so any failure left
+--      SaTaxGroup with no primary key at all. DROP + ADD now run in one atomic transaction and
+--      roll back together, so a failed rebuild can never destroy the existing key.
+IF OBJECT_ID(N'dbo.SaTaxGroup', N'U') IS NOT NULL
 BEGIN
-    ALTER TABLE dbo.SaTaxGroup DROP CONSTRAINT PK_SaTaxGroup;
-    ALTER TABLE dbo.SaTaxGroup ADD CONSTRAINT PK_SaTaxGroup PRIMARY KEY (CompanyCode, TaxGrCode);
+    DECLARE @taxPkName sysname;
+    DECLARE @taxPkCols int;
+    DECLARE @taxPkHasCc int;
+    DECLARE @taxPkHasTg int;
+    DECLARE @taxCcNullable bit;
+    DECLARE @taxSql nvarchar(300);
+
+    SELECT @taxPkName = kc.name
+    FROM sys.key_constraints kc
+    WHERE kc.parent_object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+      AND kc.[type] = N'PK';
+
+    -- PK shape is inspected with COUNT comparisons rather than FOR XML: XML methods require
+    -- QUOTED_IDENTIFIER ON, which sqlcmd does not set by default (Msg 1934).
+    SELECT @taxPkCols = COUNT(*)
+    FROM sys.index_columns ic
+    WHERE ic.object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+      AND ic.index_id = (SELECT kc2.unique_index_id
+                         FROM sys.key_constraints kc2
+                         WHERE kc2.parent_object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+                           AND kc2.[type] = N'PK')
+      AND ic.is_included_column = 0;
+
+    SELECT @taxPkHasCc = COUNT(*)
+    FROM sys.index_columns ic
+    INNER JOIN sys.columns c
+        ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+    WHERE ic.object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+      AND ic.index_id = (SELECT kc2.unique_index_id
+                         FROM sys.key_constraints kc2
+                         WHERE kc2.parent_object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+                           AND kc2.[type] = N'PK')
+      AND c.name = N'CompanyCode';
+
+    SELECT @taxPkHasTg = COUNT(*)
+    FROM sys.index_columns ic
+    INNER JOIN sys.columns c
+        ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+    WHERE ic.object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+      AND ic.index_id = (SELECT kc2.unique_index_id
+                         FROM sys.key_constraints kc2
+                         WHERE kc2.parent_object_id = OBJECT_ID(N'dbo.SaTaxGroup')
+                           AND kc2.[type] = N'PK')
+      AND c.name = N'TaxGrCode';
+
+    SELECT @taxCcNullable = c.is_nullable
+    FROM sys.columns c
+    WHERE c.object_id = OBJECT_ID(N'dbo.SaTaxGroup') AND c.name = N'CompanyCode';
+
+    IF @taxCcNullable IS NULL
+    BEGIN
+        PRINT N'SKIPPED SaTaxGroup PK: the CompanyCode column is missing.';
+    END
+    ELSE IF @taxPkCols = 2 AND @taxPkHasCc = 1 AND @taxPkHasTg = 1 AND @taxCcNullable = 0
+    BEGIN
+        PRINT N'SaTaxGroup PK already (CompanyCode, TaxGrCode). Skipping.';
+    END
+    ELSE
+    BEGIN
+        BEGIN TRY
+            BEGIN TRANSACTION;
+
+            IF @taxCcNullable = 1
+            BEGIN
+                UPDATE dbo.SaTaxGroup SET CompanyCode = N'' WHERE CompanyCode IS NULL;
+                -- nvarchar(10) matches SaTaxGroupConfiguration (CompanyCode HasMaxLength(10)).
+                EXEC sp_executesql N'ALTER TABLE dbo.SaTaxGroup ALTER COLUMN CompanyCode nvarchar(10) NOT NULL;';
+            END
+
+            IF @taxPkName IS NOT NULL
+            BEGIN
+                SET @taxSql = N'ALTER TABLE dbo.SaTaxGroup DROP CONSTRAINT ' + QUOTENAME(@taxPkName) + N';';
+                EXEC sp_executesql @taxSql;
+            END
+
+            EXEC sp_executesql N'ALTER TABLE dbo.SaTaxGroup ADD CONSTRAINT PK_SaTaxGroup PRIMARY KEY (CompanyCode, TaxGrCode);';
+
+            COMMIT TRANSACTION;
+            PRINT N'SaTaxGroup PK rebuilt as (CompanyCode, TaxGrCode).';
+        END TRY
+        BEGIN CATCH
+            IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+            PRINT N'SKIPPED SaTaxGroup PK rebuild: ' + ERROR_MESSAGE();
+        END CATCH
+    END
 END
 GO
 
@@ -187,6 +280,29 @@ GO
 IF COL_LENGTH(N'dbo.SaInvoice', N'ShipFax') IS NULL ALTER TABLE dbo.SaInvoice ADD ShipFax nvarchar(50) NULL;
 GO
 
+-- Department / Project reference masters (MsDept / MsProject). Optional; nvarchar(20) matches
+-- the master code width and the TruncateOptional(..., 20) save paths.
+-- Names must match SaInvoiceConfiguration: Dept, and ProjId mapped as HasColumnName("ProjID").
+IF OBJECT_ID(N'dbo.SaInvoice', N'U') IS NULL
+BEGIN
+    RAISERROR(N'dbo.SaInvoice is missing. Create it before adding Dept / ProjID.', 16, 1);
+END
+ELSE
+BEGIN
+    IF COL_LENGTH(N'dbo.SaInvoice', N'Dept') IS NULL
+    BEGIN
+        ALTER TABLE dbo.SaInvoice ADD Dept nvarchar(20) NULL;
+        PRINT N'Added SaInvoice.Dept';
+    END
+
+    IF COL_LENGTH(N'dbo.SaInvoice', N'ProjID') IS NULL
+    BEGIN
+        ALTER TABLE dbo.SaInvoice ADD ProjID nvarchar(20) NULL;
+        PRINT N'Added SaInvoice.ProjID';
+    END
+END
+GO
+
 IF OBJECT_ID(N'dbo.SaInvoiceDetail', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SaInvoiceDetail (
@@ -230,24 +346,79 @@ IF COL_LENGTH(N'dbo.SaInvoiceDetail', N'BranchCode') IS NULL
     ALTER TABLE dbo.SaInvoiceDetail ADD BranchCode nvarchar(10) NULL;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_SaInvoiceDetail_Company_Branch_InvNo_Line' AND object_id = OBJECT_ID(N'dbo.SaInvoiceDetail'))
+IF OBJECT_ID(N'dbo.SaInvoiceDetail', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.SaInvoiceDetail', N'BranchCode') IS NOT NULL
-    CREATE UNIQUE INDEX UQ_SaInvoiceDetail_Company_Branch_InvNo_Line
-    ON dbo.SaInvoiceDetail (CompanyCode, BranchCode, InvNo, Line);
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_SaInvoiceDetail_Company_Branch_InvNo_Line' AND object_id = OBJECT_ID(N'dbo.SaInvoiceDetail'))
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_SaInvoiceDetail_Company_InvNo_Line' AND object_id = OBJECT_ID(N'dbo.SaInvoiceDetail'))
+BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.SaInvoiceDetail
+               GROUP BY CompanyCode, BranchCode, InvNo, Line
+               HAVING COUNT(*) > 1)
+    BEGIN
+        PRINT N'SKIPPED UQ_SaInvoiceDetail_Company_Branch_InvNo_Line: duplicate (CompanyCode, BranchCode, InvNo, Line) rows exist. Resolve them, then re-run this script.';
+        SELECT TOP (20) CompanyCode, BranchCode, InvNo, Line, COUNT(*) AS DuplicateCount
+        FROM dbo.SaInvoiceDetail
+        GROUP BY CompanyCode, BranchCode, InvNo, Line
+        HAVING COUNT(*) > 1
+        ORDER BY DuplicateCount DESC;
+    END
+    ELSE
+    BEGIN
+        CREATE UNIQUE INDEX UQ_SaInvoiceDetail_Company_Branch_InvNo_Line
+        ON dbo.SaInvoiceDetail (CompanyCode, BranchCode, InvNo, Line);
+        PRINT N'Created UQ_SaInvoiceDetail_Company_Branch_InvNo_Line';
+    END
+END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_SaInvoice_Company_Status' AND object_id = OBJECT_ID(N'dbo.SaInvoice'))
+IF OBJECT_ID(N'dbo.SaInvoice', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_SaInvoice_Company_Status' AND object_id = OBJECT_ID(N'dbo.SaInvoice'))
+BEGIN
     CREATE INDEX IX_SaInvoice_Company_Status
     ON dbo.SaInvoice (CompanyCode, Status);
+    PRINT N'Created IX_SaInvoice_Company_Status';
+END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_SaInvoice_Company_CustCode' AND object_id = OBJECT_ID(N'dbo.SaInvoice'))
+IF OBJECT_ID(N'dbo.SaInvoice', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_SaInvoice_Company_CustCode' AND object_id = OBJECT_ID(N'dbo.SaInvoice'))
+BEGIN
     CREATE INDEX IX_SaInvoice_Company_CustCode
     ON dbo.SaInvoice (CompanyCode, CustCode);
+    PRINT N'Created IX_SaInvoice_Company_CustCode';
+END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_IvTrxBatch_SP_RefNo' AND object_id = OBJECT_ID(N'dbo.IvTrxBatch'))
-    CREATE UNIQUE INDEX UQ_IvTrxBatch_SP_RefNo
-    ON dbo.IvTrxBatch (CompanyCode, BranchCode, RefNo)
-    WHERE TrxType = N'SP' AND RefNo IS NOT NULL;
+-- The SP RefNo guard is duplicated in create-sado.sql / alter-sado-option-a.sql. EF and the
+-- current scripts name this index UQ_IvTrxBatch_SP_Ref; UQ_IvTrxBatch_SP_RefNo is the older name.
+-- Both are treated as "already present" so a deploy never ends up with two identical unique
+-- indexes, and the create is skipped (instead of failing) when duplicate SP rows exist.
+IF OBJECT_ID(N'dbo.IvTrxBatch', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_IvTrxBatch_SP_Ref' AND object_id = OBJECT_ID(N'dbo.IvTrxBatch'))
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_IvTrxBatch_SP_RefNo' AND object_id = OBJECT_ID(N'dbo.IvTrxBatch'))
+BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.IvTrxBatch
+               WHERE TrxType = N'SP' AND RefNo IS NOT NULL
+               GROUP BY CompanyCode, BranchCode, RefNo
+               HAVING COUNT(*) > 1)
+    BEGIN
+        PRINT N'SKIPPED UQ_IvTrxBatch_SP_Ref: duplicate (CompanyCode, BranchCode, RefNo) SP rows exist. Resolve them, then re-run this script.';
+        SELECT TOP (20) CompanyCode, BranchCode, RefNo, COUNT(*) AS DuplicateCount
+        FROM dbo.IvTrxBatch
+        WHERE TrxType = N'SP' AND RefNo IS NOT NULL
+        GROUP BY CompanyCode, BranchCode, RefNo
+        HAVING COUNT(*) > 1
+        ORDER BY DuplicateCount DESC;
+    END
+    ELSE
+    BEGIN
+        CREATE UNIQUE INDEX UQ_IvTrxBatch_SP_Ref
+        ON dbo.IvTrxBatch (CompanyCode, BranchCode, RefNo)
+        WHERE TrxType = N'SP' AND RefNo IS NOT NULL;
+        PRINT N'Created UQ_IvTrxBatch_SP_Ref';
+    END
+END
+GO
+
+PRINT N'create-sainvoice.sql complete. Review any SKIPPED messages above.';
 GO

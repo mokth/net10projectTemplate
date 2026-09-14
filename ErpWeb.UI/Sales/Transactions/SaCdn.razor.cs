@@ -95,6 +95,8 @@ public partial class SaCdn : PageBase, IDisposable
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaCdnTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
+    protected List<IvCodeLookupRow> Departments { get; set; } = [];
+    protected List<IvCodeLookupRow> Projects { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Countries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
@@ -220,6 +222,8 @@ public partial class SaCdn : PageBase, IDisposable
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
+            Departments = lookups.Departments.ToList();
+            Projects = lookups.Projects.ToList();
         }
 
         Countries = await Lookups.ListCountriesForAssignmentAsync(_cts.Token);

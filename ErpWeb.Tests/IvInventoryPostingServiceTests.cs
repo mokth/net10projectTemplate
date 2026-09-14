@@ -4,7 +4,9 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -89,6 +91,17 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
                 LotControl = false,
                 IsActive = true
             });
+        db.PoSuppliers.Add(new PoSupplier
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            SuppCode = "SUP01",
+            SuppName = "Alpha Supplier",
+            Currency = "MYR",
+            GlCode = "AP001",
+            IsActive = true,
+            RowVersion = Guid.NewGuid().ToByteArray()
+        });
         await db.SaveChangesAsync();
     }
 
@@ -125,6 +138,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         var save = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines =
             [
                 Line("A100", 10m),
@@ -228,6 +242,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         var save = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines = [Line("NS01", 5m)]
         });
         Assert.True(save.Succeeded, save.ErrorMessage);
@@ -249,6 +264,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         var req = new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -261,7 +277,8 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    ExpiryDate = FixedToday.AddDays(30)
+                    ExpiryDate = FixedToday.AddDays(30),
+                    Reason = "FOUND"
                 }
             ]
         };
@@ -275,6 +292,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         var lot = Assert.Single(await db.IvLots.ToListAsync());
         Assert.Equal("L-001", lot.LotNo);
         Assert.Equal(IvTrxTypes.MiscellaneousReceipt, lot.SourceType);
+        Assert.Equal("SUP01", lot.SupplierCode);
         Assert.Equal(14m, await db.IvBalLocs.Select(x => x.StdQty).SingleAsync());
     }
 
@@ -328,6 +346,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         var save = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines = [Line("NS01", 3m)]
         });
         Assert.True((await mr.PostAsync([save.BatchNo])).Succeeded);
@@ -352,6 +371,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         new()
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines = [Line("A100", qty)]
         };
 
@@ -365,7 +385,8 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             Uom = "EA",
             IClassCode = "RAW",
             IStatus = "ACTIVE",
-            UnitPrice = 1m
+            UnitPrice = 1m,
+            Reason = "ADJ"
         };
 
     private IvMiscReceiptService CreateMr(bool canPost = true, bool canRollback = true)
@@ -386,6 +407,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
+            new PoSupplierRepository(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 

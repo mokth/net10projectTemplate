@@ -25,6 +25,8 @@ public class AppDbContext : DbContext
     public DbSet<MsRunningNo> MsRunningNos => Set<MsRunningNo>();
     public DbSet<AdSmNum> AdSmNums => Set<AdSmNum>();
     public DbSet<AdSmNumDate> AdSmNumDates => Set<AdSmNumDate>();
+    public DbSet<MsDept> MsDepts => Set<MsDept>();
+    public DbSet<MsProject> MsProjects => Set<MsProject>();
 
     public DbSet<IvClass> IvClasses => Set<IvClass>();
     public DbSet<IvSubClass> IvSubClasses => Set<IvSubClass>();

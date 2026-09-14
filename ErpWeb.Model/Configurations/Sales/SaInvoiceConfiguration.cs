@@ -64,6 +64,9 @@ public class SaInvoiceConfiguration : IEntityTypeConfiguration<SaInvoice>
         builder.Property(e => e.AreaCode).HasMaxLength(20);
         builder.Property(e => e.IndustryCode).HasMaxLength(20);
         builder.Property(e => e.ChannelCode).HasMaxLength(20);
+        builder.Property(e => e.Dept).HasMaxLength(20);
+        // Explicit alias: the SQL column is ProjID (see scripts/create-sainvoice.sql).
+        builder.Property(e => e.ProjId).HasColumnName("ProjID").HasMaxLength(20);
         builder.Property(e => e.PostedDate).HasColumnType("datetime");
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackDate).HasColumnType("datetime");

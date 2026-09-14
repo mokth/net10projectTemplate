@@ -170,12 +170,18 @@
                         <Items>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="Model.ProjId" Enabled="@IsEditable" MaxLength="20" />
+                                    <IvCodeComboBox Data="@Projects"
+                                                    @bind-Value="Model.ProjId"
+                                                    Enabled="@IsEditable"
+                                                    NullText="Select project" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Department" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="Model.Dept" Enabled="@IsEditable" MaxLength="20" />
+                                    <IvCodeComboBox Data="@Departments"
+                                                    @bind-Value="Model.Dept"
+                                                    Enabled="@IsEditable"
+                                                    NullText="Select department" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref no." ColSpanMd="3">

@@ -303,6 +303,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     StdUom = x.StdUom,
                     PackSz = x.PackSz,
                     ToWarehouse = x.ToWarehouse,
+                    DefWarehouse = x.DefWarehouse,
+                    DefLocation = x.DefLocation,
                     LotControl = x.LotControl,
                     IsIndirect = x.IsIndirect
                 };
@@ -312,34 +314,81 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         if (!indirect && rows.Count > 0)
         {
             var codes = rows.Select(x => x.ICode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var lotByCode = await db.IvStockMasters.AsNoTracking()
+            var masterByCode = await db.IvStockMasters.AsNoTracking()
                 .Where(x => x.CompanyCode == company && codes.Contains(x.ICode))
-                .Select(x => new { x.ICode, x.LotControl })
-                .ToDictionaryAsync(x => x.ICode, x => x.LotControl, StringComparer.OrdinalIgnoreCase, cancellationToken);
-            rows = rows.Select(x => new IvGoodsReceiptPoLineLookupRow
+                .Select(x => new { x.ICode, x.LotControl, x.DefWarehouse, x.DefLocation })
+                .ToDictionaryAsync(x => x.ICode, StringComparer.OrdinalIgnoreCase, cancellationToken);
+            rows = rows.Select(x =>
             {
-                PoNo = x.PoNo,
-                PoRelNo = x.PoRelNo,
-                PoLineNo = x.PoLineNo,
-                VendCode = x.VendCode,
-                VendName = x.VendName,
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                OrderedQty = x.OrderedQty,
-                ReceivedQty = x.ReceivedQty,
-                BalanceQty = x.BalanceQty,
-                DraftQty = x.DraftQty,
-                AvailableQty = x.AvailableQty,
-                PurchaseUom = x.PurchaseUom,
-                StdUom = x.StdUom,
-                PackSz = x.PackSz,
-                ToWarehouse = x.ToWarehouse,
-                LotControl = lotByCode.GetValueOrDefault(x.ICode),
-                IsIndirect = false
+                masterByCode.TryGetValue(x.ICode, out var master);
+                return new IvGoodsReceiptPoLineLookupRow
+                {
+                    PoNo = x.PoNo,
+                    PoRelNo = x.PoRelNo,
+                    PoLineNo = x.PoLineNo,
+                    VendCode = x.VendCode,
+                    VendName = x.VendName,
+                    ICode = x.ICode,
+                    IDesc = x.IDesc,
+                    OrderedQty = x.OrderedQty,
+                    ReceivedQty = x.ReceivedQty,
+                    BalanceQty = x.BalanceQty,
+                    DraftQty = x.DraftQty,
+                    AvailableQty = x.AvailableQty,
+                    PurchaseUom = x.PurchaseUom,
+                    StdUom = x.StdUom,
+                    PackSz = x.PackSz,
+                    ToWarehouse = x.ToWarehouse,
+                    DefWarehouse = master?.DefWarehouse,
+                    DefLocation = master?.DefLocation,
+                    LotControl = master?.LotControl ?? false,
+                    IsIndirect = false
+                };
             }).ToList();
         }
 
         return IvGoodsReceiptOperationResult.OkPoLines(rows);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> AllocateLotAsync(
+        string iCode,
+        IReadOnlyCollection<string>? reservedInSave = null,
+        int? excludeBatchNo = null,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        var code = (iCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Item code is required to allocate a lot.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        try
+        {
+            var lotNo = await AllocateLotCoreAsync(
+                db,
+                context.CompanyCode!,
+                code,
+                reservedInSave,
+                excludeBatchNo,
+                cancellationToken);
+            return IvGoodsReceiptOperationResult.OkLot(lotNo);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return IvGoodsReceiptOperationResult.Fail(ex.Message);
+        }
     }
 
     public async Task<IvGoodsReceiptOperationResult> GetAsync(int batchNo, CancellationToken cancellationToken = default)
@@ -439,7 +488,14 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var trxType = NormalizeTrxType(request.TrxType);
-        var validated = await ValidateLinesAsync(db, request.Lines, trxType, context.CompanyCode!, context.BranchCode!, cancellationToken);
+        var validated = await ValidateLinesAsync(
+            db,
+            request.Lines,
+            trxType,
+            context.CompanyCode!,
+            context.BranchCode!,
+            excludeBatchNo: null,
+            cancellationToken);
         if (validated.ErrorMessage is not null)
         {
             return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
@@ -510,7 +566,14 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         var trxType = NormalizeTrxType(request.TrxType);
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-        var validated = await ValidateLinesAsync(db, request.Lines, trxType, context.CompanyCode!, context.BranchCode!, cancellationToken);
+        var validated = await ValidateLinesAsync(
+            db,
+            request.Lines,
+            trxType,
+            context.CompanyCode!,
+            context.BranchCode!,
+            excludeBatchNo: batch.BatchNo,
+            cancellationToken);
         if (validated.ErrorMessage is not null)
         {
             return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
@@ -608,6 +671,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         string trxType,
         string companyCode,
         string branchCode,
+        int? excludeBatchNo,
         CancellationToken cancellationToken)
     {
         if (lines is null || lines.Count == 0)
@@ -617,16 +681,42 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         var indirect = string.Equals(trxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
         var result = new List<ValidatedLine>();
+        var reservedLotsByItem = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         short lineNo = 1;
         foreach (var line in lines)
         {
-            var validated = await ValidateLineAsync(db, line, trxType, indirect, companyCode, branchCode, lineNo, cancellationToken);
+            var validated = await ValidateLineAsync(
+                db,
+                line,
+                trxType,
+                indirect,
+                companyCode,
+                branchCode,
+                lineNo,
+                reservedLotsByItem,
+                excludeBatchNo,
+                cancellationToken);
             if (validated.ErrorMessage is not null)
             {
                 return (validated.ErrorMessage, null);
             }
 
             result.Add(validated.Line!);
+            if (!indirect
+                && validated.Line!.LotControl
+                && !string.IsNullOrWhiteSpace(validated.Line.ToLotNo)
+                && !string.IsNullOrWhiteSpace(validated.Line.PoLine.ICode))
+            {
+                var itemCode = validated.Line.PoLine.ICode!;
+                if (!reservedLotsByItem.TryGetValue(itemCode, out var reserved))
+                {
+                    reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    reservedLotsByItem[itemCode] = reserved;
+                }
+
+                reserved.Add(validated.Line.ToLotNo!);
+            }
+
             lineNo++;
         }
 
@@ -641,6 +731,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         string companyCode,
         string branchCode,
         short lineNo,
+        IReadOnlyDictionary<string, HashSet<string>> reservedLotsByItem,
+        int? excludeBatchNo,
         CancellationToken cancellationToken)
     {
         var poNo = (line.PoNo ?? string.Empty).Trim();
@@ -696,7 +788,23 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             }
 
             lotControl = item.LotControl;
-            toWarehouse = (line.ToWarehouse ?? poLine.ToWarehouse ?? item.DefWarehouse ?? string.Empty).Trim();
+
+            var explicitWarehouse = (line.ToWarehouse ?? string.Empty).Trim();
+            if (explicitWarehouse.Length > 0)
+            {
+                toWarehouse = explicitWarehouse;
+            }
+            else
+            {
+                toWarehouse = await ResolveCompatibleWarehouseAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    poLine.ToWarehouse,
+                    item.DefWarehouse,
+                    cancellationToken);
+            }
+
             if (string.IsNullOrWhiteSpace(toWarehouse))
             {
                 return ($"Line {lineNo}: warehouse is required.", null);
@@ -709,7 +817,23 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             }
 
             var hasLocations = await _common.HasActiveLocationsAsync(db, companyCode, branchCode, toWarehouse, cancellationToken);
-            toLocation = (line.ToLocation ?? item.DefLocation ?? string.Empty).Trim();
+            var explicitLocation = (line.ToLocation ?? string.Empty).Trim();
+            if (explicitLocation.Length > 0)
+            {
+                toLocation = explicitLocation;
+            }
+            else
+            {
+                toLocation = await ResolveCompatibleLocationAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    toWarehouse,
+                    item.DefLocation,
+                    hasLocations,
+                    cancellationToken);
+            }
+
             if (hasLocations && string.IsNullOrWhiteSpace(toLocation))
             {
                 return ($"Line {lineNo}: location is required for warehouse '{toWarehouse}'.", null);
@@ -739,7 +863,21 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 toLotNo = (line.ToLotNo ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(toLotNo))
                 {
-                    return ($"Line {lineNo}: lot number is required for lot-controlled item '{item.ICode}'.", null);
+                    reservedLotsByItem.TryGetValue(item.ICode, out var reservedForItem);
+                    try
+                    {
+                        toLotNo = await AllocateLotCoreAsync(
+                            db,
+                            companyCode,
+                            item.ICode,
+                            reservedForItem,
+                            excludeBatchNo,
+                            cancellationToken);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ($"Line {lineNo}: {ex.Message}", null);
+                    }
                 }
 
                 expiry = line.ExpiryDate?.Date;
@@ -772,6 +910,134 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             lotControl,
             TruncateOptional(line.Remarks, 250),
             trxType));
+    }
+
+    private async Task<string> AllocateLotCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        IReadOnlyCollection<string>? reservedInSave,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var reserved = await LoadReservedLotNosAsync(db, companyCode, iCode, excludeBatchNo, cancellationToken);
+        var prefix = _dates.Today.ToString("yyMMdd");
+        var lots = await IvLotNumberGenerator.AllocateAsync(
+            count: 1,
+            prefixOrFirstLot: prefix,
+            startSeq: 1,
+            autoGenerate: true,
+            usedInDocument: reservedInSave ?? Array.Empty<string>(),
+            existsInDatabaseAsync: lot => Task.FromResult(reserved.Contains(lot)));
+        return lots[0];
+    }
+
+    private static async Task<HashSet<string>> LoadReservedLotNosAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var code = iCode.Trim();
+        var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var existingLots = await db.IvLots.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.ICode == code)
+            .Select(x => x.LotNo)
+            .ToListAsync(cancellationToken);
+        foreach (var lot in existingLots)
+        {
+            if (!string.IsNullOrWhiteSpace(lot))
+            {
+                reserved.Add(lot.Trim());
+            }
+        }
+
+        var draftTypes = new[]
+        {
+            IvTrxTypes.GoodsReceive,
+            IvTrxTypes.NonStockGoodsReceive,
+            IvTrxTypes.MiscellaneousReceipt
+        };
+
+        var draftQuery =
+            from b in db.IvTrxBatches.AsNoTracking()
+            from d in b.Details
+            where b.CompanyCode == companyCode
+                && b.BatchStatus == IvBatchStatuses.New
+                && draftTypes.Contains(b.TrxType)
+                && d.ICode == code
+                && d.ToLotNo != null
+                && d.ToLotNo != ""
+            select new { b.BatchNo, d.ToLotNo };
+
+        if (excludeBatchNo is > 0)
+        {
+            var exclude = excludeBatchNo.Value;
+            draftQuery = draftQuery.Where(x => x.BatchNo != exclude);
+        }
+
+        var draftLots = await draftQuery.Select(x => x.ToLotNo!).ToListAsync(cancellationToken);
+        foreach (var lot in draftLots)
+        {
+            if (!string.IsNullOrWhiteSpace(lot))
+            {
+                reserved.Add(lot.Trim());
+            }
+        }
+
+        return reserved;
+    }
+
+    private async Task<string> ResolveCompatibleWarehouseAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string? poWarehouse,
+        string? defWarehouse,
+        CancellationToken cancellationToken)
+    {
+        foreach (var candidate in new[] { poWarehouse, defWarehouse })
+        {
+            var code = (candidate ?? string.Empty).Trim();
+            if (code.Length == 0)
+            {
+                continue;
+            }
+
+            var warehouse = await _common.GetActiveWarehouseAsync(db, companyCode, branchCode, code, cancellationToken);
+            if (warehouse is not null)
+            {
+                return code;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<string> ResolveCompatibleLocationAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string warehouse,
+        string? defLocation,
+        bool hasLocations,
+        CancellationToken cancellationToken)
+    {
+        if (!hasLocations)
+        {
+            return string.Empty;
+        }
+
+        var code = (defLocation ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var location = await _common.GetActiveLocationAsync(db, companyCode, branchCode, warehouse, code, cancellationToken);
+        return location is null ? string.Empty : code;
     }
 
     private static void AddDetails(

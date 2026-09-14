@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
@@ -139,6 +141,23 @@ public sealed class SaInvoiceService : ISaInvoiceService
             })
             .ToListAsync(cancellationToken);
 
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new IvCodeLookupRow { Code = x.DeptCode, Desc = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new IvCodeLookupRow { Code = x.ProjCode, Desc = x.ProjName })
+            .ToListAsync(cancellationToken);
+
         return SaInvoiceOperationResult.OkLookups(
             items.Select(x => new SaInvoiceItemLookupRow
             {
@@ -161,7 +180,9 @@ public sealed class SaInvoiceService : ISaInvoiceService
             customers,
             taxGroups,
             payCodes,
-            salesReps);
+            salesReps,
+            departments,
+            projects);
     }
 
     public async Task<SaInvoiceOperationResult> GetCustomerDefaultsAsync(
@@ -1823,6 +1844,40 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
         ValidateHeaderLengths(request, errors);
 
+        // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+        // A stored orphan may stay untouched; a new or changed code must exist and be active.
+        string? priorDept = null;
+        string? priorProj = null;
+        var editInvNo = (excludeInvNo ?? string.Empty).Trim();
+        if (editInvNo.Length > 0)
+        {
+            var prior = await db.SaInvoices.AsNoTracking()
+                .Where(x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.InvNo == editInvNo)
+                .Select(x => new { x.Dept, x.ProjId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (prior is not null)
+            {
+                priorDept = prior.Dept;
+                priorProj = prior.ProjId;
+            }
+        }
+
+        var deptError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Department, priorDept, request.Dept, cancellationToken);
+        if (deptError is not null)
+        {
+            errors["Dept"] = deptError;
+        }
+
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Project, priorProj, request.ProjId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
+        }
+
         if (errors.Count > 0)
         {
             return PrepareOutcome.Validation("Validation failed.", errors);
@@ -2681,6 +2736,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
             AreaCode = invoice.AreaCode,
             IndustryCode = invoice.IndustryCode,
             ChannelCode = invoice.ChannelCode,
+            Dept = invoice.Dept,
+            ProjId = invoice.ProjId,
             ShipName = invoice.ShipName,
             ShipAddress1 = invoice.ShipAddress1,
             ShipAddress2 = invoice.ShipAddress2,
@@ -2939,6 +2996,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
         invoice.SalesmanCode = TruncateOptional(request.SalesmanCode, 20);
         invoice.PoNo = TruncateOptional(request.PoNo, 50);
         invoice.Remark = TruncateOptional(request.Remark, 500);
+        invoice.Dept = TruncateOptional(request.Dept, 20);
+        invoice.ProjId = TruncateOptional(request.ProjId, 20);
         invoice.InvName = UpperSnapshot(request.InvName, 100);
         invoice.InvAddress1 = UpperSnapshot(request.InvAddress1, 100);
         invoice.InvAddress2 = UpperSnapshot(request.InvAddress2, 100);
@@ -3142,6 +3201,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
         Check(nameof(request.SalesmanCode), request.SalesmanCode, 20);
         Check(nameof(request.PoNo), request.PoNo, 50);
         Check(nameof(request.Remark), request.Remark, 500);
+        Check(nameof(request.Dept), request.Dept, 20);
+        Check(nameof(request.ProjId), request.ProjId, 20);
         Check(nameof(request.InvName), request.InvName, 100);
         Check(nameof(request.InvAddress1), request.InvAddress1, 100);
         Check(nameof(request.InvAddress2), request.InvAddress2, 100);

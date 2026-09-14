@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
@@ -132,7 +134,25 @@ public sealed class SaSoService : ISaSoService
             })
             .ToListAsync(cancellationToken);
 
-        return SaSoOperationResult.OkLookups(items, warehouses, customers, taxGroups, payCodes);
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new IvCodeLookupRow { Code = x.DeptCode, Desc = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new IvCodeLookupRow { Code = x.ProjCode, Desc = x.ProjName })
+            .ToListAsync(cancellationToken);
+
+        return SaSoOperationResult.OkLookups(
+            items, warehouses, customers, taxGroups, payCodes, departments, projects);
     }
 
     public async Task<SaSoOperationResult> GetCustomerDefaultsAsync(
@@ -574,6 +594,7 @@ public sealed class SaSoService : ISaSoService
                 context.CompanyCode!,
                 context.BranchCode!,
                 existingByLine: null,
+                priorProjId: null,
                 cancellationToken);
             if (prepared.Error is not null)
             {
@@ -787,6 +808,7 @@ public sealed class SaSoService : ISaSoService
                 context.CompanyCode!,
                 context.BranchCode!,
                 existingByLine,
+                priorProjId: salesOrder.ProjId,
                 cancellationToken);
             if (prepared.Error is not null)
             {
@@ -1162,6 +1184,7 @@ public sealed class SaSoService : ISaSoService
                 context.CompanyCode!,
                 context.BranchCode!,
                 existingByLine,
+                priorProjId: current.ProjId,
                 cancellationToken);
             if (prepared.Error is not null)
             {
@@ -1529,6 +1552,7 @@ public sealed class SaSoService : ISaSoService
         string companyCode,
         string branchCode,
         IReadOnlyDictionary<short, SaSoDetail>? existingByLine,
+        string? priorProjId,
         CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1636,6 +1660,15 @@ public sealed class SaSoService : ISaSoService
                     "ST000032: All lines must use the same tax type (inclusive or exclusive).",
                     SaSoErrorKind.BusinessRule);
             }
+        }
+
+        // Legacy-aware Project validation (shared rule — see MsRefLookupRules).
+        // A stored orphan may stay untouched; a new or changed code must exist and be active.
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Project, priorProjId, request.ProjId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
         }
 
         if (errors.Count > 0)

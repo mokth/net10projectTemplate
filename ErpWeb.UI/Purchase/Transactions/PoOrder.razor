@@ -185,7 +185,17 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@ProjId" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="20" />
+                                    <DxComboBox Data="@Projects"
+                                                TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                Value="@ProjId"
+                                                ValueChanged="@((string? v) => { ProjId = v; MarkDirtyOnly(); })"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditDocument"
+                                                NullText="Select project"
+                                                CssClass="w-100" />
+                                    @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref 1" ColSpanMd="3">
@@ -222,7 +232,17 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Department" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@DeptCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="20" />
+                                    <DxComboBox Data="@Departments"
+                                                TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                Value="@DeptCode"
+                                                ValueChanged="@((string? v) => { DeptCode = v; MarkDirtyOnly(); })"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditDocument"
+                                                NullText="Select department"
+                                                CssClass="w-100" />
+                                    @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Revision reason" ColSpanMd="12">

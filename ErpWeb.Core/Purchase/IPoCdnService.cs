@@ -36,6 +36,8 @@ public sealed class PoCdnOperationResult
     public IReadOnlyList<PoCdnVendorLookupRow> Vendors { get; init; } = [];
     public IReadOnlyList<PoCdnTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyList<PoCdnReasonCodeOption> ReasonCodes { get; init; } = [];
     public IReadOnlyList<PoCdnInvoicePickerRow> InvoicePickerRows { get; init; } = [];
     public IReadOnlyList<PoCdnInvoiceLinePickerRow> InvoiceLinePickerRows { get; init; } = [];
@@ -77,6 +79,8 @@ public sealed class PoCdnOperationResult
         IReadOnlyList<PoCdnVendorLookupRow> vendors,
         IReadOnlyList<PoCdnTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
+        IReadOnlyList<IvCodeLookupRow> departments,
+        IReadOnlyList<IvCodeLookupRow> projects,
         IReadOnlyList<PoCdnReasonCodeOption> reasonCodes) =>
         new()
         {
@@ -87,6 +91,8 @@ public sealed class PoCdnOperationResult
             Vendors = vendors,
             TaxGroups = taxGroups,
             PayCodes = payCodes,
+            Departments = departments,
+            Projects = projects,
             ReasonCodes = reasonCodes
         };
 

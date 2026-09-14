@@ -45,6 +45,7 @@ public partial class IvMiscReceipt : PageBase
     protected IReadOnlyList<IvCodeLookupRow> Classes { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Uoms { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Statuses { get; set; } = [];
+    protected IReadOnlyList<IvMiscReceiptVendorLookupRow> Vendors { get; set; } = [];
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -154,7 +155,10 @@ public partial class IvMiscReceipt : PageBase
         {
             TrxDate = doc.TrxDate == default ? DateTime.Today : doc.TrxDate.Date,
             RefNo = doc.RefNo ?? string.Empty,
-            Remark = doc.Remark
+            Remark = doc.Remark,
+            VendCode = doc.VendCode,
+            VendName = doc.VendName,
+            SupplierDoNo = doc.SupplierDoNo
         };
         Lines = doc.Lines.Select(x => new IvMiscReceiptLineVm
         {
@@ -182,15 +186,18 @@ public partial class IvMiscReceipt : PageBase
         var cls = await Lookups.ListActiveClassesAsync();
         var uom = await Lookups.ListActiveUomsAsync();
         var st = await Lookups.ListActiveStatusesAsync();
+        var mrLookups = await MiscReceipt.GetLookupsAsync();
 
-        if (!wh.Succeeded || !cls.Succeeded || !uom.Succeeded || !st.Succeeded)
+        if (!wh.Succeeded || !cls.Succeeded || !uom.Succeeded || !st.Succeeded || !mrLookups.Succeeded)
         {
             ErrorMessage = wh.ErrorMessage ?? cls.ErrorMessage ?? uom.ErrorMessage ?? st.ErrorMessage
+                ?? mrLookups.ErrorMessage
                 ?? "Unable to load lookups.";
             Warehouses = [];
             Classes = [];
             Uoms = [];
             Statuses = [];
+            Vendors = [];
             return;
         }
 
@@ -198,6 +205,17 @@ public partial class IvMiscReceipt : PageBase
         Classes = cls.Rows;
         Uoms = uom.Rows;
         Statuses = st.Rows;
+        Vendors = mrLookups.Vendors;
+    }
+
+    protected Task OnVendCodeChangedAsync(string? value)
+    {
+        Header.VendCode = value;
+        Header.VendName = Vendors
+            .FirstOrDefault(x => string.Equals(x.SuppCode, value, StringComparison.OrdinalIgnoreCase))
+            ?.SuppName;
+        _isDirty = true;
+        return Task.CompletedTask;
     }
 
     private async Task RefreshPeekBatchNoAsync()
@@ -430,6 +448,20 @@ public partial class IvMiscReceipt : PageBase
             return;
         }
 
+        var missingReason = Lines.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.Reason));
+        if (missingReason is not null)
+        {
+            ErrorMessage = $"Line {missingReason.LineNo}: reason is required.";
+            return;
+        }
+
+        var supplierDo = Header.SupplierDoNo?.Trim();
+        if (!string.IsNullOrEmpty(supplierDo) && supplierDo.Length > 30)
+        {
+            ErrorMessage = "Supplier DO must be at most 30 characters.";
+            return;
+        }
+
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -441,6 +473,8 @@ public partial class IvMiscReceipt : PageBase
                 TrxDate = Header.TrxDate,
                 RefNo = Header.RefNo,
                 Remark = Header.Remark,
+                VendCode = Header.VendCode,
+                SupplierDoNo = Header.SupplierDoNo,
                 Lines = Lines.Select(x => new IvMiscReceiptLineRequest
                 {
                     ICode = x.ICode,
@@ -591,6 +625,16 @@ public partial class IvMiscReceipt : PageBase
             return "Unit price cannot be negative.";
         }
 
+        if (string.IsNullOrWhiteSpace(Popup.Reason))
+        {
+            return "Reason is required.";
+        }
+
+        if (Popup.Reason.Trim().Length > 50)
+        {
+            return "Reason must be at most 50 characters.";
+        }
+
         if (Popup.LotControl)
         {
             if (string.IsNullOrWhiteSpace(Popup.ToLotNo))
@@ -679,6 +723,9 @@ public sealed class IvMiscReceiptHeaderVm
     public DateTime TrxDate { get; set; } = DateTime.Today;
     public string RefNo { get; set; } = "AUTO";
     public string? Remark { get; set; }
+    public string? VendCode { get; set; }
+    public string? VendName { get; set; }
+    public string? SupplierDoNo { get; set; }
 }
 
 public sealed class IvMiscReceiptLineVm

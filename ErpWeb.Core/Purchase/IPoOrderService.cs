@@ -201,6 +201,8 @@ public sealed class PoOrderLookups
     public IReadOnlyList<PoOrderCodeLookupRow> PaymentTerms { get; init; } = [];
     public IReadOnlyList<PoOrderCodeLookupRow> Buyers { get; init; } = [];
     public IReadOnlyList<IvWarehouseLookupRow> Warehouses { get; init; } = [];
+    public IReadOnlyList<PoOrderCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<PoOrderCodeLookupRow> Projects { get; init; } = [];
     public bool DefaultInclusive { get; init; }
     public bool UseWeight { get; init; }
     public bool CanViewCost { get; init; }

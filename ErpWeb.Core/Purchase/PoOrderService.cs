@@ -4,11 +4,13 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
@@ -320,6 +322,23 @@ public sealed class PoOrderService : IPoOrderService
 					WarehouseCode = x.WarehouseCode,
 					WarehouseDesc = x.WarehouseDesc
 				}).ToListAsync(cancellationToken);
+			// Department / Project masters — company + branch scoped, active only.
+			List<PoOrderCodeLookupRow> departments = await (from x in db.MsDepts.AsNoTracking()
+				where x.CompanyCode == company && x.BranchCode == branch && x.IsActive
+				orderby x.DeptCode
+				select new PoOrderCodeLookupRow
+				{
+					Code = x.DeptCode,
+					Name = x.DeptName
+				}).ToListAsync(cancellationToken);
+			List<PoOrderCodeLookupRow> projects = await (from x in db.MsProjects.AsNoTracking()
+				where x.CompanyCode == company && x.BranchCode == branch && x.Status == MsProjectStatus.Active
+				orderby x.ProjCode
+				select new PoOrderCodeLookupRow
+				{
+					Code = x.ProjCode,
+					Name = x.ProjName
+				}).ToListAsync(cancellationToken);
 			PoOrderLookups poOrderLookups = new PoOrderLookups
 			{
 				DirectItems = direct,
@@ -331,6 +350,8 @@ public sealed class PoOrderService : IPoOrderService
 				PaymentTerms = paymentTerms,
 				Buyers = buyers,
 				Warehouses = warehouses,
+				Departments = departments,
+				Projects = projects,
 				DefaultInclusive = _options.PurchaseItemTaxInclusive,
 				UseWeight = _options.UseWeight,
 				CanViewCost = await CanAsync("VIEW_COST", cancellationToken)
@@ -577,6 +598,18 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				try
 				{
+					// Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+					Dictionary<string, string> refErrors = await ValidateDeptProjectAsync(
+						db, context.CompanyCode, context.BranchCode, priorDeptCode: null, priorProjId: null,
+						request.DeptCode, request.ProjId, cancellationToken);
+					if (refErrors != null)
+					{
+						await tx.RollbackAsync(cancellationToken);
+						await DiscardDraftSafeAsync(tempDocId, cancellationToken);
+						poOrderOperationResult = PoOrderOperationResult.FailValidation("Validation failed.", refErrors);
+					}
+					else
+					{
 					PrepareOutcome prepared = await PrepareLinesAsync(db, context.CompanyCode, context.BranchCode, request, null, cancellationToken);
 					if (prepared.Error != null)
 					{
@@ -678,6 +711,7 @@ public sealed class PoOrderService : IPoOrderService
 								poOrderOperationResult = await GetAsync(header.PoNo, cancellationToken);
 							}
 						}
+					}
 					}
 					end_IL_05b5:;
 				}
@@ -1030,6 +1064,17 @@ public sealed class PoOrderService : IPoOrderService
 					{
 						db.Entry(header).Property((PoOrder x) => x.RowVersion).OriginalValue = request.RowVersion;
 						Dictionary<short, PoOrderDetail> existingByLine = header.Details.ToDictionary((PoOrderDetail x) => x.Line, (PoOrderDetail x) => x);
+						// Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+						Dictionary<string, string> refErrors = await ValidateDeptProjectAsync(
+							db, context.CompanyCode, context.BranchCode, header.DeptCode, header.ProjId,
+							request.DeptCode, request.ProjId, cancellationToken);
+						if (refErrors != null)
+						{
+							await tx.RollbackAsync(cancellationToken);
+							poOrderOperationResult = PoOrderOperationResult.FailValidation("Validation failed.", refErrors);
+						}
+						else
+						{
 						PrepareOutcome prepared = await PrepareLinesAsync(db, context.CompanyCode, context.BranchCode, request, existingByLine, cancellationToken);
 						if (prepared.Error != null)
 						{
@@ -1127,6 +1172,7 @@ public sealed class PoOrderService : IPoOrderService
 								}
 							}
 						}
+					}
 					}
 					end_IL_0604:;
 				}
@@ -1314,6 +1360,39 @@ public sealed class PoOrderService : IPoOrderService
 			}
 		}
 		return result;
+	}
+
+	/// <summary>
+	/// Legacy-aware Department / Project validation for the PO header (shared rule —
+	/// see MsRefLookupRules). Returns null when valid, otherwise the field error map.
+	/// </summary>
+	private static async Task<Dictionary<string, string>?> ValidateDeptProjectAsync(
+		AppDbContext db,
+		string companyCode,
+		string branchCode,
+		string? priorDeptCode,
+		string? priorProjId,
+		string? deptCode,
+		string? projId,
+		CancellationToken cancellationToken)
+	{
+		Dictionary<string, string> errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+		string deptError = await MsRefLookupRules.ValidateAsync(
+			db, companyCode, branchCode, MsRefLookupKind.Department, priorDeptCode, deptCode, cancellationToken);
+		if (deptError != null)
+		{
+			errors["DeptCode"] = deptError;
+		}
+
+		string projError = await MsRefLookupRules.ValidateAsync(
+			db, companyCode, branchCode, MsRefLookupKind.Project, priorProjId, projId, cancellationToken);
+		if (projError != null)
+		{
+			errors["ProjId"] = projError;
+		}
+
+		return (errors.Count == 0) ? null : errors;
 	}
 
 	private async Task<PrepareOutcome> PrepareLinesAsync(AppDbContext db, string companyCode, string branchCode, PoOrderSaveRequest request, IReadOnlyDictionary<short, PoOrderDetail>? existingByLine, CancellationToken cancellationToken)

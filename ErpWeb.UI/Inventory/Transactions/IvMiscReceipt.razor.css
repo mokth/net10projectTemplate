@@ -15,6 +15,16 @@
     animation: mr-fade-in 280ms ease both;
 }
 
+.mr-guidance {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--mr-soft);
+    color: var(--mr-muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
 .mr-toast {
     display: flex;
     align-items: center;

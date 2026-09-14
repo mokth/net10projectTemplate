@@ -78,6 +78,8 @@ public partial class PoPr : PageBase, IAsyncDisposable
     protected List<PoPrCodeLookupRow> AuthorisedPersons { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<PoPrCodeLookupRow> Categories { get; set; } = [];
+    protected List<PoPrCodeLookupRow> Departments { get; set; } = [];
+    protected List<PoPrCodeLookupRow> Projects { get; set; } = [];
     protected PoPrLineVm Popup { get; set; } = new();
 
     protected IReadOnlyList<PoPrCodeLookupRow> PrTypeOptions { get; } =
@@ -322,6 +324,8 @@ public partial class PoPr : PageBase, IAsyncDisposable
         AuthorisedPersons = lookups.AuthorisedPersons.ToList();
         Warehouses = lookups.Warehouses.ToList();
         Categories = lookups.Categories.ToList();
+        Departments = lookups.Departments.ToList();
+        Projects = lookups.Projects.ToList();
         CanViewCost = lookups.CanViewCost;
         _defaultInclusive = lookups.DefaultInclusive;
     }
@@ -659,14 +663,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
             }
 
             _isDirty = false;
-            var savedPrNo = result.PrNo ?? result.Document?.PrNo;
-            if (string.IsNullOrWhiteSpace(savedPrNo))
-            {
-                Navigation.NavigateTo("/purchase/requisitions");
-                return;
-            }
-
-            Navigation.NavigateTo($"/purchase/requisitions/view/{savedPrNo}");
+            Navigation.NavigateTo("/purchase/requisitions");
         }
         finally
         {

@@ -84,6 +84,8 @@
       <Menu Code="ADMIN_MASTER" Name="Master" SortOrder="7">
         <Menu Code="SA_SM_NUM" Name="Continuous Numbers" Route="/sales/numbering/continuous" SortOrder="1" />
         <Menu Code="SA_SM_NUM_DATE" Name="Period Numbers" Route="/sales/numbering/period" SortOrder="2" />
+        <Menu Code="ADMIN_DEPT" Name="Departments" Route="/admin/departments" SortOrder="3" />
+        <Menu Code="ADMIN_PROJECT" Name="Projects" Route="/admin/projects" SortOrder="4" />
       </Menu>
     </Menu>
   </Menu>

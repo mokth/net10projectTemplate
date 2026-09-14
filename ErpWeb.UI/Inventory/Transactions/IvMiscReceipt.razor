@@ -50,6 +50,9 @@
             </header>
 
             <section class="mr-card">
+                <p class="mr-guidance">
+                    Purchase with PO: create/use the PO and receive using Goods Receipt. Stock-in without PO: use Misc Receipt.
+                </p>
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
                     <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
                         <Template>
@@ -69,6 +72,35 @@
                                        NullText="AUTO"
                                        maxlength="50"
                                        ReadOnly="@(!CanEditDocument)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Vendor" ColSpanMd="6">
+                        <Template>
+                                    <DxComboBox Data="@Vendors"
+                                                TextFieldName="@nameof(IvMiscReceiptVendorLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(IvMiscReceiptVendorLookupRow.SuppCode)"
+                                                Value="@Header.VendCode"
+                                                ValueChanged="@(async (string? v) => await OnVendCodeChangedAsync(v))"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditDocument"
+                                                NullText="Optional — leave blank if unknown"
+                                                CssClass="w-100" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Vendor name" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@(Header.VendName ?? string.Empty)"
+                                       ReadOnly="true"
+                                       NullText="Selected from vendor master" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Supplier DO" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.SupplierDoNo"
+                                       maxlength="30"
+                                       ReadOnly="@(!CanEditDocument)"
+                                       NullText="Optional supplier delivery order" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
@@ -377,8 +409,9 @@
                                     <DxComboBox Data="@IvTrxReasons.All"
                                                 @bind-Value="@Popup.Reason"
                                                 AllowUserInput="true"
-                                                NullText="Optional"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                                NullText="Select or type reason"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                CssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">

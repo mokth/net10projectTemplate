@@ -11,6 +11,7 @@ public sealed class IvMiscReceiptOperationResult
     public int FailedCount { get; init; }
     public IReadOnlyList<IvStockLookupRow> Items { get; init; } = [];
     public IReadOnlyList<IvWarehouseLookupRow> Warehouses { get; init; } = [];
+    public IReadOnlyList<IvMiscReceiptVendorLookupRow> Vendors { get; init; } = [];
     public IvMiscReceiptDocument? Document { get; init; }
     public IvMiscReceiptListPage? ListPage { get; init; }
     public IvInventoryPostingResult? Posting { get; init; }
@@ -26,8 +27,9 @@ public sealed class IvMiscReceiptOperationResult
 
     public static IvMiscReceiptOperationResult OkLookups(
         IReadOnlyList<IvStockLookupRow> items,
-        IReadOnlyList<IvWarehouseLookupRow> warehouses) =>
-        new() { Succeeded = true, Items = items, Warehouses = warehouses };
+        IReadOnlyList<IvWarehouseLookupRow> warehouses,
+        IReadOnlyList<IvMiscReceiptVendorLookupRow> vendors) =>
+        new() { Succeeded = true, Items = items, Warehouses = warehouses, Vendors = vendors };
 
     public static IvMiscReceiptOperationResult OkDocument(IvMiscReceiptDocument document) =>
         new() { Succeeded = true, Document = document, BatchId = document.Id, BatchNo = document.BatchNo };
@@ -71,6 +73,15 @@ public sealed class IvWarehouseLookupRow
         : $"{WarehouseCode} — {WarehouseDesc}";
 }
 
+public sealed class IvMiscReceiptVendorLookupRow
+{
+    public string SuppCode { get; init; } = string.Empty;
+    public string? SuppName { get; init; }
+    public string DisplayText => string.IsNullOrWhiteSpace(SuppName)
+        ? SuppCode
+        : $"{SuppCode} — {SuppName}";
+}
+
 public sealed class IvMiscReceiptListQuery
 {
     public string? SearchText { get; set; }
@@ -91,6 +102,8 @@ public sealed class IvMiscReceiptListRow
     public string BatchStatus { get; init; } = string.Empty;
     public string? RefNo { get; init; }
     public string? Remarks { get; init; }
+    public string? VendCode { get; init; }
+    public string? VendName { get; init; }
     public int LineCount { get; init; }
     public decimal TotalAmount { get; init; }
     public DateTime? CreatedDate { get; init; }
@@ -111,6 +124,9 @@ public sealed class IvMiscReceiptDocument
     public string BatchStatus { get; init; } = string.Empty;
     public string? RefNo { get; set; }
     public string? Remark { get; set; }
+    public string? VendCode { get; set; }
+    public string? VendName { get; set; }
+    public string? SupplierDoNo { get; set; }
     public IReadOnlyList<IvMiscReceiptLineDto> Lines { get; init; } = [];
 }
 
@@ -138,6 +154,8 @@ public sealed class IvMiscReceiptSaveRequest
     public DateTime TrxDate { get; set; }
     public string? RefNo { get; set; }
     public string? Remark { get; set; }
+    public string? VendCode { get; set; }
+    public string? SupplierDoNo { get; set; }
     public IReadOnlyList<IvMiscReceiptLineRequest>? Lines { get; set; }
 }
 

@@ -18,6 +18,8 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
         builder.Property(e => e.BatchStatus).HasMaxLength(20).IsRequired();
         builder.Property(e => e.RefNo).HasMaxLength(50);
         builder.Property(e => e.Remarks).HasMaxLength(250);
+        builder.Property(e => e.VendCode).HasMaxLength(60);
+        builder.Property(e => e.VendName).HasMaxLength(200);
         builder.Property(e => e.LocationCode).HasMaxLength(10);
         builder.Property(e => e.SourceFingerprint).HasMaxLength(64);
         builder.Property(e => e.PostedBy).HasMaxLength(10);

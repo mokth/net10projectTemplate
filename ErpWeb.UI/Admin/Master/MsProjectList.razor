@@ -1,0 +1,216 @@
+@page "/admin/projects"
+@inherits MsRefListPageBase<MsProjectListRow>
+
+<PageTitle>Projects</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminProject">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></div>
+        <div>
+            <p class="iv-eyebrow">Admin</p>
+            <h1 class="iv-title">Projects</h1>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <p>Loading projects…</p>
+    }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(MsProjectListRow.Code)"
+                      GridKey="ms-project-list"
+                      Title="Projects"
+                      T="MsProjectListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Project" : "View Project") : "New Project")"
+             CloseOnOutsideClick="false"
+             Width="50vw"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="projForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Code"
+                                       maxlength="20"
+                                       ReadOnly="@IsEditMode"
+                                       InputCssClass="required-field code-style" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Name" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Name"
+                                       maxlength="150"
+                                       ReadOnly="@(!EditEnabled)"
+                                       InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <IvCodeComboBox Data="@CustomerLookups"
+                                            @bind-Value="@EditModel.CustCode"
+                                            Enabled="@EditEnabled"
+                                            IsLoading="@LookupsLoading"
+                                            NullText="Select customer" />
+                            @if (IsOrphanCustCode)
+                            {
+                                <small class="text-muted">Historical value '@EditModel.CustCode' is kept unless you change it.</small>
+                            }
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Default department" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@DeptLookups"
+                                            @bind-Value="@EditModel.DeptCode"
+                                            Enabled="@EditEnabled"
+                                            IsLoading="@LookupsLoading"
+                                            NullText="Select department" />
+                            @if (IsOrphanDeptCode)
+                            {
+                                <small class="text-muted">Historical value '@EditModel.DeptCode' is kept unless you change it.</small>
+                            }
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Manager (free text)" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.ManagerEmpId"
+                                       maxlength="20"
+                                       ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@StatusOptions"
+                                        @bind-Value="@EditModel.Status"
+                                        Enabled="@EditEnabled"
+                                        NullText="Select status" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start date" ColSpanMd="4" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.StartDate" Enabled="@EditEnabled" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End date" ColSpanMd="4">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.EndDate" Enabled="@EditEnabled" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Close date" ColSpanMd="4">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.CloseDate" Enabled="@EditEnabled" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Budget" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EditModel.BudgetAmnt"
+                                        MinValue="0m"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ShowSpinButtons="false"
+                                        DisplayFormat="n2" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Remarks" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxMemo @bind-Text="@EditModel.Remarks"
+                                    maxlength="500"
+                                    ReadOnly="@(!EditEnabled)"
+                                    Rows="3" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                              SubmitFormOnClick="true"
+                                              Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Cancel"
+                                              Click="@ClosePopup"
+                                              Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Close"
+                                              Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="Edit"
+                                                  Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template>
+                            <small class="text-danger">@ErrorMessage</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="@(IsSubmitting ? "Deleting…" : "Delete")"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseConfirmDelete"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

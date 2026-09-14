@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
@@ -117,6 +119,23 @@ public sealed class SaDoService : ISaDoService
 
         var payCodes = await _custLookups.ListPayCodesForAssignmentAsync(cancellationToken);
 
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new IvCodeLookupRow { Code = x.DeptCode, Desc = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new IvCodeLookupRow { Code = x.ProjCode, Desc = x.ProjName })
+            .ToListAsync(cancellationToken);
+
         return SaDoOperationResult.OkLookups(
             items.Select(x => new SaDoItemLookupRow
             {
@@ -136,7 +155,9 @@ public sealed class SaDoService : ISaDoService
             }).ToList(),
             customers,
             taxGroups,
-            payCodes);
+            payCodes,
+            departments,
+            projects);
     }
 
     public async Task<SaDoOperationResult> GetCustomerDefaultsAsync(
@@ -2102,6 +2123,27 @@ public sealed class SaDoService : ISaDoService
                     "ST000032: All lines must use the same tax type (inclusive or exclusive).",
                     SaDoErrorKind.BusinessRule);
             }
+        }
+
+        // Legacy-aware Project validation (shared rule — see MsRefLookupRules).
+        // A stored orphan may stay untouched; a new or changed code must exist and be active.
+        string? priorProjId = null;
+        var editDoNo = (excludeDoNo ?? string.Empty).Trim();
+        if (editDoNo.Length > 0)
+        {
+            priorProjId = await db.SaDos.AsNoTracking()
+                .Where(x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.DoNo == editDoNo)
+                .Select(x => x.ProjId)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, companyCode, branchCode, MsRefLookupKind.Project, priorProjId, request.ProjId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
         }
 
         if (errors.Count > 0)

@@ -65,6 +65,7 @@ public interface IIvStockPostingRepository
         DateTime? receiptDate,
         DateTime? expiryDate,
         string? userId,
+        string? supplierCode = null,
         CancellationToken cancellationToken = default);
 
     Task<IvBalLoc> FindOrCreateBalLocAsync(
@@ -341,6 +342,7 @@ WHERE CompanyCode = {company}
         DateTime? receiptDate,
         DateTime? expiryDate,
         string? userId,
+        string? supplierCode = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(db);
@@ -350,6 +352,12 @@ WHERE CompanyCode = {company}
         if (lot.Length == 0)
         {
             throw new InvalidOperationException("Lot number is required for lot find/create.");
+        }
+
+        var supplier = string.IsNullOrWhiteSpace(supplierCode) ? null : supplierCode.Trim();
+        if (supplier is { Length: > 60 })
+        {
+            throw new InvalidOperationException("Supplier code must be at most 60 characters.");
         }
 
         var existing = await LockLotExactAsync(db, company, code, lot, forUpdate: true, cancellationToken);
@@ -366,6 +374,7 @@ WHERE CompanyCode = {company}
             LotNo = lot,
             SourceType = sourceType,
             SourceDocNo = sourceDocNo,
+            SupplierCode = supplier,
             ReceiptDate = receiptDate,
             ExpiryDate = expiryDate,
             IsActive = true,

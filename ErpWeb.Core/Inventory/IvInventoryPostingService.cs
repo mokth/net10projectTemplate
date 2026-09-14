@@ -259,6 +259,18 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInNoLinesMessage(expectedTrxType));
         }
 
+        if (string.Equals(expectedTrxType, IvTrxTypes.MiscellaneousReceipt, StringComparison.OrdinalIgnoreCase))
+        {
+            // Vendor is optional (unknown-origin stock). Reason remains required on every line.
+            var missingReason = details.FirstOrDefault(d => string.IsNullOrWhiteSpace(d.Reason));
+            if (missingReason is not null)
+            {
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"Line {missingReason.TrxLineNo}: reason is required before posting.");
+            }
+        }
+
         if (await _posting.HistoryExistsForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "History already exists for this batch.");
@@ -302,6 +314,13 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                 var lotKey = (plan.ICode, plan.LotNo!);
                 if (!lotByKey.ContainsKey(lotKey))
                 {
+                    var lotSupplierCode = string.Equals(
+                        expectedTrxType,
+                        IvTrxTypes.MiscellaneousReceipt,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? batch.VendCode
+                        : null;
+
                     lotByKey[lotKey] = await _posting.FindOrCreateLotAsync(
                         db,
                         companyCode,
@@ -312,6 +331,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                         batch.TrxDtTime.Date,
                         plan.ExpiryDate,
                         userId,
+                        lotSupplierCode,
                         cancellationToken);
                 }
 
@@ -402,6 +422,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                 ToPurQty = detail.ToPurQty,
                 ToPurUom = detail.ToPurUom,
                 IStatus = detail.IStatus,
+                DoNo = detail.DoNo,
                 PoNo = detail.PoNo,
                 PoRelNo = detail.PoRelNo,
                 PoLineNo = detail.PoLineNo,

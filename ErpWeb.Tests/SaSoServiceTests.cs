@@ -4,6 +4,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
@@ -225,6 +226,17 @@ public class SaSoServiceTests : IAsyncLifetime
                 IsActive = true,
                 RowVersion = [2, 0, 0, 0, 0, 0, 0, 0]
             });
+
+        // Project master — SO saves validate a new/changed ProjId against this.
+        db.MsProjects.Add(new MsProject
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            ProjCode = "PRJ1",
+            ProjName = "Round-trip project",
+            Status = MsProjectStatus.Active,
+            RowVersion = [1, 0, 0, 0, 0, 0, 0, 0]
+        });
 
         await db.SaveChangesAsync();
     }
@@ -1293,7 +1305,6 @@ public class SaSoServiceTests : IAsyncLifetime
     {
         var sut = CreateSoSut();
         var overRef = new string('R', 60);
-        var overProj = new string('P', 30);
 
         var save = await sut.SaveNewAsync(new SaSoSaveRequest
         {
@@ -1341,12 +1352,35 @@ public class SaSoServiceTests : IAsyncLifetime
             CustPo = "PO-1",
             SalesRep = "SM1",
             Ref1 = overRef,
-            ProjId = overProj,
+            // A project code is now validated against the master, so the >20-char truncation case
+            // can no longer reach the save path — a valid code is used to prove the round trip.
+            ProjId = "PRJ1",
             Lines = [SoLine("SVC1", 1m, 10m)]
         });
         Assert.True(longSave.Succeeded, longSave.ErrorMessage);
         Assert.Equal(overRef[..50], longSave.Document!.Ref1);
-        Assert.Equal(overProj[..20], longSave.Document.ProjId);
+        Assert.Equal("PRJ1", longSave.Document.ProjId);
+    }
+
+    [Fact]
+    public async Task SaveNew_rejects_Project_not_in_master()
+    {
+        // New/changed ProjId must exist and be active in MsProject (legacy-aware rule).
+        var sut = CreateSoSut();
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            ProjId = "NO-SUCH-PROJECT",
+            Lines = [SoLine("SVC1", 1m, 10m)]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.True(save.ValidationErrors.ContainsKey("ProjId"), "expected a ProjId validation error");
     }
 
     [Fact]

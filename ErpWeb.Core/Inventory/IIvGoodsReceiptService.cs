@@ -13,6 +13,7 @@ public sealed class IvGoodsReceiptOperationResult
     public IvGoodsReceiptListPage? ListPage { get; init; }
     public IReadOnlyList<IvGoodsReceiptPoLineLookupRow> PoLines { get; init; } = [];
     public IvInventoryPostingResult? Posting { get; init; }
+    public string? AllocatedLotNo { get; init; }
 
     public static IvGoodsReceiptOperationResult Ok() => new() { Succeeded = true };
     public static IvGoodsReceiptOperationResult OkSaved(int batchId, int batchNo) => new() { Succeeded = true, BatchId = batchId, BatchNo = batchNo };
@@ -20,6 +21,7 @@ public sealed class IvGoodsReceiptOperationResult
     public static IvGoodsReceiptOperationResult OkDocument(IvGoodsReceiptDocument document) => new() { Succeeded = true, Document = document, BatchId = document.Id, BatchNo = document.BatchNo };
     public static IvGoodsReceiptOperationResult OkList(IvGoodsReceiptListPage page) => new() { Succeeded = true, ListPage = page };
     public static IvGoodsReceiptOperationResult OkPoLines(IReadOnlyList<IvGoodsReceiptPoLineLookupRow> rows) => new() { Succeeded = true, PoLines = rows };
+    public static IvGoodsReceiptOperationResult OkLot(string lotNo) => new() { Succeeded = true, AllocatedLotNo = lotNo };
     public static IvGoodsReceiptOperationResult OkPosting(IvInventoryPostingResult posting) => new()
     {
         Succeeded = posting.Succeeded,
@@ -142,6 +144,8 @@ public sealed class IvGoodsReceiptPoLineLookupRow
     public string? StdUom { get; init; }
     public decimal PackSz { get; init; }
     public string? ToWarehouse { get; init; }
+    public string? DefWarehouse { get; init; }
+    public string? DefLocation { get; init; }
     public bool LotControl { get; init; }
     public bool IsIndirect { get; init; }
     public string DisplayText =>
@@ -153,6 +157,11 @@ public interface IIvGoodsReceiptService
     Task<IvGoodsReceiptOperationResult> PeekNextBatchNoAsync(CancellationToken cancellationToken = default);
     Task<IvGoodsReceiptOperationResult> SearchAsync(IvGoodsReceiptListQuery query, CancellationToken cancellationToken = default);
     Task<IvGoodsReceiptOperationResult> SearchPoLinesAsync(string trxType, string? searchText, CancellationToken cancellationToken = default);
+    Task<IvGoodsReceiptOperationResult> AllocateLotAsync(
+        string iCode,
+        IReadOnlyCollection<string>? reservedInSave = null,
+        int? excludeBatchNo = null,
+        CancellationToken cancellationToken = default);
     Task<IvGoodsReceiptOperationResult> GetAsync(int batchNo, CancellationToken cancellationToken = default);
     Task<IvGoodsReceiptOperationResult> SaveNewAsync(IvGoodsReceiptSaveRequest request, CancellationToken cancellationToken = default);
     Task<IvGoodsReceiptOperationResult> UpdateAsync(int batchNo, IvGoodsReceiptSaveRequest request, CancellationToken cancellationToken = default);

@@ -4,7 +4,9 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -118,11 +120,13 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
+            new PoSupplierRepository(factory),
             NullLogger<IvMiscReceiptService>.Instance);
 
         var save = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = DateTime.Today,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -134,7 +138,8 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    UnitPrice = 1m
+                    UnitPrice = 1m,
+                    Reason = "ADJ"
                 }
             ]
         });
@@ -208,6 +213,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
+            new PoSupplierRepository(factory),
             NullLogger<IvMiscReceiptService>.Instance);
         var mi = new IvMiscIssueService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -221,6 +227,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var receipt = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = DateTime.Today,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -232,7 +239,8 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    UnitPrice = 1m
+                    UnitPrice = 1m,
+                    Reason = "ADJ"
                 }
             ]
         });
@@ -445,6 +453,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
+            new PoSupplierRepository(factory),
             NullLogger<IvMiscReceiptService>.Instance);
         var adj = new IvStockAdjustmentService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -457,6 +466,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
         var receipt = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = DateTime.Today,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -468,7 +478,8 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    UnitPrice = 1m
+                    UnitPrice = 1m,
+                    Reason = "ADJ"
                 }
             ]
         });

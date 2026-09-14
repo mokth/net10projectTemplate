@@ -22,6 +22,8 @@ public sealed class IvTrxBatchListRow
     public string BatchStatus { get; init; } = string.Empty;
     public string? RefNo { get; init; }
     public string? Remarks { get; init; }
+    public string? VendCode { get; init; }
+    public string? VendName { get; init; }
     public int LineCount { get; init; }
     public decimal TotalAmount { get; init; }
     public DateTime? CreatedDate { get; init; }

@@ -36,6 +36,8 @@ public sealed class SaCdnOperationResult
     public IReadOnlyList<SaCdnCustomerLookupRow> Customers { get; init; } = [];
     public IReadOnlyList<SaCdnTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyList<SaCdnInvoicePickerRow> InvoicePickerRows { get; init; } = [];
     /// <summary>R9: reservation breakdown for a posted invoice (indicator / report).</summary>
     public SaCdnInvoiceReservationSummary? Reservations { get; init; }
@@ -67,7 +69,9 @@ public sealed class SaCdnOperationResult
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
         IReadOnlyList<SaCdnCustomerLookupRow> customers,
         IReadOnlyList<SaCdnTaxGroupLookupRow> taxGroups,
-        IReadOnlyList<IvCodeLookupRow> payCodes) =>
+        IReadOnlyList<IvCodeLookupRow> payCodes,
+        IReadOnlyList<IvCodeLookupRow>? departments = null,
+        IReadOnlyList<IvCodeLookupRow>? projects = null) =>
         new()
         {
             Succeeded = true,
@@ -76,7 +80,9 @@ public sealed class SaCdnOperationResult
             Warehouses = warehouses,
             Customers = customers,
             TaxGroups = taxGroups,
-            PayCodes = payCodes
+            PayCodes = payCodes,
+            Departments = departments ?? [],
+            Projects = projects ?? []
         };
 
     public static SaCdnOperationResult OkDefaults(SaCdnCustomerDefaults defaults) =>

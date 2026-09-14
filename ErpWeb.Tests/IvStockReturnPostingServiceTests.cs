@@ -4,7 +4,9 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -86,6 +88,17 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                 LotControl = false,
                 IsActive = true
             });
+        db.PoSuppliers.Add(new PoSupplier
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            SuppCode = "SUP01",
+            SuppName = "Alpha Supplier",
+            Currency = "MYR",
+            GlCode = "AP001",
+            IsActive = true,
+            RowVersion = Guid.NewGuid().ToByteArray()
+        });
         await db.SaveChangesAsync();
     }
 
@@ -294,6 +307,22 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
         var lot = Assert.Single(await db.IvLots.ToListAsync());
         Assert.Equal("L-CR-001", lot.LotNo);
         Assert.Equal(IvTrxTypes.CustomerReturn, lot.SourceType);
+        Assert.Null(lot.SupplierCode);
+    }
+
+    [Fact]
+    public async Task CR_post_does_not_require_or_set_batch_vendor()
+    {
+        var cr = CreateCr();
+        var save = await cr.SaveNewAsync(ReturnRequest(4m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await cr.PostAsync([save.BatchNo])).Succeeded);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == save.BatchNo);
+        Assert.Equal(IvTrxTypes.CustomerReturn, batch.TrxType);
+        Assert.Null(batch.VendCode);
+        Assert.Null(batch.VendName);
     }
 
     [Fact]
@@ -303,6 +332,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
         var mrReq = new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -315,7 +345,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    ExpiryDate = FixedToday.AddDays(30)
+                    ExpiryDate = FixedToday.AddDays(30),
+                    Reason = "FOUND"
                 }
             ]
         };
@@ -496,6 +527,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
         new()
         {
             TrxDate = FixedToday,
+            VendCode = "SUP01",
             Lines =
             [
                 new IvMiscReceiptLineRequest
@@ -507,7 +539,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
-                    UnitPrice = 1m
+                    UnitPrice = 1m,
+                    Reason = "ADJ"
                 }
             ]
         };
@@ -536,6 +569,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
+            new PoSupplierRepository(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 

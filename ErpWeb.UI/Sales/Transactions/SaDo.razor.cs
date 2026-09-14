@@ -105,6 +105,7 @@ public partial class SaDo : PageBase, IDisposable
     protected List<SaDoTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
+    protected List<IvCodeLookupRow> Projects { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Countries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
     protected IReadOnlyList<SaCustAddressVm> ShipToOptions => _shipToOptions;
@@ -210,6 +211,7 @@ public partial class SaDo : PageBase, IDisposable
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
+            Projects = lookups.Projects.ToList();
         }
 
         Countries = await Lookups.ListCountriesForAssignmentAsync(_cts.Token);

@@ -35,6 +35,8 @@ public sealed class SaInvoiceOperationResult
     public IReadOnlyList<SaInvoiceTaxGroupLookupRow> TaxGroups { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> PayCodes { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> SalesReps { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
+    public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> PostWarnings { get; init; } = [];
@@ -66,7 +68,9 @@ public sealed class SaInvoiceOperationResult
         IReadOnlyList<SaInvoiceCustomerLookupRow> customers,
         IReadOnlyList<SaInvoiceTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
-        IReadOnlyList<IvCodeLookupRow>? salesReps = null) =>
+        IReadOnlyList<IvCodeLookupRow>? salesReps = null,
+        IReadOnlyList<IvCodeLookupRow>? departments = null,
+        IReadOnlyList<IvCodeLookupRow>? projects = null) =>
         new()
         {
             Succeeded = true,
@@ -76,7 +80,9 @@ public sealed class SaInvoiceOperationResult
             Customers = customers,
             TaxGroups = taxGroups,
             PayCodes = payCodes,
-            SalesReps = salesReps ?? []
+            SalesReps = salesReps ?? [],
+            Departments = departments ?? [],
+            Projects = projects ?? []
         };
 
     public static SaInvoiceOperationResult OkDefaults(SaInvoiceCustomerDefaults defaults) =>
@@ -316,6 +322,8 @@ public sealed class SaInvoiceDocument
     public string? AreaCode { get; init; }
     public string? IndustryCode { get; init; }
     public string? ChannelCode { get; init; }
+    public string? Dept { get; set; }
+    public string? ProjId { get; set; }
     public string? ShipName { get; init; }
     public string? ShipAddress1 { get; init; }
     public string? ShipAddress2 { get; init; }
@@ -432,6 +440,8 @@ public sealed class SaInvoiceSaveRequest
     public string? AreaCode { get; set; }
     public string? IndustryCode { get; set; }
     public string? ChannelCode { get; set; }
+    public string? Dept { get; set; }
+    public string? ProjId { get; set; }
     public string? ShipName { get; set; }
     public string? ShipAddress1 { get; set; }
     public string? ShipAddress2 { get; set; }

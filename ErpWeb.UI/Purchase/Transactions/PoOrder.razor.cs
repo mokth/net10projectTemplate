@@ -128,6 +128,8 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     protected List<PoOrderCodeLookupRow> PaymentTerms { get; set; } = [];
     protected List<PoOrderCodeLookupRow> Buyers { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
+    protected List<PoOrderCodeLookupRow> Departments { get; set; } = [];
+    protected List<PoOrderCodeLookupRow> Projects { get; set; } = [];
     protected List<PoPrForPoRow> PrRows { get; set; } = [];
     protected List<PoPrRemainingLineVm> PrRemainingLines { get; set; } = [];
     protected IReadOnlyList<PoOrderShipToLookupRow> ShipToOptions => _shipToOptions;
@@ -387,6 +389,8 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         PaymentTerms = lookups.PaymentTerms.ToList();
         Buyers = lookups.Buyers.ToList();
         Warehouses = lookups.Warehouses.ToList();
+        Departments = lookups.Departments.ToList();
+        Projects = lookups.Projects.ToList();
         CanViewCost = lookups.CanViewCost;
         _defaultInclusive = lookups.DefaultInclusive;
     }
@@ -885,14 +889,7 @@ public partial class PoOrder : PageBase, IAsyncDisposable
             }
 
             _isDirty = false;
-            var savedPoNo = result.PoNo ?? result.Document?.PoNo;
-            if (string.IsNullOrWhiteSpace(savedPoNo))
-            {
-                Navigation.NavigateTo("/purchase/orders");
-                return;
-            }
-
-            Navigation.NavigateTo($"/purchase/orders/view/{savedPoNo}");
+            Navigation.NavigateTo("/purchase/orders");
         }
         finally
         {

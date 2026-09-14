@@ -35,6 +35,8 @@ public class IvTrxBatchDetail
     public string? IStatus { get; set; }
     public string? IClassCode { get; set; }
     public DateTime? ExpiryDate { get; set; }
+    /// <summary>Required reason for Misc Receipt (MR) lines. Null for other trx types / legacy rows.</summary>
+    public string? Reason { get; set; }
     public string? DoNo { get; set; }
     public string? InvNo { get; set; }
     public string? SoNo { get; set; }

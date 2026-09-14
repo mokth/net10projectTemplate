@@ -50,6 +50,8 @@ public partial class SaInvoice : PageBase, IDisposable
     protected string? PayCode;
     protected string? TaxGrCode;
     protected string? SalesmanCode;
+    protected string? Dept;
+    protected string? ProjId;
     protected string? PoNo;
     protected string? Remark;
     protected string? InvName;
@@ -112,6 +114,8 @@ public partial class SaInvoice : PageBase, IDisposable
     protected List<SaInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
+    protected List<IvCodeLookupRow> Departments { get; set; } = [];
+    protected List<IvCodeLookupRow> Projects { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Classifications { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Countries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
@@ -310,6 +314,8 @@ public partial class SaInvoice : PageBase, IDisposable
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
             SalesReps = lookups.SalesReps.ToList();
+            Departments = lookups.Departments.ToList();
+            Projects = lookups.Projects.ToList();
         }
 
         Countries = await Lookups.ListCountriesForAssignmentAsync(_cts.Token);
@@ -369,6 +375,8 @@ public partial class SaInvoice : PageBase, IDisposable
         PayCode = null;
         TaxGrCode = null;
         SalesmanCode = null;
+        Dept = null;
+        ProjId = null;
         PoNo = null;
         Remark = null;
         InvEmail = null;
@@ -443,6 +451,8 @@ public partial class SaInvoice : PageBase, IDisposable
         PayCode = doc.PayCode;
         TaxGrCode = doc.TaxGrCode;
         SalesmanCode = doc.SalesmanCode;
+        Dept = doc.Dept;
+        ProjId = doc.ProjId;
         PoNo = doc.PoNo;
         Remark = doc.Remark;
         InvName = doc.InvName;
@@ -1443,6 +1453,8 @@ public partial class SaInvoice : PageBase, IDisposable
             PayCode = PayCode,
             TaxGrCode = TaxGrCode,
             SalesmanCode = SalesmanCode,
+            Dept = Dept,
+            ProjId = ProjId,
             PoNo = PoNo,
             Remark = Remark,
             InvName = InvName,

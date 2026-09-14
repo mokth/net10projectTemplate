@@ -36,6 +36,7 @@ public class IvTrxBatchDetailConfiguration : IEntityTypeConfiguration<IvTrxBatch
         builder.Property(e => e.IStatus).HasColumnName("IStatus").HasMaxLength(10);
         builder.Property(e => e.IClassCode).HasColumnName("IClassCode").HasMaxLength(30);
         builder.Property(e => e.ExpiryDate);
+        builder.Property(e => e.Reason).HasMaxLength(50);
         builder.Property(e => e.DoNo).HasColumnName("DONo").HasMaxLength(30);
         builder.Property(e => e.InvNo).HasMaxLength(30);
         builder.Property(e => e.SoNo).HasColumnName("SO_No").HasMaxLength(30);

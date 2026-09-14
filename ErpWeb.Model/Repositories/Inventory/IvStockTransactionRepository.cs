@@ -142,6 +142,8 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
                 x.BatchStatus,
                 x.RefNo,
                 x.Remarks,
+                x.VendCode,
+                x.VendName,
                 LineCount = x.Details.Count,
                 x.CreatedDate,
                 x.CreatedBy
@@ -172,6 +174,8 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
             BatchStatus = x.BatchStatus,
             RefNo = x.RefNo,
             Remarks = x.Remarks,
+            VendCode = x.VendCode,
+            VendName = x.VendName,
             LineCount = x.LineCount,
             TotalAmount = amountByBatchId.GetValueOrDefault(x.Id),
             CreatedDate = x.CreatedDate,

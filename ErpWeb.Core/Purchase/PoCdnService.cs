@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
@@ -213,6 +215,23 @@ public sealed class PoCdnService : IPoCdnService
             .Select(x => new IvCodeLookupRow { Code = x.PayCode, Desc = x.PayDesc })
             .ToListAsync(cancellationToken);
 
+        // Department / Project masters — company + branch scoped, active only.
+        var departments = await db.MsDepts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.DeptCode)
+            .Select(x => new IvCodeLookupRow { Code = x.DeptCode, Desc = x.DeptName })
+            .ToListAsync(cancellationToken);
+
+        var projects = await db.MsProjects.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.Status == MsProjectStatus.Active)
+            .OrderBy(x => x.ProjCode)
+            .Select(x => new IvCodeLookupRow { Code = x.ProjCode, Desc = x.ProjName })
+            .ToListAsync(cancellationToken);
+
         var canInternalAdjustment = await CanAsync(
             type, PermissionCodes.InternalAdjustment, cancellationToken);
 
@@ -228,7 +247,7 @@ public sealed class PoCdnService : IPoCdnService
             })
             .ToList();
 
-        return PoCdnOperationResult.OkLookups(items, warehouses, vendors, taxGroups, payCodes, reasonCodes);
+        return PoCdnOperationResult.OkLookups(items, warehouses, vendors, taxGroups, payCodes, departments, projects, reasonCodes);
     }
 
     public async Task<PoCdnOperationResult> GetVendorDefaultsAsync(
@@ -1058,12 +1077,44 @@ public sealed class PoCdnService : IPoCdnService
             errors["Currency"] = rateError;
         }
 
+        // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
+        // A stored orphan may stay untouched; a new or changed code must exist and be active.
+        string? priorDept = null;
+        string? priorProj = null;
+        var editDocNo = (excludeDocNo ?? string.Empty).Trim();
+        if (editDocNo.Length > 0)
+        {
+            var prior = await db.PoCdns.AsNoTracking()
+                .Where(x => x.CompanyCode == company
+                    && x.BranchCode == branch
+                    && x.DocNo == editDocNo)
+                .Select(x => new { x.Dept, x.ProjId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (prior is not null)
+            {
+                priorDept = prior.Dept;
+                priorProj = prior.ProjId;
+            }
+        }
+
+        var deptError = await MsRefLookupRules.ValidateAsync(
+            db, company, branch, MsRefLookupKind.Department, priorDept, request.Dept, cancellationToken);
+        if (deptError is not null)
+        {
+            errors["Dept"] = deptError;
+        }
+
+        var projError = await MsRefLookupRules.ValidateAsync(
+            db, company, branch, MsRefLookupKind.Project, priorProj, request.ProjId, cancellationToken);
+        if (projError is not null)
+        {
+            errors["ProjId"] = projError;
+        }
+
         if (errors.Count > 0)
         {
             return PreparedOutcome.FailValidation("Validation failed.", errors);
         }
-
-        // ── Reference data ────────────────────────────────────────────────────
         var taxPercents = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == company)
             .ToDictionaryAsync(x => x.TaxGrCode, x => x.Percentage, StringComparer.OrdinalIgnoreCase, cancellationToken);

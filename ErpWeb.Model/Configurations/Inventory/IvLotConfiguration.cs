@@ -17,7 +17,7 @@ public class IvLotConfiguration : IEntityTypeConfiguration<IvLot>
         builder.Property(e => e.LotNo).HasMaxLength(50).IsRequired();
         builder.Property(e => e.SourceType).HasMaxLength(20);
         builder.Property(e => e.SourceDocNo).HasMaxLength(50);
-        builder.Property(e => e.SupplierCode).HasMaxLength(20);
+        builder.Property(e => e.SupplierCode).HasMaxLength(60);
         builder.Property(e => e.QcStatus).HasMaxLength(10);
         builder.Property(e => e.Remarks).HasMaxLength(250);
         builder.Property(e => e.LocationCode).HasMaxLength(10);

@@ -68,6 +68,8 @@ public static class MenuCodes
     public const string AdminMaster = "ADMIN_MASTER";
     public const string AdminSmNum = "SA_SM_NUM";
     public const string AdminSmNumDate = "SA_SM_NUM_DATE";
+    public const string AdminDept = "ADMIN_DEPT";
+    public const string AdminProject = "ADMIN_PROJECT";
     /// <summary>Obsolete alias — use <see cref="AdminSmNum"/>.</summary>
     public const string SalesSmNum = AdminSmNum;
     /// <summary>Obsolete alias — use <see cref="AdminSmNumDate"/>.</summary>

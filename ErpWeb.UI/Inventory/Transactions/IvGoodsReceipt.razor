@@ -158,6 +158,24 @@
                                 @DisplayOrDash(((IvGoodsReceiptLineVm)context.DataItem).ToWarehouse)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToLocation)" Caption="Location" Width="100px">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvGoodsReceiptLineVm)context.DataItem).ToLocation)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToLotNo)" Caption="Lot" Width="110px">
+                            <CellDisplayTemplate>
+                                @DisplayOrDash(((IvGoodsReceiptLineVm)context.DataItem).ToLotNo)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ExpiryDate)" Caption="Expiry" Width="110px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var expiry = ((IvGoodsReceiptLineVm)context.DataItem).ExpiryDate;
+                                }
+                                @(expiry is null ? "—" : expiry.Value.ToString("dd/MM/yyyy"))
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.FrPurQty)" Caption="FrPurQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToRecvQty)" Caption="ToRecvQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(IvGoodsReceiptLineVm.ToStdQty)" Caption="StdQty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -314,7 +332,7 @@
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="Add selected"
                               IconCssClass="fa-solid fa-plus"
-                              Click="@AddFromPo"
+                              Click="@AddFromPoAsync"
                               Enabled="@(!PoPickerLoading && SelectedPoPickerRows.Count > 0)" />
                 </div>
             </div>
@@ -411,11 +429,21 @@
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Lot number" ColSpanMd="6">
                                     <Template>
-                                        <DxTextBox @bind-Text="@LinePopup.ToLotNo"
-                                                   maxlength="50"
-                                                   Enabled="@LinePopup.LotControl"
-                                                   InputCssClass="@(LinePopup.LotControl ? "required-field" : null)"
-                                                   NullText="@(LinePopup.LotControl ? "Required for lot-controlled item" : "Not lot-controlled")" />
+                                        <div class="d-flex gap-1">
+                                            <DxTextBox @bind-Text="@LinePopup.ToLotNo"
+                                                       maxlength="50"
+                                                       Enabled="@LinePopup.LotControl"
+                                                       CssClass="flex-grow-1"
+                                                       InputCssClass="@(LinePopup.LotControl ? "required-field" : null)"
+                                                       NullText="@(LinePopup.LotControl ? "Defaulted — you can change this" : "Not lot-controlled")" />
+                                            @if (LinePopup.LotControl)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                          Text="Generate"
+                                                          Click="@OnGenerateLotAsync"
+                                                          Enabled="@(!IsSubmitting)" />
+                                            }
+                                        </div>
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">

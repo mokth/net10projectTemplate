@@ -341,7 +341,7 @@ public partial class IvGoodsReceipt : PageBase
 
     protected void ClosePoPicker() => PoPickerVisible = false;
 
-    protected void AddFromPo()
+    protected async Task AddFromPoAsync()
     {
         if (SelectedPoPickerRows.Count == 0)
         {
@@ -350,12 +350,48 @@ public partial class IvGoodsReceipt : PageBase
         }
 
         var added = 0;
+        var reservedLotsByItem = Lines
+            .Where(x => x.LotControl && !string.IsNullOrWhiteSpace(x.ToLotNo))
+            .GroupBy(x => x.ICode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.ToLotNo).ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
         foreach (var row in SelectedPoPickerRows)
         {
             var key = IvGoodsReceiptLineVm.BuildLineKey(row.PoNo, row.PoRelNo, row.PoLineNo);
             if (Lines.Any(x => string.Equals(x.LineKey, key, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
+            }
+
+            var warehouse = string.Empty;
+            var location = string.Empty;
+            var lotNo = string.Empty;
+
+            if (IsStockGr)
+            {
+                warehouse = ResolveDefaultWarehouse(row.ToWarehouse, row.DefWarehouse);
+                location = await ResolveDefaultLocationAsync(warehouse, row.DefLocation);
+                if (row.LotControl)
+                {
+                    reservedLotsByItem.TryGetValue(row.ICode, out var reserved);
+                    reserved ??= [];
+                    var allocate = await GoodsReceipt.AllocateLotAsync(
+                        row.ICode,
+                        reserved,
+                        IsEditMode ? BatchNo : null);
+                    if (!allocate.Succeeded || string.IsNullOrWhiteSpace(allocate.AllocatedLotNo))
+                    {
+                        PoPickerError = allocate.ErrorMessage ?? $"Unable to allocate lot for item '{row.ICode}'.";
+                        return;
+                    }
+
+                    lotNo = allocate.AllocatedLotNo;
+                    reserved.Add(lotNo);
+                    reservedLotsByItem[row.ICode] = reserved;
+                }
             }
 
             Lines.Add(new IvGoodsReceiptLineVm
@@ -371,9 +407,12 @@ public partial class IvGoodsReceipt : PageBase
                 Uom = row.PurchaseUom ?? string.Empty,
                 StdUom = row.StdUom,
                 PackSz = row.PackSz,
-                ToWarehouse = row.ToWarehouse ?? string.Empty,
+                ToWarehouse = warehouse,
+                ToLocation = location,
+                ToLotNo = lotNo,
                 IStatus = DefaultItemStatus(),
-                LotControl = row.LotControl
+                LotControl = row.LotControl,
+                DefLocation = row.DefLocation
             });
             added++;
         }
@@ -422,7 +461,7 @@ public partial class IvGoodsReceipt : PageBase
             LotControl = line.LotControl,
             Uom = line.Uom
         };
-        _pendingDefLocation = line.ToLocation;
+        _pendingDefLocation = string.IsNullOrWhiteSpace(line.ToLocation) ? line.DefLocation : line.ToLocation;
         LinePopupError = null;
         LinePopupVisible = true;
 
@@ -453,6 +492,7 @@ public partial class IvGoodsReceipt : PageBase
 
     protected async Task OnLineWarehouseChangedAsync(string? warehouse)
     {
+        var previousLocation = LinePopup.ToLocation;
         LinePopup.ToWarehouse = warehouse ?? string.Empty;
         LinePopup.ToLocation = string.Empty;
         Locations = [];
@@ -460,6 +500,7 @@ public partial class IvGoodsReceipt : PageBase
         if (string.IsNullOrWhiteSpace(LinePopup.ToWarehouse))
         {
             LocationsLoading = false;
+            _pendingDefLocation = null;
             return;
         }
 
@@ -480,7 +521,12 @@ public partial class IvGoodsReceipt : PageBase
         }
 
         Locations = result.Rows;
-        if (!string.IsNullOrWhiteSpace(_pendingDefLocation)
+        if (!string.IsNullOrWhiteSpace(previousLocation)
+            && Locations.Any(x => string.Equals(x.Code, previousLocation, StringComparison.OrdinalIgnoreCase)))
+        {
+            LinePopup.ToLocation = previousLocation;
+        }
+        else if (!string.IsNullOrWhiteSpace(_pendingDefLocation)
             && Locations.Any(x => string.Equals(x.Code, _pendingDefLocation, StringComparison.OrdinalIgnoreCase)))
         {
             LinePopup.ToLocation = _pendingDefLocation;
@@ -489,9 +535,47 @@ public partial class IvGoodsReceipt : PageBase
         _pendingDefLocation = null;
     }
 
+    protected async Task OnGenerateLotAsync()
+    {
+        LinePopupError = null;
+        if (!LinePopup.LotControl || string.IsNullOrWhiteSpace(LinePopup.ICode))
+        {
+            return;
+        }
+
+        var reserved = Lines
+            .Where(x => x != _editingLine
+                && string.Equals(x.ICode, LinePopup.ICode, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(x.ToLotNo))
+            .Select(x => x.ToLotNo)
+            .ToList();
+
+        var result = await GoodsReceipt.AllocateLotAsync(
+            LinePopup.ICode,
+            reserved,
+            IsEditMode ? BatchNo : null);
+        if (!result.Succeeded || string.IsNullOrWhiteSpace(result.AllocatedLotNo))
+        {
+            LinePopupError = result.ErrorMessage ?? "Unable to allocate lot number.";
+            return;
+        }
+
+        LinePopup.ToLotNo = result.AllocatedLotNo;
+    }
+
     protected void CommitLineEdit()
     {
-        LinePopupError = ValidateLinePopup();
+        LinePopupError = ValidateStockReceiveLine(
+            LinePopup.ToRecvQty,
+            LinePopup.FrPurQty,
+            LinePopup.ToWarehouse,
+            LinePopup.ToLocation,
+            LinePopup.ToLotNo,
+            LinePopup.IStatus,
+            LinePopup.ExpiryDate,
+            LinePopup.LotControl,
+            locationsLoaded: true,
+            locationOptions: Locations);
         if (LinePopupError is not null || _editingLine is null)
         {
             return;
@@ -547,6 +631,26 @@ public partial class IvGoodsReceipt : PageBase
         {
             ErrorMessage = "Add at least one receipt line from a purchase order.";
             return;
+        }
+
+        foreach (var line in Lines)
+        {
+            var error = ValidateStockReceiveLine(
+                line.ToRecvQty,
+                line.FrPurQty,
+                line.ToWarehouse,
+                line.ToLocation,
+                line.ToLotNo,
+                line.IStatus,
+                line.ExpiryDate,
+                line.LotControl,
+                locationsLoaded: false,
+                locationOptions: null);
+            if (error is not null)
+            {
+                ErrorMessage = $"Line {line.LineNo}: {error}";
+                return;
+            }
         }
 
         IsSubmitting = true;
@@ -671,16 +775,26 @@ public partial class IvGoodsReceipt : PageBase
         return true;
     }
 
-    private string? ValidateLinePopup()
+    private string? ValidateStockReceiveLine(
+        decimal toRecvQty,
+        decimal frPurQty,
+        string? toWarehouse,
+        string? toLocation,
+        string? toLotNo,
+        string? iStatus,
+        DateTime? expiryDate,
+        bool lotControl,
+        bool locationsLoaded,
+        IReadOnlyList<IvCodeLookupRow>? locationOptions)
     {
-        if (LinePopup.ToRecvQty <= 0m)
+        if (toRecvQty <= 0m)
         {
             return "Receive quantity must be greater than zero.";
         }
 
-        if (LinePopup.ToRecvQty > LinePopup.FrPurQty)
+        if (toRecvQty > frPurQty)
         {
-            return $"Receive quantity cannot exceed the balance ({LinePopup.FrPurQty:n4}).";
+            return $"Receive quantity cannot exceed the balance ({frPurQty:n4}).";
         }
 
         if (!IsStockGr)
@@ -688,34 +802,42 @@ public partial class IvGoodsReceipt : PageBase
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(LinePopup.ToWarehouse))
+        if (string.IsNullOrWhiteSpace(toWarehouse))
         {
             return "Warehouse is required.";
         }
 
-        if (Locations.Count > 0 && string.IsNullOrWhiteSpace(LinePopup.ToLocation))
+        if (locationsLoaded && locationOptions is { Count: > 0 } && string.IsNullOrWhiteSpace(toLocation))
         {
             return "Location is required.";
         }
 
-        if (string.IsNullOrWhiteSpace(LinePopup.IStatus))
+        if (locationsLoaded
+            && locationOptions is { Count: > 0 }
+            && !string.IsNullOrWhiteSpace(toLocation)
+            && !locationOptions.Any(x => string.Equals(x.Code, toLocation, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"Location '{toLocation}' is not valid for warehouse '{toWarehouse}'.";
+        }
+
+        if (string.IsNullOrWhiteSpace(iStatus))
         {
             return "Item status is required.";
         }
 
-        if (LinePopup.LotControl)
+        if (!string.IsNullOrWhiteSpace(toLotNo) && toLotNo.Trim().Length > 50)
         {
-            if (string.IsNullOrWhiteSpace(LinePopup.ToLotNo))
-            {
-                return "Lot number is required for this item.";
-            }
+            return "Lot number must be at most 50 characters.";
+        }
 
-            if (LinePopup.ExpiryDate is null)
+        if (lotControl)
+        {
+            if (expiryDate is null)
             {
                 return "Expiry date is required for this item.";
             }
 
-            if (LinePopup.ExpiryDate.Value.Date < AppToday.Date)
+            if (expiryDate.Value.Date < AppToday.Date)
             {
                 return "Expiry date cannot be earlier than today.";
             }
@@ -748,6 +870,43 @@ public partial class IvGoodsReceipt : PageBase
         Statuses.Any(x => string.Equals(x.Code, IvItemStatuses.Active, StringComparison.OrdinalIgnoreCase))
             ? IvItemStatuses.Active
             : (Statuses.FirstOrDefault()?.Code ?? IvItemStatuses.Active);
+
+    private string ResolveDefaultWarehouse(string? poWarehouse, string? defWarehouse)
+    {
+        foreach (var candidate in new[] { poWarehouse, defWarehouse })
+        {
+            var code = (candidate ?? string.Empty).Trim();
+            if (code.Length == 0)
+            {
+                continue;
+            }
+
+            if (Warehouses.Any(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)))
+            {
+                return code;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<string> ResolveDefaultLocationAsync(string warehouse, string? defLocation)
+    {
+        if (string.IsNullOrWhiteSpace(warehouse) || string.IsNullOrWhiteSpace(defLocation))
+        {
+            return string.Empty;
+        }
+
+        var result = await Lookups.ListActiveLocationsAsync(warehouse);
+        if (!result.Succeeded)
+        {
+            return string.Empty;
+        }
+
+        return result.Rows.Any(x => string.Equals(x.Code, defLocation, StringComparison.OrdinalIgnoreCase))
+            ? defLocation.Trim()
+            : string.Empty;
+    }
 
     private static string NormalizeTrxType(string? trxType) =>
         string.Equals((trxType ?? string.Empty).Trim(), IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
@@ -794,6 +953,7 @@ public sealed class IvGoodsReceiptLineVm
     public DateTime? ExpiryDate { get; set; }
     public string? Remarks { get; set; }
     public bool LotControl { get; set; }
+    public string? DefLocation { get; set; }
 
     public string LineKey => BuildLineKey(PoNo, PoRelNo, PoLineNo);
     public decimal ToStdQty => PoOrderCalc.ComputeStdQty(ToRecvQty, PackSz);
@@ -839,6 +999,8 @@ public sealed class IvGoodsReceiptPoPickerRow
     public string? StdUom { get; init; }
     public decimal PackSz { get; init; }
     public string? ToWarehouse { get; init; }
+    public string? DefWarehouse { get; init; }
+    public string? DefLocation { get; init; }
     public bool LotControl { get; init; }
 
     public static IvGoodsReceiptPoPickerRow FromLookup(IvGoodsReceiptPoLineLookupRow row) =>
@@ -859,6 +1021,8 @@ public sealed class IvGoodsReceiptPoPickerRow
             StdUom = row.StdUom,
             PackSz = row.PackSz,
             ToWarehouse = row.ToWarehouse,
+            DefWarehouse = row.DefWarehouse,
+            DefLocation = row.DefLocation,
             LotControl = row.LotControl
         };
 }

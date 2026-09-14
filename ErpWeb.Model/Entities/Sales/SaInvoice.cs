@@ -65,6 +65,12 @@ public class SaInvoice
     public string? IndustryCode { get; set; }
     public string? ChannelCode { get; set; }
 
+    /// <summary>Department code (MsDept). Optional, nvarchar(20).</summary>
+    public string? Dept { get; set; }
+
+    /// <summary>Project code (MsProject). Optional, nvarchar(20). Column is <c>ProjID</c>.</summary>
+    public string? ProjId { get; set; }
+
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }

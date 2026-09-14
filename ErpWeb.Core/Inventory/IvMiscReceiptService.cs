@@ -4,6 +4,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -21,6 +22,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
     private readonly IIvStockTransactionRepository _transactions;
     private readonly IIvStockPostingRepository _postingRepo;
     private readonly IIvInventoryPostingService _posting;
+    private readonly IPoSupplierRepository _suppliers;
     private readonly ILogger<IvMiscReceiptService> _logger;
 
     public IvMiscReceiptService(
@@ -34,6 +36,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         IIvStockTransactionRepository transactions,
         IIvStockPostingRepository postingRepo,
         IIvInventoryPostingService posting,
+        IPoSupplierRepository suppliers,
         ILogger<IvMiscReceiptService> logger)
     {
         _dbFactory = dbFactory;
@@ -46,6 +49,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         _transactions = transactions;
         _postingRepo = postingRepo;
         _posting = posting;
+        _suppliers = suppliers;
         _logger = logger;
     }
 
@@ -88,6 +92,19 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             context.BranchCode!,
             cancellationToken);
 
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var vendors = await db.PoSuppliers.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && x.IsActive)
+            .OrderBy(x => x.SuppCode)
+            .Select(x => new IvMiscReceiptVendorLookupRow
+            {
+                SuppCode = x.SuppCode,
+                SuppName = x.SuppName
+            })
+            .ToListAsync(cancellationToken);
+
         return IvMiscReceiptOperationResult.OkLookups(
             items.Select(x => new IvStockLookupRow
             {
@@ -104,7 +121,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             {
                 WarehouseCode = x.WarehouseCode,
                 WarehouseDesc = x.WarehouseDesc
-            }).ToList());
+            }).ToList(),
+            vendors);
     }
 
     public async Task<IvMiscReceiptOperationResult> SearchAsync(
@@ -152,6 +170,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 BatchStatus = x.BatchStatus,
                 RefNo = x.RefNo,
                 Remarks = x.Remarks,
+                VendCode = x.VendCode,
+                VendName = x.VendName,
                 LineCount = x.LineCount,
                 TotalAmount = decimal.Round(x.TotalAmount, 2),
                 CreatedDate = x.CreatedDate,
@@ -208,8 +228,12 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             lotControlByCode[code] = item?.LotControl ?? false;
         }
 
-        var lines = batch.Details
-            .OrderBy(d => d.TrxLineNo)
+        var orderedDetails = batch.Details.OrderBy(d => d.TrxLineNo).ToList();
+        var supplierDoNo = orderedDetails
+            .Select(d => d.DoNo)
+            .FirstOrDefault(d => !string.IsNullOrWhiteSpace(d));
+
+        var lines = orderedDetails
             .Select(d =>
             {
                 var code = (d.ICode ?? string.Empty).Trim();
@@ -228,7 +252,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                     IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
                     UnitPrice = d.UnitPrice ?? 0m,
                     ExpiryDate = d.ExpiryDate,
-                    Reason = null,
+                    Reason = d.Reason,
                     Remarks = d.Remarks,
                     LotControl = lotControl
                 };
@@ -243,6 +267,9 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             BatchStatus = batch.BatchStatus,
             RefNo = batch.RefNo,
             Remark = batch.Remarks,
+            VendCode = batch.VendCode,
+            VendName = batch.VendName,
+            SupplierDoNo = supplierDoNo,
             Lines = lines
         });
     }
@@ -269,6 +296,19 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var vendorResult = await ResolveActiveVendorAsync(
+            db, context.CompanyCode!, context.BranchCode!, request.VendCode, cancellationToken);
+        if (vendorResult.ErrorMessage is not null)
+        {
+            return IvMiscReceiptOperationResult.Fail(vendorResult.ErrorMessage);
+        }
+
+        var doResult = NormalizeSupplierDoNo(request.SupplierDoNo);
+        if (doResult.ErrorMessage is not null)
+        {
+            return IvMiscReceiptOperationResult.Fail(doResult.ErrorMessage);
+        }
 
         var validatedResult = await ValidateLinesAsync(
             db,
@@ -302,12 +342,21 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             BatchStatus = IvBatchStatuses.New,
             RefNo = refNo,
             Remarks = TruncateOptional(request.Remark, 250),
+            VendCode = vendorResult.VendCode,
+            VendName = vendorResult.VendName,
             LocationCode = context.LocationCode,
             CreatedDate = now,
             CreatedBy = userId
         };
 
-        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo);
+        AddDetails(
+            batch,
+            validatedResult.Lines!,
+            context.CompanyCode!,
+            context.BranchCode!,
+            context.LocationCode,
+            batchNo,
+            doResult.DoNo);
 
         await _transactions.InsertAsync(db, batch, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
@@ -371,6 +420,19 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             return IvMiscReceiptOperationResult.Fail("Only NEW miscellaneous receipts can be edited.");
         }
 
+        var vendorResult = await ResolveActiveVendorAsync(
+            db, context.CompanyCode!, context.BranchCode!, request.VendCode, cancellationToken);
+        if (vendorResult.ErrorMessage is not null)
+        {
+            return IvMiscReceiptOperationResult.Fail(vendorResult.ErrorMessage);
+        }
+
+        var doResult = NormalizeSupplierDoNo(request.SupplierDoNo);
+        if (doResult.ErrorMessage is not null)
+        {
+            return IvMiscReceiptOperationResult.Fail(doResult.ErrorMessage);
+        }
+
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
 
         var validatedResult = await ValidateLinesAsync(
@@ -389,12 +451,21 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         batch.TrxDtTime = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
         batch.RefNo = NormalizeRefNo(request.RefNo, batch.BatchNo);
         batch.Remarks = TruncateOptional(request.Remark, 250);
+        batch.VendCode = vendorResult.VendCode;
+        batch.VendName = vendorResult.VendName;
         batch.ModifiedDate = now;
         batch.ModifiedBy = userId;
 
         db.IvTrxBatchDetails.RemoveRange(existingDetails);
         batch.Details.Clear();
-        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo);
+        AddDetails(
+            batch,
+            validatedResult.Lines!,
+            context.CompanyCode!,
+            context.BranchCode!,
+            context.LocationCode,
+            batch.BatchNo,
+            doResult.DoNo);
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
@@ -498,6 +569,51 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         return IvMiscReceiptOperationResult.OkPosting(posting);
     }
 
+    private async Task<(string? ErrorMessage, string? VendCode, string? VendName)> ResolveActiveVendorAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string? vendCode,
+        CancellationToken cancellationToken)
+    {
+        var code = (vendCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            // Optional: unknown-origin / found stock may have no supplier.
+            return (null, null, null);
+        }
+
+        if (code.Length > 60)
+        {
+            return ("Vendor code must be at most 60 characters.", null, null);
+        }
+
+        var supplier = await _suppliers.GetByCodeAsync(
+            db, companyCode, branchCode, code, includeChildren: false, cancellationToken);
+        if (supplier is null || !supplier.IsActive)
+        {
+            return ($"Vendor '{code}' was not found or is inactive for this company/branch.", null, null);
+        }
+
+        return (null, supplier.SuppCode, supplier.SuppName);
+    }
+
+    private static (string? ErrorMessage, string? DoNo) NormalizeSupplierDoNo(string? supplierDoNo)
+    {
+        if (string.IsNullOrWhiteSpace(supplierDoNo))
+        {
+            return (null, null);
+        }
+
+        var trimmed = supplierDoNo.Trim();
+        if (trimmed.Length > 30)
+        {
+            return ("Supplier DO must be at most 30 characters.", null);
+        }
+
+        return (null, trimmed);
+    }
+
     private async Task<(string? ErrorMessage, List<ValidatedLine>? Lines)> ValidateLinesAsync(
         AppDbContext db,
         IReadOnlyList<IvMiscReceiptLineRequest>? lines,
@@ -549,7 +665,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string companyCode,
         string branchCode,
         string? locationCode,
-        int batchNo)
+        int batchNo,
+        string? supplierDoNo)
     {
         short trxLineNo = 1;
         foreach (var row in validated)
@@ -574,7 +691,9 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
                 UnitPrice = IvQty.Round(row.UnitPrice),
+                Reason = row.Reason,
                 Remarks = row.Remarks,
+                DoNo = supplierDoNo,
                 LocationCode = NullIfWhiteSpace(locationCode)
             });
             trxLineNo++;
@@ -704,6 +823,21 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             return ($"Line {lineNo}: unit price cannot be negative.", null);
         }
 
+        var reason = (line.Reason ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return ($"Line {lineNo}: reason is required.", null);
+        }
+
+        if (reason.Length > 50)
+        {
+            return ($"Line {lineNo}: reason must be at most 50 characters.", null);
+        }
+
+        var remarks = string.IsNullOrWhiteSpace(line.Remarks)
+            ? null
+            : TruncateOptional(line.Remarks, 250);
+
         var lot = (line.ToLotNo ?? string.Empty).Trim();
         DateTime? expiry = line.ExpiryDate?.Date;
         string toLotNo;
@@ -750,7 +884,6 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         }
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
-        var remarks = CombineRemarks(line.Reason, line.Remarks);
 
         return (null, new ValidatedLine(
             item,
@@ -764,24 +897,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             iClassCode,
             expiry,
             line.UnitPrice,
+            reason,
             remarks));
-    }
-
-    private static string? CombineRemarks(string? reason, string? remarks)
-    {
-        var rsn = reason?.Trim();
-        var rem = remarks?.Trim();
-        if (string.IsNullOrEmpty(rsn))
-        {
-            return TruncateOptional(rem, 250);
-        }
-
-        if (string.IsNullOrEmpty(rem))
-        {
-            return TruncateOptional(rsn, 250);
-        }
-
-        return TruncateOptional($"{rsn}: {rem}", 250);
     }
 
     private static string? NormalizeRefNo(string? refNo, int batchNo)
@@ -847,6 +964,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string IClassCode,
         DateTime? ExpiryDate,
         decimal UnitPrice,
+        string Reason,
         string? Remarks);
 
     private readonly record struct UserContext(

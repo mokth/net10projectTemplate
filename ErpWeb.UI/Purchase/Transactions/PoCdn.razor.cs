@@ -61,6 +61,8 @@ public partial class PoCdn : PageBase, IDisposable
     protected decimal CurrRate = 1m;
     protected bool CurrRateValid;
     protected string? PayCode;
+    protected string? Dept;
+    protected string? ProjId;
     protected string? TaxGrCode;
     protected string? ReasonCode;
     protected string? InvNo;
@@ -84,6 +86,8 @@ public partial class PoCdn : PageBase, IDisposable
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<PoCdnTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
+    protected List<IvCodeLookupRow> Departments { get; set; } = [];
+    protected List<IvCodeLookupRow> Projects { get; set; } = [];
     protected List<PoCdnReasonCodeOption> ReasonCodes { get; set; } = [];
     protected List<PoCdnInvoicePickerRow> InvoicePickerRows { get; set; } = [];
     protected List<PoCdnInvoiceLinePickerRow> InvoiceLineRows { get; set; } = [];
@@ -213,6 +217,8 @@ public partial class PoCdn : PageBase, IDisposable
                 Warehouses = lookups.Warehouses.ToList();
                 TaxGroups = lookups.TaxGroups.ToList();
                 PayCodes = lookups.PayCodes.ToList();
+                Departments = lookups.Departments.ToList();
+                Projects = lookups.Projects.ToList();
                 ReasonCodes = lookups.ReasonCodes.ToList();
             }
             else
@@ -268,6 +274,8 @@ public partial class PoCdn : PageBase, IDisposable
         CurrRate = 1m;
         CurrRateValid = true;
         PayCode = null;
+        Dept = null;
+        ProjId = null;
         TaxGrCode = null;
         InvNo = null;
         SupplierDocNo = null;
@@ -295,6 +303,8 @@ public partial class PoCdn : PageBase, IDisposable
         CurrRate = doc.CurrRate;
         CurrRateValid = true;
         PayCode = doc.PayCode;
+        Dept = doc.Dept;
+        ProjId = doc.ProjId;
         TaxGrCode = doc.TaxGrCode;
         ReasonCode = doc.ReasonCode;
         InvNo = doc.InvNo;
@@ -541,6 +551,8 @@ public partial class PoCdn : PageBase, IDisposable
         CurrRateValid = true;
         TaxGrCode ??= doc.TaxGrCode;
         PayCode ??= doc.PayCode;
+        Dept ??= doc.Dept;
+        ProjId ??= doc.ProjId;
         RecalcDocument();
         InvoicePickerVisible = false;
         StatusMessage = $"Copied {Lines.Count} line(s) from invoice {row.InvNo}. Review and save to confirm.";
@@ -740,6 +752,8 @@ public partial class PoCdn : PageBase, IDisposable
         Currency = Currency,
         CurrRate = CurrRate,
         PayCode = PayCode,
+        Dept = Dept,
+        ProjId = ProjId,
         TaxGrCode = TaxGrCode,
         ReasonCode = ReasonCode,
         SupplierDocNo = SupplierDocNo,
@@ -754,14 +768,18 @@ public partial class PoCdn : PageBase, IDisposable
     {
         if (IsSubmitting) return;
 
-        using var blocking = BeginBlockingWork("Please wait. Saving is still running.");
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
         ValidationErrors.Clear();
 
+        // MainLayout's NavigationLock cancels internal navigation while PageNavigationGuard is
+        // blocking, so the scope opened below must end before we navigate.
+        string? navigateTo = null;
         try
         {
+            using var blocking = BeginBlockingWork("Please wait. Saving is still running.");
+
             RecalcDocument();
 
             if (IsNewMode)
@@ -769,24 +787,24 @@ public partial class PoCdn : PageBase, IDisposable
                 var created = await Cdns.SaveNewAsync(ToRequest(), _cts.Token);
                 if (!HandleOperationResult(created, stayOnPage: false)) return;
 
-                StatusMessage = $"Saved {created.DocNo}.";
-                Navigation.NavigateTo(EditRouteFor(created.DocNo!));
-                return;
+                navigateTo = ListRoute;
             }
-
-            var updated = await Cdns.UpdateAsync(DocNo!, ToRequest(), _cts.Token);
-            if (!HandleOperationResult(updated, stayOnPage: true)) return;
-
-            StatusMessage = "Saved.";
-            var reloaded = await Cdns.GetAsync(DocNo!, _cts.Token);
-            if (reloaded.Succeeded && reloaded.Document is not null)
+            else
             {
-                ApplyDocument(reloaded.Document);
+                var updated = await Cdns.UpdateAsync(DocNo!, ToRequest(), _cts.Token);
+                if (!HandleOperationResult(updated, stayOnPage: true)) return;
+
+                navigateTo = ListRoute;
             }
         }
         finally
         {
             IsSubmitting = false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(navigateTo))
+        {
+            Navigation.NavigateTo(navigateTo);
         }
     }
 
@@ -868,12 +886,17 @@ public partial class PoCdn : PageBase, IDisposable
     {
         if (IsSubmitting || string.IsNullOrWhiteSpace(DocNo)) return;
 
-        using var blocking = BeginBlockingWork("Please wait. Delete is still running.");
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+
+        // MainLayout's NavigationLock cancels internal navigation while PageNavigationGuard is
+        // blocking, so the scope opened below must end before we navigate.
+        string? navigateTo = null;
         try
         {
+            using var blocking = BeginBlockingWork("Please wait. Delete is still running.");
+
             var result = await Cdns.DeleteAsync(
                 [new PoCdnKeyedRequest { DocNo = DocNo!, RowVersion = _rowVersion }], _cts.Token);
 
@@ -884,11 +907,16 @@ public partial class PoCdn : PageBase, IDisposable
                 return;
             }
 
-            Navigation.NavigateTo(ListRoute);
+            navigateTo = ListRoute;
         }
         finally
         {
             IsSubmitting = false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(navigateTo))
+        {
+            Navigation.NavigateTo(navigateTo);
         }
     }
 
