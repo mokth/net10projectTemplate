@@ -46,7 +46,7 @@
                 <DxButton RenderStyle="@(AppliedType == "INV" ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
                           Text="Invoices" Click="@(() => SetTypeAsync("INV"))" />
                 <DxButton RenderStyle="@(AppliedType == "CN" ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
-                          Text="Credit Notes" Click="@(() => SetTypeAsync("CN"))" />
+                          Text="Quantity Corrections" Click="@(() => SetTypeAsync("CN"))" />
                 <DxButton RenderStyle="@(string.IsNullOrEmpty(AppliedType) ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
                           Text="All" Click="@(() => SetTypeAsync(null))" />
             </div>

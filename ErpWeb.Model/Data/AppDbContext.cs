@@ -73,6 +73,8 @@ public class AppDbContext : DbContext
     public DbSet<PoPrDetail> PoPrDetails => Set<PoPrDetail>();
     public DbSet<PoInvoice> PoInvoices => Set<PoInvoice>();
     public DbSet<PoInvoiceDetail> PoInvoiceDetails => Set<PoInvoiceDetail>();
+    public DbSet<PoCdn> PoCdns => Set<PoCdn>();
+    public DbSet<PoCdnDetail> PoCdnDetails => Set<PoCdnDetail>();
     public DbSet<PoCj> PoCjs => Set<PoCj>();
     public DbSet<PoCjDetail> PoCjDetails => Set<PoCjDetail>();
     public DbSet<PoVendor> PoVendors => Set<PoVendor>();

@@ -1,4 +1,4 @@
--- Seed AdSmNumDate for Purchase Invoice / CN (NumCd = 'POCDN') - monthly DEMO pattern.
+-- Seed AdSmNumDate for Purchase Invoice / CN (NumCd = 'PO_INV') - monthly DEMO pattern.
 -- Adjust CompanyCode / BranchCode / Year / Month to match your tenant before running.
 -- Requires dbo.AdSmNumDate (run scripts/init-adsmnum.sql first if missing).
 -- Do NOT also seed AdSmNum for the same NumCd when using AdSmNumDate (date path wins).
@@ -23,7 +23,7 @@ IF NOT EXISTS (
     SELECT 1 FROM dbo.AdSmNumDate
     WHERE CompanyCode = @Company
       AND BranchCode = @Branch
-      AND NumCd = N'POCDN'
+      AND NumCd = N'PO_INV'
       AND [Year] = @Year
       AND [Month] = @Month)
 BEGIN
@@ -33,7 +33,7 @@ BEGIN
         Created, UserID, NumberingDelimeter, NumberingFormat)
     VALUES (
         @Company, @Branch, N'MAIN',
-        @Year, @Month, N'POCDN', N'Purchase Invoice', 4, N'PINV', 1,
+        @Year, @Month, N'PO_INV', N'Purchase Invoice', 4, N'PINV', 1,
         GETDATE(), N'SYSTEM', N'-', NULL);
 END
 GO

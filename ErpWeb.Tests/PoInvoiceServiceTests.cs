@@ -550,6 +550,7 @@ public class PoInvoiceServiceTests : IAsyncLifetime
             new FixedCurrentDateService(FixedToday),
             new PoInvoiceRepository(),
             new PoOrderRepository(),
+            new PoCdnRepository(),
             Options.Create(new PoOrderOptions()),
             NullLogger<PoInvoiceService>.Instance);
     }

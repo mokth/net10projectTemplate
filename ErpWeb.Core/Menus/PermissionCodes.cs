@@ -23,6 +23,13 @@ public static class PermissionCodes
     public const string ViewCost = "VIEW_COST";
     public const string ViewProfit = "VIEW_PROFIT";
 
+    /// <summary>
+    /// C44: allows a CN/DN with a blank supplier document number (reason code
+    /// <c>INTERNAL_ADJUSTMENT</c>). Gated so it cannot be used just to avoid entering
+    /// a supplier document number.
+    /// </summary>
+    public const string InternalAdjustment = "INTERNAL_ADJUSTMENT";
+
     /// <summary>All known permission codes (ADMIN UI / GetPermissionsAsync).</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {

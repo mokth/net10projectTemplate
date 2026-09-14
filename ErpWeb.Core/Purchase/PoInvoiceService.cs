@@ -21,6 +21,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
     private readonly ICurrentDateService _dates;
     private readonly IPoInvoiceRepository _invoices;
     private readonly IPoOrderRepository _orders;
+    private readonly IPoCdnRepository _cdns;
     private readonly PoOrderOptions _options;
     private readonly ILogger<PoInvoiceService> _logger;
 
@@ -32,6 +33,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         ICurrentDateService dates,
         IPoInvoiceRepository invoices,
         IPoOrderRepository orders,
+        IPoCdnRepository cdns,
         IOptions<PoOrderOptions> options,
         ILogger<PoInvoiceService> logger)
     {
@@ -42,6 +44,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         _dates = dates;
         _invoices = invoices;
         _orders = orders;
+        _cdns = cdns;
         _options = options.Value;
         _logger = logger;
     }
@@ -317,21 +320,21 @@ public sealed class PoInvoiceService : IPoInvoiceService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoInvoiceOperationResult.Fail(
-                    "POCDN numbering is not configured for this company/branch.",
+                    "PO invoice numbering is not configured for this company/branch.",
                     PoInvoiceErrorKind.BusinessRule);
             }
             catch (DocumentNumberingConfigurationException)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoInvoiceOperationResult.Fail(
-                    "POCDN numbering is not configured correctly. Contact an administrator.",
+                    "PO invoice numbering is not configured correctly. Contact an administrator.",
                     PoInvoiceErrorKind.BusinessRule);
             }
             catch (DocumentNumberingOverflowException)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoInvoiceOperationResult.Fail(
-                    "The next POCDN number exceeds the configured length.",
+                    "The next PO invoice number exceeds the configured length.",
                     PoInvoiceErrorKind.BusinessRule);
             }
             catch (DocumentNumberingConcurrencyException)
@@ -361,7 +364,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
         catch (SqlException ex) when (ex.Number == 1205)
         {
-            _logger.LogWarning(ex, "POCDN save deadlock.");
+            _logger.LogWarning(ex, "PO invoice save deadlock.");
             await tx.RollbackAsync(cancellationToken);
             return PoInvoiceOperationResult.Fail(
                 "The document could not be saved because of a database conflict. Try again.",
@@ -369,7 +372,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "POCDN save failed.");
+            _logger.LogError(ex, "PO invoice save failed.");
             await tx.RollbackAsync(cancellationToken);
             return PoInvoiceOperationResult.Fail("Unable to save the document.", PoInvoiceErrorKind.Unexpected);
         }
@@ -460,7 +463,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "POCDN update failed.");
+            _logger.LogError(ex, "PO invoice update failed.");
             await tx.RollbackAsync(cancellationToken);
             return PoInvoiceOperationResult.Fail("Unable to update the document.", PoInvoiceErrorKind.Unexpected);
         }
@@ -539,7 +542,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "POCDN delete failed for {DocNo}", docNo);
+                _logger.LogError(ex, "PO invoice delete failed for {DocNo}", docNo);
                 await tx.RollbackAsync(cancellationToken);
                 results.Add(PoInvoicePostingItemResult.Failed(docNo, "Unable to delete the document."));
             }
@@ -915,7 +918,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "POCDN post failed for {DocNo}", docNo);
+            _logger.LogError(ex, "PO invoice post failed for {DocNo}", docNo);
             await tx.RollbackAsync(cancellationToken);
             return PoInvoicePostingItemResult.Failed(docNo, "Unable to post the document.");
         }
@@ -960,6 +963,18 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     return PoInvoicePostingItemResult.Failed(
                         docNo,
                         "Cannot rollback invoice while posted credit notes still reference it.");
+                }
+
+                // C25: a purchase CN/DN pins the invoice for as long as it is NEW or POSTED.
+                // Rolling back would strand its reservation basis and its InvLineNo traceability.
+                var hasPoCdn = await _cdns.ExistsForInvoiceAsync(
+                    db, write.CompanyCode, write.BranchCode, invoice.DocNo, cancellationToken);
+                if (hasPoCdn)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoInvoicePostingItemResult.Failed(
+                        docNo,
+                        "Cannot rollback invoice while a purchase credit/debit note still references it.");
                 }
             }
 
@@ -1009,7 +1024,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "POCDN rollback failed for {DocNo}", docNo);
+            _logger.LogError(ex, "PO invoice rollback failed for {DocNo}", docNo);
             await tx.RollbackAsync(cancellationToken);
             return PoInvoicePostingItemResult.Failed(docNo, "Unable to rollback the document.");
         }

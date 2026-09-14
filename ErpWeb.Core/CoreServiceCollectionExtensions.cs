@@ -167,6 +167,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IPoInvoiceService, PoInvoiceService>();
 
+        services.AddScoped<IPoCdnService, PoCdnService>();
+
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();

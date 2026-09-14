@@ -3,7 +3,7 @@
 Status: **Implementation-ready (v2.3 — final clarifications locked)**
 Source: [procuretment-plan.md](procuretment-plan.md) (PR/PO/GR business-logic review, 2026-09-13)
 Scope: Purchase Requisition (`POPR`), Purchase Order (`POOrder`), Goods Receipt (`IvTrxBatch` GR/NG),
-Vendor Return (new `VR`), Purchase Invoice (existing `POCDN` / `POCDNDetail`).
+Vendor Return (new `VR`), Purchase Invoice (existing `POInvoice` / `POInvoiceDetail`).
 Goal: close the nine review findings and extend the chain from `PR → PO → GR` to
 `PR → PO → GR → Vendor Return → Purchase Invoice (3-way match)` without inventing a new stack.
 
@@ -18,7 +18,7 @@ invariant (§4 of the review) and adds only what is missing:
 
 - **Quantity integrity** — tolerance over-receipt can drive `BalanceQty` negative and is not accounted for.
 - **Returns close the loop** — `ApplyReturnQtyAsync` exists but has no caller; return-to-vendor has no document.
-- **Purchase invoice / 3-way match** — `POCDN` / `POCDNDetail` tables exist with no service.
+- **Purchase invoice / 3-way match** — `POInvoice` / `POInvoiceDetail` tables exist with no service.
 - **Status honesty** — statuses exist in code and UI but are never written.
 - **Draft reservation** — two unposted GR drafts can target the same PO balance.
 
@@ -28,7 +28,7 @@ invariant (§4 of the review) and adds only what is missing:
 flowchart LR
   P1["Phase 1<br/>Quantity integrity<br/>(P0, clamped balance<br/>+ OverRecvQty / InvoicedQty)"]
   P2["Phase 2<br/>Vendor Return (VR)<br/>+ PO write-back"]
-  P3["Phase 3<br/>POCDN invoice<br/>+ 3-way match"]
+  P3["Phase 3<br/>Purchase invoice<br/>+ 3-way match"]
   P4["Phase 4<br/>Status honesty<br/>PR derived status,<br/>close audit, OPEN"]
   P5["Phase 5<br/>Draft reservation<br/>+ UX indicators"]
 
@@ -70,8 +70,8 @@ Every fact below was checked against the current code. Do not re-derive.
 | `GetReceiptToleranceAsync` is **private** inside the posting service | `IvInventoryPostingService.cs` |
 | `PoVendorByItems.Tolerance` is the only tolerance field; no price tolerance exists | `ErpWeb.Model/Entities/Purchase/PoVendorByItem.cs` |
 | `IPoOrderService.ApplyReturnQtyAsync` opens its **own** context + transaction; no caller | `IPoOrderService.cs:512`, `PoOrderService.cs:778` |
-| `PoCdn` / `PoCdnDetail` entities + EF configs exist; **no service** | `ErpWeb.Model/Entities/Purchase/PoCdn.cs`, `PoCdnDetail.cs` |
-| `PoCdnDetail` has **no** `PoNo` / `PoRelNo` / `PoLineNo` | `PoCdnDetail.cs` |
+| `PoInvoice` / `PoInvoiceDetail` entities + EF configs exist; **no service** | `ErpWeb.Model/Entities/Purchase/PoInvoice.cs`, `PoInvoiceDetail.cs` |
+| `PoInvoiceDetail` has **no** `PoNo` / `PoRelNo` / `PoLineNo` | `PoInvoiceDetail.cs` |
 | `PoOrderDetail` has **no** `OverRecvQty` / `InvoicedQty` | `ErpWeb.Model/Entities/Purchase/PoOrderDetail.cs` |
 | `PoOrder` has `CheckBy`/`ApprovedBy`/`AuthorisedBy` but **no** `CloseReason`/`ClosedBy`/`ClosedOn` | `ErpWeb.Model/Entities/Purchase/PoOrder.cs` |
 | `PoPrDetail` already has a `Status` column (`PRStat`, max 20) | `PoPrDetailConfiguration.cs:32` |
@@ -102,9 +102,10 @@ Every fact below was checked against the current code. Do not re-derive.
 2. **Vendor Return is a new stock-OUT inventory document** (`IvTrxTypes.VendorReturn` = `"VR"`),
    cloned from MI per `ErpWeb/docs/inventory-trx-pattern.md`. It posts stock out, then writes the
    return back to the PO inside the same transaction.
-3. **The purchase invoice uses the existing `POCDN` / `POCDNDetail` tables** plus new PO link
-   columns. No new invoice document family, no new tables. Types: `INV` and quantity `CN` only.
-   Debit note and value-only CN are out of scope.
+3. **The purchase invoice uses the existing `POInvoice` / `POInvoiceDetail` tables** plus new PO link
+   columns. No new invoice document family for commercial INV. Types: `INV` and quantity `CN` only
+   on `PoInvoice`. Debit note and value-only (financial) CN are delivered by the separate `PoCdn`
+   family — see `plans/POCNDN-plan.md` (v2.5).
 4. **PR approval stays external.** No approval engine in this plan. Only a derived PR status
    (`PARTIALLY_ORDERED` / `FULLY_ORDERED`) is added. `PENDING` / `CHECKED` remain in the enum and
    list filter because they are approval states.
@@ -121,15 +122,16 @@ Every fact below was checked against the current code. Do not re-derive.
    run manually by a DBA, never at app startup.
 10. **Invoice qty tolerance is receive-only.** `AllowedInvoicedQty = NetReceivedQty`. Qty tolerance
     may raise `AllowedRecvQty` above `OrderedQty`; it must not raise invoice qty above net received.
-11. **CN is quantity-only** and must reference one specific posted INV. Value-only credit notes are
-    out of scope.
+11. **CN is quantity-only** on `PoInvoice` and must reference one specific posted INV. Value-only /
+    financial credit notes and debit notes are **not** on `PoInvoice` — they are the `PoCdn` family
+    (`plans/POCNDN-plan.md`). `PoInvoice.Type=CN` money is informational / non-AP.
 12. **No negative `InvoiceableQty`.** Split over-invoice into `OverInvoicedQty`.
 13. **VR after invoice is allowed**; **GR rollback after invoice is rejected** when it would make
     `InvoicedQty > NewNetReceivedQty`. See §4 rationale.
 14. **VR is prohibited** on service / non-stock (NG) lines.
 15. **Invoice UOM must equal** the PO line `PurchaseUom`. No conversion in this plan.
 16. **Prices and tolerances are non-negative** (`0..100`). Invoice price-tolerance override may
-    increase or decrease the vendor-item value under existing `PO_CDN` EDIT/POST authorization.
+    increase or decrease the vendor-item value under existing `PO_INVOICE` EDIT/POST authorization.
 17. **`RecvQty` is the current effective posted GR/NG quantity** after posts and rollbacks, not an
     immutable historical total. VR never decreases it.
 18. **AP / GL journal posting is deferred.** Phase 3 is commercial invoice + 3-way match +
@@ -397,7 +399,7 @@ recomputed on VR paths, and no unreachable return API remains.
 
 ---
 
-## 6. Phase 3 — Purchase invoice (POCDN) + 3-way match
+## 6. Phase 3 — Purchase invoice (POInvoice) + 3-way match
 
 **Why:** `PR → PO → GR` ends at stock; the finance cycle is missing (finding 2).
 
@@ -406,10 +408,10 @@ recomputed on VR paths, and no unreachable return API remains.
 1. **PO link columns**
    - Add `PoNo` (column `PONo`, max 30), `PoRelNo` (`short?`, column `PORelNo`),
      `PoLineNo` (`short?`, column `POLineNo`) to
-     `ErpWeb.Model/Entities/Purchase/PoCdnDetail.cs`, following the existing
+     `ErpWeb.Model/Entities/Purchase/PoInvoiceDetail.cs`, following the existing
      `PoOrderDetailConfiguration` naming convention.
-   - Map in `ErpWeb.Model/Configurations/Purchase/PoCdnDetailConfiguration.cs`.
-   - Add `scripts/alter-pocdndetail-po-link.sql`, idempotent.
+   - Map in `ErpWeb.Model/Configurations/Purchase/PoInvoiceDetailConfiguration.cs`.
+   - Add `scripts/alter-poinvoicedetail-po-link.sql`, idempotent.
 
 2. **Financial close columns on PO**
    - Add `FinClosed` bit + `FinClosedOn` / `FinClosedBy` to `PoOrder` + configuration +
@@ -418,24 +420,24 @@ recomputed on VR paths, and no unreachable return API remains.
 
 3. **Price tolerance column**
    - Add `PoVendorByItem.PriceTolerance` (`decimal(18,4)`, default 0) +
-     nullable `PoCdn.PriceTolerance` override + `scripts/alter-povendorbyitem-pricetolerance.sql`.
+     nullable `PoInvoice.PriceTolerance` override + `scripts/alter-povendorbyitem-pricetolerance.sql`.
 
-4. **Service** — new `IPoCdnService` / `PoCdnService` / `PoCdnCalc` in `ErpWeb.Core/Purchase/`,
+4. **Service** — new `IPoInvoiceService` / `PoInvoiceService` / `PoInvoiceCalc` in `ErpWeb.Core/Purchase/`,
    cloned from `SaCdnService` / `SaCdnCalc` / `SaCdnRepository`.
    - Reuse `IvMasterOperationResult<T>` / error-kind conventions already used by the Purchase services.
    - Permissions: `ACCESS` / `ADD` / `EDIT` / `DELETE` / `POST` where the clone defines them;
      UI hiding buttons is not authorization.
    - Scope via `TryBranchScope` (list/get/delete) and `TryWriteScope` (save).
    - Numbering: `IDocumentNumberingService.NextAsync(db, module, "", docDate, DocumentNumberRequestMode.New, "AUTO", ct)`
-     with a new `POCDN` NumCd, mirroring `SaCdnService.cs:480`. Seed with
-     `scripts/seed-po-cdn-numbering.sql` (model on `scripts/seed-po-order-numbering.sql`).
+     with a new `PO_INV` NumCd, mirroring `SaCdnService.cs:480`. Seed with
+     `scripts/seed-po-invoice-numbering.sql` (model on `scripts/seed-po-order-numbering.sql`).
      Allocation must run inside the same SQL transaction as the invoice insert.
    - Document types: `INV` increases `InvoicedQty`; `CN` decreases `InvoicedQty` (not below 0).
      Debit note out of scope. Value-only CN out of scope (`Qty` must be `> 0`).
-   - Add `PostedDate` / `PostedBy` / `RollbackDate` / `RollbackBy` on `PoCdn` (missing vs `SaCdn`).
+   - Add `PostedDate` / `PostedBy` / `RollbackDate` / `RollbackBy` on `PoInvoice` (missing vs `SaCdn`).
 
 5. **CN-to-invoice reference**
-   - `PoCdn.InvNo` is required on CN and must be one **specific posted INV** for the same
+   - `PoInvoice.InvNo` is required on CN and must be one **specific posted INV** for the same
      company/branch/vendor. CN qty on a PO line cannot exceed that INV's **remaining qty** on that line:
 
      ```
@@ -467,7 +469,7 @@ recomputed on VR paths, and no unreachable return API remains.
      is a consistency check, not a second formula.
    - Invoice post:
      - Reject invoice-before-receipt (`NetReceivedQty <= 0`)
-     - Invoice line UOM must equal PO line `PurchaseUom` (map `PoCdnDetail.SellingUOM`; no conversion)
+     - Invoice line UOM must equal PO line `PurchaseUom` (map `PoInvoiceDetail.SellingUOM`; no conversion)
      - `newInvoiceQty <= AllowedInvoicedQty - InvoicedQty` where `AllowedInvoicedQty = NetReceivedQty`
      - After commit: `0 <= InvoicedQty <= NetReceivedQty`
      - Client cannot supply `InvoicedQty`
@@ -488,7 +490,7 @@ recomputed on VR paths, and no unreachable return API remains.
 9. **Price tolerance**
    - Basis: **unit price**, after `RoundPrice` (`POPriceDecimal`, default 6, `AwayFromZero`).
    - Invoice override **may increase or decrease** the vendor-item tolerance
-     (`Invoice.PriceTolerance ?? vendorItem.PriceTolerance ?? 0`). No new permission: `PO_CDN`
+     (`Invoice.PriceTolerance ?? vendorItem.PriceTolerance ?? 0`). No new permission: `PO_INVOICE`
      EDIT/POST is the authorization. A 100% override can neutralize price match; that is accepted
      as a document-level control, not a silent master bypass.
    - Commercial prices: `PoUnitPrice >= 0`, invoice `UnitPrice >= 0`. Negative prices are not
@@ -550,7 +552,7 @@ recomputed on VR paths, and no unreachable return API remains.
     - **VR is rejected** for service IType and OneTime/NG lines.
     - Financial correction after NG+invoice is a quantity CN, not a VR.
 
-13. **POCDN commercial / tax scope**
+13. **POInvoice commercial / tax scope**
     - **Reuse unchanged** from `PoOrderCalc` / `PoPrCalc`: `ComputeTax`, `PurchaseTaxDec`,
       `ApplyTwoLevelDiscount` (`ItemDiscount` / `ItemDiscount1` only), `SumTotals`.
     - **Clone pattern** from `SaCdnService`: numbering inside the save transaction, `NEW`↔`POSTED`,
@@ -562,26 +564,26 @@ recomputed on VR paths, and no unreachable return API remains.
 14. **UI**
     - Clone `SaCdnList.razor` / `SaCdn.razor` (+ `.cs` / `.css`) into `ErpWeb.UI/Purchase/Transactions/`.
     - Routes `/purchase/invoices` and `/purchase/invoices/{new|edit|view}/{DocNo}`.
-    - Menu `PO_CDN` under `PO_TRANSACTIONS` with `SortOrder="3"` (after `PO_ORDER`);
+    - Menu `PO_INVOICE` under `PO_TRANSACTIONS` with `SortOrder="3"` (after `PO_ORDER`);
       constant in `MenuCodes.cs`; grants in `scripts/init-menu-access.sql`.
     - Cross-document navigation (list/detail links; PO keys already exist):
       PO → GR, PO → VR, PO → Invoice; Invoice → PO, CN → Invoice, VR → originating PO.
 
 ### Files
 
-`ErpWeb.Model/Entities/Purchase/PoCdnDetail.cs` · `PoCdn.cs` · `PoOrder.cs` · `PoVendorByItem.cs` ·
-`ErpWeb.Model/Configurations/Purchase/PoCdnDetailConfiguration.cs` · `PoOrderConfiguration.cs` ·
-`ErpWeb.Core/Purchase/IPoCdnService.cs` · `PoCdnService.cs` · `PoCdnCalc.cs` · `PoToleranceLookup.cs` ·
-`ErpWeb.Model/Repositories/Purchase/PoCdnRepository.cs` · `IvInventoryPostingService.cs` (extract helper) ·
-`ErpWeb.UI/Purchase/Transactions/PoCdn*.razor*` · `ErpWeb.Core/Menus/MenuCodes.cs` ·
+`ErpWeb.Model/Entities/Purchase/PoInvoiceDetail.cs` · `PoInvoice.cs` · `PoOrder.cs` · `PoVendorByItem.cs` ·
+`ErpWeb.Model/Configurations/Purchase/PoInvoiceDetailConfiguration.cs` · `PoOrderConfiguration.cs` ·
+`ErpWeb.Core/Purchase/IPoInvoiceService.cs` · `PoInvoiceService.cs` · `PoInvoiceCalc.cs` · `PoToleranceLookup.cs` ·
+`ErpWeb.Model/Repositories/Purchase/PoInvoiceRepository.cs` · `IvInventoryPostingService.cs` (extract helper) ·
+`ErpWeb.UI/Purchase/Transactions/PoInvoice*.razor*` · `ErpWeb.Core/Menus/MenuCodes.cs` ·
 `ErpWeb/Menus/menus.xml` · `ErpWeb.Core/CoreServiceCollectionExtensions.cs` ·
-`scripts/alter-pocdndetail-po-link.sql` · `scripts/alter-poorder-finclosed.sql` ·
-`scripts/alter-povendorbyitem-pricetolerance.sql` · `scripts/seed-po-cdn-numbering.sql` ·
+`scripts/alter-poinvoicedetail-po-link.sql` · `scripts/alter-poorder-finclosed.sql` ·
+`scripts/alter-povendorbyitem-pricetolerance.sql` · `scripts/seed-po-invoice-numbering.sql` ·
 `scripts/init-menu-access.sql`
 
 ### Tests
 
-New `ErpWeb.Tests/PoCdnServiceTests.cs` (clone `SaCdnServiceTests.cs`) covering the match matrix:
+New `ErpWeb.Tests/PoInvoiceServiceTests.cs` (clone `SaCdnServiceTests.cs`) covering the match matrix:
 
 - match pass: ordered net-received = invoiced → FinClosed
 - invoice above net received rejected (no invoice qty tolerance)
@@ -596,7 +598,7 @@ New `ErpWeb.Tests/PoCdnServiceTests.cs` (clone `SaCdnServiceTests.cs`) covering 
 - numbering allocated in the same transaction as the insert
 - double-post → no qty change
 
-New `ErpWeb.Tests/PoCdnSqlServerConcurrencyTests.cs` (clone `SaCdnSqlServerConcurrencyTests.cs`):
+New `ErpWeb.Tests/PoInvoiceSqlServerConcurrencyTests.cs` (clone `SaCdnSqlServerConcurrencyTests.cs`):
 
 - two invoices for the same PO line → exactly one commits; `InvoicedQty` never exceeds net received
 - invoice vs GR posting on the same PO line → no deadlock, no lost update
@@ -726,7 +728,7 @@ over-invoicing.
 3. **Test suite** — `dotnet test ErpWeb.Tests` must stay green; new files per phase:
    - Phase 1: `PoOrderCalcTests.cs` (extended), `IvInventoryPostingServiceTests.cs`
    - Phase 2: `IvVendorReturnPostingServiceTests.cs`
-   - Phase 3: `PoCdnServiceTests.cs`, `PoCdnSqlServerConcurrencyTests.cs`
+   - Phase 3: `PoInvoiceServiceTests.cs`, `PoInvoiceSqlServerConcurrencyTests.cs`
    - Phase 4: PR status tests, `PoOrderServiceTests.cs`, extended SQL Server concurrency tests
    - Phase 5: `IvGoodsReceiptServiceTests.cs`
 4. **SQL Server concurrency tests self-skip** unless `ConnectionStrings:DefaultConnection` points at a
@@ -762,7 +764,9 @@ over-invoicing.
 - **PR approval engine** — deferred by decision (§3.4); only the derived PR status is implemented.
 - Removing `PENDING` / `CHECKED` from the enum, the list filter, or `IsViewOnlyLeftover`.
 - AP / GL journal posting (deferred until an AP family exists).
-- Freight, debit note, e-invoice / IRBM, value-only CN, invoice UOM conversion.
+- Freight, e-invoice / IRBM, invoice UOM conversion.
+- Debit note and value-only (financial) CN — **out of this v2 plan**; delivered by `PoCdn`
+  (`plans/POCNDN-plan.md`, v2.5).
 - Dedicated supplier-invoice-date column (`DocDate` is the date).
 
 ---
@@ -816,7 +820,7 @@ All rows: Ordered = 100, receive qty tol = 10% unless noted. Invoice qty tol doe
 | Concurrent invoices — two INV 60 against Net 100 | one commits, one fails; Inv never exceeds Net |
 
 Required tests: `PoOrderCalcTests`, `IvInventoryPostingServiceTests`, `IvVendorReturnPostingServiceTests`,
-`PoCdnServiceTests`, plus PO revise / service-VR cases on `PoOrderServiceTests`.
+`PoInvoiceServiceTests`, plus PO revise / service-VR cases on `PoOrderServiceTests`.
 
 ---
 
@@ -824,7 +828,16 @@ Required tests: `PoOrderCalcTests`, `IvInventoryPostingServiceTests`, `IvVendorR
 
 | Date | Change |
 |---|---|
-| 2026-09-13 | v2 created from `plans/procuretment-plan.md`; all five phases specified to implementation level; vendor return locked to a new `VR` inventory document; invoice locked to `POCDN` / `POCDNDetail`; PR approval deferred. |
-| 2026-09-13 | v2.1 — net-received model, cumulative VR, INV+CN, price-tolerance source, FinClosed recompute, truth table, POCDN tax reuse / AP-GL deferral. |
+| 2026-09-13 | v2 created from `plans/procuretment-plan.md`; all five phases specified to implementation level; vendor return locked to a new `VR` inventory document; invoice locked to `POInvoice` / `POInvoiceDetail`; PR approval deferred. |
+| 2026-09-13 | v2.1 — net-received model, cumulative VR, INV+CN, price-tolerance source, FinClosed recompute, truth table, POInvoice tax reuse / AP-GL deferral. |
 | 2026-09-13 | v2.2 — invoice qty = net received only; quantity CN only; OverInvoicedQty; RecvQty=effective posted; price/tolerance validation; FinClosed exact match; PO revise vs InvoicedQty; service VR ban; invoice UOM identity; document lifecycle + idempotent post; audit links. |
-| 2026-09-13 | v2.3 — validator split; GR rollback rejected when it would over-invoice; VR-vs-GR-rollback rationale; CN bound to one INV remaining qty; CN rollback math; FinClosed from all lines under lock; zero-qty policy; persisted-equals-helper; DBA integrity report; AllowedInvoicedQty preamble; price override either-direction under PO_CDN auth. |
+| 2026-09-13 | v2.3 — validator split; GR rollback rejected when it would over-invoice; VR-vs-GR-rollback rationale; CN bound to one INV remaining qty; CN rollback math; FinClosed from all lines under lock; zero-qty policy; persisted-equals-helper; DBA integrity report; AllowedInvoicedQty preamble; price override either-direction under PO_INVOICE auth. |
+| 2026-09-13 | v2.4 — purchase invoice family renamed off the legacy credit/debit-note names: C# types/files `PoCdn*` → `PoInvoice*`, tables `POCDN` / `POCDNDetail` → `POInvoice` / `POInvoiceDetail`, menu code `PO_CDN` → `PO_INVOICE`, numbering module `POCDN` → `PO_INV`; scripts renamed to `create-po-invoice.sql`, `alter-poinvoicedetail-po-link.sql`, `seed-po-invoice-numbering.sql`. Existing databases require `scripts/rename-po-cdn-to-po-invoice.sql` (manual DBA run before app start). Supersedes decision 3's table names; still no new document family and no new tables. |
+| 2026-09-13 | **v2.5 — supersedes v2.4's "still no new document family".** `PoCdn` / `PoCdnDetail` is introduced as the financial Purchase Credit/Debit Note family (`plans/POCNDN-plan.md`, controls C1–C54). `PoInvoice.Type=CN` remains the **quantity-only** PO/GR correction: it changes `InvoicedQty` only; calculated monetary fields are **informational / non-AP** and are **not** included in the PoCdn header money reservation (C3). The two documents have different business semantics. Round-7 closure: VR-in-tx API, `ConsumesInvoiceQty`, Option A OverInvoiced workflow, canonical lock order. |
+| 2026-09-14 | **v2.6 — PoCdn implementation landed (Phases 0, 1, 3).** Normative behaviour is now documented in `docs/purchase_cdn_logic.md` (controls C1–C48). Delivered: SQL scripts (`create-pocdn.sql`, `seed-pocdn-numbering.sql`, `init-pocdn-menu.sql`, hardened `rename-po-cdn-to-po-invoice.sql`), entities + EF configurations, `IPoCdnRepository`, pure domain `PoCdnCalc`, `IPoCdnService` / `PoCdnService`, `PoCdnLockOrder`, DI wiring. Cross-document guards added: **C25** in `PoInvoiceService.RollbackOneAsync` and **C31** in `IvVendorReturnService` (Update/Delete/Cancel/Post/Rollback). Both guards co-exist deliberately — they defend the two independent correction mechanisms (`PoInvoice.Type=CN` quantity correction vs `PoCdn` financial note). |
+| 2026-09-14 | **v2.6a — test coverage + six service defects fixed.** `PoCdnCalcTests` (44) and `PoCdnServiceTests` (35) added; `PoCdnSqlServerConcurrencyTests` (C10/C41, self-skips without SQL Server). Suite total 951. Real defects corrected: error-message masking in `PrepareAsync` (twice — per-line reasons overwritten by document-level aggregates), locked header missing `.Include(Details)`, traceability validator receiving the *requested* instead of *found* invoice line, line ceilings ordered after the header reservation, and `UpdateAsync` reporting a concurrency error instead of C21 immutability on a `POSTED` document. Also `ResolveCurrencyRateAsync` returned `Succeeded = true` on an unresolvable currency while discarding the reason (`OkRate` hardcodes success) — a **fail-closed (C17) regression**, now returning `FailRate(message)`. |
+| 2026-09-14 | **v2.6b — C18 deviation resolved by implementing the plan.** `PoCdnService.PrepareAsync` now **rejects** a request currency that conflicts with the referenced invoice's currency (blank inherits). Previously it silently overwrote the request currency. Tests `A_credit_note_rejects_a_currency_that_differs_from_the_invoice` + `A_credit_note_with_a_blank_currency_inherits_the_invoice_currency` added; the C18 mismatch is reported in preference to a downstream rate failure. |
+| 2026-09-14 | **v2.6c — Phase 2 UI delivered.** `PoCdnList` (credit- and debit-note lists at `/purchase/credit-notes` and `/purchase/debit-notes`, batch POST/ROLLBACK/DELETE, filters), `PoCdn` entry/edit/view screen (`/purchase/{credit|debit}-notes/{new|edit|view}[/{docNo}]`, line popup editor, invoice picker with Copy / Use-ref, post/rollback/delete), `PoCdnReservations` (`/purchase/cn-reservations`), and the **Create Purchase Credit Note** action on the posted `PoInvoice` screen (`?invNo=` hands the reference to the new draft). `PoInvoice.Type=CN` relabelled "Quantity Correction (PO/GR)" throughout. |
+| 2026-09-14 | **v2.7 — SQL Server verification done on a scratch database (`ERPWeb_PoCdnTest` on `MSSQL$SQLEXPRESS`).** All four PoCdn scripts applied cleanly **twice** (idempotent): `create-pocdn.sql` (16 batches), `seed-pocdn-numbering.sql` (4), `init-pocdn-menu.sql` (6), `rename-po-cdn-to-po-invoice.sql` (16). Verified objects: tables `PoCdn`/`PoCdnDetail` alongside the untouched `POInvoice`/`POInvoiceDetail`; `PoCdn` identity columns `VrBatchNo`/`ReasonCode`/`SupplierDocNo`/`RowVersion`; `PoCdnDetail` `InvLineNo`/`IsStockReturn`/`FromBalLocId`; filtered unique index `UX_PoCdn_SupplierDoc`; numbering rows `PCN`/`PDN`; menu rows `PO_CN`/`PO_DN`/`PO_CN_RESERVATIONS`; permission `INTERNAL_ADJUSTMENT`; both menu→permission mappings. **The hardening in `rename-po-cdn-to-po-invoice.sql` was exercised for the first time and correctly no-opped** — with a new-family `PoCdn` table present, it renamed nothing and `POInvoice` survived (no `POCDN`/`POCDNDetail` tables were created). |
+| 2026-09-14 | **v2.7a — concurrency tests now genuinely run.** `PoCdnSqlServerConcurrencyTests` previously self-skipped; it now requires the explicit key `ConnectionStrings:SqlServerTestConnection` **and** a database whose name contains "test", and bootstraps its schema from the EF model. Deliberately NOT `DefaultConnection`, which points at the live `ERPWeb` database — these tests write and delete rows. Note this differs from the other `*SqlServerConcurrencyTests` in the repo, which use `DefaultConnection` and can therefore seed rows into live data. |
+| 2026-09-14 | **v2.7b — C2 / C10 / C41 verified against real SQL Server (4 tests, all passing).** **C41** invoice-line reservation race: two concurrent 10-unit credit notes against a 10-unit line → exactly one wins; follow-up confirms the survivor consumed exactly its own quantity. **C10** stock-return race: the plan's save-time ceiling is a **soft warning only**, so both drafts must save and the race is decided at **post** under the PO lock — exactly one post succeeds and the loser stays a draft. (An earlier version of this test asserted the race at save time, which contradicted C10's specified design; corrected.) **C2** duplicate supplier-document number: the filtered unique index rejects the loser. The index only exists on SQL Server — `AppDbContext.OnModelCreating` strips filtered indexes for SQLite — so C2 is unverifiable in the SQLite suite. Full suite with SQL Server enabled: **953 passing, 0 failures.** |

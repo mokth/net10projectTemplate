@@ -53,7 +53,10 @@ public static class MenuCodes
     public const string PurchaseTransactions = "PO_TRANSACTIONS";
     public const string PurchaseRequisition = "PO_PR";
     public const string PurchaseOrder = "PO_ORDER";
-    public const string PurchaseInvoice = "PO_CDN";
+    public const string PurchaseInvoice = "PO_INVOICE";
+    public const string PurchaseCreditNote = "PO_CN";
+    public const string PurchaseDebitNote = "PO_DN";
+    public const string PurchaseCreditNoteReservations = "PO_CN_RESERVATIONS";
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

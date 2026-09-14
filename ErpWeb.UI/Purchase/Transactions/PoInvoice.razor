@@ -45,6 +45,12 @@
                 {
                     <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
                 }
+                @if (CanCreateCreditNote)
+                {
+                    <DxButton Text="Create Purchase Credit Note"
+                              RenderStyle="ButtonRenderStyle.Secondary"
+                              Click="@CreateCreditNoteAsync" />
+                }
             </div>
         </header>
 
@@ -58,7 +64,9 @@
                 <div class="row g-3">
                     <div class="col-md-2">
                         <label class="form-label">Type</label>
-                        <DxComboBox Data="@(new[] { "INV", "CN" })"
+                        <DxComboBox Data="@TypeOptions"
+                                    ValueFieldName="Value"
+                                    TextFieldName="Text"
                                     @bind-Value="Model.Type"
                                     Enabled="@IsNew"
                                     CssClass="w-100" />
@@ -72,7 +80,7 @@
                         <DxDateEdit @bind-Date="Model.DocDate" Enabled="@IsEditable" CssClass="w-100" />
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">@(Model.Type == "CN" ? "Invoice Doc No" : "Supplier Invoice No")</label>
+                        <label class="form-label">@(Model.Type == "CN" ? "Source Invoice No" : "Supplier Invoice No")</label>
                         <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" CssClass="w-100" />
                     </div>
                     <div class="col-md-3">
@@ -115,7 +123,7 @@
                             <DxButton Text="Add PO line" RenderStyle="ButtonRenderStyle.Secondary" Click="@OpenPoPickerAsync" />
                             @if (Model.Type == "CN")
                             {
-                                <DxButton Text="Copy from INV" RenderStyle="ButtonRenderStyle.Secondary" Click="@CopyFromInvAsync" />
+                                <DxButton Text="Copy from Invoice" RenderStyle="ButtonRenderStyle.Secondary" Click="@CopyFromInvAsync" />
                             }
                         </div>
                     }

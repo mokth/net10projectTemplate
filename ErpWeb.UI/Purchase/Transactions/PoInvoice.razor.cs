@@ -37,9 +37,39 @@ public partial class PoInvoice : PageBase
     protected bool IsNew => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsView => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditable => !IsView && (IsNew || Model.CanEdit);
+
+    /// <summary>
+    /// Display labels for the document type. <c>PoInvoice.Type=CN</c> is a <b>quantity</b> correction
+    /// against a PO/GR — it is NOT the financial purchase credit note, which is the separate
+    /// <c>PoCdn</c> document (menu PO_CN). Labelling it "Credit Note" invited users to record price
+    /// corrections here, where no money moves.
+    /// </summary>
+    protected static readonly IReadOnlyList<PoInvoiceTypeOption> TypeOptions =
+    [
+        new(PoInvoiceTypes.Invoice, "Invoice"),
+        new(PoInvoiceTypes.CreditNote, "Quantity Correction (PO/GR)")
+    ];
+
+    public sealed record PoInvoiceTypeOption(string Value, string Text);
+
     protected string PageHeading => IsNew
         ? "New Purchase Invoice"
-        : $"{(Model.Type == PoInvoiceTypes.CreditNote ? "Credit Note" : "Invoice")} {Model.DocNo}";
+        : $"{(Model.Type == PoInvoiceTypes.CreditNote ? "Quantity Correction" : "Invoice")} {Model.DocNo}";
+
+    /// <summary>
+    /// A posted INV invoice can be the source of a financial purchase credit note. This is a
+    /// different document from the quantity correction represented by <c>Type = CN</c> on this
+    /// screen: the credit note moves money, this screen only corrects quantity against the PO/GR.
+    /// Only offered for a saved, posted invoice with a document number.
+    /// </summary>
+    protected bool CanCreateCreditNote =>
+        !IsNew
+        && string.Equals(Model.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Model.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(Model.DocNo);
+
+    protected void CreateCreditNoteAsync() =>
+        Navigation.NavigateTo($"/purchase/credit-notes/new?invNo={Uri.EscapeDataString(Model.DocNo)}");
 
     protected override async Task OnPageInitializedAsync()
     {

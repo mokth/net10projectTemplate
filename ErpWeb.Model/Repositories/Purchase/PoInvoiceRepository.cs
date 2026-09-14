@@ -94,7 +94,7 @@ public sealed class PoInvoiceRepository : IPoInvoiceRepository
             return await db.PoInvoices
                 .FromSqlInterpolated($@"
 SELECT *
-FROM dbo.POCDN WITH (UPDLOCK, HOLDLOCK)
+FROM dbo.POInvoice WITH (UPDLOCK, HOLDLOCK)
 WHERE CompanyCode = {company}
   AND BranchCode = {branch}
   AND DocNo = {no}")

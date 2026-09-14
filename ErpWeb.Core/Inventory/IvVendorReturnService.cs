@@ -391,6 +391,12 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
             return IvVendorReturnOperationResult.Fail("Vendor return was not found.");
         }
 
+        var ownedError = OwnedByPoCdnError(batch);
+        if (ownedError is not null)
+        {
+            return IvVendorReturnOperationResult.Fail(ownedError);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvVendorReturnOperationResult.Fail("Only NEW Vendor returns can be edited.");
@@ -483,6 +489,12 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
                 return IvVendorReturnOperationResult.Fail($"Vendor return {no} was not found.");
             }
 
+            var ownedError = OwnedByPoCdnError(batch);
+            if (ownedError is not null)
+            {
+                return IvVendorReturnOperationResult.Fail(ownedError);
+            }
+
             if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 return IvVendorReturnOperationResult.Fail(
@@ -550,6 +562,12 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
                 return IvVendorReturnOperationResult.Fail($"Vendor return {no} was not found.");
             }
 
+            var ownedError = OwnedByPoCdnError(batch);
+            if (ownedError is not null)
+            {
+                return IvVendorReturnOperationResult.Fail(ownedError);
+            }
+
             if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 return IvVendorReturnOperationResult.Fail(
@@ -578,6 +596,13 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
         IReadOnlyList<int> batchNos,
         CancellationToken cancellationToken = default)
     {
+        // C31: a PoCdn-owned batch is posted from its credit note, never from here.
+        var ownedError = await FindPoCdnOwnedBatchErrorAsync(batchNos, cancellationToken);
+        if (ownedError is not null)
+        {
+            return IvVendorReturnOperationResult.Fail(ownedError);
+        }
+
         var posting = await _posting.PostAsync(IvTrxTypes.VendorReturn, batchNos, cancellationToken);
         return IvVendorReturnOperationResult.OkPosting(posting);
     }
@@ -586,6 +611,13 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
         IReadOnlyList<int> batchNos,
         CancellationToken cancellationToken = default)
     {
+        // C31: rollback targets the owning PoCdn, so the physical and financial effects stay paired.
+        var ownedError = await FindPoCdnOwnedBatchErrorAsync(batchNos, cancellationToken);
+        if (ownedError is not null)
+        {
+            return IvVendorReturnOperationResult.Fail(ownedError);
+        }
+
         var posting = await _posting.RollbackAsync(IvTrxTypes.VendorReturn, batchNos, cancellationToken);
         return IvVendorReturnOperationResult.OkPosting(posting);
     }
@@ -905,6 +937,54 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
         }
 
         return TruncateOptional($"{rsn}: {rem}", 250);
+    }
+
+    /// <summary>
+    /// C31: a batch whose <c>RefNo</c> is in this range is owned by a Purchase Credit Note. The
+    /// owning <c>PoCdn</c> is the only authoritative path to change, post or reverse it, so the
+    /// generic Vendor Return screen rejects it rather than letting the one-to-one link drift.
+    /// </summary>
+    private const string PoCdnVrRefPrefix = "PCN/";
+
+    private static string? OwnedByPoCdnError(IvTrxBatch? batch)
+    {
+        var refNo = (batch?.RefNo ?? string.Empty).Trim();
+        return refNo.StartsWith(PoCdnVrRefPrefix, StringComparison.OrdinalIgnoreCase)
+            ? $"Vendor return {batch!.BatchNo} is owned by purchase credit note "
+              + $"{refNo[PoCdnVrRefPrefix.Length..]} and must be changed from that document."
+            : null;
+    }
+
+    /// <summary>
+    /// C31: Post and Rollback delegate to the shared inventory posting service, which is generic
+    /// across every inventory type and therefore cannot know about PoCdn ownership. The check
+    /// belongs here, at the Vendor Return entry point that the generic screen and any future
+    /// caller both go through.
+    /// </summary>
+    private async Task<string?> FindPoCdnOwnedBatchErrorAsync(
+        IReadOnlyList<int> batchNos,
+        CancellationToken cancellationToken)
+    {
+        var context = ValidateWriteContext();
+        if (context.Error is not null)
+        {
+            return context.Error;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var owned = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && batchNos.Contains(x.BatchNo)
+                        && x.RefNo != null
+                        && x.RefNo.StartsWith(PoCdnVrRefPrefix))
+            .Select(x => new { x.BatchNo, x.RefNo })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return owned is null
+            ? null
+            : $"Vendor return {owned.BatchNo} is owned by purchase credit note "
+              + $"{owned.RefNo![PoCdnVrRefPrefix.Length..]} and must be changed from that document.";
     }
 
     private static string? NormalizeRefNo(string? refNo, int batchNo)

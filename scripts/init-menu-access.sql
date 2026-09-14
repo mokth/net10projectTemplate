@@ -408,12 +408,12 @@ WHERE m.MenuCode = N'INV_VENDOR_RETURN'
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 GO
 
--- Purchase Invoice (PO_CDN): ACCESS/ADD/EDIT/DELETE/POST/ROLLBACK
+-- Purchase Invoice (PO_INVOICE): ACCESS/ADD/EDIT/DELETE/POST/ROLLBACK
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
-WHERE m.MenuCode = N'PO_CDN'
+WHERE m.MenuCode = N'PO_INVOICE'
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);

@@ -212,7 +212,7 @@ public class PoInvoiceSqlServerConcurrencyTests
         {
             CompanyCode = "DEMO",
             ICode = iCode,
-            IDesc = "POCDN concurrency item",
+            IDesc = "PO invoice concurrency item",
             IClassCode = "RAW",
             StdUom = "EA",
             PurUom = "EA",
@@ -239,14 +239,14 @@ public class PoInvoiceSqlServerConcurrencyTests
         });
 
         if (!await db.AdSmNums.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "POCDN"))
+                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "PO_INV"))
         {
             db.AdSmNums.Add(new AdSmNum
             {
                 CompanyCode = "DEMO",
                 BranchCode = "HQ",
                 LocationCode = "MAIN",
-                NumCd = "POCDN",
+                NumCd = "PO_INV",
                 NumDes = "Purchase Invoice",
                 Prefix = "PI",
                 TotLength = 10,
@@ -255,7 +255,7 @@ public class PoInvoiceSqlServerConcurrencyTests
         }
 
         if (!await db.AdSmNumDates.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "POCDN"
+                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "PO_INV"
                 && x.Year == 2026 && x.Month == 9))
         {
             db.AdSmNumDates.Add(new AdSmNumDate
@@ -265,7 +265,7 @@ public class PoInvoiceSqlServerConcurrencyTests
                 LocationCode = "MAIN",
                 Year = 2026,
                 Month = 9,
-                NumCd = "POCDN",
+                NumCd = "PO_INV",
                 NumDes = "Purchase Invoice",
                 Prefix = "PI",
                 TotLength = 4,
@@ -274,7 +274,7 @@ public class PoInvoiceSqlServerConcurrencyTests
             });
         }
 
-        var poNo = "POCDN-PO-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var poNo = "PINV-PO-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         db.PoOrders.Add(new PoOrder
         {
             CompanyCode = "DEMO",
@@ -300,7 +300,7 @@ public class PoInvoiceSqlServerConcurrencyTests
                     PoRelNo = 0,
                     Line = 1,
                     ICode = iCode,
-                    IDesc = "POCDN concurrency item",
+                    IDesc = "PO invoice concurrency item",
                     PoUnitPrice = 10m,
                     PoPurQty = 100m,
                     PoQty = 100m,
@@ -344,7 +344,7 @@ public class PoInvoiceSqlServerConcurrencyTests
                 new PoInvoiceLineRequest
                 {
                     ICode = fixture.ICode,
-                    IDesc = "POCDN concurrency item",
+                    IDesc = "PO invoice concurrency item",
                     Qty = qty,
                     UnitPrice = 10m,
                     SellingUom = "EA",
@@ -379,6 +379,7 @@ public class PoInvoiceSqlServerConcurrencyTests
             new FixedCurrentDateService(FixedToday),
             new PoInvoiceRepository(),
             new PoOrderRepository(),
+            new PoCdnRepository(),
             Options.Create(new PoOrderOptions()),
             NullLogger<PoInvoiceService>.Instance);
     }

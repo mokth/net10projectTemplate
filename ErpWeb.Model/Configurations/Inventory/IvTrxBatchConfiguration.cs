@@ -50,5 +50,13 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
             .IsUnique()
             .HasFilter("[TrxType] = N'CR' AND [RefNo] >= N'CN/' AND [RefNo] < N'CN0'")
             .HasDatabaseName("UQ_IvTrxBatch_CR_CnRef");
+
+        // C7: one PoCdn owns at most one VR batch (and one batch is owned by at most one PoCdn).
+        // IvVendorReturnService.NormalizeRefNo defaults RefNo to the batch number, so the filter is
+        // range-scoped to the PCN/ prefix, exactly as the CR index scopes the CN/ prefix.
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.RefNo })
+            .IsUnique()
+            .HasFilter("[TrxType] = N'VR' AND [RefNo] >= N'PCN/' AND [RefNo] < N'PCN0'")
+            .HasDatabaseName("UQ_IvTrxBatch_VR_PcnRef");
     }
 }

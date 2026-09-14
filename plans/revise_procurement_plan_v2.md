@@ -35,11 +35,11 @@ v2.1 and v2.2 locks stay. This pass only adds the third-review clarifications �
 - **Validator split:** `ValidateQtyInvariants` = persisted PO-line state is internally valid. `ValidateReceiptAgainstTolerance` = proposed GR result under receive tolerance. PO edit/revise floors live in a third helper (`ValidateOrderQtyChange`), not in the GR validator.
 - **GR rollback after invoice is rejected** when it would make `InvoicedQty > NewNetReceivedQty`. Over-invoice from GR rollback is not an allowed exception.
 - **VR after invoice stays allowed** (physical return after supplier invoice; CN is the correction). GR rollback after invoice is rejected (undoing the receipt; reverse INV/CN first). Document this distinction in Phase 2 and Phase 1.
-- **CN references one specific posted INV** (`PoCdn.InvNo`). CN qty cannot exceed that invoice's remaining qty on the same PO line (INV line qty minus posted CNs for that InvNo + PO line). Not a free allocation against accumulated PO `InvoicedQty` alone. Cannot rollback an INV that still has posted CNs referencing it.
+- **CN references one specific posted INV** (`PoInvoice.InvNo`). CN qty cannot exceed that invoice's remaining qty on the same PO line (INV line qty minus posted CNs for that InvNo + PO line). Not a free allocation against accumulated PO `InvoicedQty` alone. Cannot rollback an INV that still has posted CNs referencing it.
 - **CN rollback:** `InvoicedQty += CNQty`, then `0 <= InvoicedQty`, then recompute Invoiceable / OverInvoiced / FinClosed.
 - **FinClosed** is computed from the **complete** set of PO lines after the affected line is updated, while header + all details remain locked.
 - **Quantities must be > 0:** active PO detail `OrderedQty > 0`; GR/NG/VR/INV/CN transaction qty `> 0`.
-- **Invoice price-tolerance override may increase or decrease** the vendor-item value (`0..100`). No extra permission beyond existing `PO_CDN` EDIT/POST. Document that a 100% override is a control bypass accepted under document authorization (no new permission in this plan).
+- **Invoice price-tolerance override may increase or decrease** the vendor-item value (`0..100`). No extra permission beyond existing `PO_INVOICE` EDIT/POST. Document that a 100% override is a control bypass accepted under document authorization (no new permission in this plan).
 - **Persisted equals helper:** after every write-back, `BalanceQty == ComputeBalance(...)` and `OverRecvQty == ComputeOverRecv(...)`.
 - **DBA pre-enable report** for existing PO lines (see §8).
 
@@ -187,9 +187,9 @@ A full return can reopen operational `CLOSED` via `PoStatusPolicy` (never set st
 
 ### Documents and lifecycle
 
-`PoCdn.Type`: `INV` increases `InvoicedQty`; `CN` decreases `InvoicedQty` (not below 0). Debit note out of scope. Value-only CN out of scope (`Qty` must be `> 0`).
+`PoInvoice.Type`: `INV` increases `InvoicedQty`; `CN` decreases `InvoicedQty` (not below 0). Debit note out of scope. Value-only CN out of scope (`Qty` must be `> 0`).
 
-**CN-to-invoice reference:** `PoCdn.InvNo` is required on CN and must be one **specific posted INV** for the same company/branch/vendor. CN qty on a PO line cannot exceed that INV's **remaining qty** on that line:
+**CN-to-invoice reference:** `PoInvoice.InvNo` is required on CN and must be one **specific posted INV** for the same company/branch/vendor. CN qty on a PO line cannot exceed that INV's **remaining qty** on that line:
 
 ```
 RemainingOnInvLine = PostedInvQty(InvNo, PoLine) - Sum(PostedCnQty where InvNo + PoLine)
@@ -216,7 +216,7 @@ Authoritative net received, after PO-line lock: `RecvQty - ReturnQty`. History a
 Invoice post:
 
 - Reject invoice-before-receipt (`NetReceivedQty <= 0`)
-- Invoice line UOM must equal PO line `PurchaseUom` (map `PoCdnDetail.SellingUOM`; no conversion)
+- Invoice line UOM must equal PO line `PurchaseUom` (map `PoInvoiceDetail.SellingUOM`; no conversion)
 - `newInvoiceQty <= AllowedInvoicedQty - InvoicedQty` where `AllowedInvoicedQty = NetReceivedQty`
 - After commit: `0 <= InvoicedQty <= NetReceivedQty`
 - Client cannot supply `InvoicedQty`
@@ -235,11 +235,11 @@ VR after invoice is **allowed** (see Phase 1 distinction). That creates `OverInv
 
 ### Price tolerance
 
-- `PoVendorByItem.PriceTolerance` (`decimal(18,4)`, default 0) + nullable `PoCdn.PriceTolerance` override
+- `PoVendorByItem.PriceTolerance` (`decimal(18,4)`, default 0) + nullable `PoInvoice.PriceTolerance` override
 - Shared `PoToleranceLookup` for qty and price
 - Basis: unit price, after `RoundPrice` (`POPriceDecimal`, default 6, `AwayFromZero`)
 - Master and override validation: `0 <= QtyTolerance <= 100`, `0 <= PriceTolerance <= 100`. Reject negatives. Do not allow malformed master data to create unlimited receive/invoice.
-- Invoice override **may increase or decrease** the vendor-item tolerance (`Invoice.PriceTolerance ?? vendorItem.PriceTolerance ?? 0`). No new permission: `PO_CDN` EDIT/POST is the authorization. A 100% override can neutralize price match; that is accepted as a document-level control, not a silent master bypass.
+- Invoice override **may increase or decrease** the vendor-item tolerance (`Invoice.PriceTolerance ?? vendorItem.PriceTolerance ?? 0`). No new permission: `PO_INVOICE` EDIT/POST is the authorization. A 100% override can neutralize price match; that is accepted as a document-level control, not a silent master bypass.
 - Commercial prices: `PoUnitPrice >= 0`, invoice `UnitPrice >= 0`. Negative prices are not supported (same as [PoMasterRefService](ErpWeb.Core/Purchase/PoMasterRefService.cs) today).
 - Formula:
 
@@ -296,13 +296,13 @@ Lock in the plan:
 - **VR is rejected** for service IType and OneTime/NG lines (no stock-out, `FromBalLocId` unused).
 - Financial correction after NG+invoice is a quantity CN, not a VR.
 
-### POCDN commercial / tax scope
+### POInvoice commercial / tax scope
 
 **Reuse unchanged** from `PoOrderCalc` / `PoPrCalc`: `ComputeTax`, `PurchaseTaxDec`, `ApplyTwoLevelDiscount` (`ItemDiscount` / `ItemDiscount1` only), `SumTotals`.
 
 **Clone pattern** from `SaCdnService`: numbering inside the save transaction, `NEW`↔`POSTED`, currency rate into `CurrRate`, commercial-readiness GL-code checks (validation only).
 
-**Wire:** `InvNo` required on `INV`; `DocDate` is the invoice/CN date; `ExternalDocNo` extra ref. Add `PostedDate` / `PostedBy` / `RollbackDate` / `RollbackBy` on `PoCdn`.
+**Wire:** `InvNo` required on `INV`; `DocDate` is the invoice/CN date; `ExternalDocNo` extra ref. Add `PostedDate` / `PostedBy` / `RollbackDate` / `RollbackBy` on `PoInvoice`.
 
 **Out of scope:** AP/GL journals, freight, dedicated supplier-invoice-date column, debit note, e-invoice/IRBM, value-only CN, invoice UOM conversion.
 
@@ -356,7 +356,7 @@ All rows: Ordered = 100, receive qty tol = 10% unless noted. Invoice qty tol doe
 - Double-post — second Post on already-POSTED INV/VR/GR → no qty change
 - Concurrent invoices — two INV 60 against Net 100 → one commits, one fails; Inv never exceeds Net
 
-Required tests: `PoOrderCalcTests`, `IvInventoryPostingServiceTests`, `IvVendorReturnPostingServiceTests`, `PoCdnServiceTests`, plus PO revise / service-VR cases on `PoOrderServiceTests`.
+Required tests: `PoOrderCalcTests`, `IvInventoryPostingServiceTests`, `IvVendorReturnPostingServiceTests`, `PoInvoiceServiceTests`, plus PO revise / service-VR cases on `PoOrderServiceTests`.
 
 ---
 
@@ -379,8 +379,8 @@ Existing inconsistent rows are reported, not silently rewritten.
 
 Append to §12:
 
-- `2026-09-13 | v2.1 — net-received model, cumulative VR, INV+CN, price-tolerance source, FinClosed recompute, truth table, POCDN tax reuse / AP-GL deferral.`
+- `2026-09-13 | v2.1 — net-received model, cumulative VR, INV+CN, price-tolerance source, FinClosed recompute, truth table, POInvoice tax reuse / AP-GL deferral.`
 - `2026-09-13 | v2.2 — invoice qty = net received only; quantity CN only; OverInvoicedQty; RecvQty=effective posted; price/tolerance validation; FinClosed exact match; PO revise vs InvoicedQty; service VR ban; invoice UOM identity; document lifecycle + idempotent post; audit links.`
-- `2026-09-13 | v2.3 — validator split; GR rollback rejected when it would over-invoice; VR-vs-GR-rollback rationale; CN bound to one INV remaining qty; CN rollback math; FinClosed from all lines under lock; zero-qty policy; persisted-equals-helper; DBA integrity report; AllowedInvoicedQty preamble; price override either-direction under PO_CDN auth.`
+- `2026-09-13 | v2.3 — validator split; GR rollback rejected when it would over-invoice; VR-vs-GR-rollback rationale; CN bound to one INV remaining qty; CN rollback math; FinClosed from all lines under lock; zero-qty policy; persisted-equals-helper; DBA integrity report; AllowedInvoicedQty preamble; price override either-direction under PO_INVOICE auth.`
 
 No application code, scripts, or tests in this pass. After acceptance, the only deliverable is the revised markdown.

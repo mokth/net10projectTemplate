@@ -54,7 +54,7 @@ flowchart LR
   PR["PR (PoPr)\nNEW / APPROVED"] -->|pull remaining lines\nby vendor| PO["PO (PoOrder)\nNEW to RECEIVED to CLOSED"]
   PO -->|GR line stores\nPoNo / PoRelNo / PoLineNo| GRD["GR draft\nIvTrxBatch NEW"]
   GRD -->|Post| GRP["GR posted\nRecvQty += ToPurQty\nBalanceQty = PoPurQty - RecvQty - ReturnQty"]
-  PO -.->|not implemented| PI["Purchase invoice / 3-way match\n(PoCdn entities only, no service)"]
+  PO -.->|not implemented| PI["Purchase invoice / 3-way match\n(PoInvoice entities only, no service)"]
   GRP --> INV["Stock ledger (IvInventory)"]
 ```
 
@@ -122,7 +122,7 @@ CLOSED with BalanceQty>0 = FORCE CLOSED (blocks GR; reopenable)
 | # | Severity | Finding | Evidence |
 |---|---|---|---|
 | 1 | High | Tolerance over-receipt can make `BalanceQty` negative. GR posting does not run `PoOrderCalc.ValidateQtyInvariants`. | `IvInventoryPostingService.ApplyGoodsReceiptPoQtyAsync`; `PoOrderCalc.AllowedRecvQty` |
-| 2 | High | No purchase invoice / 3-way match. PR→PO→GR ends at stock; finance cycle is missing. | `PoCdn` / `PoCdnDetail` entities only; no service |
+| 2 | High | No purchase invoice / 3-way match. PR→PO→GR ends at stock; finance cycle is missing. | `PoInvoice` / `PoInvoiceDetail` entities only; no service |
 | 3 | High | Return-to-vendor does not update the PO. `ApplyReturnQtyAsync` has no caller. | `IPoOrderService.ApplyReturnQtyAsync`, `PoOrderService.ApplyReturnQtyAsync` |
 | 4 | Medium | `PENDING` / `CHECKED` PO statuses are never written but appear in the list filter. | `PoOrderStatuses`, `PoOrderList.razor.cs` filter options, `PoStatusPolicy.IsViewOnlyLeftover` |
 | 5 | Medium | PR has no user-visible ordered state; status stays `NEW`/`APPROVED`. | `PoPrStatuses`; `PoPr.PoNo` stamp only |
@@ -192,7 +192,7 @@ Per PO line persist and expose:
 
 ### Phase 3 — Purchase invoice and 3-way match
 
-- [ ] Add `IPoCdnService` (or a dedicated invoice service) over the existing `PoCdn` / `PoCdnDetail` entities.
+- [ ] Add `IPoInvoiceService` (or a dedicated invoice service) over the existing `PoInvoice` / `PoInvoiceDetail` entities.
 - [ ] Line link to `PoNo` / `PoRelNo` / `PoLineNo`, and aggregate against posted GR qty.
 - [ ] Enforce qty and price tolerances; write `InvoicedQty` back to the PO line.
 - [ ] Mark the PO financially closed only when ordered = received = invoiced (within tolerance).
@@ -248,6 +248,6 @@ Per PO line persist and expose:
 ## 11. Open questions
 
 1. Which module owns vendor returns — Inventory (`IvStockReturn`) or Purchasing?
-2. Is the purchase invoice `PoCdn` (credit / debit note) or a new AP invoice document?
+2. Is the purchase invoice `PoInvoice` (credit / debit note) or a new AP invoice document?
 3. Should PR approval be implemented in this phase, or does it stay external?
 4. Keep legacy `OPEN` support for GR picking, or clean the data and drop it?

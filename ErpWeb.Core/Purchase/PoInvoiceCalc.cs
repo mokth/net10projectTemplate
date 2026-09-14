@@ -17,7 +17,7 @@ public static class PoInvoiceTypes
 public static class PoInvoiceLimits
 {
     public const int MaxPostSelection = 3;
-    public const string NumberingModule = "POCDN";
+    public const string NumberingModule = "PO_INV";
 }
 
 public static class PoInvoiceCalc
