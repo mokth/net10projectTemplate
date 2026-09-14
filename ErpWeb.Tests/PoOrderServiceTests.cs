@@ -370,6 +370,203 @@ public class PoOrderServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PR_partial_then_remaining_then_fully_ordered()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+
+        var first = await sut.SaveNewAsync(Request(Line("A100", qty: 6m, prNo: prNo, prLine: 1)));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+        Assert.Equal(PoPrStatuses.PartiallyOrdered, await GetPrStatusAsync(prNo));
+
+        var second = await sut.SaveNewAsync(Request(Line("A100", qty: 4m, prNo: prNo, prLine: 1)));
+        Assert.True(second.Succeeded, second.ErrorMessage);
+        Assert.Equal(PoPrStatuses.FullyOrdered, await GetPrStatusAsync(prNo));
+
+        var third = await sut.SaveNewAsync(Request(Line("A100", qty: 1m, prNo: prNo, prLine: 1)));
+        Assert.False(third.Succeeded);
+        // FULLY_ORDERED is a status gate (not a quantity message).
+        Assert.Contains("is not available for PO", third.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PoPrStatuses.FullyOrdered, await GetPrStatusAsync(prNo));
+    }
+
+    [Fact]
+    public async Task PR_over_consumption_rejected_leaves_PR_unchanged()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+        var first = await sut.SaveNewAsync(Request(Line("A100", qty: 6m, prNo: prNo, prLine: 1)));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var over = await sut.SaveNewAsync(Request(Line("A100", qty: 5m, prNo: prNo, prLine: 1)));
+        Assert.False(over.Succeeded);
+        Assert.Contains("remaining quantity is insufficient", over.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PoPrStatuses.PartiallyOrdered, await GetPrStatusAsync(prNo));
+        Assert.Equal(6m, await LiveConsumedAsync(prNo, 1));
+    }
+
+    [Fact]
+    public async Task PR_stale_partially_ordered_with_zero_remaining_rejected()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+        var first = await sut.SaveNewAsync(Request(Line("A100", qty: 10m, prNo: prNo, prLine: 1)));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+        Assert.Equal(PoPrStatuses.FullyOrdered, await GetPrStatusAsync(prNo));
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.PoPrs.SingleAsync(x => x.PrNo == prNo);
+            header.Status = PoPrStatuses.PartiallyOrdered;
+            await db.SaveChangesAsync();
+        }
+
+        var again = await sut.SaveNewAsync(Request(Line("A100", qty: 1m, prNo: prNo, prLine: 1)));
+        Assert.False(again.Succeeded);
+        Assert.Contains("remaining quantity is insufficient", again.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(10m, await LiveConsumedAsync(prNo, 1));
+    }
+
+    [Theory]
+    [InlineData(PoPrStatuses.FullyOrdered)]
+    [InlineData(PoPrStatuses.Cancelled)]
+    [InlineData(PoPrStatuses.Open)]
+    public async Task PR_rejected_status_not_available_for_PO(string status)
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: status);
+
+        var save = await sut.SaveNewAsync(Request(Line("A100", qty: 1m, prNo: prNo, prLine: 1)));
+        Assert.False(save.Succeeded);
+        Assert.Contains("is not available for PO", save.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(status, await GetPrStatusAsync(prNo));
+        Assert.Equal(0m, await LiveConsumedAsync(prNo, 1));
+    }
+
+    [Fact]
+    public async Task SearchPrForPo_includes_allowed_excludes_rejected()
+    {
+        var sut = CreateSut();
+        var allowedNew = await SeedPrAsync(qty: 5m, status: PoPrStatuses.New, prNo: "PR-NEW-1");
+        var allowedApproved = await SeedPrAsync(qty: 5m, status: PoPrStatuses.Approved, prNo: "PR-APR-1");
+        var allowedPartial = await SeedPrAsync(qty: 5m, status: PoPrStatuses.PartiallyOrdered, prNo: "PR-PART-1");
+        var rejectedFull = await SeedPrAsync(qty: 5m, status: PoPrStatuses.FullyOrdered, prNo: "PR-FULL-1");
+        var rejectedCancel = await SeedPrAsync(qty: 5m, status: PoPrStatuses.Cancelled, prNo: "PR-CAN-1");
+        var rejectedOpen = await SeedPrAsync(qty: 5m, status: PoPrStatuses.Open, prNo: "PR-OPEN-1");
+
+        var result = await sut.SearchPrForPoAsync("SUP01", null);
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        var nos = result.PrRows.Select(x => x.PrNo).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.Contains(allowedNew, nos);
+        Assert.Contains(allowedApproved, nos);
+        Assert.Contains(allowedPartial, nos);
+        Assert.DoesNotContain(rejectedFull, nos);
+        Assert.DoesNotContain(rejectedCancel, nos);
+        Assert.DoesNotContain(rejectedOpen, nos);
+    }
+
+    [Fact]
+    public async Task GetPrRemainingLines_status_and_qty_semantics()
+    {
+        var sut = CreateSut();
+        var missing = await sut.GetPrRemainingLinesAsync("PR-MISSING");
+        Assert.False(missing.Succeeded);
+        Assert.Equal(PoOrderErrorKind.NotFound, missing.ErrorKind);
+
+        var cancelled = await SeedPrAsync(qty: 5m, status: PoPrStatuses.Cancelled, prNo: "PR-CAN-REM");
+        var cancelledResult = await sut.GetPrRemainingLinesAsync(cancelled);
+        Assert.False(cancelledResult.Succeeded);
+        Assert.Contains("is not available for PO", cancelledResult.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var partial = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New, prNo: "PR-PART-REM");
+        Assert.True((await sut.SaveNewAsync(Request(Line("A100", qty: 6m, prNo: partial, prLine: 1)))).Succeeded);
+        var rem = await sut.GetPrRemainingLinesAsync(partial);
+        Assert.True(rem.Succeeded, rem.ErrorMessage);
+        var row = Assert.Single(rem.PrRemainingLines);
+        Assert.Equal(4m, row.RemainingQty);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.PoPrs.SingleAsync(x => x.PrNo == partial);
+            header.Status = PoPrStatuses.PartiallyOrdered;
+            await db.SaveChangesAsync();
+            // Consume the rest via a second PO then force stale status for empty remaining.
+        }
+
+        Assert.True((await sut.SaveNewAsync(Request(Line("A100", qty: 4m, prNo: partial, prLine: 1)))).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.PoPrs.SingleAsync(x => x.PrNo == partial);
+            header.Status = PoPrStatuses.PartiallyOrdered;
+            await db.SaveChangesAsync();
+        }
+
+        var stale = await sut.GetPrRemainingLinesAsync(partial);
+        Assert.True(stale.Succeeded, stale.ErrorMessage);
+        Assert.Empty(stale.PrRemainingLines);
+    }
+
+    [Fact]
+    public async Task Update_excludePo_excludes_current_but_counts_other_POs()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+
+        var po1 = await sut.SaveNewAsync(Request(Line("A100", qty: 6m, prNo: prNo, prLine: 1)));
+        Assert.True(po1.Succeeded, po1.ErrorMessage);
+        var po2 = await sut.SaveNewAsync(Request(Line("A100", qty: 4m, prNo: prNo, prLine: 1)));
+        Assert.True(po2.Succeeded, po2.ErrorMessage);
+
+        // Editing PO1 to keep qty 6 must succeed (excludePo) even though other PO already took 4.
+        var updateOk = await sut.UpdateAsync(
+            po1.PoNo!,
+            Request(
+                Line("A100", qty: 6m, line: po1.Document!.Lines[0].Line, prNo: prNo, prLine: 1),
+                rowVersion: (await sut.GetAsync(po1.PoNo!)).Document!.RowVersion));
+        Assert.True(updateOk.Succeeded, updateOk.ErrorMessage);
+
+        // Editing PO1 to 7 would need remaining 1 after excluding itself, but other PO holds 4 → insufficient.
+        var updateFail = await sut.UpdateAsync(
+            po1.PoNo!,
+            Request(
+                Line("A100", qty: 7m, line: po1.Document.Lines[0].Line, prNo: prNo, prLine: 1),
+                rowVersion: updateOk.Document!.RowVersion));
+        Assert.False(updateFail.Succeeded);
+        Assert.Contains("remaining quantity is insufficient", updateFail.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(6m, await LiveConsumedForPoAsync(po1.PoNo!, 1));
+    }
+
+    [Fact]
+    public async Task Revise_excludePo_excludes_current_revision()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+        var po1 = await sut.SaveNewAsync(Request(Line("A100", qty: 6m, prNo: prNo, prLine: 1)));
+        Assert.True(po1.Succeeded, po1.ErrorMessage);
+        Assert.True((await sut.SaveNewAsync(Request(Line("A100", qty: 4m, prNo: prNo, prLine: 1)))).Succeeded);
+
+        var request = Request(
+            Line("A100", qty: 6m, line: po1.Document!.Lines[0].Line, prNo: prNo, prLine: 1),
+            rowVersion: (await sut.GetAsync(po1.PoNo!)).Document!.RowVersion);
+        request.RevisionReason = "Keep same PR qty";
+        var revise = await sut.ReviseAsync(po1.PoNo!, request);
+        Assert.True(revise.Succeeded, revise.ErrorMessage);
+        Assert.Equal(2, revise.Document!.PoRelNo);
+    }
+
+    [Fact]
+    public async Task SaveNew_zero_qty_rejected_by_existing_validation()
+    {
+        var sut = CreateSut();
+        var prNo = await SeedPrAsync(qty: 10m, status: PoPrStatuses.New);
+        var result = await sut.SaveNewAsync(Request(Line("A100", qty: 0m, prNo: prNo, prLine: 1)));
+        Assert.False(result.Succeeded);
+        Assert.Equal(PoOrderErrorKind.Validation, result.ErrorKind);
+        Assert.Equal(0m, await LiveConsumedAsync(prNo, 1));
+        Assert.Equal(PoPrStatuses.New, await GetPrStatusAsync(prNo));
+    }
+
+    [Fact]
     public async Task Update_received_line_cannot_decrease_PoPurQty()
     {
         var sut = CreateSut();
@@ -447,6 +644,85 @@ public class PoOrderServiceTests : IAsyncLifetime
                 rowVersion: stale));
         Assert.False(second.Succeeded);
         Assert.Equal(PoOrderErrorKind.Concurrency, second.ErrorKind);
+    }
+
+    private async Task<string> SeedPrAsync(decimal qty, string status, string? prNo = null)
+    {
+        var no = prNo ?? ("PR-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant());
+        await using var db = await _factory.CreateDbContextAsync();
+        db.PoPrs.Add(new PoPr
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            PrNo = no,
+            CreateDt = FixedToday,
+            Requester = "tester",
+            Status = status,
+            PrType = PoPrTypes.Purchasing,
+            CreatedDate = FixedToday,
+            CreatedBy = "user",
+            RowVersion = Guid.NewGuid().ToByteArray(),
+            Details =
+            [
+                new PoPrDetail
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    PrNo = no,
+                    Line = 1,
+                    ICode = "A100",
+                    IDesc = "Stock A",
+                    Qty = qty,
+                    PurchaseQty = qty,
+                    StdQty = qty,
+                    PackSz = 1m,
+                    StdUom = "EA",
+                    PurchaseUom = "EA",
+                    Currency = "MYR",
+                    UnitPrice = 25m,
+                    Amount = qty * 25m,
+                    VendorCd = "SUP01",
+                    VendNm = "Alpha Supplier",
+                    TaxGroup = "SR",
+                    ToWarehouse = "MAIN",
+                    Status = status
+                }
+            ]
+        });
+        await db.SaveChangesAsync();
+        return no;
+    }
+
+    private async Task<string> GetPrStatusAsync(string prNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return await db.PoPrs.AsNoTracking()
+            .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.PrNo == prNo)
+            .Select(x => x.Status)
+            .SingleAsync();
+    }
+
+    private async Task<decimal> LiveConsumedAsync(string prNo, short prLine)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return await db.PoOrderDetails.AsNoTracking()
+            .Where(d => d.CompanyCode == "DEMO"
+                && d.BranchCode == "HQ"
+                && d.PrNo == prNo
+                && d.PrLineNo == prLine
+                && d.Order.Status != PoOrderStatuses.Cancelled)
+            .SumAsync(d => (decimal?)d.PoPurQty) ?? 0m;
+    }
+
+    private async Task<decimal> LiveConsumedForPoAsync(string poNo, short poRelNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return await db.PoOrderDetails.AsNoTracking()
+            .Where(d => d.CompanyCode == "DEMO"
+                && d.BranchCode == "HQ"
+                && d.PoNo == poNo
+                && d.PoRelNo == poRelNo)
+            .SumAsync(d => (decimal?)d.PoPurQty) ?? 0m;
     }
 
     private static PoOrderSaveRequest Request(

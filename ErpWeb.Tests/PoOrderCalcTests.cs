@@ -157,6 +157,25 @@ public class PoOrderCalcTests
             PoPrCalc.ComputeDerivedStatus(PoPrStatuses.Approved, [(10m, 0m)]));
     }
 
+    [Theory]
+    [InlineData(PoPrStatuses.New, true)]
+    [InlineData(PoPrStatuses.Approved, true)]
+    [InlineData(PoPrStatuses.PartiallyOrdered, true)]
+    [InlineData(PoPrStatuses.FullyOrdered, false)]
+    [InlineData(PoPrStatuses.Cancelled, false)]
+    [InlineData(PoPrStatuses.Open, false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("new", true)]
+    [InlineData("Approved", true)]
+    [InlineData("partially_ordered", true)]
+    [InlineData("fully_ordered", false)]
+    [InlineData("cancelled", false)]
+    [InlineData("open", false)]
+    public void PoPrCalc_IsAvailableForPo_status_matrix(string? status, bool expected) =>
+        Assert.Equal(expected, PoPrCalc.IsAvailableForPo(status));
+
     [Fact]
     public void PoStatusPolicy_reopen_fails_when_no_balance_remains()
     {

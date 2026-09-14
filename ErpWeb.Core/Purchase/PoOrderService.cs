@@ -488,7 +488,10 @@ public sealed class PoOrderService : IPoOrderService
 			string vendor = (vendorCd ?? string.Empty).Trim();
 			string term = (searchText ?? string.Empty).Trim();
 			IQueryable<PoPr> query = from x in db.PoPrs.AsNoTracking()
-				where x.CompanyCode == company && x.BranchCode == branch && (x.Status == "NEW" || x.Status == "APPROVED" || x.Status == "PARTIALLY_ORDERED")
+				where x.CompanyCode == company && x.BranchCode == branch
+					&& (x.Status == PoPrStatuses.New
+						|| x.Status == PoPrStatuses.Approved
+						|| x.Status == PoPrStatuses.PartiallyOrdered)
 				select x;
 			if (vendor.Length > 0)
 			{
@@ -533,7 +536,19 @@ public sealed class PoOrderService : IPoOrderService
 		PoOrderOperationResult result;
 		await using (AppDbContext db = await _dbFactory.CreateDbContextAsync(cancellationToken))
 		{
-			result = PoOrderOperationResult.OkPrRemainingLines((await BuildPrRemainingLinesAsync(db, context.CompanyCode, context.BranchCode, no, vendorCd, null, cancellationToken)).Where((PoPrRemainingLineDto x) => x.RemainingQty > 0m).ToList());
+			PoPr header = await db.PoPrs.AsNoTracking().FirstOrDefaultAsync((PoPr x) => x.CompanyCode == context.CompanyCode && x.BranchCode == context.BranchCode && x.PrNo == no, cancellationToken);
+			if (header == null)
+			{
+				result = PoOrderOperationResult.Fail("Purchase Requisition was not found.", PoOrderErrorKind.NotFound);
+			}
+			else if (!PoPrCalc.IsAvailableForPo(header.Status))
+			{
+				result = PoOrderOperationResult.Fail("PR " + no + " is not available for PO.");
+			}
+			else
+			{
+				result = PoOrderOperationResult.OkPrRemainingLines((await BuildPrRemainingLinesAsync(db, context.CompanyCode, context.BranchCode, no, vendorCd, null, cancellationToken)).Where((PoPrRemainingLineDto x) => x.RemainingQty > 0m).ToList());
+			}
 		}
 		return result;
 	}
@@ -645,13 +660,15 @@ public sealed class PoOrderService : IPoOrderService
 								{
 									header.Details.Add(ToDetailEntity(header, line, lineNo++));
 								}
-								await StampPrConsumptionAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(header.Details), header.PoNo, cancellationToken);
 								if (tempDocId != null)
 								{
 									await StampAttachDocIdsInDbAsync(db, context.CompanyCode, context.BranchCode, tempDocId, header.PoNo, header.PoRelNo, uid, cancellationToken);
 								}
 								TouchRowVersion(db, header);
 								db.PoOrders.Add(header);
+								// Persist PO lines first so LivePoConsumedForPrAsync (and PR stamps) see this document.
+								await db.SaveChangesAsync(cancellationToken);
+								await StampPrConsumptionAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(header.Details), header.PoNo, cancellationToken);
 								await db.SaveChangesAsync(cancellationToken);
 								await tx.CommitAsync(cancellationToken);
 								if (tempDocId != null)
@@ -1067,9 +1084,11 @@ public sealed class PoOrderService : IPoOrderService
 										TouchRowVersion(db, header);
 										TouchRowVersion(db, newHeader);
 										db.PoOrders.Add(newHeader);
+										await StampAttachRevNoAsync(db, context.CompanyCode, context.BranchCode, newHeader.PoNo, newHeader.PoRelNo, cancellationToken);
+										// Persist cancelled prior rev + new rev so LivePoConsumed sees CANCELLED exclude correctly.
+										await db.SaveChangesAsync(cancellationToken);
 										await RecalculatePrStampsAsync(db, context.CompanyCode, context.BranchCode, oldPrKeys.Concat(CollectPrKeys(newHeader.Details)).ToList(), cancellationToken);
 										await StampPrConsumptionAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(newHeader.Details), newHeader.PoNo, cancellationToken);
-										await StampAttachRevNoAsync(db, context.CompanyCode, context.BranchCode, newHeader.PoNo, newHeader.PoRelNo, cancellationToken);
 										await db.SaveChangesAsync(cancellationToken);
 										await tx.CommitAsync(cancellationToken);
 										poOrderOperationResult = await GetAsync(newHeader.PoNo, newHeader.PoRelNo, cancellationToken);
@@ -1093,6 +1112,7 @@ public sealed class PoOrderService : IPoOrderService
 												await StampAttachDocIdsInDbAsync(db, context.CompanyCode, context.BranchCode, tempDocId, header.PoNo, header.PoRelNo, Truncate(context.UserId, 20), cancellationToken);
 											}
 											TouchRowVersion(db, header);
+											await db.SaveChangesAsync(cancellationToken);
 											await RecalculatePrStampsAsync(db, context.CompanyCode, context.BranchCode, oldPrKeys.Concat(CollectPrKeys(header.Details)).ToList(), cancellationToken);
 											await StampPrConsumptionAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(header.Details), header.PoNo, cancellationToken);
 											await db.SaveChangesAsync(cancellationToken);
@@ -1478,7 +1498,16 @@ public sealed class PoOrderService : IPoOrderService
 			string headerStatus = await (from x in db.PoPrs.AsNoTracking()
 				where x.CompanyCode == companyCode && x.BranchCode == branchCode && x.PrNo == @group.Key.Item1
 				select x.Status).FirstOrDefaultAsync(cancellationToken);
-			if (headerStatus == null || (headerStatus != "NEW" && headerStatus != "APPROVED"))
+			if (headerStatus == null)
+			{
+				return PoOrderOperationResult.Fail("PR " + group.Key.Item1 + " is not available for PO.");
+			}
+
+			// New PO creation requires IsAvailableForPo. Update/revise may adjust an already-linked
+			// PO against a FULLY_ORDERED PR because excludePo releases this document's own qty.
+			var fullyOrderedUpdate = excludePo is not null
+				&& string.Equals(headerStatus, PoPrStatuses.FullyOrdered, StringComparison.OrdinalIgnoreCase);
+			if (!PoPrCalc.IsAvailableForPo(headerStatus) && !fullyOrderedUpdate)
 			{
 				return PoOrderOperationResult.Fail("PR " + group.Key.Item1 + " is not available for PO.");
 			}
@@ -1616,7 +1645,7 @@ public sealed class PoOrderService : IPoOrderService
 
 	private async Task<decimal> LivePoConsumedForPrAsync(AppDbContext db, string companyCode, string branchCode, string prNo, short prLineNo, (string PoNo, short PoRelNo)? excludePo, CancellationToken cancellationToken)
 	{
-		IQueryable<PoOrderDetail> query = db.PoOrderDetails.Where((PoOrderDetail d) => d.CompanyCode == companyCode && d.BranchCode == branchCode && d.PrNo == prNo && (int?)d.PrLineNo == (int?)prLineNo && d.Order.Status != "CANCELLED");
+		IQueryable<PoOrderDetail> query = db.PoOrderDetails.Where((PoOrderDetail d) => d.CompanyCode == companyCode && d.BranchCode == branchCode && d.PrNo == prNo && (int?)d.PrLineNo == (int?)prLineNo && d.Order.Status != PoOrderStatuses.Cancelled);
 		if (excludePo.HasValue)
 		{
 			string po = excludePo.Value.PoNo;
@@ -1629,7 +1658,7 @@ public sealed class PoOrderService : IPoOrderService
 	private async Task<string?> LatestLivePoNoForPrAsync(AppDbContext db, string companyCode, string branchCode, string prNo, short? prLineNo, CancellationToken cancellationToken)
 	{
 		IQueryable<PoOrderDetail> query = from d in db.PoOrderDetails.AsNoTracking()
-			where d.CompanyCode == companyCode && d.BranchCode == branchCode && d.PrNo == prNo && d.Order.Status != "CANCELLED"
+			where d.CompanyCode == companyCode && d.BranchCode == branchCode && d.PrNo == prNo && d.Order.Status != PoOrderStatuses.Cancelled
 			select d;
 		if (prLineNo.HasValue)
 		{

@@ -5,172 +5,395 @@
 <PageTitle>@PageHeading</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.PurchaseInvoice">
-    <div class="iv-page">
+    <SaDocPage>
         @if (!string.IsNullOrWhiteSpace(StatusMessage))
         {
-            <div class="iv-toast iv-toast--ok" role="status">
+            <div class="sdoc-toast sdoc-toast--ok" role="status">
                 <span>@StatusMessage</span>
-                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
-            <div class="iv-toast iv-toast--err" role="alert">
+            <div class="sdoc-toast sdoc-toast--err" role="alert">
                 <span>@ErrorMessage</span>
-                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
             </div>
         }
-
-        <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-invoice"></i></div>
-            <div class="iv-hero__copy">
-                <p class="iv-eyebrow">Purchase</p>
-                <h1 class="iv-title">@PageHeading</h1>
-                <div class="iv-chips">
-                    <span class="iv-chip">@(Model.Status.Length == 0 ? "DRAFT" : Model.Status)</span>
-                    <span class="iv-chip">@Model.Type</span>
-                </div>
-            </div>
-            <div class="iv-hero__actions">
-                <DxButton Text="Back" RenderStyle="ButtonRenderStyle.Secondary" Click="@GoBack" />
-                @if (IsEditable)
-                {
-                    <DxButton Text="Save" RenderStyle="ButtonRenderStyle.Primary" Click="@SaveAsync" Enabled="@(!IsSubmitting)" />
-                }
-                @if (Model.CanPost)
-                {
-                    <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting)" />
-                }
-                @if (Model.CanRollback)
-                {
-                    <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
-                }
-                @if (CanCreateCreditNote)
-                {
-                    <DxButton Text="Create Purchase Credit Note"
-                              RenderStyle="ButtonRenderStyle.Secondary"
-                              Click="@CreateCreditNoteAsync" />
-                }
-            </div>
-        </header>
 
         @if (IsLoading)
         {
-            <p>Loading…</p>
+            <div class="sdoc-loading">
+                <p class="mb-0">Loading purchase invoice…</p>
+            </div>
         }
         else
         {
-            <section class="iv-card mb-3">
-                <div class="row g-3">
-                    <div class="col-md-2">
-                        <label class="form-label">Type</label>
-                        <DxComboBox Data="@TypeOptions"
-                                    ValueFieldName="Value"
-                                    TextFieldName="Text"
-                                    @bind-Value="Model.Type"
-                                    Enabled="@IsNew"
-                                    CssClass="w-100" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Doc No</label>
-                        <DxTextBox Text="@(string.IsNullOrWhiteSpace(Model.DocNo) ? "AUTO" : Model.DocNo)" ReadOnly="true" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Date</label>
-                        <DxDateEdit @bind-Date="Model.DocDate" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label">@(Model.Type == "CN" ? "Source Invoice No" : "Supplier Invoice No")</label>
-                        <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Vendor</label>
-                        <DxComboBox Data="@Vendors"
-                                    ValueFieldName="@nameof(PoInvoiceVendorLookupRow.SuppCode)"
-                                    TextFieldName="@nameof(PoInvoiceVendorLookupRow.DisplayText)"
-                                    SearchMode="ListSearchMode.AutoSearch"
-                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                    Value="@Model.VendorCode"
-                                    ValueChanged="@(EventCallback.Factory.Create<string>(this, OnVendorChanged))"
-                                    Enabled="@IsEditable"
-                                    CssClass="w-100" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Currency</label>
-                        <DxTextBox @bind-Text="Model.Currency" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Rate</label>
-                        <DxSpinEdit @bind-Value="Model.CurrRate" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Price Tol %</label>
-                        <DxSpinEdit @bind-Value="PriceToleranceEdit" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
-                    <div class="col-md-12">
-                        <label class="form-label">Remarks</label>
-                        <DxTextBox @bind-Text="Model.Remarks" Enabled="@IsEditable" CssClass="w-100" />
-                    </div>
+            <header class="sdoc-titlebar">
+                <h1 class="sdoc-titlebar__title" title="@($"{PageHeading} · {DocNoDisplay}")">@PageHeading · @DocNoDisplay</h1>
+                <span class="sdoc-titlebar__status" title="@StatusDisplay">
+                    @StatusDisplay
+                    <span class="sdoc-titlebar__status-extra">@TypeDisplay · @ModeChip</span>
+                </span>
+                <div class="sdoc-titlebar__kpi">
+                    <span>Total incl. tax</span>
+                    <strong>@Model.TotAmnt.ToString("n2")</strong>
+                </div>
+            </header>
+
+            <section class="sdoc-master">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Document</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Type" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@TypeOptions"
+                                                ValueFieldName="Value"
+                                                TextFieldName="Text"
+                                                @bind-Value="Model.Type"
+                                                Enabled="@IsNew"
+                                                CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Doc no." ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                                <Template>
+                                    <DxDateEdit @bind-Date="Model.DocDate"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@IsEditable"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="@SupplierInvCaption" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" CssClass="w-100 required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Vendor</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@Vendors"
+                                                ValueFieldName="@nameof(PoInvoiceVendorLookupRow.SuppCode)"
+                                                TextFieldName="@nameof(PoInvoiceVendorLookupRow.DisplayText)"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Value="@Model.VendorCode"
+                                                ValueChanged="@(async (string? v) => await OnVendorChanged(v))"
+                                                Enabled="@IsEditable"
+                                                NullText="Select vendor"
+                                                CssClass="w-100 required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Name" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.VendorName" Enabled="@IsEditable" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Terms</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@Currencies"
+                                                TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                                Value="@Model.Currency"
+                                                ValueChanged="@((string? v) => OnCurrencyChanged(v))"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@IsEditable"
+                                                NullText="Select currency"
+                                                CssClass="w-100 required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Rate" ColSpanMd="12">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="Model.CurrRate" Enabled="@IsEditable" CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                                <Template>
+                                    <IvCodeComboBox Data="@PayCodes"
+                                                    Value="@Model.PayCode"
+                                                    ValueChanged="@((string? v) => Model.PayCode = v)"
+                                                    Enabled="@IsEditable"
+                                                    NullText="Select payment term" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@TaxGroups"
+                                                TextFieldName="@nameof(PoInvoiceTaxGroupLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(PoInvoiceTaxGroupLookupRow.TaxGrCode)"
+                                                @bind-Value="Model.TaxGrCode"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@IsEditable"
+                                                NullText="Default"
+                                                CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Price tol %" ColSpanMd="12">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="PriceToleranceEdit" Enabled="@IsEditable" CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>References</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Project" ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.ProjId" Enabled="@IsEditable" MaxLength="20" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Department" ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.Dept" Enabled="@IsEditable" MaxLength="20" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Ref no." ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.RefNo" Enabled="@IsEditable" MaxLength="50" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="External doc no." ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="Model.ExternalDocNo" Enabled="@IsEditable" MaxLength="50" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+
+                <div class="sdoc-address-tabs">
+                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                        <DxTabPage Text="Vendor address">
+                            <div class="sdoc-tab">
+                                <DxFormLayout SizeMode="SizeMode.Small">
+                                    <DxFormLayoutItem Caption="Address 1" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.InvAddress1" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 2" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.InvAddress2" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 3" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.InvAddress3" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 4" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.InvAddress4" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="City" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.City" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="State" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.State" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Postal" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.PostalCode" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Country" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.Country" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Tel" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.Tel" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Fax" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="Model.Fax" Enabled="@IsEditable" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </DxFormLayout>
+                            </div>
+                        </DxTabPage>
+                        <DxTabPage Text="Remarks">
+                            <div class="sdoc-tab">
+                                <DxMemo @bind-Text="Model.Remarks" Rows="5" Enabled="@IsEditable" CssClass="w-100" />
+                            </div>
+                        </DxTabPage>
+                    </DxTabs>
                 </div>
             </section>
 
-            <section class="iv-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h2 class="h5 mb-0">Lines</h2>
+            <section class="sdoc-items">
+                <div class="sdoc-items__head">
+                    <h2 class="sdoc-items__title">Items</h2>
                     @if (IsEditable)
                     {
-                        <div class="d-flex gap-2">
-                            <DxButton Text="Add PO line" RenderStyle="ButtonRenderStyle.Secondary" Click="@OpenPoPickerAsync" />
-                            @if (Model.Type == "CN")
+                        <div class="poinvoice-item-actions">
+                            <DxButton Text="Add PO line"
+                                      RenderStyle="ButtonRenderStyle.Secondary"
+                                      IconCssClass="fa-solid fa-list-check"
+                                      Click="@OpenPoPickerAsync"
+                                      Enabled="@CanMutateLines" />
+                            @if (IsQuantityCorrection)
                             {
-                                <DxButton Text="Copy from Invoice" RenderStyle="ButtonRenderStyle.Secondary" Click="@CopyFromInvAsync" />
+                                <DxButton Text="Copy from Invoice"
+                                          RenderStyle="ButtonRenderStyle.Secondary"
+                                          Click="@CopyFromInvAsync"
+                                          Enabled="@CanMutateLines" />
                             }
                         </div>
                     }
                 </div>
 
-                <DxGrid Data="@EditLines" KeyFieldName="ClientKey" PageSize="20">
+                <DxGrid Data="@EditLines"
+                        KeyFieldName="ClientKey"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        CssClass="sdoc-line-grid">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(LineEdit.PoNo)" Caption="PO" Width="120px" />
                         <DxGridDataColumn FieldName="@nameof(LineEdit.PoRelNo)" Caption="Rev" Width="60px" />
                         <DxGridDataColumn FieldName="@nameof(LineEdit.PoLineNo)" Caption="Line" Width="60px" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.ICode)" Caption="Item" Width="120px" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.IDesc)" Caption="Description" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.ICode)" Caption="Item" Width="170px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var itemLine = (LineEdit)context.DataItem;
+                                }
+                                <div class="sdoc-cell-stack">
+                                    <span class="sdoc-cell-stack__primary">@itemLine.ICode</span>
+                                    <span class="sdoc-cell-stack__secondary">@itemLine.IDesc</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(LineEdit.SellingUom)" Caption="UOM" Width="70px" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.Qty)" Caption="Qty" Width="100px" DisplayFormat="n4" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.UnitPrice)" Caption="Price" Width="110px" DisplayFormat="n6" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.NetAmount)" Caption="Net" Width="110px" DisplayFormat="n2" />
-                        <DxGridDataColumn FieldName="@nameof(LineEdit.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.Qty)" Caption="Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.UnitPrice)" Caption="Price" Width="110px" DisplayFormat="n6" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.NetAmount)" Caption="Net" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                     </Columns>
+                    <EmptyDataAreaTemplate>
+                        <div class="sdoc-empty">
+                            <h3>No items yet</h3>
+                            <p>@(IsEditable ? "Select a vendor, then add invoiceable PO lines." : "This purchase invoice has no lines.")</p>
+                        </div>
+                    </EmptyDataAreaTemplate>
                 </DxGrid>
 
-                <div class="d-flex justify-content-end gap-4 mt-3">
-                    <div><span class="text-muted">Gross</span> <strong>@Model.GrossAmnt.ToString("n2")</strong></div>
-                    <div><span class="text-muted">Tax</span> <strong>@Model.Taxes.ToString("n2")</strong></div>
-                    <div><span class="text-muted">Total</span> <strong>@Model.TotAmnt.ToString("n2")</strong></div>
+                <div class="sdoc-totals">
+                    <div><span>GROSS</span><strong>@Model.GrossAmnt.ToString("n2")</strong></div>
+                    <div><span>TAXES</span><strong>@Model.Taxes.ToString("n2")</strong></div>
+                    <div><span>TOTAL</span><strong>@Model.TotAmnt.ToString("n2")</strong></div>
                 </div>
             </section>
-        }
-    </div>
 
-    <DxPopup @bind-Visible="PoPickerVisible" HeaderText="Invoiceable PO lines" Width="900px" CloseOnOutsideClick="false">
-        <BodyTemplate>
-            <DxGrid Data="@PoPickerRows" KeyFieldName="@nameof(PoInvoicePoLinePickerRow.DisplayText)" PageSize="10"
-                    SelectionMode="GridSelectionMode.Multiple" @bind-SelectedDataItems="SelectedPoLines">
-                <Columns>
-                    <DxGridSelectionColumn Width="40px" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoNo)" Caption="PO" Width="120px" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.Line)" Caption="Line" Width="60px" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.ICode)" Caption="Item" Width="100px" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PurchaseUom)" Caption="UOM" Width="70px" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.InvoiceableQty)" Caption="Invoiceable" Width="110px" DisplayFormat="n4" />
-                    <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoUnitPrice)" Caption="PO Price" Width="110px" DisplayFormat="n6" />
-                </Columns>
-            </DxGrid>
-        </BodyTemplate>
-        <FooterTemplate>
-            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PoPickerVisible = false)" />
-            <DxButton Text="Add selected" RenderStyle="ButtonRenderStyle.Primary" Click="@AddSelectedPoLines" />
-        </FooterTemplate>
-    </DxPopup>
+            <footer class="sdoc-footer">
+                <p class="sdoc-footer__hint">@LineCountLabel</p>
+                <div class="sdoc-footer__actions">
+                    @if (IsView)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@GoBack" />
+                        @if (CanEditFromView)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@GoBack" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@SaveAsync"
+                                  Enabled="@CanSave" />
+                    }
+                    @if (Model.CanPost)
+                    {
+                        <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting)" />
+                    }
+                    @if (Model.CanRollback)
+                    {
+                        <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
+                    }
+                    @if (CanCreateCreditNote)
+                    {
+                        <DxButton Text="Create Purchase Credit Note"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@CreateCreditNoteAsync" />
+                    }
+                </div>
+            </footer>
+        }
+
+        <DxPopup HeaderText="Invoiceable PO lines"
+                 CloseOnOutsideClick="false"
+                 Width="900px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="PoPickerVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    <DxGrid Data="@PoPickerRows"
+                            KeyFieldName="@nameof(PoInvoicePoLinePickerRow.DisplayText)"
+                            PageSize="10"
+                            SelectionMode="GridSelectionMode.Multiple"
+                            @bind-SelectedDataItems="SelectedPoLines"
+                            CssClass="sdoc-line-grid">
+                        <Columns>
+                            <DxGridSelectionColumn Width="40px" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoNo)" Caption="PO" Width="120px" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.Line)" Caption="Line" Width="60px" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.ICode)" Caption="Item" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PurchaseUom)" Caption="UOM" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.InvoiceableQty)" Caption="Invoiceable" Width="110px" DisplayFormat="n4" />
+                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoUnitPrice)" Caption="PO Price" Width="110px" DisplayFormat="n6" />
+                        </Columns>
+                    </DxGrid>
+                </div>
+                <div class="sdoc-popup-footer">
+                    <div class="sdoc-popup-footer__actions">
+                        <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PoPickerVisible = false)" />
+                        <DxButton Text="Add selected" RenderStyle="ButtonRenderStyle.Primary" Click="@AddSelectedPoLines" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+    </SaDocPage>
 </MenuAuthorize>

@@ -60,6 +60,9 @@
       <Menu Code="PO_PR" Name="Purchase Requisition" Route="/purchase/requisitions" SortOrder="1" />
       <Menu Code="PO_ORDER" Name="Purchase Order" Route="/purchase/orders" SortOrder="2" />
       <Menu Code="PO_INVOICE" Name="Purchase Invoice" Route="/purchase/invoices" SortOrder="3" />
+      <Menu Code="PO_CN" Name="Credit Note" Route="/purchase/credit-notes" SortOrder="4" />
+      <Menu Code="PO_DN" Name="Debit Note" Route="/purchase/debit-notes" SortOrder="5" />
+      <Menu Code="PO_CN_RESERVATIONS" Name="CN Reservations" Route="/purchase/cn-reservations" SortOrder="6" />
     </Menu>
   </Menu>
 

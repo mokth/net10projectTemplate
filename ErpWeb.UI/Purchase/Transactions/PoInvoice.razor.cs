@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Components.Pages;
@@ -24,10 +25,14 @@ public partial class PoInvoice : PageBase
     };
 
     protected List<PoInvoiceVendorLookupRow> Vendors { get; set; } = [];
+    protected List<PoInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
+    protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
+    protected List<IvCodeLookupRow> Currencies { get; set; } = [];
     protected List<LineEdit> EditLines { get; set; } = [];
     protected List<PoInvoicePoLinePickerRow> PoPickerRows { get; set; } = [];
     protected IReadOnlyList<object> SelectedPoLines { get; set; } = [];
     protected bool PoPickerVisible;
+    protected int ActiveTabIndex;
     protected decimal? PriceToleranceEdit
     {
         get => Model.PriceTolerance;
@@ -37,6 +42,23 @@ public partial class PoInvoice : PageBase
     protected bool IsNew => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsView => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditable => !IsView && (IsNew || Model.CanEdit);
+    protected bool IsQuantityCorrection =>
+        string.Equals(Model.Type, PoInvoiceTypes.CreditNote, StringComparison.OrdinalIgnoreCase);
+    protected bool CanMutateLines => IsEditable && !IsSubmitting;
+    protected bool CanSave => IsEditable && !IsSubmitting;
+    protected bool CanEditFromView =>
+        IsView && Model.CanEdit && !string.IsNullOrWhiteSpace(Model.DocNo);
+
+    protected string DocNoDisplay => string.IsNullOrWhiteSpace(Model.DocNo) ? "AUTO" : Model.DocNo;
+    protected string StatusDisplay =>
+        string.IsNullOrWhiteSpace(Model.Status) ? PoInvoiceStatuses.New : Model.Status;
+    protected string TypeDisplay =>
+        TypeOptions.FirstOrDefault(x => string.Equals(x.Value, Model.Type, StringComparison.OrdinalIgnoreCase))?.Text
+        ?? Model.Type;
+    protected string ModeChip => IsNew ? "New" : IsView ? "View" : "Edit";
+    protected string LineCountLabel => EditLines.Count == 1 ? "1 line" : $"{EditLines.Count} lines";
+    protected string SupplierInvCaption =>
+        IsQuantityCorrection ? "Source invoice no" : "Supplier invoice no";
 
     /// <summary>
     /// Display labels for the document type. <c>PoInvoice.Type=CN</c> is a <b>quantity</b> correction
@@ -52,9 +74,12 @@ public partial class PoInvoice : PageBase
 
     public sealed record PoInvoiceTypeOption(string Value, string Text);
 
-    protected string PageHeading => IsNew
-        ? "New Purchase Invoice"
-        : $"{(Model.Type == PoInvoiceTypes.CreditNote ? "Quantity Correction" : "Invoice")} {Model.DocNo}";
+    protected string PageHeading =>
+        IsNew
+            ? (IsQuantityCorrection ? "New quantity correction" : "New purchase invoice")
+            : IsView
+                ? (IsQuantityCorrection ? "View quantity correction" : "View purchase invoice")
+                : (IsQuantityCorrection ? "Edit quantity correction" : "Edit purchase invoice");
 
     /// <summary>
     /// A posted INV invoice can be the source of a financial purchase credit note. This is a
@@ -77,6 +102,9 @@ public partial class PoInvoice : PageBase
         if (lookups.Succeeded && lookups.Lookups is not null)
         {
             Vendors = lookups.Lookups.Vendors.ToList();
+            TaxGroups = lookups.Lookups.TaxGroups.ToList();
+            PayCodes = lookups.Lookups.PayCodes.ToList();
+            Currencies = lookups.Lookups.Currencies.ToList();
         }
 
         if (!IsNew && !string.IsNullOrWhiteSpace(DocNo))
@@ -102,7 +130,20 @@ public partial class PoInvoice : PageBase
         IsLoading = false;
     }
 
-    protected async Task OnVendorChanged(string vendorCode)
+    protected void OnCurrencyChanged(string? code)
+    {
+        Model.Currency = code ?? string.Empty;
+        var row = Currencies.FirstOrDefault(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase));
+        if (row?.Rate is decimal rate && rate > 0m)
+        {
+            Model.CurrRate = rate;
+        }
+    }
+
+    protected void OnEditFromView() =>
+        Navigation.NavigateTo($"/purchase/invoices/edit/{Uri.EscapeDataString(Model.DocNo)}");
+
+    protected async Task OnVendorChanged(string? vendorCode)
     {
         Model.VendorCode = vendorCode ?? string.Empty;
         if (!IsEditable || string.IsNullOrWhiteSpace(Model.VendorCode))

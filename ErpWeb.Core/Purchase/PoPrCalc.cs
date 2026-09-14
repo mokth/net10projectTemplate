@@ -102,6 +102,16 @@ public static class PoPrCalc
     }
 
     /// <summary>
+    /// PR header statuses that may be picked into a PO. Remaining quantity is a separate save-time gate.
+    /// Normalization is limited to this helper — do not rewrite persisted status values.
+    /// </summary>
+    public static bool IsAvailableForPo(string? status)
+    {
+        var s = (status ?? string.Empty).Trim().ToUpperInvariant();
+        return s is PoPrStatuses.New or PoPrStatuses.Approved or PoPrStatuses.PartiallyOrdered;
+    }
+
+    /// <summary>
     /// Line status from live PO consumption. CANCELLED wins; no consumption preserves non-derived status.
     /// </summary>
     public static string ComputeLineDerivedStatus(decimal purchaseQty, decimal consumedQty, string? currentStatus)

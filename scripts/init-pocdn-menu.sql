@@ -34,23 +34,29 @@ ELSE
 GO
 
 -- ── Menu rows under PO_TRANSACTIONS ───────────────────────────────────────────
+-- IMPORTANT: these rows are NOT sufficient on their own. MenuSyncService runs at startup
+-- (ErpWeb/Program.cs) and SOFT-DISABLES every dbo.Menu row whose MenuCode is absent from
+-- ErpWeb/Menus/menus.xml. The same script must therefore also add PO_CN / PO_DN /
+-- PO_CN_RESERVATIONS to menus.xml, otherwise _active is flipped to 0 on the next app start
+-- and AccessRightService (which filters on menu.IsActive) will hide and lock out the
+-- screens. Keep MenuName/Route/SortOrder here in step with menus.xml; the XML wins.
 DECLARE @poTransactionsId int = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'PO_TRANSACTIONS');
 
 IF OBJECT_ID(N'dbo.Menu', N'U') IS NOT NULL AND @poTransactionsId IS NOT NULL
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_CN')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'PO_CN', N'Purchase Credit Note', @poTransactionsId, N'/purchase/credit-notes', 4, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'PO_CN', N'Credit Note', @poTransactionsId, N'/purchase/credit-notes', 4, 0, 1, SYSUTCDATETIME(), N'SEED');
 
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_DN')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'PO_DN', N'Purchase Debit Note', @poTransactionsId, N'/purchase/debit-notes', 5, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'PO_DN', N'Debit Note', @poTransactionsId, N'/purchase/debit-notes', 5, 0, 1, SYSUTCDATETIME(), N'SEED');
 
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_CN_RESERVATIONS')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'PO_CN_RESERVATIONS', N'Credit Note Reservations', @poTransactionsId, N'/purchase/cn-reservations', 6, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'PO_CN_RESERVATIONS', N'CN Reservations', @poTransactionsId, N'/purchase/cn-reservations', 6, 0, 1, SYSUTCDATETIME(), N'SEED');
 
-    PRINT N'Menu rows PO_CN / PO_DN / PO_CN_RESERVATIONS ensured.';
+    PRINT N'Menu rows PO_CN / PO_DN / PO_CN_RESERVATIONS ensured (requires matching entries in menus.xml).';
 END
 ELSE
     PRINT N'dbo.Menu or PO_TRANSACTIONS missing - run init-menu-access.sql first, then re-run this script.';

@@ -101,16 +101,137 @@ public class PoOrderSqlServerConcurrencyTests
     }
 
     [Fact]
-    public async Task SqlServer_concurrent_PR_consumption_70_plus_50()
+    public async Task SqlServer_concurrent_PR_remaining_4_two_requests_of_3_at_most_one_succeeds()
     {
         if (!IsSqlServerAvailable())
         {
             return;
         }
 
-        // Requires full PR→PO consumption wiring against live SQL Server masters.
-        // Skipped here: seeding approved PR lines with remaining qty is heavier than PO numbering tests.
+        var factory = CreateFactory();
+        var fixture = await SeedPrFixtureAsync(factory, purchaseQty: 10m);
+        if (fixture is null)
+        {
+            return;
+        }
+
+        var sutSetup = CreateSut(factory);
+        var first = await sutSetup.SaveNewAsync(RequestFromPr(fixture, qty: 6m));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var sutA = CreateSut(factory);
+        var sutB = CreateSut(factory);
+        var results = await Task.WhenAll(
+            sutA.SaveNewAsync(RequestFromPr(fixture, qty: 3m)),
+            sutB.SaveNewAsync(RequestFromPr(fixture, qty: 3m)));
+
+        var succeeded = results.Count(r => r.Succeeded);
+        Assert.True(succeeded <= 1, "At most one of the concurrent 3-qty saves may succeed when remaining is 4.");
+        Assert.Contains(results, r => !r.Succeeded);
+
+        await using var db = factory.CreateDbContext();
+        var live = await db.PoOrderDetails.AsNoTracking()
+            .Where(d => d.CompanyCode == "DEMO"
+                && d.BranchCode == "HQ"
+                && d.PrNo == fixture.PrNo
+                && d.PrLineNo == 1
+                && d.Order.Status != PoOrderStatuses.Cancelled)
+            .SumAsync(d => (decimal?)d.PoPurQty) ?? 0m;
+        Assert.True(live <= fixture.PurchaseQty, $"Live consumption {live} exceeded PR qty {fixture.PurchaseQty}.");
+        Assert.True(live <= 10m);
+        Assert.True(live >= 6m);
     }
+
+    private sealed record PrFixture(string ICode, string PrNo, decimal PurchaseQty);
+
+    private static async Task<PrFixture?> SeedPrFixtureAsync(
+        IDbContextFactory<AppDbContext> factory,
+        decimal purchaseQty)
+    {
+        var baseFixture = await SeedFixtureAsync(factory);
+        if (baseFixture is null)
+        {
+            return null;
+        }
+
+        await using var db = factory.CreateDbContext();
+        var prNo = "PRC" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        db.PoPrs.Add(new PoPr
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            PrNo = prNo,
+            CreateDt = FixedToday,
+            Requester = "concurrency",
+            Status = PoPrStatuses.New,
+            PrType = PoPrTypes.Purchasing,
+            CreatedDate = FixedToday,
+            CreatedBy = "user",
+            Details =
+            [
+                new PoPrDetail
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    PrNo = prNo,
+                    Line = 1,
+                    ICode = baseFixture.ICode,
+                    IDesc = "PO concurrency item",
+                    Qty = purchaseQty,
+                    PurchaseQty = purchaseQty,
+                    StdQty = purchaseQty,
+                    PackSz = 1m,
+                    StdUom = "EA",
+                    PurchaseUom = "EA",
+                    Currency = "MYR",
+                    UnitPrice = 10m,
+                    Amount = purchaseQty * 10m,
+                    VendorCd = "SUP01",
+                    VendNm = "Alpha Supplier",
+                    TaxGroup = "SR",
+                    ToWarehouse = "MAIN",
+                    Status = PoPrStatuses.New
+                }
+            ]
+        });
+
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            return null;
+        }
+
+        return new PrFixture(baseFixture.ICode, prNo, purchaseQty);
+    }
+
+    private static PoOrderSaveRequest RequestFromPr(PrFixture fixture, decimal qty) =>
+        new()
+        {
+            PoDate = FixedToday,
+            VendCode = "SUP01",
+            VendName = "Alpha Supplier",
+            CurCode = "MYR",
+            Lines =
+            [
+                new PoOrderLineDto
+                {
+                    ICode = fixture.ICode,
+                    PoPurQty = qty,
+                    PoQty = qty,
+                    PurchaseUom = "EA",
+                    StdUom = "EA",
+                    PackSz = 1m,
+                    CurCode = "MYR",
+                    TaxGroup = "SR",
+                    ToWarehouse = "MAIN",
+                    PrNo = fixture.PrNo,
+                    PrLineNo = 1
+                }
+            ]
+        };
 
     private sealed record Fixture(string ICode);
 

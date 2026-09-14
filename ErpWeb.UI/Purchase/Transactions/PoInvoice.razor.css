@@ -1,8 +1,8 @@
-/* Page-specific tweaks; shared chrome lives in /css/inventory-chrome.css */
+/* Relies on SaDocPage.razor.css for sdoc-* chrome. */
 
-.iv-hero__actions {
+.poinvoice-item-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    align-items: flex-start;
+    gap: 8px;
+    align-items: center;
 }
