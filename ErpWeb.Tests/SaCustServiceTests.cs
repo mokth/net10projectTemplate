@@ -132,6 +132,7 @@ public class SaCustServiceTests : IAsyncLifetime
                 IsActive = true,
                 // Legacy free text that no master row matches: must not block an unrelated edit.
                 SubGroupCode = "LEGACY",
+                SalesmanCode = "LEGACYREP",
                 RowVersion = Rv(11)
             },
             new SaCust
@@ -193,6 +194,14 @@ public class SaCustServiceTests : IAsyncLifetime
             ContactPerson = "Bob",
             ContactEmail = "bob@example.com"
         });
+
+        // Sales-master lookups: SR2 carries the legacy NULL IsActive, which means ACTIVE (the shipped
+        // post-time salesman checks reject only "rep is null || rep.IsActive == false").
+        db.SaSalesReps.AddRange(
+            new SaSalesRep { CompanyCode = "DEMO", SrepCode = "SR1", SrepName = "Sales Rep One", IsActive = true },
+            new SaSalesRep { CompanyCode = "DEMO", SrepCode = "SR2", SrepName = "Nullable Active Rep", IsActive = null },
+            new SaSalesRep { CompanyCode = "DEMO", SrepCode = "SR3", SrepName = "Retired Rep", IsActive = false },
+            new SaSalesRep { CompanyCode = "OTHER", SrepCode = "SR9", SrepName = "Other Company Rep", IsActive = true });
 
         await db.SaveChangesAsync();
     }
@@ -837,6 +846,164 @@ public class SaCustServiceTests : IAsyncLifetime
         Assert.Equal("Beta Renamed", row.CustName);
     }
 
+    // ─────────── Sales master lookups (plans/sales-master-lookup-fixes.md §3.1–§3.3) ───────────
+
+    [Fact]
+    public async Task CustomerSearch_IsCompanyScoped_ActiveOnly_AndMatchesCodeOrName()
+    {
+        var lookups = CreateLookups();
+
+        var all = await lookups.SearchCustomersAsync();
+        Assert.Contains(all, x => x.Code == "CUST01");
+        Assert.Contains(all, x => x.Code == "CUST02");
+        // Another company's customer, and the caller's own inactive one, are both absent.
+        Assert.DoesNotContain(all, x => x.Code == "SHARED");
+        Assert.DoesNotContain(all, x => x.Code == "CUST03");
+
+        var byName = await lookups.SearchCustomersAsync("Alpha");
+        Assert.Single(byName);
+        Assert.Equal("CUST01", byName[0].Code);
+        Assert.Equal("Alpha Customer", byName[0].Desc);
+
+        var byCode = await lookups.SearchCustomersAsync("CUST02");
+        Assert.Single(byCode);
+        Assert.Equal("CUST02", byCode[0].Code);
+
+        var unknown = await lookups.SearchCustomersAsync("no-such-customer");
+        Assert.Empty(unknown);
+    }
+
+    [Fact]
+    public async Task CustomerSearch_NeverReturnsAnotherCompanysCustomer_EvenOnAnExactCodeMatch()
+    {
+        var lookups = CreateLookups();
+
+        var rows = await lookups.SearchCustomersAsync("SHARED");
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public async Task CustomerSearch_IsBounded()
+    {
+        var lookups = CreateLookups();
+
+        var rows = await lookups.SearchCustomersAsync(maxRows: 1);
+
+        Assert.Single(rows);
+        Assert.Equal("CUST01", rows[0].Code);
+    }
+
+    [Fact]
+    public async Task SalesRepAssignment_IsCompanyScoped_AndTreatsNullIsActiveAsActive()
+    {
+        var lookups = CreateLookups();
+
+        var rows = await lookups.ListSalesRepsForAssignmentAsync();
+
+        Assert.Equal(["SR1", "SR2"], rows.Select(x => x.Code));
+        Assert.Equal("Sales Rep One", rows[0].Desc);
+        // NULL IsActive is active; IsActive == false is retired; another company is out of scope.
+        Assert.DoesNotContain(rows, x => x.Code == "SR3");
+        Assert.DoesNotContain(rows, x => x.Code == "SR9");
+    }
+
+    [Fact]
+    public async Task Salesman_UnknownCode_Rejected()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BADSALES");
+        model.SalesmanCode = "NOPE";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("SalesmanCode"));
+        Assert.Contains("NOPE", result.ValidationErrors["SalesmanCode"]);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.SaCusts.AnyAsync(x => x.CustCode == "BADSALES"));
+    }
+
+    [Fact]
+    public async Task Salesman_Blank_StoredAsNull_AndSaves()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BLANKSALES");
+        model.SalesmanCode = "   ";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CustCode == "BLANKSALES");
+        Assert.Null(row.SalesmanCode);
+    }
+
+    [Fact]
+    public async Task Salesman_KnownCode_Accepted()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("GOODSALES");
+        model.SalesmanCode = "SR1";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CustCode == "GOODSALES");
+        Assert.Equal("SR1", row.SalesmanCode);
+    }
+
+    [Fact]
+    public async Task Salesman_NullIsActiveRep_IsAccepted_ButRetiredRep_IsNot()
+    {
+        var sut = CreateSut();
+        var nullableActive = ValidNewModel("NULLACTIVE");
+        nullableActive.SalesmanCode = "SR2";
+        var retired = ValidNewModel("RETIREDREP");
+        retired.SalesmanCode = "SR3";
+
+        var ok = await sut.SaveAsync(nullableActive, isNew: true);
+        var rejected = await sut.SaveAsync(retired, isNew: true);
+
+        Assert.True(ok.Succeeded, ok.Message);
+        Assert.False(rejected.Succeeded);
+        Assert.True(rejected.ValidationErrors.ContainsKey("SalesmanCode"));
+    }
+
+    [Fact]
+    public async Task Salesman_OtherCompanysCode_Rejected_SameCompanyOnly()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("CROSSSALES");
+        // "OTHER" has an SR9; DEMO does not. A NEW foreign value fails clause 2 (company scope).
+        model.SalesmanCode = "SR9";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.ValidationErrors.ContainsKey("SalesmanCode"));
+    }
+
+    [Fact]
+    public async Task Salesman_LegacyValue_ToleratedOnUnrelatedEdit()
+    {
+        var sut = CreateSut();
+        var loaded = (await sut.GetAsync("CUST02")).Data!;
+        Assert.Equal("LEGACYREP", loaded.SalesmanCode);
+        loaded.CustName = "Beta Renamed Again";
+
+        var result = await sut.SaveAsync(loaded, isNew: false);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST02");
+        Assert.Equal("LEGACYREP", row.SalesmanCode);
+        Assert.Equal("Beta Renamed Again", row.CustName);
+    }
+
     private static SaCustEditVm ValidNewModel(string code) =>
         new()
         {
@@ -855,6 +1022,9 @@ public class SaCustServiceTests : IAsyncLifetime
     private static IvMasterKeyToken Token(string code, byte[] rowVersion) =>
         new() { Code = code, RowVersion = rowVersion };
     private static byte[] Rv(byte marker) => [marker, 0, 0, 0, 0, 0, 0, 0];
+
+    private SaCustLookupService CreateLookups() =>
+        new(_factory, InventoryTenantTestHelper.CreateTenantContext());
 
     private SaCustService CreateSut(
         bool canAccess = true,

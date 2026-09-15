@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
@@ -225,6 +226,61 @@ public sealed class SaCustLookupService : ISaCustLookupService
 
     public Task<bool> ValidateCustPriceCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListPriceGroupsForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
+
+    public async Task<IReadOnlyList<IvCodeLookupRow>> SearchCustomersAsync(
+        string? searchText = null,
+        int maxRows = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        var limit = Math.Clamp(maxRows, 1, 500);
+        var term = string.IsNullOrWhiteSpace(searchText) ? null : searchText.Trim();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.SaCusts
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.IsActive);
+
+        if (term is not null)
+        {
+            query = query.Where(x => x.CustCode.Contains(term) || x.CustName.Contains(term));
+        }
+
+        // Predicate → order → projection → bounded Take, in one translation unit: nothing materializes
+        // early, so the customer table never reaches the circuit.
+        return await query
+            .OrderBy(x => x.CustCode)
+            .Select(x => new IvCodeLookupRow { Code = x.CustCode, Desc = x.CustName })
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListSalesRepsForAssignmentAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        // IsActive is bool? and NULL means active: the shipped post-time checks (SaInvoiceService /
+        // SaCdnService) reject only "rep is null || rep.IsActive == false".
+        return await db.SaSalesReps
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.IsActive != false)
+            .OrderBy(x => x.SrepCode)
+            .Select(x => new IvCodeLookupRow { Code = x.SrepCode, Desc = x.SrepName ?? x.SrepCode })
+            .ToListAsync(cancellationToken);
+    }
+
+    public Task<bool> ValidateSalesmanCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateLegacyOrFailClosed(code, existingCode, ListSalesRepsForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
 
     public Task<bool> ValidateIndustryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListIndustriesForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);

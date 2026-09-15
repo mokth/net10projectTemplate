@@ -623,12 +623,13 @@ Plan of record: `plans/sales-item-family-v2-plan.md`. Phase 0 findings: `ErpWeb/
 | Object | Table | Screen | Route |
 |---|---|---|---|
 | Price list header + item prices | `IvCustPriceGroup` + `IvCustPrice` | Price Groups (list + header/line editor) | `/sales/price-groups` |
-| Item prices, read-only listing | `IvCustPrice` | Customer Prices (per price group) | `/sales/customer-prices` |
 | Customer item | `SaItemCust` | Customer Items (list + popup CRUD) | `/sales/customer-items` |
 | Item discount rule | `SaDisGroupItem` | Item Discounts (list + popup CRUD) | `/sales/item-discounts` |
 | Price + discount **resolution** (rules only) | — | `SaItemFamilyPricing.cs` (`ResolveItemPriceAsync` / `ResolveItemDiscountAsync` on `ISaSalesRefService`) | n/a — server capability |
 
-Service surface: `ISaSalesRefService` (sales item family section) implemented in `SaSalesRefService.ItemFamily*.cs`; DTOs in `SaItemFamilyResults.cs`; workbooks in `SaMasterRefExportWorkbooks`; downloads at `/sales/price-groups/export`, `/sales/customer-prices/export?custPriceCode=…`, `/sales/customer-items/export`, `/sales/item-discounts/export`.
+The standalone read-only **Customer Prices** screen (`SA_CUST_PRICE`, `/sales/customer-prices`) was merged into Price Groups on 2026-09-15: it rendered NEW/EDIT/DELETE buttons whose handlers were stubs, and its ADD/EDIT/DELETE permissions were never checked by the service. Item prices are now maintained only in the price-list popup (one aggregate, one writer); `/sales/customer-prices` redirects there and the per-group download is `/sales/price-groups/prices/export`.
+
+Service surface: `ISaSalesRefService` (sales item family section) implemented in `SaSalesRefService.ItemFamily*.cs`; DTOs in `SaItemFamilyResults.cs`; workbooks in `SaMasterRefExportWorkbooks`; downloads at `/sales/price-groups/export`, `/sales/price-groups/prices/export?custPriceCode=…`, `/sales/customer-items/export`, `/sales/item-discounts/export`.
 
 The **resolution contract itself is implemented and tested** — the pure rules live in `ErpWeb.Core/Sales/SaItemFamilyPricing.cs` (no EF, no UI), wrapped by two tenant-scoped, screen-ungated service entry points in `SaSalesRefService.ItemFamily.Resolve.cs`. What remains deferred is only the *consumer*: no SO/DO/INV/CN page calls them yet (§11.2). Tests: `SaItemFamilyPricingContractTests` (precedence, JOIN/SPLIT, slots, tie-break), `SaItemFamilyResolutionServiceTests` (the DB-loaded chain, legacy `float` scaling, date-part windows).
 

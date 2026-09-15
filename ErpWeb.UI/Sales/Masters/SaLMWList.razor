@@ -70,17 +70,24 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer Code" ColSpanMd="4">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.CustCode"
-                                       maxlength="30"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvCodeComboBox Data="@CustomerOptions"
+                                            Value="@EditModel.CustCode"
+                                            ValueChanged="@OnCustomerCodeChangedAsync"
+                                            Enabled="@(!IsEditMode)"
+                                            NullText="Select customer"
+                                            InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
+                    @* CustName is a stored denormalisation of SaCust.CustName, never an independent input:
+                       the combo above fills it. A legacy row whose customer is retired has no option to
+                       match, so the combo renders blank while the stored name stays in the read-only box —
+                       smoke step 5 must confirm a load-then-save does not clear either value (plan §4.5/§7). *@
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer Name" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.CustName"
                                        maxlength="200"
-                                       ReadOnly="@(!EditEnabled)" />
+                                       ReadOnly="true"
+                                       NullText="From the selected customer" />
                         </Template>
                     </DxFormLayoutItem>
 

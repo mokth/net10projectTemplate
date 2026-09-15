@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.UI.Admin.Master;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Masters;
 
@@ -14,6 +15,9 @@ namespace ErpWeb.UI.Sales.Masters;
 /// </summary>
 public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
 {
+    [Inject] private ISaCustLookupService Lookups { get; set; } = default!;
+    [Inject] private IIvInventoryLookupService InventoryLookups { get; set; } = default!;
+
     protected override string MenuCode => MenuCodes.SalesItemCust;
     protected override string EntityLabel => "Customer Item";
     protected override string? ExportRoute => "/sales/customer-items/export";
@@ -21,6 +25,12 @@ public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
     protected SaItemCustEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
     protected bool CanViewPrice { get; set; }
+
+    /// <summary>Ungated option lists (ISaCustLookupService / IIvInventoryLookupService — never the
+    /// menu-gated ref services). Loaded when the popup opens so the picker stays fresh.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> CustomerOptions { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> UomOptions { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> CurrencyOptions { get; set; } = [];
 
     public List<GridColumnData> Columns()
     {
@@ -183,6 +193,7 @@ public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -201,6 +212,7 @@ public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -219,7 +231,38 @@ public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
+    }
+
+    /// <summary>
+    /// Ungated lookups only: <see cref="ISaCustLookupService"/> for customers and currencies and
+    /// <see cref="IIvInventoryLookupService"/> for UOMs. Reaching for the menu-gated ref services
+    /// (INV_UOM / customer master) would render an empty picker for a sales-master-only user.
+    /// </summary>
+    private async Task LoadLookupsAsync()
+    {
+        CustomerOptions = await Lookups.SearchCustomersAsync();
+        CurrencyOptions = await Lookups.ListCurrenciesForAssignmentAsync();
+
+        var uoms = await InventoryLookups.ListActiveUomsAsync();
+        UomOptions = uoms.Succeeded ? uoms.Rows : [];
+    }
+
+    /// <summary>
+    /// Prefills only what the picker actually knows (plan §4.1 rule 4): the code, the description and
+    /// the standard UOM when the row is new and its UOM is still blank. It never touches the price —
+    /// VIEW_PRICE owns that and <c>IvStockMasterLookupRow</c> carries no selling price anyway.
+    /// </summary>
+    protected void OnItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        EditModel.ICode = item.ICode;
+        EditModel.IDesc = item.IDesc;
+
+        if (!IsEditMode && string.IsNullOrWhiteSpace(EditModel.SellingUOM))
+        {
+            EditModel.SellingUOM = item.StdUom ?? string.Empty;
+        }
     }
 
     protected async Task SwitchViewToEditAsync()

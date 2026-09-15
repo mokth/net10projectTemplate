@@ -51,6 +51,12 @@ public partial class SaCustEntry : PageBase
 
     /// <summary>Active price lists for the Price group picker (D2-23).</summary>
     protected IReadOnlyList<IvCodeLookupRow> PriceGroups { get; set; } = [];
+
+    /// <summary>
+    /// Sales reps for the Salesman picker. Ungated on purpose: <c>ISaSalesRefService.ListSalesRepsAsync</c>
+    /// sits behind the SALES_SALES_REP menu, which a customer-only user does not hold.
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> SalesReps { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> TaxGroups { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> PayCodes { get; set; } = [];
@@ -557,6 +563,7 @@ public partial class SaCustEntry : PageBase
         Currencies = await Lookups.ListCurrenciesForAssignmentAsync();
         DisGroups = await Lookups.ListDisGroupsForAssignmentAsync();
         PriceGroups = await Lookups.ListPriceGroupsForAssignmentAsync();
+        SalesReps = await Lookups.ListSalesRepsForAssignmentAsync();
         States = await Lookups.ListStatesForAssignmentAsync();
         TaxGroups = await Lookups.ListTaxGroupsForAssignmentAsync();
         PayCodes = await Lookups.ListPayCodesForAssignmentAsync();

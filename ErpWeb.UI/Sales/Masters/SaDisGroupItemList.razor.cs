@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.UI.Admin.Master;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Masters;
 
@@ -14,12 +15,17 @@ namespace ErpWeb.UI.Sales.Masters;
 /// </summary>
 public partial class SaDisGroupItemList : SaRefListPageBase<SaDisGroupItemListRow>
 {
+    [Inject] private IIvInventoryLookupService InventoryLookups { get; set; } = default!;
+
     protected override string MenuCode => MenuCodes.SalesDisGroupItem;
     protected override string EntityLabel => "Item Discount";
     protected override string? ExportRoute => "/sales/item-discounts/export";
 
     protected SaDisGroupItemEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>Ungated item-class list. Blank is meaningful here: it spans every class.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> ClassOptions { get; set; } = [];
 
     /// <summary>The two date editors bind nullable values; the VM keeps the required start date.</summary>
     protected DateTime? DateFrValue { get; set; }
@@ -199,6 +205,7 @@ public partial class SaDisGroupItemList : SaRefListPageBase<SaDisGroupItemListRo
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -217,6 +224,7 @@ public partial class SaDisGroupItemList : SaRefListPageBase<SaDisGroupItemListRo
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -235,7 +243,22 @@ public partial class SaDisGroupItemList : SaRefListPageBase<SaDisGroupItemListRo
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
+    }
+
+    /// <summary>Ungated class list (INV_CLASS is not required to author a discount rule).</summary>
+    private async Task LoadLookupsAsync()
+    {
+        var classes = await InventoryLookups.ListActiveClassesAsync();
+        ClassOptions = classes.Succeeded ? classes.Rows : [];
+    }
+
+    /// <summary>Prefills the code and the item description the picker actually carries.</summary>
+    protected void OnItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        EditModel.ICode = item.ICode;
+        EditModel.IDesc = item.IDesc;
     }
 
     protected async Task SwitchViewToEditAsync()

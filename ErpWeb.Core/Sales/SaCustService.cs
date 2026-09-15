@@ -746,6 +746,15 @@ public sealed class SaCustService : ISaCustService
             errors["CustPriceCode"] = $"Price group '{model.CustPriceCode}' is not valid.";
         }
 
+        // D-6: SalesmanCode was written but never validated (the last unvalidated customer reference
+        // field). Blank is allowed, a non-blank value must exist in the caller's company, and the value
+        // already on the row is tolerated so a legacy free-text salesman code cannot block an unrelated
+        // edit (ValidateSalesmanCodeAssignmentAsync handles all three clauses).
+        if (!await _lookups.ValidateSalesmanCodeAssignmentAsync(model.SalesmanCode, existingSnapshot?.SalesmanCode, cancellationToken))
+        {
+            errors[nameof(model.SalesmanCode)] = $"Salesman '{model.SalesmanCode}' is not valid.";
+        }
+
         if (!await _lookups.ValidateStateAssignmentAsync(model.State, existingSnapshot?.State, cancellationToken))
         {
             errors["State"] = $"State '{model.State}' is not valid.";

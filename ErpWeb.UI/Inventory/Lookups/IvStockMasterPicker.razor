@@ -1,7 +1,7 @@
 @namespace ErpWeb.UI.Inventory.Lookups
 
 <div class="iv-stock-picker d-flex gap-1 align-items-center">
-    <DxTextBox Text="@ICode"
+    <DxTextBox @bind-Text="@ICode"
                ReadOnly="true"
                InputCssClass="@InputCssClass"
                CssClass="flex-grow-1" />

@@ -12,12 +12,41 @@ public partial class SaDisGroupList : SaKeyedRefListPageBase<SaDisGroupListRow, 
 {
     [Inject] private ISaCustService CustService { get; set; } = default!;
 
+    /// <summary>Ungated assignment lookup — never the customer-master-gated <c>ISaCustService</c>.</summary>
+    [Inject] private ISaCustLookupService Lookups { get; set; } = default!;
+
     protected override string MenuCode => MenuCodes.SalesDisGroup;
     protected override string EntityLabel => "Discount Group";
 
     protected SaDisGroupEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
     protected string NewMemberCode { get; set; } = string.Empty;
+
+    protected IReadOnlyList<IvCodeLookupRow> PayCodeOptions { get; set; } = [];
+
+    /// <summary>
+    /// <c>GroupStatus</c> is the activation flag consumers filter on (only <c>NEW</c> is active).
+    /// <c>FALSE</c> is the observed inactive value. A legacy row can still carry something else (the
+    /// commented legacy code used TRUE/FALSE), so the current value is appended when it is neither
+    /// token: otherwise the combo renders blank over a non-empty column and the next unrelated save
+    /// would silently deactivate the group.
+    /// </summary>
+    protected IReadOnlyList<string> GroupStatusOptions
+    {
+        get
+        {
+            var current = EditModel.GroupStatus?.Trim();
+            if (string.IsNullOrWhiteSpace(current)
+                || GroupStatusTokens.Contains(current, StringComparer.OrdinalIgnoreCase))
+            {
+                return GroupStatusTokens;
+            }
+
+            return [.. GroupStatusTokens, current];
+        }
+    }
+
+    private static readonly string[] GroupStatusTokens = ["NEW", "FALSE"];
 
     public List<GridColumnData> Columns() =>
     [
@@ -123,6 +152,7 @@ public partial class SaDisGroupList : SaKeyedRefListPageBase<SaDisGroupListRow, 
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadPayCodesAsync();
         PopupVisible = true;
     }
 
@@ -141,6 +171,7 @@ public partial class SaDisGroupList : SaKeyedRefListPageBase<SaDisGroupListRow, 
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
+        await LoadPayCodesAsync();
         PopupVisible = true;
     }
 
@@ -159,8 +190,13 @@ public partial class SaDisGroupList : SaKeyedRefListPageBase<SaDisGroupListRow, 
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadPayCodesAsync();
         PopupVisible = true;
     }
+
+    /// <summary>The ungated payment-term list (PAY_CODE is not required to author a discount group).</summary>
+    private async Task LoadPayCodesAsync() =>
+        PayCodeOptions = await Lookups.ListPayCodesForAssignmentAsync();
 
     protected async Task SwitchViewToEditAsync()
     {

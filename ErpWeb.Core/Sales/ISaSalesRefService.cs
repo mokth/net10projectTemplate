@@ -146,8 +146,7 @@ public interface ISaSalesRefService
     Task<DeleteCheckResult> CanDeleteCustPriceGroupsAsync(IReadOnlyList<string> custPriceCodes, CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<object>> DeleteCustPriceGroupsAsync(IReadOnlyList<SaItemFamilyKeyToken> items, CancellationToken cancellationToken = default);
 
-    // Price lines (read surface for the line list; writes go through the header aggregate)
-    Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ListCustPricesAsync(string custPriceCode, CancellationToken cancellationToken = default);
+    // Price lines — writes go through the header aggregate; this is the per-group workbook download.
     Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ExportCustPricesAsync(string custPriceCode, CancellationToken cancellationToken = default);
 
     // Customer item

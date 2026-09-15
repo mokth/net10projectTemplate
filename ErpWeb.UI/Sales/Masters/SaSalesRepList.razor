@@ -103,7 +103,10 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="State" ColSpanMd="4">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.State" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                            <IvCodeComboBox Data="@StateOptions"
+                                            @bind-Value="@EditModel.State"
+                                            Enabled="@EditEnabled"
+                                            NullText="Select state" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Postal" ColSpanMd="4">
@@ -113,7 +116,10 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Country" ColSpanMd="4" BeginRow="true">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.Country" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                            <IvCodeComboBox Data="@CountryOptions"
+                                            @bind-Value="@EditModel.Country"
+                                            Enabled="@EditEnabled"
+                                            NullText="Select country" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Tel" ColSpanMd="4">

@@ -20,6 +20,27 @@ public interface ISaCustLookupService
     /// <see cref="ValidateCustPriceCodeAssignmentAsync"/> still tolerates a value already on the row.
     /// </summary>
     Task<IReadOnlyList<IvCodeLookupRow>> ListPriceGroupsForAssignmentAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ungated, company-scoped customer list for sales-master pickers. <c>ISaCustService.SearchAsync</c>
+    /// gates on the customer-master menu and the sales-order lookups on sales-order access, so either
+    /// would lock a sales-master user out of their own popup. Bounded by design: the predicates, the
+    /// ordering, the projection and the <c>Take</c> all run in the database, so a Blazor Server circuit
+    /// never receives the customer table. Blank/whitespace <paramref name="searchText"/> returns the
+    /// first <paramref name="maxRows"/> customers by code.
+    /// </summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> SearchCustomersAsync(
+        string? searchText = null,
+        int maxRows = 200,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Salesmen of the caller's company that may be assigned to a customer. Ungated: the gated
+    /// <c>ISaSalesRefService.ListSalesRepsAsync</c> requires the SALES_SALES_REP menu, which a
+    /// customer-only user does not have. Legacy <c>IsActive == NULL</c> is intentionally treated as
+    /// <b>active</b>, matching the shipped post-time salesman checks — do not tighten to <c>== true</c>.
+    /// </summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListSalesRepsForAssignmentAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListIndustriesForAssignmentAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListChannelsForAssignmentAsync(CancellationToken cancellationToken = default);
 
@@ -46,6 +67,15 @@ public interface ISaCustLookupService
     /// The assignment list fails closed when empty.
     /// </summary>
     Task<bool> ValidateCustPriceCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Server-side check for <c>SaCust.SalesmanCode</c>, the last customer reference field that nothing
+    /// validated (same defect class D-6 fixed for SubGroupCode/CustPriceCode). The three clauses are:
+    /// blank is allowed; a non-blank value must exist in the caller's company; and the value already on
+    /// the row is tolerated, so a legacy free-text salesman code cannot block an unrelated edit.
+    /// A new value naming another company's salesman is therefore rejected (clause 2).
+    /// </summary>
+    Task<bool> ValidateSalesmanCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateIndustryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateChannelAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
 

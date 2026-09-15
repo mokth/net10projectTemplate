@@ -157,16 +157,16 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@DraftSalesman"
-                                       NullText="Any salesman"
-                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            <IvCodeComboBox Data="@SalesReps"
+                                            @bind-Value="@DraftSalesman"
+                                            NullText="Any salesman" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Area" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@DraftArea"
-                                       NullText="Any area"
-                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            <IvCodeComboBox Data="@Areas"
+                                            @bind-Value="@DraftArea"
+                                            NullText="Any area" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>

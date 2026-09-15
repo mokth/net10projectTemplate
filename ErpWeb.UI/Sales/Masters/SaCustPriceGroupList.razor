@@ -51,150 +51,198 @@
     <DxPopup HeaderCssClass="code-style"
              HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Price Group" : "View Price Group") : "New Price Group")"
              CloseOnOutsideClick="false"
-             Width="64vw"
+             Width="70vw"
              CssClass="common-popup"
              @bind-Visible="@PopupVisible">
         <Content>
             <EditForm Model="@EditModel" Context="priceGroupForm" OnValidSubmit="@HandleValidSubmitAsync">
                 <DataAnnotationsValidator />
-                <ValidationSummary />
-                <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="4">
-                        <Template>
-                            <DxTextBox @bind-Text="@EditModel.CustPriceCode"
-                                       maxlength="20"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="5">
-                        <Template>
-                            <DxTextBox @bind-Text="@EditModel.CustPriceDesc"
-                                       maxlength="50"
-                                       ReadOnly="@(!EditEnabled)"
-                                       InputCssClass="required-field" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="3">
-                        <Template>
-                            <DxCheckBox @bind-Checked="@EditModel.IsActive" Enabled="@EditEnabled" />
-                        </Template>
-                    </DxFormLayoutItem>
-                </DxFormLayout>
+                <div class="spg-form">
+                    <ValidationSummary />
 
-                <hr />
+                    <section class="spg-section">
+                        <div class="spg-head">
+                            <div class="iv-field spg-head__code">
+                                <label class="iv-field__label code-style">Code</label>
+                                <DxTextBox @bind-Text="@EditModel.CustPriceCode"
+                                           maxlength="20"
+                                           ReadOnly="@IsEditMode"
+                                           InputCssClass="required-field code-style" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Description</label>
+                                <DxTextBox @bind-Text="@EditModel.CustPriceDesc"
+                                           maxlength="50"
+                                           ReadOnly="@(!EditEnabled)"
+                                           InputCssClass="required-field" />
+                            </div>
+                            <div class="iv-field spg-head__active">
+                                <label class="iv-field__label">Active</label>
+                                <DxCheckBox @bind-Checked="@EditModel.IsActive" Enabled="@EditEnabled" />
+                            </div>
+                        </div>
+                    </section>
 
-                <h5 class="iv-eyebrow">Items</h5>
+                    <section class="spg-section">
+                        <header class="spg-section__head">
+                            <h5 class="iv-eyebrow">Item prices</h5>
+                            <span class="spg-count">@EditModel.Lines.Count @(EditModel.Lines.Count == 1 ? "line" : "lines")</span>
+                        </header>
 
-                @if (EditEnabled)
-                {
-                    <DxFormLayout SizeMode="SizeMode.Small">
-                        <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item" ColSpanMd="3">
-                            <Template>
-                                <DxTextBox @bind-Text="@LineItem" maxlength="20" InputCssClass="required-field code-style" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem CaptionCssClass="code-style" Caption="UOM" ColSpanMd="2">
-                            <Template>
-                                <DxTextBox @bind-Text="@LineUom" maxlength="5" InputCssClass="required-field code-style" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem CaptionCssClass="code-style" Caption="Selling price" ColSpanMd="3">
-                            <Template>
-                                <DxSpinEdit @bind-Value="@LinePrice" MinValue="0" ShowSpinButtons="false" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pack size" ColSpanMd="2">
-                            <Template>
-                                <DxSpinEdit @bind-Value="@LinePack" MinValue="0" ShowSpinButtons="false" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="2">
-                            <Template>
-                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                          Text="@(LineEditKey is null ? "Add line" : "Update line")"
-                                          Click="@OnLineAddOrUpdate" />
-                            </Template>
-                        </DxFormLayoutItem>
-                    </DxFormLayout>
-                }
-
-                <DxGrid Data="@EditModel.Lines"
-                        KeyFieldName="@nameof(IvCustPriceLineVm.Key)"
-                        ShowFilterRow="false"
-                        ShowGroupPanel="false"
-                        ShowSearchBox="false"
-                        TextWrapEnabled="false"
-                        PageSize="10"
-                        CssClass="iv-line-grid">
-                    <Columns>
                         @if (EditEnabled)
                         {
-                            <DxGridCommandColumn Width="120px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
-                                <CellDisplayTemplate>
-                                    @{
-                                        var line = (IvCustPriceLineVm)context.DataItem;
-                                    }
-                                    <div class="sdoc-row-actions">
+                            <div class="spg-editor">
+                                <div class="iv-field spg-editor__item">
+                                    <label class="iv-field__label code-style">Item</label>
+                                    <IvStockMasterPicker ICode="@LineItem"
+                                                         ICodeChanged="@(v => LineItem = v)"
+                                                         Selected="OnLineItemSelectedAsync"
+                                                         InputCssClass="required-field code-style" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label code-style">UOM</label>
+                                    <IvCodeComboBox Data="@UomOptions"
+                                                    @bind-Value="@LineUom"
+                                                    NullText="Select UOM"
+                                                    InputCssClass="required-field code-style" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Selling price</label>
+                                    <DxSpinEdit @bind-Value="@LinePrice" MinValue="0" ShowSpinButtons="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Pack size</label>
+                                    <DxSpinEdit @bind-Value="@LinePack" MinValue="0" ShowSpinButtons="false" />
+                                </div>
+                                <div class="spg-editor__actions">
+                                    <DxButton RenderStyle="@(LineEditKey is null ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                              Text="@(LineEditKey is null ? "Add line" : "Update line")"
+                                              Click="@OnLineAddOrUpdate"
+                                              Enabled="@(!IsSubmitting)" />
+                                    @if (LineEditKey is not null)
+                                    {
                                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
-                                                  IconCssClass="fa-solid fa-pen"
-                                                  title="Edit"
-                                                  Click="@(() => OnLineEdit(line))"
+                                                  Text="Discard"
+                                                  Click="@ResetLineEditor"
                                                   Enabled="@(!IsSubmitting)" />
-                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
-                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
-                                                  IconCssClass="fa-solid fa-trash"
-                                                  title="Remove"
-                                                  Click="@(() => OnLineRemove(line))"
-                                                  Enabled="@(!IsSubmitting)" />
-                                    </div>
-                                </CellDisplayTemplate>
-                            </DxGridCommandColumn>
-                        }
-                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.ICode)" Caption="Item" Width="140px" />
-                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.IDesc)" Caption="Description" />
-                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.UOM)" Caption="UOM" Width="90px" />
-                        @if (CanViewPrice)
-                        {
-                            <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellingPrice)" Caption="Selling price" Width="130px" />
-                        }
-                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellPackSize)" Caption="Pack size" Width="110px" />
-                    </Columns>
-                </DxGrid>
+                                    }
+                                </div>
+                            </div>
 
-                @if (EditModel.Lines.Count == 0)
-                {
-                    <p class="sdoc-empty">No item prices yet — add at least one before saving.</p>
-                }
-
-                <div class="iv-popup-actions">
-                    @if (EditEnabled)
-                    {
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
-                                  SubmitFormOnClick="true"
-                                  Enabled="@(!IsSubmitting)" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="Cancel"
-                                  Click="@ClosePopup"
-                                  Enabled="@(!IsSubmitting)" />
-                    }
-                    else
-                    {
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="Close"
-                                  Click="@ClosePopup" />
-                        @if (CanEditFromView)
-                        {
-                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                      Text="Edit"
-                                      Click="@SwitchViewToEditAsync" />
+                            <p class="spg-hint">
+                                @if (LineEditKey is null)
+                                {
+                                    <span>Pick an item, set the UOM and the price, then choose <strong>Add line</strong>.</span>
+                                }
+                                else
+                                {
+                                    <span><i class="fa-solid fa-pen" aria-hidden="true"></i> Editing @LineEditKey — <strong>Update line</strong> replaces it, <strong>Discard</strong> leaves it as it is.</span>
+                                }
+                            </p>
                         }
+
+                        @if (EditModel.Lines.Count > 0)
+                        {
+                            <div class="spg-grid">
+                                <DxGrid Data="@EditModel.Lines"
+                                        KeyFieldName="@nameof(IvCustPriceLineVm.Key)"
+                                        ShowFilterRow="false"
+                                        ShowGroupPanel="false"
+                                        ShowSearchBox="false"
+                                        TextWrapEnabled="false"
+                                        PageSize="10"
+                                        CssClass="spg-line-grid">
+                                    <Columns>
+                                        @if (EditEnabled)
+                                        {
+                                            <DxGridCommandColumn Width="92px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                                <CellDisplayTemplate>
+                                                    @{
+                                                        var line = (IvCustPriceLineVm)context.DataItem;
+                                                    }
+                                                    <div class="spg-row-actions">
+                                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                                  IconCssClass="fa-solid fa-pen"
+                                                                  title="Edit this line"
+                                                                  Click="@(() => OnLineEdit(line))"
+                                                                  Enabled="@(!IsSubmitting)" />
+                                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                                  IconCssClass="fa-solid fa-trash"
+                                                                  title="Remove this line"
+                                                                  Click="@(() => OnLineRemove(line))"
+                                                                  Enabled="@(!IsSubmitting)" />
+                                                    </div>
+                                                </CellDisplayTemplate>
+                                            </DxGridCommandColumn>
+                                        }
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.ICode)" Caption="Item" Width="140px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.IDesc)" Caption="Description" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.UOM)" Caption="UOM" Width="90px" />
+                                        @if (CanViewPrice)
+                                        {
+                                            <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellingPrice)" Caption="Selling price" Width="130px" />
+                                        }
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellPackSize)" Caption="Pack size" Width="110px" />
+                                    </Columns>
+                                </DxGrid>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="spg-empty">
+                                <i class="fa-regular fa-rectangle-list" aria-hidden="true"></i>
+                                No item prices yet — @(EditEnabled
+                                    ? "pick an item and add the first line."
+                                    : "this price list has no lines.")
+                            </p>
+                        }
+                    </section>
+
+                    <footer class="spg-footer">
+                        <div class="spg-footer__left">
+                            @if (IsEditMode && CanExport && EditModel.Lines.Count > 0)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          IconCssClass="fa-solid fa-file-excel"
+                                          Text="Export prices"
+                                          Click="@OnExportPrices"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                        <div class="spg-footer__right">
+                            @if (EditEnabled)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Cancel"
+                                          Click="@ClosePopup"
+                                          Enabled="@(!IsSubmitting)" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                          SubmitFormOnClick="true"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                            else
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Close"
+                                          Click="@ClosePopup" />
+                                @if (CanEditFromView)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              Text="Edit"
+                                              Click="@SwitchViewToEditAsync" />
+                                }
+                            }
+                        </div>
+                    </footer>
+
+                    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+                    {
+                        <p class="spg-error" role="alert">@ErrorMessage</p>
                     }
                 </div>
-
-                <small class="text-danger">@ErrorMessage</small>
             </EditForm>
         </Content>
     </DxPopup>

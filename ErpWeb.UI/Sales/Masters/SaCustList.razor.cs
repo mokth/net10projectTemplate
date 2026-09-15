@@ -47,12 +47,21 @@ public partial class SaCustList : PageBase, IDisposable
 
     protected string? DraftType;
     protected string? DraftGroup;
-    protected string DraftSalesman = string.Empty;
-    protected string DraftArea = string.Empty;
+    protected string? DraftSalesman;
+    protected string? DraftArea;
     protected string DraftActiveKey = "active";
 
     protected IReadOnlyList<IvCodeLookupRow> Types { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Groups { get; set; } = [];
+
+    /// <summary>
+    /// Salesman / Area filter options. The Salesman filter is an EQUALITY predicate
+    /// (<c>SaCustRepository</c>: <c>x.SalesmanCode == salesman</c>), so a lookup is the correct control —
+    /// the popup's separate free-text box is the LIKE grid search and is untouched. Both lists come from
+    /// the ungated assignment lookups, not from the menu-gated ref services (plan §4.3).
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> SalesReps { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> Areas { get; set; } = [];
 
     protected SaCustGridDataSource DataSource { get; private set; } = default!;
 
@@ -481,6 +490,8 @@ public partial class SaCustList : PageBase, IDisposable
 
         Types = types;
         Groups = groups;
+        SalesReps = await Lookups.ListSalesRepsForAssignmentAsync();
+        Areas = await Lookups.ListAreasForAssignmentAsync();
     }
 
     private Dictionary<string, string?> BuildQueryDictionary()

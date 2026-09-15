@@ -1,0 +1,18 @@
+@page "/sales/customer-prices"
+@using Microsoft.AspNetCore.Components
+@inject NavigationManager Navigation
+
+@*
+    Legacy address of the removed read-only "Customer Prices" screen. Item prices are maintained inside
+    the Price Groups popup (one aggregate, one writer), so the old URL forwards instead of 404ing.
+*@
+
+@code {
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            Navigation.NavigateTo("/sales/price-groups", replace: true);
+        }
+    }
+}

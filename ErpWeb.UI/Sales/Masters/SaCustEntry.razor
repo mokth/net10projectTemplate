@@ -306,7 +306,8 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Salesman</label>
-                                    <DxTextBox @bind-Text="@Model.SalesmanCode" maxlength="20" />
+                                    <IvCodeComboBox Data="@SalesReps" @bind-Value="@Model.SalesmanCode" NullText="Select salesman" />
+                                    @FieldError(nameof(SaCustEditVm.SalesmanCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Area</label>

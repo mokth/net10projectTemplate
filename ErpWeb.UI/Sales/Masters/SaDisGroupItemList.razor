@@ -61,19 +61,20 @@
                 <DxFormLayout SizeMode="SizeMode.Small">
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.ICode"
-                                       maxlength="20"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvStockMasterPicker ICode="@EditModel.ICode"
+                                                 ICodeChanged="@(v => EditModel.ICode = v ?? string.Empty)"
+                                                 Selected="OnItemSelectedAsync"
+                                                 Enabled="@(!IsEditMode)"
+                                                 InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item class" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.IClass"
-                                       maxlength="10"
-                                       ReadOnly="@(!EditEnabled)"
-                                       InputCssClass="code-style"
-                                       NullText="All classes" />
+                            <IvCodeComboBox Data="@ClassOptions"
+                                            @bind-Value="@EditModel.IClass"
+                                            Enabled="@EditEnabled"
+                                            NullText="All classes"
+                                            InputCssClass="code-style" />
                         </Template>
                     </DxFormLayoutItem>
 

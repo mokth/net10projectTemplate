@@ -1,0 +1,209 @@
+/* Price Group popup layout.
+   The popup previously used DxFormLayout, which sizes every editor from its own caption width, so the
+   header and the line editor came out ragged and the two rows did not line up. This file owns the
+   layout instead: label-above-control fields in explicit grids, so every editor is the same height and
+   the columns line up between the header, the editor strip and the grid.
+   It also restores the flex behaviour of IvStockMasterPicker: its markup relies on `d-flex`,
+   `gap-1` and `flex-grow-1`, none of which this app's stylesheets ship (DevExpress Fluent theme +
+   site.css + inventory-chrome.css only), which is why the Search button wrapped under the input. */
+
+/* -- the DevExpress editors must fill their grid cell --------------------- */
+
+.spg-form ::deep .dxbl-text-edit,
+.spg-form ::deep .dxbl-combobox,
+.spg-form ::deep .dxbl-spin-edit,
+.spg-form ::deep .iv-code-combo {
+    width: 100%;
+    min-width: 0;
+}
+
+.spg-form ::deep .iv-stock-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.spg-form ::deep .iv-stock-picker > .dxbl-text-edit {
+    flex: 1 1 auto;
+    width: auto;
+}
+
+/* -- popup shell ---------------------------------------------------------- */
+
+.spg-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    color: var(--text, #1c2430);
+}
+
+.spg-form ::deep ul.validation-errors {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--danger, #b42318);
+    font-size: 0.85rem;
+}
+
+.spg-form ::deep ul.validation-errors:empty {
+    display: none;
+}
+
+.spg-section {
+    padding: 14px 16px 16px;
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 12px;
+    background: var(--surface, #fff);
+}
+
+.spg-section__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.spg-section__head .iv-eyebrow {
+    margin: 0;
+}
+
+.spg-count {
+    flex: 0 0 auto;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted, #667085) 12%, transparent);
+    color: var(--muted, #667085);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* -- header: code / description / active ---------------------------------- */
+
+.spg-head {
+    display: grid;
+    grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) 96px;
+    gap: 16px;
+    align-items: end;
+}
+
+.spg-head__active ::deep .dxbl-checkbox {
+    margin-bottom: 6px;
+}
+
+/* -- line editor strip ---------------------------------------------------- */
+
+.spg-editor {
+    display: grid;
+    grid-template-columns:
+        minmax(200px, 1.5fr)
+        minmax(120px, 0.85fr)
+        minmax(110px, 0.85fr)
+        minmax(100px, 0.7fr)
+        auto;
+    gap: 12px;
+    align-items: end;
+    padding: 12px;
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--muted, #667085) 5%, var(--surface, #fff));
+}
+
+.spg-editor__item ::deep .dxbl-text-edit-input {
+    text-transform: uppercase;
+}
+
+.spg-editor__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.spg-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 0;
+    color: var(--muted, #667085);
+    font-size: 0.8rem;
+}
+
+.spg-hint strong {
+    color: var(--text, #1c2430);
+    font-weight: 600;
+}
+
+/* -- line grid ------------------------------------------------------------ */
+
+.spg-grid {
+    margin-top: 14px;
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.spg-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.spg-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+    padding: 18px 16px;
+    border: 1px dashed var(--line, #d7dde5);
+    border-radius: 10px;
+    color: var(--muted, #667085);
+    font-size: 0.88rem;
+    text-align: center;
+}
+
+/* -- footer --------------------------------------------------------------- */
+
+.spg-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line, #d7dde5);
+}
+
+.spg-footer__left,
+.spg-footer__right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.spg-error {
+    margin: 0;
+    padding: 8px 12px;
+    border: 1px solid color-mix(in srgb, var(--danger, #b42318) 35%, var(--line, #d7dde5));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--danger, #b42318) 8%, var(--surface, #fff));
+    color: var(--danger, #b42318);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 1100px) {
+    .spg-head {
+        grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr) 96px;
+    }
+
+    .spg-editor {
+        grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 1fr));
+    }
+
+    .spg-editor__actions {
+        grid-column: 1 / -1;
+        justify-content: flex-end;
+    }
+}

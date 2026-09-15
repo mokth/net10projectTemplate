@@ -56,7 +56,7 @@ Phases 0–7 are implemented, and the §7/§8 resolution contract is implemented
 | Model | `ErpWeb.Model/Entities/Sales/{IvCustPriceGroup,IvCustPrice,SaItemCust,SaDisGroupItem}.cs` + configs + 4 DbSets + `InventoryLeftoverSite.Apply` overloads |
 | Service (masters) | `SaSalesRefService.ItemFamily.cs`, `.DisGroupItem.cs`, `.Delete.cs`; DTOs in `SaItemFamilyResults.cs`; surface on `ISaSalesRefService` |
 | **Resolution contract** | `ErpWeb.Core/Sales/SaItemFamilyPricing.cs` (pure rules: §7 chain, §8 pipeline, JOIN/SPLIT, slot mapping, tie-break, basis conversion) + `SaSalesRefService.ItemFamily.Resolve.cs` (`ResolveItemPriceAsync`, `ResolveItemDiscountAsync`) |
-| Screens | `/sales/price-groups`, `/sales/customer-prices`, `/sales/customer-items`, `/sales/item-discounts` (`ErpWeb.UI/Sales/Masters/`) |
+| Screens | `/sales/price-groups`, `/sales/customer-items`, `/sales/item-discounts` (`ErpWeb.UI/Sales/Masters/`) — **superseded 2026-09-15:** the read-only `/sales/customer-prices` screen was merged into `/sales/price-groups` (see `docs/sales-item-family-logic.md` §11.1); do not rebuild it |
 | Permissions/menus | `MenuCodes` ×4, `PermissionCodes.ViewPrice` (+ `All`), `menus.xml` rows 18–21, `scripts/init-sales-item-family-menu.sql` |
 | Export | `SaItemFamilyExportEndpoints.cs` (registered in `Program.cs`) + workbooks in `SaMasterRefExportWorkbooks` |
 | Tests | `SaItemFamilyServiceTests.cs` (masters, VIEW_PRICE, tenant, exports), `SaItemFamilyPricingContractTests.cs` (§7.2 E1–E11, §8.1.1 JOIN/SPLIT, §8.3 matching, §8.3.1 tie-break), `SaItemFamilyResolutionServiceTests.cs` (DB-loaded chain, legacy `float` scaling, date-part windows), `SaItemFamilySqlServerConcurrencyTests.cs` (§24 concurrency rows) |

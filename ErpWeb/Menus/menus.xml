@@ -43,9 +43,8 @@
       <Menu Code="SA_SHIP_LEAD_TIME" Name="Shipping Lead Time" Route="/sales/shipping-lead-time" SortOrder="16" />
       <Menu Code="SA_LMW" Name="LMW Licences" Route="/sales/lmw" SortOrder="17" />
       <Menu Code="SA_CUST_PRICE_GROUP" Name="Price Groups" Route="/sales/price-groups" SortOrder="18" />
-      <Menu Code="SA_CUST_PRICE" Name="Customer Prices" Route="/sales/customer-prices" SortOrder="19" />
-      <Menu Code="SA_ITEM_CUST" Name="Customer Items" Route="/sales/customer-items" SortOrder="20" />
-      <Menu Code="SA_DIS_GROUP_ITEM" Name="Item Discounts" Route="/sales/item-discounts" SortOrder="21" />
+      <Menu Code="SA_ITEM_CUST" Name="Customer Items" Route="/sales/customer-items" SortOrder="19" />
+      <Menu Code="SA_DIS_GROUP_ITEM" Name="Item Discounts" Route="/sales/item-discounts" SortOrder="20" />
     </Menu>
     <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2">
       <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="0" />

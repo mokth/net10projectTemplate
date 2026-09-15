@@ -61,18 +61,20 @@
                 <DxFormLayout SizeMode="SizeMode.Small">
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.CustCode"
-                                       maxlength="20"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvCodeComboBox Data="@CustomerOptions"
+                                            @bind-Value="@EditModel.CustCode"
+                                            Enabled="@(!IsEditMode)"
+                                            NullText="Select customer"
+                                            InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.ICode"
-                                       maxlength="20"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvStockMasterPicker ICode="@EditModel.ICode"
+                                                 ICodeChanged="@(v => EditModel.ICode = v ?? string.Empty)"
+                                                 Selected="OnItemSelectedAsync"
+                                                 Enabled="@(!IsEditMode)"
+                                                 InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
 
@@ -86,10 +88,11 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Selling UOM" ColSpanMd="3">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.SellingUOM"
-                                       maxlength="5"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvCodeComboBox Data="@UomOptions"
+                                            @bind-Value="@EditModel.SellingUOM"
+                                            Enabled="@(!IsEditMode)"
+                                            NullText="Select UOM"
+                                            InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="MOQ" ColSpanMd="3">
@@ -122,17 +125,18 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Currency" ColSpanMd="4">
                             <Template>
-                                <DxTextBox @bind-Text="@EditModel.Currency"
-                                           maxlength="5"
-                                           ReadOnly="@(!EditEnabled)"
-                                           InputCssClass="code-style" />
+                                <IvCodeComboBox Data="@CurrencyOptions"
+                                                @bind-Value="@EditModel.Currency"
+                                                Enabled="@EditEnabled"
+                                                NullText="Select currency"
+                                                InputCssClass="code-style" />
                             </Template>
                         </DxFormLayoutItem>
                     }
 
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="4" BeginRow="true">
                         <Template>
-                                <DxTextBox Text="@(EditModel.Status ?? "NEW")" ValidationEnabled="false" ReadOnly="true" />
+                                <DxTextBox @bind-Text="@EditModel.Status"  ReadOnly="true" />
                         </Template>
                     </DxFormLayoutItem>
 

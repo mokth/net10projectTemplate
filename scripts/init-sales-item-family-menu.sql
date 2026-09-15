@@ -19,6 +19,11 @@
 -- ROLE MAPPING IS NOT PRESCRIBED HERE. The default is to mirror the roles already granted to the
 -- equivalent shipped master (SA_CUST_TYPE); the block at the bottom is commented out until the
 -- deployment owner confirms.
+--
+-- RETIRED (2026-09-15): the standalone read-only "Customer Prices" screen (SA_CUST_PRICE) was merged
+--   into "Price Groups". Item prices are maintained in the price-list popup, and the per-group workbook
+--   download moved to /sales/price-groups/prices/export. The cleanup block at the bottom soft-disables
+--   the old menu row and withdraws its grants on databases that ran an earlier revision of this script.
 
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
@@ -45,44 +50,40 @@ BEGIN
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
         VALUES (N'SA_CUST_PRICE_GROUP', N'Price Groups', @saMasterId, N'/sales/price-groups', 18, 0, 1, SYSUTCDATETIME(), N'SEED');
 
-    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_CUST_PRICE')
-        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'SA_CUST_PRICE', N'Customer Prices', @saMasterId, N'/sales/customer-prices', 19, 0, 1, SYSUTCDATETIME(), N'SEED');
-
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_ITEM_CUST')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'SA_ITEM_CUST', N'Customer Items', @saMasterId, N'/sales/customer-items', 20, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'SA_ITEM_CUST', N'Customer Items', @saMasterId, N'/sales/customer-items', 19, 0, 1, SYSUTCDATETIME(), N'SEED');
 
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_DIS_GROUP_ITEM')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'SA_DIS_GROUP_ITEM', N'Item Discounts', @saMasterId, N'/sales/item-discounts', 21, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'SA_DIS_GROUP_ITEM', N'Item Discounts', @saMasterId, N'/sales/item-discounts', 20, 0, 1, SYSUTCDATETIME(), N'SEED');
 
-    PRINT N'Menu rows SA_CUST_PRICE_GROUP / SA_CUST_PRICE / SA_ITEM_CUST / SA_DIS_GROUP_ITEM ensured (requires matching entries in menus.xml).';
+    PRINT N'Menu rows SA_CUST_PRICE_GROUP / SA_ITEM_CUST / SA_DIS_GROUP_ITEM ensured (requires matching entries in menus.xml).';
 END
 ELSE
     PRINT N'dbo.Menu or SA_MASTER missing - run init-menu-access.sql first, then re-run this script.';
 GO
 
 -- ── Menu permissions ──────────────────────────────────────────────────────────
--- ACCESS / ADD / EDIT / DELETE / EXPORT for all four screens.
+-- ACCESS / ADD / EDIT / DELETE / EXPORT for the three surviving screens.
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p
     ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'EXPORT')
-WHERE m.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_CUST_PRICE', N'SA_ITEM_CUST', N'SA_DIS_GROUP_ITEM')
+WHERE m.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_ITEM_CUST', N'SA_DIS_GROUP_ITEM')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 GO
 
--- VIEW_PRICE only on the three screens that can display a price. The item-discount screen shows
+-- VIEW_PRICE only on the screens that can display a price. The item-discount screen shows
 -- discount slots, not prices, so it is deliberately excluded.
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode = N'VIEW_PRICE'
-WHERE m.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_CUST_PRICE', N'SA_ITEM_CUST')
+WHERE m.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_ITEM_CUST')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
@@ -97,11 +98,34 @@ GO
 -- INNER JOIN dbo.Menu srcMenu ON srcMenu.MenuId = src.MenuId AND srcMenu.MenuCode = N'SA_CUST_TYPE'
 -- CROSS JOIN dbo.Menu dst
 -- INNER JOIN dbo.MenuPermission mp ON mp.MenuId = dst.MenuId AND mp.PermissionId = src.PermissionId
--- WHERE dst.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_CUST_PRICE', N'SA_ITEM_CUST', N'SA_DIS_GROUP_ITEM')
+-- WHERE dst.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_ITEM_CUST', N'SA_DIS_GROUP_ITEM')
 --   AND NOT EXISTS (
 --       SELECT 1 FROM dbo.RoleMenuPermission rmp
 --       WHERE rmp.RoleId = src.RoleId AND rmp.MenuId = dst.MenuId AND rmp.PermissionId = src.PermissionId);
 -- GO
+
+-- ── Retired: SA_CUST_PRICE (merged into SA_CUST_PRICE_GROUP) ────────────────
+-- Databases that ran an earlier revision of this script still carry the standalone read-only
+-- "Customer Prices" screen. MenuSyncService already soft-disables that row on the next startup because
+-- the code is gone from menus.xml; this makes it deterministic and also withdraws the grants, so no
+-- role keeps a permission on a screen that no longer exists.
+UPDATE dbo.MenuPermission
+SET IsActive = 0
+WHERE IsActive = 1
+  AND MenuId IN (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_CUST_PRICE');
+
+UPDATE dbo.RoleMenuPermission
+SET IsActive = 0
+WHERE IsActive = 1
+  AND MenuId IN (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_CUST_PRICE');
+
+UPDATE dbo.Menu
+SET IsActive = 0,
+    ModifiedDate = SYSUTCDATETIME(),
+    ModifiedBy = N'SEED'
+WHERE MenuCode = N'SA_CUST_PRICE'
+  AND IsActive = 1;
+GO
 
 PRINT N'init-sales-item-family-menu.sql complete.';
 GO

@@ -13,7 +13,7 @@ public static class SaItemFamilyExportEndpoints
     public static IEndpointRouteBuilder MapSaItemFamilyExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/sales/price-groups/export", ExportCustPriceGroupsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/customer-prices/export", ExportCustPricesAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/price-groups/prices/export", ExportPriceGroupPricesAsync).RequireAuthorization();
         endpoints.MapGet("/sales/customer-items/export", ExportItemCustsAsync).RequireAuthorization();
         endpoints.MapGet("/sales/item-discounts/export", ExportDisGroupItemsAsync).RequireAuthorization();
         return endpoints;
@@ -27,7 +27,7 @@ public static class SaItemFamilyExportEndpoints
         return ToFile(result, "IvCustPriceGroups", SaMasterRefExportWorkbooks.BuildCustPriceGroups);
     }
 
-    private static async Task<IResult> ExportCustPricesAsync(
+    private static async Task<IResult> ExportPriceGroupPricesAsync(
         [FromServices] ISaSalesRefService masters,
         [FromQuery] string? custPriceCode,
         CancellationToken cancellationToken)

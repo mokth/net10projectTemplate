@@ -830,17 +830,17 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var pl1 = await sut.ListCustPricesAsync("PL1");
+        var pl1 = await sut.ExportCustPricesAsync("PL1");
         Assert.True(pl1.Succeeded, pl1.Message);
         Assert.Equal("I1", Assert.Single(pl1.Data!).ICode);
 
-        var pl2 = await sut.ListCustPricesAsync("PL2");
+        var pl2 = await sut.ExportCustPricesAsync("PL2");
         Assert.True(pl2.Succeeded, pl2.Message);
         Assert.Equal("I2", Assert.Single(pl2.Data!).ICode);
 
         // A group belonging to another company is invisible even by its exact code.
         var other = CreateSut(company: "OTHER", canViewPrice: true);
-        var foreign = await other.ListCustPricesAsync("PL1");
+        var foreign = await other.ExportCustPricesAsync("PL1");
         Assert.True(foreign.Succeeded, foreign.Message);
         Assert.Empty(foreign.Data!);
     }

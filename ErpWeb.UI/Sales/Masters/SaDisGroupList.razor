@@ -69,10 +69,11 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pay Code" ColSpanMd="6">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.PayCode"
-                                       maxlength="40"
-                                       ReadOnly="@IsEditMode"
-                                       InputCssClass="required-field code-style" />
+                            <IvCodeComboBox Data="@PayCodeOptions"
+                                            @bind-Value="@EditModel.PayCode"
+                                            Enabled="@(!IsEditMode)"
+                                            NullText="Select pay code"
+                                            InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="4" BeginRow="true">
@@ -84,11 +85,18 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="4">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.GroupStatus"
-                                       maxlength="20"
-                                       ReadOnly="@(!EditEnabled)" />
+                            <DxComboBox Data="@GroupStatusOptions"
+                                        @bind-Value="@EditModel.GroupStatus"
+                                        Enabled="@EditEnabled"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        NullText="Select status" />
                         </Template>
                     </DxFormLayoutItem>
+                    @* Discount Type stays a free-text box on purpose: it is a free-text CATEGORY token on the
+                       header (legacy filters elsewhere use 'Retailer'), NOT the item-level
+                       PERCENTAGE/AMOUNT slot type. No authoritative vocabulary exists, so a dropdown here
+                       would invent one and silently rewrite the category on save. See
+                       plans/sales-master-lookup-fixes.md §4.2. *@
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount Type" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.DiscountType"

@@ -47,7 +47,6 @@ public static class MenuCodes
     // Sales item family (plans/sales-item-family-v2-plan.md): price lists, price lines, customer items
     // and item discount rules. One code per screen, following the D-15 convention.
     public const string SalesCustPriceGroup = "SA_CUST_PRICE_GROUP";
-    public const string SalesCustPrice = "SA_CUST_PRICE";
     public const string SalesItemCust = "SA_ITEM_CUST";
     public const string SalesDisGroupItem = "SA_DIS_GROUP_ITEM";
     public const string SalesInvoice = "SA_INVOICE";

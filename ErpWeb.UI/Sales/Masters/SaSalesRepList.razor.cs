@@ -4,11 +4,14 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.UI.Admin.Master;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Masters;
 
 public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
 {
+    [Inject] private ISaCustLookupService Lookups { get; set; } = default!;
+
     protected override string MenuCode => MenuCodes.SalesSalesRep;
     protected override string EntityLabel => "Sales Rep";
     protected override bool SupportsActivate => true;
@@ -16,6 +19,14 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
     protected SaSalesRepEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
     private string? _loadedFingerprint;
+
+    /// <summary>
+    /// Ungated state/country lists — the same combos <c>SaCustEntry</c> and <c>PoSuppEntry</c> already use
+    /// for their address blocks. These fields are NOT validated server-side, so this is a typing guard
+    /// only: no new server-side check is introduced here (plan §4.0 rule 5 / §4.2).
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> StateOptions { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> CountryOptions { get; set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -124,6 +135,7 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -142,6 +154,7 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
+        await LoadLookupsAsync();
         PopupVisible = true;
     }
 
@@ -160,7 +173,14 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadLookupsAsync();
         PopupVisible = true;
+    }
+
+    private async Task LoadLookupsAsync()
+    {
+        StateOptions = await Lookups.ListStatesForAssignmentAsync();
+        CountryOptions = await Lookups.ListCountriesForAssignmentAsync();
     }
 
     protected async Task SwitchViewToEditAsync()

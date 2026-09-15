@@ -580,25 +580,19 @@ public sealed partial class SaSalesRefService
             CountCustPriceGroupReferencesBulkAsync,
             cancellationToken);
 
-    public async Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ListCustPricesAsync(
-        string custPriceCode,
-        CancellationToken cancellationToken = default)
-    {
-        var ctx = await RequireCompanyScopeAsync(MenuCodes.SalesCustPrice, PermissionCodes.Access, cancellationToken);
-        if (ctx.Error is not null)
-        {
-            return FailList<IvCustPriceListRow>(ctx.Error.Value);
-        }
-
-        return await CustPricesCoreAsync(ctx.CompanyCode!, custPriceCode, cancellationToken);
-    }
-
-    /// <summary>Export path: EXPORT permission instead of ACCESS, same VIEW_PRICE masking.</summary>
+    /// <summary>
+    /// Per-group workbook download, driven from the price-list popup. EXPORT permission (not ACCESS),
+    /// with the same VIEW_PRICE masking as the list.
+    ///
+    /// This is the only caller-facing price-line read: the standalone read-only Customer Prices screen
+    /// (/sales/customer-prices) was merged into the Price Groups screen, which keeps every write inside
+    /// the header aggregate.
+    /// </summary>
     public async Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ExportCustPricesAsync(
         string custPriceCode,
         CancellationToken cancellationToken = default)
     {
-        var ctx = await RequireCompanyScopeAsync(MenuCodes.SalesCustPrice, PermissionCodes.Export, cancellationToken);
+        var ctx = await RequireCompanyScopeAsync(MenuCodes.SalesCustPriceGroup, PermissionCodes.Export, cancellationToken);
         if (ctx.Error is not null)
         {
             return FailList<IvCustPriceListRow>(ctx.Error.Value);
@@ -607,13 +601,17 @@ public sealed partial class SaSalesRefService
         return await CustPricesCoreAsync(ctx.CompanyCode!, custPriceCode, cancellationToken);
     }
 
+    /// <summary>
+    /// The rows of one price group, VIEW_PRICE-masked. Shared by the export; there is no line list page
+    /// any more (the Customer Prices screen was merged into the price-list popup).
+    /// </summary>
     private async Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> CustPricesCoreAsync(
         string company,
         string custPriceCode,
         CancellationToken cancellationToken)
     {
         var code = NormalizeOptionalCode(custPriceCode);
-        var canViewPrice = await CanViewPriceAsync(MenuCodes.SalesCustPrice, cancellationToken);
+        var canViewPrice = await CanViewPriceAsync(MenuCodes.SalesCustPriceGroup, cancellationToken);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var rows = await db.IvCustPrices.AsNoTracking()

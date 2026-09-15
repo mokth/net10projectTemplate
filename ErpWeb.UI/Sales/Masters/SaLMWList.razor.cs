@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.UI.Admin.Master;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Masters;
 
@@ -15,12 +16,17 @@ namespace ErpWeb.UI.Sales.Masters;
 /// </summary>
 public partial class SaLMWList : SaRefListPageBase<SaLMWListRow>
 {
+    [Inject] private ISaCustLookupService Lookups { get; set; } = default!;
+
     protected override string MenuCode => MenuCodes.SalesLmw;
     protected override string EntityLabel => "LMW Licence";
     protected override string? ExportRoute => "/sales/lmw/export";
 
     protected SaLMWEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>Ungated customer list; the customer master screen (and its menu gate) is not required.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> CustomerOptions { get; set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -155,6 +161,7 @@ public partial class SaLMWList : SaRefListPageBase<SaLMWListRow>
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadCustomersAsync();
         PopupVisible = true;
     }
 
@@ -173,6 +180,7 @@ public partial class SaLMWList : SaRefListPageBase<SaLMWListRow>
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
+        await LoadCustomersAsync();
         PopupVisible = true;
     }
 
@@ -191,8 +199,27 @@ public partial class SaLMWList : SaRefListPageBase<SaLMWListRow>
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
+        await LoadCustomersAsync();
         PopupVisible = true;
     }
+
+    /// <summary>
+    /// Fills the stored customer-name denormalisation from the picked customer. The persistence contract
+    /// is unchanged (the VM still carries CustName and the service still stores it): only the source of
+    /// the value moves from the operator's keyboard to SaCust. Plan §4.5.
+    /// </summary>
+    protected Task OnCustomerCodeChangedAsync(string? value)
+    {
+        EditModel.CustCode = value ?? string.Empty;
+        EditModel.CustName = CustomerOptions
+            .FirstOrDefault(x => string.Equals(x.Code, EditModel.CustCode, StringComparison.OrdinalIgnoreCase))
+            ?.Desc;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Ungated customer list; never <c>ISaCustService.SearchAsync</c> (customer-master gated).</summary>
+    private async Task LoadCustomersAsync() =>
+        CustomerOptions = await Lookups.SearchCustomersAsync();
 
     protected async Task SwitchViewToEditAsync()
     {
