@@ -51,6 +51,27 @@ public class SaCustServiceTests : IAsyncLifetime
             CustGroupDesc = "Group 1"
         });
 
+        // TC34 / D-6: sub-group masters. Company B has its own SG1 so the reference check stays
+        // tenant-scoped rather than global.
+        db.SaCustSubGroups.Add(new SaCustSubGroup
+        {
+            CompanyCode = "DEMO",
+            CustSubGroupCode = "SG1",
+            CustSubGroupDesc = "Sub Group 1"
+        });
+        db.SaCustSubGroups.Add(new SaCustSubGroup
+        {
+            CompanyCode = "OTHER",
+            CustSubGroupCode = "SG1",
+            CustSubGroupDesc = "Sub Group 1 (other company)"
+        });
+        db.SaCustSubGroups.Add(new SaCustSubGroup
+        {
+            CompanyCode = "OTHER",
+            CustSubGroupCode = "SG9",
+            CustSubGroupDesc = "Other company only"
+        });
+
         db.SaCurrencies.Add(new SaCurrency
         {
             CompanyCode = "DEMO",
@@ -109,6 +130,8 @@ public class SaCustServiceTests : IAsyncLifetime
                 InvTel = "222",
                 ContactPerson = "Alice",
                 IsActive = true,
+                // Legacy free text that no master row matches: must not block an unrelated edit.
+                SubGroupCode = "LEGACY",
                 RowVersion = Rv(11)
             },
             new SaCust
@@ -252,8 +275,7 @@ public class SaCustServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvalidType_Rejected()
-    {
+    public async Task InvalidType_Rejected()    {
         var sut = CreateSut();
         var model = ValidNewModel("BADTYPE");
         model.CustType = "INVALID";
@@ -307,7 +329,6 @@ public class SaCustServiceTests : IAsyncLifetime
         Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
         Assert.True(result.ValidationErrors.ContainsKey("State"));
     }
-
     [Fact]
     public async Task InvalidTaxGroup_Rejected()
     {
@@ -734,6 +755,88 @@ public class SaCustServiceTests : IAsyncLifetime
         Assert.Equal("Alpha Updated", row.CustName);
     }
 
+    // ─────────────── TC34: SaCust.SubGroupCode is validated server-side (D-6 §10.7) ───────────────
+
+    [Fact]
+    public async Task SubGroup_UnknownCode_Rejected()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BADSUB");
+        model.SubGroupCode = "NOPE";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("SubGroupCode"));
+        Assert.Contains("NOPE", result.ValidationErrors["SubGroupCode"]);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.SaCusts.AnyAsync(x => x.CustCode == "BADSUB"));
+    }
+
+    [Fact]
+    public async Task SubGroup_Blank_StoredAsNull_AndSaves()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("BLANKSUB");
+        model.SubGroupCode = "   ";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CustCode == "BLANKSUB");
+        Assert.Null(row.SubGroupCode);
+    }
+
+    [Fact]
+    public async Task SubGroup_KnownCode_Accepted()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("GOODSUB");
+        model.SubGroupCode = "SG1";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CustCode == "GOODSUB");
+        Assert.Equal("SG1", row.SubGroupCode);
+    }
+
+    [Fact]
+    public async Task SubGroup_OtherCompanysCode_Rejected_SameCompanyOnly()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("CROSSSUB");
+        // "OTHER" has an SG9; DEMO does not. The check must be scoped to the caller's company.
+        model.SubGroupCode = "SG9";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.ValidationErrors.ContainsKey("SubGroupCode"));
+    }
+
+    [Fact]
+    public async Task SubGroup_LegacyValue_ToleratedOnUnrelatedEdit()
+    {
+        var sut = CreateSut();
+        // CUST02 carries a legacy free-text sub-group that no master row matches.
+        var loaded = (await sut.GetAsync("CUST02")).Data!;
+        Assert.Equal("LEGACY", loaded.SubGroupCode);
+        loaded.CustName = "Beta Renamed";
+
+        var result = await sut.SaveAsync(loaded, isNew: false);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST02");
+        Assert.Equal("LEGACY", row.SubGroupCode);
+        Assert.Equal("Beta Renamed", row.CustName);
+    }
+
     private static SaCustEditVm ValidNewModel(string code) =>
         new()
         {
@@ -751,7 +854,6 @@ public class SaCustServiceTests : IAsyncLifetime
 
     private static IvMasterKeyToken Token(string code, byte[] rowVersion) =>
         new() { Code = code, RowVersion = rowVersion };
-
     private static byte[] Rv(byte marker) => [marker, 0, 0, 0, 0, 0, 0, 0];
 
     private SaCustService CreateSut(

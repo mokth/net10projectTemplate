@@ -36,6 +36,16 @@
       <Menu Code="SA_PAY_TERM" Name="Payment Terms" Route="/sales/payment-terms" SortOrder="9" />
       <Menu Code="SA_SALES_REP" Name="Sales Reps" Route="/sales/sales-reps" SortOrder="10" />
       <Menu Code="SA_TAX_GROUP" Name="Tax Groups" Route="/sales/tax-groups" SortOrder="11" />
+      <Menu Code="SA_CUST_SUB_GROUP" Name="Customer Sub Groups" Route="/sales/customer-sub-groups" SortOrder="12" />
+      <Menu Code="SA_SHIP_VIA" Name="Ship Via" Route="/sales/ship-vias" SortOrder="13" />
+      <Menu Code="SA_SO_TYPE" Name="SO Types" Route="/sales/so-types" SortOrder="14" />
+      <Menu Code="SA_COMMENT" Name="Comments" Route="/sales/comments" SortOrder="15" />
+      <Menu Code="SA_SHIP_LEAD_TIME" Name="Shipping Lead Time" Route="/sales/shipping-lead-time" SortOrder="16" />
+      <Menu Code="SA_LMW" Name="LMW Licences" Route="/sales/lmw" SortOrder="17" />
+      <Menu Code="SA_CUST_PRICE_GROUP" Name="Price Groups" Route="/sales/price-groups" SortOrder="18" />
+      <Menu Code="SA_CUST_PRICE" Name="Customer Prices" Route="/sales/customer-prices" SortOrder="19" />
+      <Menu Code="SA_ITEM_CUST" Name="Customer Items" Route="/sales/customer-items" SortOrder="20" />
+      <Menu Code="SA_DIS_GROUP_ITEM" Name="Item Discounts" Route="/sales/item-discounts" SortOrder="21" />
     </Menu>
     <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2">
       <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="0" />

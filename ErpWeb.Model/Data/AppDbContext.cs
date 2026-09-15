@@ -68,6 +68,17 @@ public class AppDbContext : DbContext
     public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();
     public DbSet<SaPaymentTerm> SaPaymentTerms => Set<SaPaymentTerm>();
     public DbSet<SaSalesRep> SaSalesReps => Set<SaSalesRep>();
+    public DbSet<SaCustSubGroup> SaCustSubGroups => Set<SaCustSubGroup>();
+    public DbSet<SaShipVia> SaShipVias => Set<SaShipVia>();
+    public DbSet<SaSOType> SaSOTypes => Set<SaSOType>();
+    public DbSet<SaComment> SaComments => Set<SaComment>();
+    public DbSet<SaShippingLeadTime> SaShippingLeadTimes => Set<SaShippingLeadTime>();
+    public DbSet<SaLMW> SaLmws => Set<SaLMW>();
+
+    public DbSet<IvCustPriceGroup> IvCustPriceGroups => Set<IvCustPriceGroup>();
+    public DbSet<IvCustPrice> IvCustPrices => Set<IvCustPrice>();
+    public DbSet<SaItemCust> SaItemCusts => Set<SaItemCust>();
+    public DbSet<SaDisGroupItem> SaDisGroupItems => Set<SaDisGroupItem>();
 
     public DbSet<PoOrder> PoOrders => Set<PoOrder>();
     public DbSet<PoOrderDetail> PoOrderDetails => Set<PoOrderDetail>();

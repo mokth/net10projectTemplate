@@ -197,6 +197,66 @@ internal static class InventoryLeftoverSite
         entity.LocationCode = writeScope.LocationCode;
     }
 
+    public static void Apply(IvCustPriceGroup entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(IvCustPrice entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaItemCust entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaDisGroupItem entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaCustSubGroup entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaShipVia entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaSOType entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaComment entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaShippingLeadTime entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(SaLMW entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
     public static void Apply(PoSupplier entity, InventoryTenantScope writeScope)
     {
         entity.BranchCode = writeScope.BranchCode!;

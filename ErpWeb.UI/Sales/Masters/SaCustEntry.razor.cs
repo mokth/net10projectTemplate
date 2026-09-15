@@ -43,10 +43,14 @@ public partial class SaCustEntry : PageBase
 
     protected IReadOnlyList<IvCodeLookupRow> Types { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Groups { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> SubGroups { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Areas { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Countries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Currencies { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> DisGroups { get; set; } = [];
+
+    /// <summary>Active price lists for the Price group picker (D2-23).</summary>
+    protected IReadOnlyList<IvCodeLookupRow> PriceGroups { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> States { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> TaxGroups { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> PayCodes { get; set; } = [];
@@ -547,10 +551,12 @@ public partial class SaCustEntry : PageBase
     {
         Types = await Lookups.ListTypesForAssignmentAsync();
         Groups = await Lookups.ListGroupsForAssignmentAsync();
+        SubGroups = await Lookups.ListSubGroupsForAssignmentAsync();
         Areas = await Lookups.ListAreasForAssignmentAsync();
         Countries = await Lookups.ListCountriesForAssignmentAsync();
         Currencies = await Lookups.ListCurrenciesForAssignmentAsync();
         DisGroups = await Lookups.ListDisGroupsForAssignmentAsync();
+        PriceGroups = await Lookups.ListPriceGroupsForAssignmentAsync();
         States = await Lookups.ListStatesForAssignmentAsync();
         TaxGroups = await Lookups.ListTaxGroupsForAssignmentAsync();
         PayCodes = await Lookups.ListPayCodesForAssignmentAsync();

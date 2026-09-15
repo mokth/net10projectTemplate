@@ -105,6 +105,8 @@ try
     app.MapSaCustExportEndpoints();
     app.MapPoSupplierExportEndpoints();
     app.MapPoMasterRefExportEndpoints();
+    app.MapSaMasterRefExportEndpoints();
+    app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();
     app.MapPoPrAttachmentEndpoints();
     app.MapPoOrderAttachmentEndpoints();

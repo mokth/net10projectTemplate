@@ -10,8 +10,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Sales;
 
-public sealed class SaSalesRefService : ISaSalesRefService
+public sealed partial class SaSalesRefService : ISaSalesRefService
 {
+    /// <summary>Export row ceiling; mirrored by the export endpoints.</summary>
+    public const int MaxExportRows = 50_000;
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;

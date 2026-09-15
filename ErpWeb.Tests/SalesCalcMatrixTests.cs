@@ -147,6 +147,72 @@ public class SalesCalcMatrixTests
     }
 
     [Fact]
+    public void Exclusive_adaptive_rounding_taxes_net_not_amount_for_amount_discount()
+    {
+        // qty 1 / unit 100 / disc amount 11 / tax 10%: CalculateLine → Tax 8.90;
+        // adaptive rounding must not overwrite with Amount×10% = 10.00.
+        var lines = new List<SaInvoiceLineCalcState> { Line(qty: 1m, price: 100m, taxPercent: 10m, inclusive: false) };
+        lines[0].ItemDiscAmount = 11m;
+        SaInvoiceCalc.CalculateLine(lines[0], 10m, decPoint: false, discMethod: null);
+        Assert.Equal(8.90m, lines[0].TaxAmt);
+
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(lines);
+
+        Assert.Equal(100m, lines[0].Amount);
+        Assert.Equal(89m, lines[0].NetAmount);
+        Assert.Equal(8.90m, lines[0].TaxAmt);
+    }
+
+    [Fact]
+    public void Exclusive_adaptive_rounding_taxes_net_not_amount_for_percent_discount()
+    {
+        // qty 1 / unit 100 / 10% disc / tax 10%: net 90 → Tax 9.00 (not Amount×10% = 10.00).
+        var lines = new List<SaInvoiceLineCalcState> { Line(qty: 1m, price: 100m, taxPercent: 10m, inclusive: false) };
+        lines[0].ItemDiscount = 10m;
+        SaInvoiceCalc.CalculateLine(lines[0], 10m, decPoint: false, discMethod: null);
+        Assert.Equal(9.00m, lines[0].TaxAmt);
+
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(lines);
+
+        Assert.Equal(100m, lines[0].Amount);
+        Assert.Equal(90m, lines[0].NetAmount);
+        Assert.Equal(9.00m, lines[0].TaxAmt);
+    }
+
+    [Fact]
+    public void Exclusive_discounted_lines_adaptive_rounding_header_reconciles()
+    {
+        var lines = new List<SaInvoiceLineCalcState>
+        {
+            Line(qty: 1m, price: 100m, taxPercent: 10m, inclusive: false),
+            Line(qty: 1m, price: 100m, taxPercent: 10m, inclusive: false),
+            Line(qty: 1m, price: 50m, taxPercent: 6m, inclusive: false)
+        };
+        lines[0].ItemDiscAmount = 11m;
+        lines[1].ItemDiscount = 10m;
+        lines[2].ItemDiscAmount = 5m;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            lines[i].Line = i + 1;
+        }
+
+        foreach (var line in lines)
+        {
+            SaInvoiceCalc.CalculateLine(line, line.TaxPercent, decPoint: false, discMethod: null);
+        }
+        var popupTaxes = lines.Select(x => x.TaxAmt).ToList();
+
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding(lines);
+        var header = SaInvoiceCalc.CalculateHeader(lines, decPoint: false);
+
+        // Popup (CalculateLine only) and document (after adaptive rounding) must agree on tax.
+        Assert.Equal(popupTaxes, lines.Select(x => x.TaxAmt).ToList());
+        Assert.Equal(89m + 90m + 45m, header.GrossAmnt);
+        Assert.Equal(8.90m + 9.00m + 2.70m, header.Taxes);
+        Assert.Equal(header.GrossAmnt + header.Taxes, header.TotAmnt);
+    }
+
+    [Fact]
     public void Residual_rounding_is_order_independent()
     {
         var seed = new List<SaInvoiceLineCalcState>
@@ -215,6 +281,8 @@ public class SalesCalcMatrixTests
     {
         var line = Line(row);
         SaInvoiceCalc.CalculateLine(line, row.TaxPercent, row.DecPoint, discMethod: null);
+        // Document RecalcDocument / prepare always run adaptive rounding after CalculateLine.
+        SaInvoiceCalc.ApplyTaxAdaptiveRounding([line]);
 
         Assert.Equal(row.Amount, line.Amount);
         Assert.Equal(row.NetAmount, line.NetAmount);

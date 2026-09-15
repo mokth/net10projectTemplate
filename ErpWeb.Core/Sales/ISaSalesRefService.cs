@@ -77,12 +77,119 @@ public interface ISaSalesRefService
     Task<IvMasterOperationResult<SaTaxGroupEditVm>> SaveTaxGroupAsync(SaTaxGroupEditVm model, bool isNew, string? expectedFingerprint, CancellationToken cancellationToken = default);
     Task<DeleteCheckResult> CanDeleteTaxGroupsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<object>> DeleteTaxGroupsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+
+    // -------- Flat sales code-reference family (docs/sales-master-plan.md) --------
+    // All six are Level A (DB RowVersion on the VM) — there is no expectedFingerprint argument.
+
+    // Customer Sub Group (company-scoped, no Active)
+    Task<IvMasterOperationResult<IReadOnlyList<SaCustSubGroupListRow>>> ListCustSubGroupsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaCustSubGroupListRow>>> ExportCustSubGroupsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaCustSubGroupEditVm>> GetCustSubGroupAsync(string code, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaCustSubGroupEditVm>> SaveCustSubGroupAsync(SaCustSubGroupEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteCustSubGroupsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteCustSubGroupsAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Ship Via (company-scoped, Active)
+    Task<IvMasterOperationResult<IReadOnlyList<SaShipViaListRow>>> ListShipViasAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaShipViaListRow>>> ExportShipViasAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaShipViaEditVm>> GetShipViaAsync(string code, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaShipViaEditVm>> SaveShipViaAsync(SaShipViaEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> SetShipViaActiveAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, bool isActive, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteShipViasAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteShipViasAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // SO Type (company-scoped, Active, no FOCAuto)
+    Task<IvMasterOperationResult<IReadOnlyList<SaSOTypeListRow>>> ListSoTypesAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaSOTypeListRow>>> ExportSoTypesAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaSOTypeEditVm>> GetSoTypeAsync(string code, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaSOTypeEditVm>> SaveSoTypeAsync(SaSOTypeEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> SetSoTypeActiveAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, bool isActive, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteSoTypesAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteSoTypesAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Comment (company-scoped, Active, no Module / no legacy identity ID)
+    Task<IvMasterOperationResult<IReadOnlyList<SaCommentListRow>>> ListCommentsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaCommentListRow>>> ExportCommentsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaCommentEditVm>> GetCommentAsync(string code, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaCommentEditVm>> SaveCommentAsync(SaCommentEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> SetCommentActiveAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, bool isActive, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteCommentsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteCommentsAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Shipping Lead Time (company-scoped, Active, Days + Type)
+    Task<IvMasterOperationResult<IReadOnlyList<SaShippingLeadTimeListRow>>> ListShippingLeadTimesAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaShippingLeadTimeListRow>>> ExportShippingLeadTimesAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaShippingLeadTimeEditVm>> GetShippingLeadTimeAsync(string code, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaShippingLeadTimeEditVm>> SaveShippingLeadTimeAsync(SaShippingLeadTimeEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> SetShippingLeadTimeActiveAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, bool isActive, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteShippingLeadTimesAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteShippingLeadTimesAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // LMW licence register (company + customer scoped, no Active, serializable overlap check)
+    Task<IvMasterOperationResult<IReadOnlyList<SaLMWListRow>>> ListLmwsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaLMWListRow>>> ExportLmwsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaLMWEditVm>> GetLmwAsync(string licenseNo, string custCode, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaLMWEditVm>> SaveLmwAsync(SaLMWEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteLmwsAsync(IReadOnlyList<SaLMWKey> keys, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteLmwsAsync(IReadOnlyList<SaCompanyMasterKeyToken> items, CancellationToken cancellationToken = default);
+
+    // ---- Sales item family (plans/sales-item-family-v2-plan.md) ----
+    // Price lists, price lines, customer items and item discount rules. Price values are projected only
+    // when the caller holds VIEW_PRICE; a denied caller receives nulls (never a zeroed price).
+
+    // Price list header (saved together with its lines in one transaction)
+    Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceGroupListRow>>> ListCustPriceGroupsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceGroupListRow>>> ExportCustPriceGroupsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IvCustPriceGroupEditVm>> GetCustPriceGroupAsync(string custPriceCode, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IvCustPriceGroupEditVm>> SaveCustPriceGroupAsync(IvCustPriceGroupEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> SetCustPriceGroupActiveAsync(IReadOnlyList<SaItemFamilyKeyToken> items, bool isActive, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteCustPriceGroupsAsync(IReadOnlyList<string> custPriceCodes, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteCustPriceGroupsAsync(IReadOnlyList<SaItemFamilyKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Price lines (read surface for the line list; writes go through the header aggregate)
+    Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ListCustPricesAsync(string custPriceCode, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<IvCustPriceListRow>>> ExportCustPricesAsync(string custPriceCode, CancellationToken cancellationToken = default);
+
+    // Customer item
+    Task<IvMasterOperationResult<IReadOnlyList<SaItemCustListRow>>> ListItemCustsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaItemCustListRow>>> ExportItemCustsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaItemCustEditVm>> GetItemCustAsync(SaItemCustKey key, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaItemCustEditVm>> SaveItemCustAsync(SaItemCustEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteItemCustsAsync(IReadOnlyList<SaItemCustKey> keys, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteItemCustsAsync(IReadOnlyList<SaItemFamilyKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Item discount rules
+    Task<IvMasterOperationResult<IReadOnlyList<SaDisGroupItemListRow>>> ListDisGroupItemsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<IReadOnlyList<SaDisGroupItemListRow>>> ExportDisGroupItemsAsync(CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaDisGroupItemEditVm>> GetDisGroupItemAsync(int id, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaDisGroupItemEditVm>> SaveDisGroupItemAsync(SaDisGroupItemEditVm model, bool isNew, CancellationToken cancellationToken = default);
+    Task<DeleteCheckResult> CanDeleteDisGroupItemsAsync(IReadOnlyList<int> ids, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteDisGroupItemsAsync(IReadOnlyList<SaItemFamilyKeyToken> items, CancellationToken cancellationToken = default);
+
+    // Resolution entry points (plan §7/§8/§8.9). The masters above are the data; these are the single
+    // place a price or a discount is decided, so the future SO/DO/INV/CN consumer never re-derives one
+    // — and today they are what the price/discount contract is tested against.
+    Task<IvMasterOperationResult<SaItemFamilyPriceResolution>> ResolveItemPriceAsync(SaItemFamilyPriceRequest request, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaItemFamilyDiscountSelection>> ResolveItemDiscountAsync(SaItemFamilyDiscountRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class SaCompanyMasterKeyToken
 {
     public string Code { get; init; } = string.Empty;
     public byte[] RowVersion { get; init; } = [];
+
+    /// <summary>
+    /// Second half of a two-part natural key. Only <c>SaLMW</c> uses it today
+    /// (<see cref="Code"/> = LicenseNo, <see cref="ParentCode"/> = CustCode).
+    /// </summary>
+    public string? ParentCode { get; init; }
+}
+
+/// <summary>Natural key of an LMW licence row.</summary>
+public sealed class SaLMWKey
+{
+    public string LicenseNo { get; init; } = string.Empty;
+    public string CustCode { get; init; } = string.Empty;
 }
 
 public sealed class SaDisGroupKey
@@ -286,4 +393,126 @@ public sealed class SaTaxGroupEditVm
     public string CompanyCode { get; set; } = string.Empty;
     public string? BranchCode { get; set; }
     public string? LocationCode { get; set; }
+}
+
+// ===================== Flat sales code-reference family =====================
+
+public sealed class SaCustSubGroupListRow
+{
+    public string Code { get; init; } = string.Empty;
+    public string? Desc { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaCustSubGroupEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public string? Desc { get; set; }
+    public byte[]? RowVersion { get; set; }
+}
+
+public sealed class SaShipViaListRow
+{
+    public string Code { get; init; } = string.Empty;
+    public string? Desc { get; init; }
+    public bool IsActive { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaShipViaEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public string? Desc { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[]? RowVersion { get; set; }
+}
+
+public sealed class SaSOTypeListRow
+{
+    public string Code { get; init; } = string.Empty;
+    public string? Desc { get; init; }
+    public bool IsActive { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaSOTypeEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public string? Desc { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[]? RowVersion { get; set; }
+}
+
+public sealed class SaCommentListRow
+{
+    public string Code { get; init; } = string.Empty;
+    public string? Comment { get; init; }
+    public bool IsActive { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaCommentEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public string? Comment { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[]? RowVersion { get; set; }
+}
+
+public sealed class SaShippingLeadTimeListRow
+{
+    public string Code { get; init; } = string.Empty;
+    public string? Desc { get; init; }
+    public int? Days { get; init; }
+    public string? Type { get; init; }
+    public bool IsActive { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaShippingLeadTimeEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public string? Desc { get; set; }
+    public int? Days { get; set; }
+    public string? Type { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[]? RowVersion { get; set; }
+}
+
+public sealed class SaLMWListRow
+{
+    public string LicenseNo { get; init; } = string.Empty;
+    public string CustCode { get; init; } = string.Empty;
+
+    /// <summary>Grid selection key: both halves of the natural key, so two licences of one customer stay distinct.</summary>
+    public string RowKey => $"{LicenseNo}|{CustCode}";
+
+    public string? LicenseID { get; init; }
+    public string? LicenseType { get; init; }
+    public DateTime LicenseStartDate { get; init; }
+    public DateTime LicenseEndDate { get; init; }
+    public DateTime SystemStartDate { get; init; }
+    public DateTime SystemEndDate { get; init; }
+    public string? Name { get; init; }
+    public string? IC { get; init; }
+    public string? Position { get; init; }
+    public string? CustName { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SaLMWEditVm
+{
+    public string LicenseNo { get; set; } = string.Empty;
+    public string CustCode { get; set; } = string.Empty;
+    public string? LicenseID { get; set; }
+    public string? LicenseType { get; set; }
+    public DateTime LicenseStartDate { get; set; }
+    public DateTime LicenseEndDate { get; set; }
+    public DateTime SystemStartDate { get; set; }
+    public DateTime SystemEndDate { get; set; }
+    public string? Name { get; set; }
+    public string? IC { get; set; }
+    public string? Position { get; set; }
+    public string? CustName { get; set; }
+    public byte[]? RowVersion { get; set; }
 }

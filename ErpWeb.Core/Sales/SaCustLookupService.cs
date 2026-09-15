@@ -62,6 +62,27 @@ public sealed class SaCustLookupService : ISaCustLookupService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListSubGroupsForAssignmentAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.SaCustSubGroups
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode)
+            .OrderBy(x => x.CustSubGroupCode)
+            .Select(x => new IvCodeLookupRow
+            {
+                Code = x.CustSubGroupCode,
+                Desc = x.CustSubGroupDesc ?? x.CustSubGroupCode
+            })
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<IvCodeLookupRow>> ListAreasForAssignmentAsync(CancellationToken cancellationToken = default)
     {
         var scope = _tenant.TryCompanyScope();
@@ -157,6 +178,9 @@ public sealed class SaCustLookupService : ISaCustLookupService
     public Task<bool> ValidateGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListGroupsForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
 
+    public Task<bool> ValidateSubGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateLegacyOrFailClosed(code, existingCode, ListSubGroupsForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
+
     public Task<bool> ValidateAreaAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListAreasForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
 
@@ -177,6 +201,30 @@ public sealed class SaCustLookupService : ISaCustLookupService
 
     public Task<bool> ValidatePayCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListPayCodesForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
+
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListPriceGroupsForAssignmentAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.IvCustPriceGroups
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.IsActive)
+            .OrderBy(x => x.CustPriceCode)
+            .Select(x => new IvCodeLookupRow
+            {
+                Code = x.CustPriceCode,
+                Desc = x.CustPriceDesc ?? x.CustPriceCode
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public Task<bool> ValidateCustPriceCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateLegacyOrFailClosed(code, existingCode, ListPriceGroupsForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
 
     public Task<bool> ValidateIndustryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListIndustriesForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);

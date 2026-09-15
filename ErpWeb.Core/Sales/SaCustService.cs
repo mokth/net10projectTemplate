@@ -691,6 +691,14 @@ public sealed class SaCustService : ISaCustService
             errors["CustGroupCode"] = $"Group '{model.CustGroupCode}' is not valid.";
         }
 
+        // D-6: SubGroupCode became a lookup, so it must also be validated on save — the popup is a
+        // convenience, the save path is the boundary. Blank stays allowed and a legacy value already
+        // on the row is tolerated (ValidateSubGroupAssignmentAsync handles both).
+        if (!await _lookups.ValidateSubGroupAssignmentAsync(model.SubGroupCode, existingSnapshot?.SubGroupCode, cancellationToken))
+        {
+            errors["SubGroupCode"] = $"Sub-group '{model.SubGroupCode}' is not valid.";
+        }
+
         if (!await _lookups.ValidateAreaAssignmentAsync(model.AreaCode, existingSnapshot?.AreaCode, cancellationToken))
         {
             errors["AreaCode"] = $"Area '{model.AreaCode}' is not valid.";
@@ -731,6 +739,11 @@ public sealed class SaCustService : ISaCustService
         if (!await _lookups.ValidateDisGroupAssignmentAsync(model.GroupDiscount, existingSnapshot?.GroupDiscount, cancellationToken))
         {
             errors["GroupDiscount"] = $"Discount group '{model.GroupDiscount}' is not valid.";
+        }
+
+        if (!await _lookups.ValidateCustPriceCodeAssignmentAsync(model.CustPriceCode, existingSnapshot?.CustPriceCode, cancellationToken))
+        {
+            errors["CustPriceCode"] = $"Price group '{model.CustPriceCode}' is not valid.";
         }
 
         if (!await _lookups.ValidateStateAssignmentAsync(model.State, existingSnapshot?.State, cancellationToken))

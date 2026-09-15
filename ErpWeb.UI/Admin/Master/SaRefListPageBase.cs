@@ -34,6 +34,12 @@ public abstract class SaRefListPageBase<TRow> : PageBase
 
     protected virtual bool SupportsActivate => false;
 
+    /// <summary>
+    /// Server-side export endpoint for this list, or <c>null</c> when the page has none. The
+    /// shell's EXPORT button is inert for pages that do not override it.
+    /// </summary>
+    protected virtual string? ExportRoute => null;
+
     protected List<ButtonInfo> ToolbarButtons
     {
         get
@@ -113,10 +119,33 @@ public abstract class SaRefListPageBase<TRow> : PageBase
             case "DELETE":
                 await BeginDeleteAsync();
                 break;
+            case "EXPORT":
+                await OnExportClickAsync();
+                break;
             case "REFRESH":
                 await ReloadListAsync();
                 break;
         }
+    }
+
+    /// <summary>
+    /// Navigates to the export endpoint. The permission is checked here for a clear message, and
+    /// again at the server execution point — a toolbar check is not a security boundary (D-15).
+    /// </summary>
+    protected virtual async Task OnExportClickAsync()
+    {
+        if (ExportRoute is null)
+        {
+            return;
+        }
+
+        if (!await EnsurePermissionAsync(PermissionCodes.Export))
+        {
+            return;
+        }
+
+        Navigation.NavigateTo(ExportRoute, forceLoad: true);
+        await Task.CompletedTask;
     }
 
     protected async Task OnRowActionAsync(SelectedButtonInfo<TRow> info)
@@ -289,7 +318,9 @@ public abstract class SaRefListPageBase<TRow> : PageBase
         new()
         {
             Code = token.Code,
-            RowVersion = token.RowVersion
+            RowVersion = token.RowVersion,
+            // Carried through for two-part natural keys (SaLMW: Code = LicenseNo, ParentCode = CustCode).
+            ParentCode = token.ParentCode
         };
 
     protected static IReadOnlyList<SaCompanyMasterKeyToken> ToSaKeys(IReadOnlyList<IvMasterKeyToken> items) =>

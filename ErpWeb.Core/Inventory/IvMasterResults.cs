@@ -28,6 +28,13 @@ public sealed class DeleteCheckResult
     public static DeleteCheckResult Ok() =>
         new() { CanDelete = true };
 
+    /// <summary>
+    /// Deletable, with an explicit note. Used where a master has no consumer column yet so the
+    /// "no references" answer is a documented statement rather than a silent <c>true</c> (plan §10.5).
+    /// </summary>
+    public static DeleteCheckResult Ok(string message) =>
+        new() { CanDelete = true, Message = message };
+
     public static DeleteCheckResult Blocked(string message, IReadOnlyList<IvMasterReferenceHit> references) =>
         new()
         {

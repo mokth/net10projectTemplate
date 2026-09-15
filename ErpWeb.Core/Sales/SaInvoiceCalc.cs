@@ -167,7 +167,9 @@ public static class SaInvoiceCalc
         decimal runningRounded = 0m;
         foreach (var line in lines)
         {
-            var raw = line.Amount * line.TaxPercent / 100m;
+            // Tax base is post-discount ex-tax (same as CalculateLine). Using Amount
+            // would tax the discarded discount and inflate TaxAmt on discounted lines.
+            var raw = line.NetAmount * line.TaxPercent / 100m;
             runningUnrounded += raw;
             var target = Money(runningUnrounded, TaxDecimalPlaces);
             line.TaxAmt = target - runningRounded;

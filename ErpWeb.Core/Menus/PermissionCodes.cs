@@ -24,6 +24,14 @@ public static class PermissionCodes
     public const string ViewProfit = "VIEW_PROFIT";
 
     /// <summary>
+    /// Price visibility (sales item family). Visibility only: the server never trusts a
+    /// client-supplied price and never zeroes a persisted one — a denied caller simply receives no
+    /// price values in the projection. Mirrors <see cref="ViewCost"/>. Must be listed in
+    /// <see cref="All"/> so it counts as a built-in permission and cannot be deleted by an admin.
+    /// </summary>
+    public const string ViewPrice = "VIEW_PRICE";
+
+    /// <summary>
     /// C44: allows a CN/DN with a blank supplier document number (reason code
     /// <c>INTERNAL_ADJUSTMENT</c>). Gated so it cannot be used just to avoid entering
     /// a supplier document number.
@@ -34,6 +42,7 @@ public static class PermissionCodes
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Access, Add, Edit, Delete, Print, Post, Rollback, Approve, Reject, Cancel,
-        Void, Reverse, Export, Import, Email, Submit, Close, Reopen, ViewCost, ViewProfit
+        Void, Reverse, Export, Import, Email, Submit, Close, Reopen, ViewCost, ViewProfit,
+        ViewPrice
     };
 }

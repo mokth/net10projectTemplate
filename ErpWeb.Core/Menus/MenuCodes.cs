@@ -35,6 +35,21 @@ public static class MenuCodes
     public const string SalesPayTerm = "SA_PAY_TERM";
     public const string SalesSalesRep = "SA_SALES_REP";
     public const string SalesTaxGroup = "SA_TAX_GROUP";
+    // Flat sales code-reference family (docs/sales-master-plan.md D-15). One code per master —
+    // replaces legacy screen id 700.1.9, which was shared by four unrelated masters.
+    public const string SalesCustSubGroup = "SA_CUST_SUB_GROUP";
+    public const string SalesShipVia = "SA_SHIP_VIA";
+    public const string SalesSoType = "SA_SO_TYPE";
+    public const string SalesComment = "SA_COMMENT";
+    public const string SalesShipLeadTime = "SA_SHIP_LEAD_TIME";
+    public const string SalesLmw = "SA_LMW";
+
+    // Sales item family (plans/sales-item-family-v2-plan.md): price lists, price lines, customer items
+    // and item discount rules. One code per screen, following the D-15 convention.
+    public const string SalesCustPriceGroup = "SA_CUST_PRICE_GROUP";
+    public const string SalesCustPrice = "SA_CUST_PRICE";
+    public const string SalesItemCust = "SA_ITEM_CUST";
+    public const string SalesDisGroupItem = "SA_DIS_GROUP_ITEM";
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
     public const string SalesOrder = "SA_SO";

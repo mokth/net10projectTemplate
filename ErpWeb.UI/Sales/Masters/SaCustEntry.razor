@@ -314,7 +314,8 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Sub group</label>
-                                    <DxTextBox @bind-Text="@Model.SubGroupCode" maxlength="20" />
+                                    <IvCodeComboBox Data="@SubGroups" @bind-Value="@Model.SubGroupCode" NullText="Select sub group" />
+                                    @FieldError(nameof(SaCustEditVm.SubGroupCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Industry</label>
@@ -736,7 +737,9 @@
                                             </div>
                                             <div class="sa-cust-pay-field">
                                                 <label class="iv-field__label">Price group</label>
-                                                <DxTextBox @bind-Text="@Model.CustPriceCode" maxlength="20" />
+                                                <IvCodeComboBox Data="@PriceGroups"
+                                                                @bind-Value="@Model.CustPriceCode"
+                                                                NullText="Select price group" />
                                             </div>
                                         </div>
                                     </div>
