@@ -1,4 +1,5 @@
 using ErpWeb.Core.Admin;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
@@ -492,7 +493,10 @@ public sealed class SaCdnService : ISaCdnService
             if (!readiness.Ok)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return SaCdnOperationResult.FailValidation("Validation failed.", readiness.ToValidationErrors());
+                var readinessErrors = readiness.ToValidationErrors();
+                return SaCdnOperationResult.FailValidation(
+                    ValidationMessageFormat.JoinMessages(readinessErrors),
+                    readinessErrors);
             }
 
             DocumentNumberResult issued;
@@ -678,6 +682,15 @@ public sealed class SaCdnService : ISaCdnService
                 return SaCdnOperationResult.Fail("Only NEW documents can be edited.", SaCdnErrorKind.BusinessRule);
             }
 
+            // e-Invoice structural edit lock: enforced in the service layer too, not just the UI.
+            if (EInvoiceStatuses.IsLocked(cdn.IrbmStatus))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaCdnOperationResult.Fail(
+                    $"This document cannot be edited while its e-Invoice status is {EInvoiceStatuses.Normalize(cdn.IrbmStatus)}.",
+                    SaCdnErrorKind.BusinessRule);
+            }
+
             if (!RowVersionsEqual(cdn.RowVersion, request.RowVersion))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -781,7 +794,10 @@ public sealed class SaCdnService : ISaCdnService
             if (!readiness.Ok)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return SaCdnOperationResult.FailValidation("Validation failed.", readiness.ToValidationErrors());
+                var readinessErrors = readiness.ToValidationErrors();
+                return SaCdnOperationResult.FailValidation(
+                    ValidationMessageFormat.JoinMessages(readinessErrors),
+                    readinessErrors);
             }
 
             TouchRowVersion(db, cdn);
@@ -863,6 +879,14 @@ public sealed class SaCdnService : ISaCdnService
                 {
                     await tx.RollbackAsync(cancellationToken);
                     return SaCdnOperationResult.Fail($"Document {no} is not NEW and cannot be deleted.");
+                }
+
+                // e-Invoice structural edit lock (same rule as UpdateAsync).
+                if (EInvoiceStatuses.IsLocked(cdn.IrbmStatus))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaCdnOperationResult.Fail(
+                        $"Document {no} cannot be deleted while its e-Invoice status is {EInvoiceStatuses.Normalize(cdn.IrbmStatus)}.");
                 }
 
                 if (!RowVersionsEqual(cdn.RowVersion, item.RowVersion))
@@ -1296,6 +1320,13 @@ public sealed class SaCdnService : ISaCdnService
             StdCustPsize = 0m,
             StdUom = d.StdUom,
             UnitPrice = d.UnitPrice,
+            // The invoice's provenance is inherited by the credit note: the price is copied, and so is
+            // the explanation of where it came from. Phase 4 extends this to the override record, so an
+            // overridden invoice line billed back does not silently lose the fact it was overridden.
+            PricingSource = d.PricingSource,
+            PricingRef = d.PricingRef,
+            OriginalUnitPrice = d.OriginalUnitPrice,
+            OverrideReason = d.OverrideReason,
             Amount = d.Amount,
             ItemDiscount = d.ItemDiscount,
             ItemDiscount2 = d.ItemDiscount2,
@@ -1720,7 +1751,12 @@ public sealed class SaCdnService : ISaCdnService
         public SaCdnOperationResult ToFail()
         {
             if (Error is null) return SaCdnOperationResult.Fail("Preparation failed.");
-            if (ValidationErrors?.Count > 0) return SaCdnOperationResult.FailValidation(Error, ValidationErrors);
+            if (ValidationErrors?.Count > 0)
+            {
+                return SaCdnOperationResult.FailValidation(
+                    ValidationMessageFormat.ResolveServiceMessage(ValidationErrors, Error), ValidationErrors);
+            }
+
             return SaCdnOperationResult.Fail(Error, ErrorKind);
         }
 
@@ -1749,6 +1785,10 @@ public sealed class SaCdnService : ISaCdnService
         decimal StdCustPsize,
         string? StdUom,
         decimal UnitPrice,
+        string? PricingSource,
+        string? PricingRef,
+        decimal? OriginalUnitPrice,
+        string? OverrideReason,
         decimal ItemDiscount,
         decimal ItemDiscount2,
         decimal ItemDiscount3,
@@ -1974,6 +2014,11 @@ public sealed class SaCdnService : ISaCdnService
                 StdCustPsize: stdPack,
                 StdUom: item.StdUom,
                 UnitPrice: line.UnitPrice,
+                PricingSource: TruncateOptional(line.PricingSource, 40),
+                PricingRef: TruncateOptional(line.PricingRef, 60),
+                // Phase 4: normalised HERE so "NULL = never overridden" stays true.
+                OriginalUnitPrice: SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, line.OriginalUnitPrice),
+                OverrideReason: SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, line.OriginalUnitPrice, line.OverrideReason),
                 ItemDiscount: line.ItemDiscount,
                 ItemDiscount2: line.ItemDiscount2,
                 ItemDiscount3: line.ItemDiscount3,
@@ -2042,6 +2087,20 @@ public sealed class SaCdnService : ISaCdnService
         SaInvoiceCalc.ApplyTaxAdaptiveRounding(calcStates);
 
         var header = SaInvoiceCalc.CalculateHeader(calcStates, decPoint);
+
+        // Phase 4: price-override governance, enforced SERVER-SIDE (the page is not the execution point).
+        var overrideError = SaPriceOverridePolicy.Validate(
+            prepared
+                .Select(x => new SaPriceOverrideDeclaration(x.UnitPrice, x.OriginalUnitPrice, x.OverrideReason))
+                .ToList(),
+            await CanAsync(docType, PermissionCodes.PriceOverride, cancellationToken));
+        if (overrideError is not null)
+        {
+            return PreparedLinesResult.Validation(
+                overrideError,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["UnitPrice"] = overrideError });
+        }
+
         return PreparedLinesResult.Ok(customer, currency, currRate, header.Taxes, header.TotAmnt, prepared);
     }
 
@@ -2260,6 +2319,10 @@ public sealed class SaCdnService : ISaCdnService
                 StdCustPsize = d.StdCustPsize,
                 StdUom = d.StdUom,
                 UnitPrice = d.UnitPrice,
+                PricingSource = d.PricingSource,
+                PricingRef = d.PricingRef,
+                OriginalUnitPrice = d.OriginalUnitPrice,
+                OverrideReason = d.OverrideReason,
                 Amount = d.Amount,
                 ItemDiscount = d.ItemDiscount,
                 ItemDiscount2 = d.ItemDiscount2,
@@ -2315,6 +2378,10 @@ public sealed class SaCdnService : ISaCdnService
                 StdCustPsize = line.StdCustPsize,
                 StdUom = line.StdUom,
                 UnitPrice = line.UnitPrice,
+                PricingSource = line.PricingSource,
+                PricingRef = line.PricingRef,
+                OriginalUnitPrice = line.OriginalUnitPrice,
+                OverrideReason = line.OverrideReason,
                 Amount = line.Calc.Amount,
                 ItemDiscount = line.ItemDiscount,
                 ItemDiscount1 = line.ItemDiscAmount,   // ItemDiscAmount stored in ItemDiscount1

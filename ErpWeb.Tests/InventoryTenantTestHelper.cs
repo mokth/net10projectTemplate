@@ -20,6 +20,6 @@ internal static class InventoryTenantTestHelper
         current.SetupGet(x => x.CompanyCode).Returns(company);
         current.SetupGet(x => x.BranchCode).Returns(branch);
         current.SetupGet(x => x.LocationCode).Returns(location);
-        return new InventoryTenantContext(current.Object);
+        return new InventoryTenantContext(new TenantScopeContext(current.Object));
     }
 }

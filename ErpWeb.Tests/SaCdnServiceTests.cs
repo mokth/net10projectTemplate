@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
@@ -1249,7 +1250,146 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.Empty(overOnly.ReservationReport!.Rows);
     }
 
+    // ─────────────────────────── 36. Phase 2: pricing provenance round trip ───────────────────────────
+
+    /// <summary>
+    /// Phase 2: the credit/debit note must persist the pricing provenance it was given, and the read
+    /// projection must hand it back.
+    /// </summary>
+    [Fact]
+    public async Task PricingProvenance_RoundTripsThroughSaveAndReload()
+    {
+        var sut = CreateSut();
+
+        var req = CdnRequest("CN");
+        req.Lines =
+        [
+            new SaCdnLineRequest
+            {
+                ICode = "SVC1",
+                Qty = 2m,
+                UnitPrice = 10m,
+                PricingSource = "CUSTOMER_ITEM",
+                PricingRef = "MOQ=100"
+            }
+        ];
+
+        var save = await sut.SaveNewAsync(req);
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.DocNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        var line = get.Document!.Lines[0];
+        Assert.Equal("CUSTOMER_ITEM", line.PricingSource);
+        Assert.Equal("MOQ=100", line.PricingRef);
+        Assert.Equal(10m, line.UnitPrice);
+    }
+
+    /// <summary>A line written with no provenance keeps NULL, which means "not recorded".</summary>
+    [Fact]
+    public async Task PricingProvenance_IsNullWhenTheCallerSuppliesNone()
+    {
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(CdnRequest("CN"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.DocNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        Assert.Null(get.Document!.Lines[0].PricingSource);
+        Assert.Null(get.Document.Lines[0].PricingRef);
+    }
+
+    /// <summary>
+    /// Phase 2.3: a credit note copied from an invoice inherits the invoice line's pricing provenance,
+    /// and that inherited value survives the actual save.
+    /// </summary>
+    [Fact]
+    public async Task CopiedFromInvoice_InheritsInvoiceLineProvenance()
+    {
+        var invNo = await SeedPostedInvoiceAsync(100m, pricingSource: "CUSTOMER_PRICE_LIST", pricingRef: "PL-A");
+        var sut = CreateSut();
+
+        var copy = await sut.CopyFromInvoiceAsync(invNo);
+        Assert.True(copy.Succeeded, copy.ErrorMessage);
+
+        var copied = copy.Document!.Lines[0];
+        Assert.Equal("CUSTOMER_PRICE_LIST", copied.PricingSource);
+        Assert.Equal("PL-A", copied.PricingRef);
+
+        // Now save exactly what the copy produced and confirm it reaches the database.
+        var save = await sut.SaveNewAsync(new SaCdnSaveRequest
+        {
+            Type = "CN",
+            DocDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            InvNo = invNo,
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaCdnLineRequest
+                {
+                    ICode = copied.ICode,
+                    Qty = copied.Qty,
+                    UnitPrice = copied.UnitPrice,
+                    PricingSource = copied.PricingSource,
+                    PricingRef = copied.PricingRef
+                }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.DocNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+        Assert.Equal("CUSTOMER_PRICE_LIST", get.Document!.Lines[0].PricingSource);
+        Assert.Equal("PL-A", get.Document.Lines[0].PricingRef);
+    }
+
     // ─────────────────────────── Helpers ───────────────────────────
+
+    /// <summary>
+    /// Phase 3: the e-Invoice structural edit lock on CN/DN. The service layer is the authority, so a
+    /// note whose e-Invoice status is locked cannot be edited or deleted even by another API caller.
+    /// </summary>
+    [Fact]
+    public async Task Update_and_delete_are_refused_while_the_einvoice_status_is_locked()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(CdnRequest("CN"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var cdn = await db.SaCdns.SingleAsync();
+            cdn.IrbmStatus = EInvoiceStatuses.Submitted;
+            await db.SaveChangesAsync();
+        }
+
+        var current = await sut.GetAsync(save.DocNo!);
+        Assert.True(current.Succeeded, current.ErrorMessage);
+
+        var request = CdnRequest("CN");
+        request.RowVersion = current.Document!.RowVersion;
+
+        var update = await sut.UpdateAsync(save.DocNo!, request);
+        Assert.False(update.Succeeded);
+        Assert.Equal(SaCdnErrorKind.BusinessRule, update.ErrorKind);
+        Assert.Contains("e-Invoice status", update.ErrorMessage);
+
+        var delete = await sut.DeleteAsync([new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = [] }]);
+        Assert.False(delete.Succeeded);
+        Assert.Equal(SaCdnErrorKind.BusinessRule, delete.ErrorKind);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var cdn = await db.SaCdns.SingleAsync();
+            Assert.Equal(EInvoiceStatuses.Submitted, cdn.IrbmStatus);
+        }
+    }
+
     private SaCdnService CreateSut(Mock<IAccessRightService>? access = null)
     {
         access ??= AlwaysAllowed();
@@ -1292,7 +1432,10 @@ public class SaCdnServiceTests : IAsyncLifetime
     }
 
     /// <summary>Seeds a simple service-only invoice and posts it. Returns the InvNo.</summary>
-    private async Task<string> SeedPostedInvoiceAsync(decimal totalAmount = 100m)
+    private async Task<string> SeedPostedInvoiceAsync(
+        decimal totalAmount = 100m,
+        string? pricingSource = null,
+        string? pricingRef = null)
     {
         var invService = CreateInvoiceService();
         var qty = totalAmount / 10m;
@@ -1310,7 +1453,9 @@ public class SaCdnServiceTests : IAsyncLifetime
                     ICode = "SVC1",
                     Qty = qty,
                     UnitPrice = 10m,
-                    FrWarehouse = "MAIN"
+                    FrWarehouse = "MAIN",
+                    PricingSource = pricingSource,
+                    PricingRef = pricingRef
                 }
             ]
         };

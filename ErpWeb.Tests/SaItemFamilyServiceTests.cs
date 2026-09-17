@@ -145,6 +145,11 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
     {
         var sut = CreateSut();
 
+        // Phase 3: a line's identity is (item, UOM, ValidFrom, MinQty, currency), so two lines are only a
+        // duplicate when the BAND AND WINDOW match too. Both lines below default to the 1900-01-01
+        // sentinel and MinQty 0, so this is a genuine duplicate - but two lines for the same item and
+        // UOM with DIFFERENT bands are now legal and are covered by
+        // PriceGroup_Save_AcceptsTwoBandsSharingOneValidFrom.
         var result = await sut.SaveCustPriceGroupAsync(new IvCustPriceGroupEditVm
         {
             CustPriceCode = "PL1",
@@ -157,7 +162,7 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
         }, isNew: true);
 
         Assert.False(result.Succeeded);
-        Assert.Contains("more than once", result.ValidationErrors["Lines[1].ICode"]);
+        Assert.Contains("already has a price for the same effective date and quantity band", result.ValidationErrors["Lines[1].ICode"]);
     }
 
     [Fact]
@@ -704,7 +709,11 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
         Assert.True(result.Succeeded, result.Message);
         var bytes = SaMasterRefExportWorkbooks.BuildCustPrices("PL1", result.Data!);
         var row = Assert.Single(SaMasterRefExportWorkbooks.ReadDataRows(bytes));
-        Assert.Equal("12.5", row[4]);
+
+        // Looked up by header, not a hard-coded index: Phase 3 inserted band/window/currency columns
+        // and a fixed index would silently re-break on the next column added.
+        var priceColumn = Array.IndexOf(SaMasterRefExportWorkbooks.CustPriceHeaders, "Selling Price");
+        Assert.Equal("12.5", row[priceColumn]);
     }
 
     [Fact]
@@ -720,8 +729,10 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
         var row = Assert.Single(SaMasterRefExportWorkbooks.ReadDataRows(bytes));
 
         // Export is not a bypass: without VIEW_PRICE the workbook carries no price.
-        Assert.Equal(string.Empty, row[4]);
-        Assert.Equal("PCS", row[3]);
+        var priceColumn = Array.IndexOf(SaMasterRefExportWorkbooks.CustPriceHeaders, "Selling Price");
+        var uomColumn = Array.IndexOf(SaMasterRefExportWorkbooks.CustPriceHeaders, "UOM");
+        Assert.Equal(string.Empty, row[priceColumn]);
+        Assert.Equal("PCS", row[uomColumn]);
     }
 
     [Fact]
@@ -994,11 +1005,13 @@ public class SaItemFamilyServiceTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), PermissionCodes.ViewPrice, It.IsAny<CancellationToken>()))
             .ReturnsAsync(canViewPrice);
 
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "SITE");
         return new SaSalesRefService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "SITE"),
+            tenant,
             access.Object,
-            new FixedCurrentDateService(FixedToday));
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory, tenant));
     }
 
     private static byte[] Rv(int seed) => [0, 0, 0, 0, 0, 0, 0, (byte)seed];

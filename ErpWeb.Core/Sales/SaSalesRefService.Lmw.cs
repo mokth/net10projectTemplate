@@ -446,24 +446,9 @@ public sealed partial class SaSalesRefService
     }
 
     /// <summary>
-    /// SQL Server serialization / deadlock failures: deadlock victim (1205), update conflict (3960)
-    /// and lock-request timeout (1222). Message-matched, like the existing duplicate/FK helpers here.
+    /// SQL Server serialization / deadlock failures. Delegates to the single shared classifier so the
+    /// numbering service and this one can never disagree about which codes mean "lost a race".
     /// </summary>
-    private static bool IsSerializationConflict(Exception ex)
-    {
-        for (Exception? e = ex; e is not null; e = e.InnerException)
-        {
-            var message = e.Message;
-            if (message.Contains("1205", StringComparison.Ordinal)
-                || message.Contains("3960", StringComparison.Ordinal)
-                || message.Contains("1222", StringComparison.Ordinal)
-                || message.Contains("deadlock", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("serialization", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool IsSerializationConflict(Exception ex) =>
+        ErpWeb.Core.Services.SqlErrorClassifier.IsSerializationConflict(ex);
 }

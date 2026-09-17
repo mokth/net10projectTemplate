@@ -325,6 +325,23 @@ public sealed class SaSoLineDto
     public string? StdUom { get; init; }
     public string? Warehouse { get; init; }
     public decimal UnitPrice { get; init; }
+
+    /// <summary>
+    /// WHICH price source priced this line (plan Phase 2) — the persisted <c>SaPriceSourceTokens</c>
+    /// value. NULL on rows written before the column existed, which means "not recorded", NOT
+    /// "no price source". Explanatory only: <see cref="UnitPrice"/> is frozen and never re-derived.
+    /// </summary>
+    public string? PricingSource { get; init; }
+
+    /// <summary>Readable reference behind <see cref="PricingSource"/> (<c>PL1</c>, <c>MOQ=100</c>, <c>QTY 10-99</c>).</summary>
+    public string? PricingRef { get; init; }
+
+    /// <summary>Phase 4: the price the ENGINE resolved; NULL unless an operator overrode it.</summary>
+    public decimal? OriginalUnitPrice { get; init; }
+
+    /// <summary>Phase 4: why the resolved price was changed. Present only when the line was overridden.</summary>
+    public string? OverrideReason { get; init; }
+
     public decimal Amount { get; init; }
     public decimal ItemDiscount { get; init; }
     public decimal ItemDiscount2 { get; init; }
@@ -399,6 +416,22 @@ public sealed class SaSoLineRequest
     public decimal OrderQty { get; set; }
     public string? Warehouse { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>The pricing provenance the engine reported for this line; stored, never trusted for the price.</summary>
+    public string? PricingSource { get; set; }
+
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the page resolved for this line. Supplying a value that DIFFERS from
+    /// <see cref="UnitPrice"/> declares an override, which the service refuses without
+    /// <c>PRICE_OVERRIDE</c> and a reason. Leaving it null declares nothing.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why the resolved price was changed. Required whenever an override is declared.</summary>
+    public string? OverrideReason { get; set; }
+
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }
     public decimal ItemDiscount3 { get; set; }

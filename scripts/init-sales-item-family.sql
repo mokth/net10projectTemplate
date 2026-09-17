@@ -69,6 +69,11 @@ IF OBJECT_ID(N'dbo.IvCustPrice', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.IvCustPrice
     (
+        /* Phase 3: SURROGATE primary key. The natural key CANNOT be the PK because two quantity bands
+           legitimately start on the SAME ValidFrom (a MinQty 1 tier and a MinQty 10 tier both effective
+           2026-09-01), so a PK containing ValidFrom would make tiered pricing impossible. The natural key
+           is a separate UNIQUE index below — the same shape SaDisGroupItem uses in this same script. */
+        Id              int            IDENTITY(1,1) NOT NULL,
         CompanyCode     nvarchar(5)    NOT NULL,
         CustPriceCode   nvarchar(20)   NOT NULL,
         ICode           nvarchar(20)   NOT NULL,
@@ -77,14 +82,50 @@ BEGIN
         CustPriceDesc   nvarchar(50)   NULL,
         SellingPrice    decimal(18,4)  NULL,
         SellPackSize    decimal(18,4)  NULL,
+        /* Phase 3: NOT NULL so the natural unique index can CONTAIN them. SQL Server treats NULLs as
+           EQUAL inside a unique index, so a nullable ValidFrom/MinQty would admit only ONE undated or
+           unbanded row per key. The 1900-01-01 sentinel means "always"; MinQty 0 means "any quantity". */
+        ValidFrom       date           NOT NULL CONSTRAINT DF_IvCustPrice_ValidFrom DEFAULT ('1900-01-01'),
+        ValidTo         date           NULL,
+        MinQty          decimal(18,4)  NOT NULL CONSTRAINT DF_IvCustPrice_MinQty DEFAULT (0),
+        MaxQty          decimal(18,4)  NULL,
+        CurrencyCode    nvarchar(5)    NULL,
         Created         datetime       NULL,
         UserID          nvarchar(10)   NULL,
         Updated         datetime       NULL,
         UpdatedUID      nvarchar(10)   NULL,
         BranchCode      nvarchar(5)    NULL,
         LocationCode    nvarchar(10)   NULL,
-        CONSTRAINT PK_IvCustPrice PRIMARY KEY CLUSTERED (CompanyCode, CustPriceCode, ICode, UOM)
+        CONSTRAINT PK_IvCustPrice_Id PRIMARY KEY CLUSTERED (Id)
     );
+
+    /* The natural key: exactly ONE row per (list, item, UOM, effective-from, band-floor, CURRENCY).
+       CurrencyCode IS included, which deviates from the letter of plan 3.2 ("CurrencyCode stays OUT of
+       the unique index"). It has to be: plan 3.4 requires a MYR tier and a USD tier over the SAME band
+       to coexist, and that is impossible if the index forbids two rows on one band. ValidTo and MaxQty
+       stay OUT so a tier or a promotion can be edited without key churn. */
+    CREATE UNIQUE NONCLUSTERED INDEX UX_IvCustPrice_BusinessKey
+        ON dbo.IvCustPrice (CompanyCode, CustPriceCode, ICode, UOM, ValidFrom, MinQty, CurrencyCode);
+
+    /* The resolver filters list + item + UOM and then by the window. */
+    CREATE NONCLUSTERED INDEX IX_IvCustPrice_Resolve
+        ON dbo.IvCustPrice (CompanyCode, CustPriceCode, ICode, UOM, ValidFrom, ValidTo);
+
+    /* Currency is filtered after the window/band filters. */
+    CREATE NONCLUSTERED INDEX IX_IvCustPrice_Currency
+        ON dbo.IvCustPrice (CompanyCode, CustPriceCode, ICode, UOM, CurrencyCode);
+
+    PRINT N'IvCustPrice created WITH the Phase 3 shape (surrogate Id PK, validity window, quantity band, currency).';
+END
+ELSE
+BEGIN
+    /* The table already exists. A database created BEFORE Phase 3 still holds the old 4-part composite
+       PK and none of the new columns, and the EF model expects them — so say so LOUDLY rather than
+       leaving a silently divergent schema that fails at runtime. */
+    IF COL_LENGTH(N'dbo.IvCustPrice', N'ValidFrom') IS NULL
+        PRINT N'STOP: IvCustPrice exists WITHOUT the Phase 3 columns. Run scripts/alter-ivcustprice-phase3.sql before using the pricing screens.';
+    ELSE
+        PRINT N'IvCustPrice already present with the Phase 3 shape - no change.';
 END
 GO
 

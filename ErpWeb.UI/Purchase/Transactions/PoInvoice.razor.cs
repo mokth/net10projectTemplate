@@ -277,6 +277,13 @@ public partial class PoInvoice : PageBase
         RecalcTotals();
     }
 
+    /// <summary>
+    /// Field-keyed reasons from the last validation failure. Rendered in full by the shared
+    /// validation summary; it is never reduced to a single generic message.
+    /// </summary>
+    protected Dictionary<string, string> ValidationErrors { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     protected async Task SaveAsync()
     {
         if (IsSubmitting)
@@ -287,6 +294,7 @@ public partial class PoInvoice : PageBase
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+        ValidationErrors.Clear();
         try
         {
             var request = BuildRequest();
@@ -296,7 +304,19 @@ public partial class PoInvoice : PageBase
 
             if (!result.Succeeded || result.Document is null)
             {
-                ErrorMessage = result.ErrorMessage ?? "Save failed.";
+                if (result.ErrorKind == PoInvoiceErrorKind.Validation)
+                {
+                    ValidationErrors = result.ValidationErrors.ToDictionary(
+                        x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
+                    ErrorMessage = BuildValidationMessage(ValidationErrors, result.ErrorMessage);
+                }
+                else
+                {
+                    // A previous attempt's field errors must never linger next to a different failure kind.
+                    ValidationErrors.Clear();
+                    ErrorMessage = result.ErrorMessage ?? "Save failed.";
+                }
+
                 return;
             }
 
@@ -316,6 +336,7 @@ public partial class PoInvoice : PageBase
         }
 
         IsSubmitting = true;
+        ValidationErrors.Clear();
         try
         {
             var result = await Invoices.PostAsync(
@@ -345,6 +366,7 @@ public partial class PoInvoice : PageBase
         }
 
         IsSubmitting = true;
+        ValidationErrors.Clear();
         try
         {
             var result = await Invoices.RollbackAsync(

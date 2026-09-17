@@ -71,6 +71,13 @@ public interface ISaSalesRefService
     Task<DeleteCheckResult> CanDeleteSalesRepsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<object>> DeleteSalesRepsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
 
+    // Sales Rep monthly targets (sales-analysis Phase 1). Company-wide by design: there is no branch
+    // part in the key, and attainment always compares a rep's posted invoices against these targets.
+    // Save is an UPSERT of (code, year, month) — re-saving the same month updates rather than failing.
+    Task<IvMasterOperationResult<IReadOnlyList<SaSalesRepTargetRow>>> ListSalesRepTargetsAsync(string code, int year, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<SaSalesRepTargetRow>> SaveSalesRepTargetAsync(SaSalesRepTargetEditVm model, CancellationToken cancellationToken = default);
+    Task<IvMasterOperationResult<object>> DeleteSalesRepTargetAsync(string code, int year, int month, CancellationToken cancellationToken = default);
+
     // Tax Group (global)
     Task<IvMasterOperationResult<IReadOnlyList<SaTaxGroupListRow>>> ListTaxGroupsAsync(CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<SaTaxGroupEditVm>> GetTaxGroupAsync(string code, CancellationToken cancellationToken = default);
@@ -170,6 +177,20 @@ public interface ISaSalesRefService
     // — and today they are what the price/discount contract is tested against.
     Task<IvMasterOperationResult<SaItemFamilyPriceResolution>> ResolveItemPriceAsync(SaItemFamilyPriceRequest request, CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<SaItemFamilyDiscountSelection>> ResolveItemDiscountAsync(SaItemFamilyDiscountRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The single entry point a document line uses: price resolution, tax-basis conversion and discount
+    /// resolution in the order the pipeline requires, returning a value ready to assign onto the line.
+    /// Reads the company pricing method server-side and never accepts it from the caller.
+    /// </summary>
+    Task<IvMasterOperationResult<SaLinePricingResult>> ResolveLinePricingAsync(SaLinePricingRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Phase 6 — the explanation ladder. Same inputs as <see cref="ResolveLinePricingAsync"/>, but reports
+    /// EVERY level (candidate, band, window, currency, applied or not, and why) instead of stopping at the
+    /// first usable price, including levels the company's pricing method excluded.
+    /// </summary>
+    Task<IvMasterOperationResult<SaPriceExplanation>> ExplainLinePriceAsync(SaLinePricingRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class SaCompanyMasterKeyToken
@@ -224,6 +245,10 @@ public sealed class SaCustGroupListRow
 {
     public string Code { get; init; } = string.Empty;
     public string? Desc { get; init; }
+
+    /// <summary>Phase 5: the group's default price list (blank = none).</summary>
+    public string? CustPriceCode { get; init; }
+
     public byte[] RowVersion { get; init; } = [];
 }
 
@@ -231,6 +256,14 @@ public sealed class SaCustGroupEditVm
 {
     public string Code { get; set; } = string.Empty;
     public string? Desc { get; set; }
+
+    /// <summary>
+    /// Phase 5: the group's default price list. Validated against the caller's company via
+    /// <c>ISaCustLookupService.ValidateCustPriceCodeAssignmentAsync</c> — blank is allowed, an
+    /// unknown code is rejected, and the value already on the row is tolerated.
+    /// </summary>
+    public string? CustPriceCode { get; set; }
+
     public byte[]? RowVersion { get; set; }
 }
 
@@ -371,6 +404,26 @@ public sealed class SaSalesRepEditVm
     public string? Email { get; set; }
     public decimal? CommissionRate { get; set; }
     public bool IsActive { get; set; } = true;
+}
+
+/// <summary>One monthly sales-rep target as loaded into the target grid.</summary>
+public sealed class SaSalesRepTargetRow
+{
+    public int Year { get; init; }
+    public int Month { get; init; }
+    public decimal TargetAmount { get; init; }
+}
+
+/// <summary>
+/// Upsert payload for one monthly target. <see cref="Code"/> is the sales-rep code; the row is keyed
+/// by (code, year, month) inside the caller's company.
+/// </summary>
+public sealed class SaSalesRepTargetEditVm
+{
+    public string Code { get; set; } = string.Empty;
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public decimal TargetAmount { get; set; }
 }
 
 public sealed class SaTaxGroupListRow

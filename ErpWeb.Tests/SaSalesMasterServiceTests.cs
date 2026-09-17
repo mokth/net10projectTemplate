@@ -567,10 +567,12 @@ public class SaSalesMasterServiceTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), PermissionCodes.Delete, It.IsAny<CancellationToken>()))
             .ReturnsAsync(canDelete);
 
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "SITE");
         return new SaSalesRefService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "SITE"),
+            tenant,
             access.Object,
-            new FixedCurrentDateService(FixedToday));
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory, tenant));
     }
 }

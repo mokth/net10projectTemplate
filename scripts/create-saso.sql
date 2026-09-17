@@ -130,6 +130,8 @@ BEGIN
         DeliveryDate datetime2 NULL,
         ETA datetime2 NULL,
         ETD datetime2 NULL,
+        OriginalUnitPrice decimal(18,4) NULL,
+        OverrideReason nvarchar(100) NULL,
         CONSTRAINT PK_SaSODetail PRIMARY KEY CLUSTERED (CompanyCode, BranchCode, SONo, CustRel, Line),
         CONSTRAINT FK_SaSODetail_SaSO FOREIGN KEY (CompanyCode, BranchCode, SONo, CustRel)
             REFERENCES dbo.SaSO (CompanyCode, BranchCode, SONo, CustRel) ON DELETE CASCADE,

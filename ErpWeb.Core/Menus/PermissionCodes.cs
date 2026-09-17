@@ -38,11 +38,19 @@ public static class PermissionCodes
     /// </summary>
     public const string InternalAdjustment = "INTERNAL_ADJUSTMENT";
 
+    /// <summary>
+    /// Phase 4: authority to change a line price away from the price the engine resolved. Without it
+    /// the price control is read-only. Enforced SERVER-SIDE too, because the page is not the execution
+    /// point — a tampered post must not be able to invent a price. Must be listed in
+    /// <see cref="All"/> so it counts as a built-in permission and cannot be deleted by an admin.
+    /// </summary>
+    public const string PriceOverride = "PRICE_OVERRIDE";
+
     /// <summary>All known permission codes (ADMIN UI / GetPermissionsAsync).</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Access, Add, Edit, Delete, Print, Post, Rollback, Approve, Reject, Cancel,
         Void, Reverse, Export, Import, Email, Submit, Close, Reopen, ViewCost, ViewProfit,
-        ViewPrice
+        ViewPrice, PriceOverride
     };
 }

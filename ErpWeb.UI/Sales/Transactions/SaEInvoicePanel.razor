@@ -1,0 +1,181 @@
+@using ErpWeb.Core.Services
+@* The only UI surface allowed to talk to MyInvois. Everything goes through ISaEInvoiceService. *@
+@if (_status is not null || Enabled)
+{
+    <section class="einvoice" aria-label="LHDN e-Invoice">
+        <header class="einvoice__head">
+            <h3 class="einvoice__title">LHDN e-Invoice</h3>
+            @if (_status is not null)
+            {
+                <span class="einvoice__status einvoice__status--@StatusCss" title="ERP lifecycle status">@StatusDetail</span>
+            }
+            else
+            {
+                <span class="einvoice__status einvoice__status--muted">Not available</span>
+            }
+            @if (_busy)
+            {
+                <span class="einvoice__busy" role="status">@_busyAction…</span>
+            }
+        </header>
+
+        @if (_message is not null)
+        {
+            <div class="einvoice__message @(_messageIsError ? "einvoice__message--error" : "einvoice__message--ok")" role="status">
+                <span>@_message</span>
+            </div>
+        }
+
+        @if (_validationErrors.Count > 0)
+        {
+            <ul class="einvoice__errors">
+                @foreach (var issue in ValidationMessageFormat.Order(_validationErrors))
+                {
+                    <li><strong>@ValidationMessageFormat.Label(issue.Key)</strong>: @issue.Value</li>
+                }
+            </ul>
+        }
+
+        @if (_status is not null)
+        {
+            @if (!string.IsNullOrWhiteSpace(_status.Error))
+            {
+                <p class="einvoice__last-error" title="Latest e-Invoice error">@_status.Error</p>
+            }
+
+            <dl class="einvoice__fields">
+                @if (!string.IsNullOrWhiteSpace(_status.Uuid))
+                {
+                    <div><dt>Document UUID</dt><dd class="einvoice__mono">@_status.Uuid</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(_status.OriginUuid))
+                {
+                    <div><dt>Original UUID</dt><dd class="einvoice__mono">@_status.OriginUuid</dd></div>
+                }
+                @if (!string.IsNullOrWhiteSpace(_status.SubmissionId))
+                {
+                    <div><dt>Submission</dt><dd class="einvoice__mono">@_status.SubmissionId</dd></div>
+                }
+                @if (_status.SentOn is not null)
+                {
+                    <div><dt>Sent</dt><dd>@_status.SentOn.Value.ToString("dd/MM/yyyy HH:mm")</dd></div>
+                }
+                @if (_status.ValidOn is not null)
+                {
+                    <div><dt>Validated</dt><dd>@_status.ValidOn.Value.ToString("dd/MM/yyyy HH:mm")</dd></div>
+                }
+                @if (_status.CancelledOn is not null)
+                {
+                    <div><dt>Cancelled</dt><dd>@_status.CancelledOn.Value.ToString("dd/MM/yyyy HH:mm")</dd></div>
+                }
+            </dl>
+
+            <div class="einvoice__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Validate"
+                          IconCssClass="fa-solid fa-clipboard-check"
+                          Click="@OnValidateAsync"
+                          Enabled="@CanAct" />
+
+                @if (_status.CanRetry)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Retry"
+                              IconCssClass="fa-solid fa-rotate-right"
+                              Click="@OnRetryAsync"
+                              Enabled="@CanRetry" />
+                }
+                else
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Submit to LHDN"
+                              IconCssClass="fa-solid fa-paper-plane"
+                              Click="@OnSubmitAsync"
+                              Enabled="@CanSubmit" />
+                }
+
+                @if (_status.CanRecover)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Recover"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              Click="@OnRecoverAsync"
+                              Enabled="@CanRecover" />
+                }
+
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Refresh status"
+                          IconCssClass="fa-solid fa-arrows-rotate"
+                          Click="@OnRefreshAsync"
+                          Enabled="@CanRefresh" />
+
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Cancel e-Invoice"
+                          IconCssClass="fa-solid fa-ban"
+                          Click="@OpenCancel"
+                          Enabled="@CanCancel" />
+            </div>
+
+            @if (_status.History.Count > 0)
+            {
+                <details class="einvoice__history">
+                    <summary>History (@_status.History.Count)</summary>
+                    <table class="einvoice__history-table">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Action</th>
+                                <th>Status</th>
+                                <th>Attempt</th>
+                                <th>ms</th>
+                                <th>Error</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _status.History.Take(20))
+                            {
+                                <tr>
+                                    <td>@(row.RequestTime ?? row.CreatedOn).ToLocalTime().ToString("dd/MM HH:mm:ss")</td>
+                                    <td>@row.Action</td>
+                                    <td>@row.Status</td>
+                                    <td>@row.AttemptNo</td>
+                                    <td>@row.DurationMs</td>
+                                    <td class="einvoice__history-error" title="@row.ErrorMessage">
+                                        @(row.ErrorCode is null ? row.ErrorMessage : $"{row.ErrorCode}: {row.ErrorMessage}")
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
+        }
+    </section>
+}
+
+<DxPopup HeaderText="Cancel e-Invoice"
+         CloseOnOutsideClick="false"
+         Width="520px"
+         CssClass="sdoc-popup common-popup"
+         @bind-Visible="@_cancelVisible">
+    <Content>
+        <div class="sdoc-popup-body">
+            <p>Cancelling is recorded at MyInvois against the document UUID. The invoice itself is not unposted.</p>
+            @if (_cancelError is not null)
+            {
+                <p class="einvoice__message einvoice__message--error" role="alert">@_cancelError</p>
+            }
+            <label for="einvoice-cancel-reason">Cancellation reason (required)</label>
+            <DxMemo @bind-Text="_cancelReason"
+                    Rows="3"
+                    MaxLength="300"
+                    CssClass="w-100 einvoice__cancel-reason" />
+            </div>
+            <div class="sdoc-popup-footer">
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => _cancelVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel e-Invoice" Click="@ConfirmCancelAsync" Enabled="@CanAct" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>

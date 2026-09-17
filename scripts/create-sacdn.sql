@@ -111,6 +111,8 @@ BEGIN
         LotNo nvarchar(50) NULL,
         ExpiryDate date NULL,
         StockControl bit NOT NULL CONSTRAINT DF_SaCDNDetail_StockControl DEFAULT (0),
+        OriginalUnitPrice decimal(18,4) NULL,
+        OverrideReason nvarchar(100) NULL,
         CONSTRAINT PK_SaCDNDetail PRIMARY KEY CLUSTERED (CompanyCode, BranchCode, DocNo, Line),
         CONSTRAINT FK_SaCDNDetail_SaCDN FOREIGN KEY (CompanyCode, BranchCode, DocNo)
             REFERENCES dbo.SaCDN (CompanyCode, BranchCode, DocNo) ON DELETE CASCADE

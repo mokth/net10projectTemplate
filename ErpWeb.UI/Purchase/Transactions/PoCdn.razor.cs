@@ -950,12 +950,18 @@ public partial class PoCdn : PageBase, IDisposable
             return true;
         }
 
+        // A previous attempt's field errors must never linger next to a different failure kind.
+        if (result.ErrorKind != PoCdnErrorKind.Validation)
+        {
+            ValidationErrors.Clear();
+        }
+
         switch (result.ErrorKind)
         {
             case PoCdnErrorKind.Validation:
                 ValidationErrors = new Dictionary<string, string>(
                     result.ValidationErrors, StringComparer.OrdinalIgnoreCase);
-                ErrorMessage = result.ErrorMessage ?? "Validation failed.";
+                ErrorMessage = BuildValidationMessage(ValidationErrors, result.ErrorMessage);
                 break;
             case PoCdnErrorKind.Concurrency:
                 ErrorMessage = result.ErrorMessage

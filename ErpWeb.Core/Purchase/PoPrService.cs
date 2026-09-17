@@ -404,7 +404,7 @@ public sealed class PoPrService : IPoPrService
             if (refErrors is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoPrOperationResult.FailValidation("Validation failed.", refErrors);
+                return PoPrOperationResult.FailValidation(ValidationMessageFormat.JoinMessages(refErrors), refErrors);
             }
 
             var lines = StripEmptyLines(request.Lines);
@@ -652,7 +652,7 @@ public sealed class PoPrService : IPoPrService
             if (refErrors is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoPrOperationResult.FailValidation("Validation failed.", refErrors);
+                return PoPrOperationResult.FailValidation(ValidationMessageFormat.JoinMessages(refErrors), refErrors);
             }
 
             var prepared = await PrepareLinesAsync(
@@ -2067,7 +2067,7 @@ public sealed class PoPrService : IPoPrService
 
         public PoPrOperationResult ToFail() =>
             Kind == PoPrErrorKind.Validation
-                ? PoPrOperationResult.FailValidation(Error ?? "Validation failed.", Errors)
+                ? PoPrOperationResult.FailValidation(ValidationMessageFormat.ResolveServiceMessage(Errors, Error), Errors)
                 : PoPrOperationResult.Fail(Error ?? "Unable to save the Purchase Requisition.", Kind);
     }
 

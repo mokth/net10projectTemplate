@@ -313,6 +313,17 @@
                                                     ReadOnly="@(!CanMutate)" />
                                     </Template>
                                 </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Sales Pricing Method" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@SalesPriceMethods"
+                                                    @bind-Value="@EditModel.SalesPriceMethod"
+                                                    TextFieldName="@nameof(PriceMethodOption.Name)"
+                                                    ValueFieldName="@nameof(PriceMethodOption.Value)"
+                                                    NullText="Customer item, price list, then item default (recommended)"
+                                                    ReadOnly="@(!CanMutate)" />
+                                        <small>Selects WHICH price sources may apply to a sales line. The evaluation order is fixed by specificity and is not configurable here.</small>
+                                    </Template>
+                                </DxFormLayoutItem>
                             </Items>
                         </DxFormLayoutGroup>
 

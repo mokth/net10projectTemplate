@@ -8,6 +8,7 @@ public sealed class SaCustSearchArgs
     public string? CustGroupCode { get; set; }
     public string? SalesmanCode { get; set; }
     public string? AreaCode { get; set; }
+    public string? CustSource { get; set; }
     public string? SortField { get; set; }
     public bool SortDescending { get; set; }
     public int Skip { get; set; }

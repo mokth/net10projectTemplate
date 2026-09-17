@@ -541,10 +541,12 @@ public class SaItemFamilySqlServerConcurrencyTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(Company, "HQ", "SITE");
         return new SaSalesRefService(
             _factory!,
-            InventoryTenantTestHelper.CreateTenantContext(Company, "HQ", "SITE"),
+            tenant,
             access.Object,
-            new FixedCurrentDateService(FixedToday));
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory!, tenant));
     }
 }

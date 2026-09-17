@@ -16,13 +16,7 @@
                 <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
-        {
-            <div class="sdoc-toast sdoc-toast--err" role="alert">
-                <span class="sdoc-toast__body">@ErrorMessage</span>
-                <button type="button" class="sdoc-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
-            </div>
-        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
         @if (!string.IsNullOrWhiteSpace(VendorBlockedMessage))
         {
             <div class="sdoc-toast sdoc-toast--warn" role="status">
@@ -345,6 +339,27 @@
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.TaxAmt)" Caption="Tax amt" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Amount)" Caption="Gross" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn Caption="Issues" Width="220px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var issuesRow = (PoCdnLineVm)context.DataItem;
+                                        var issues = LineErrorMessages(ValidationErrors, Lines.IndexOf(issuesRow) + 1);
+                                    }
+                                    @if (issues.Count > 0)
+                                    {
+                                        <div class="sdoc-cell-stack" title="@string.Join(' ', issues)">
+                                            @foreach (var issue in issues.Take(2))
+                                            {
+                                                <span class="sdoc-field-error">@issue</span>
+                                            }
+                                            @if (issues.Count > 2)
+                                            {
+                                                <span class="sdoc-field-error">+@(issues.Count - 2) more</span>
+                                            }
+                                        </div>
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
                         </Columns>
                     </DxGrid>
                 }

@@ -1,0 +1,284 @@
+@page "/admin/settings"
+@inherits PageBase
+@using ErpWeb.Core.Settings
+
+<PageTitle>System Settings</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.AdminSettings">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="@(() => StatusMessage = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="@(() => ErrorMessage = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-sliders"></i></div>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Admin</p>
+            <h1 class="iv-title">System Settings</h1>
+            <div class="iv-chips">
+                <span class="iv-chip">Unset → code default</span>
+                <span class="iv-chip as-chip as-chip--branch">Branch</span>
+                <span class="as-precedence" aria-hidden="true">›</span>
+                <span class="iv-chip as-chip as-chip--company">Company</span>
+                <span class="as-precedence" aria-hidden="true">›</span>
+                <span class="iv-chip as-chip as-chip--global">Global</span>
+                <span class="iv-chip">Most specific wins</span>
+            </div>
+        </div>
+        <div class="iv-hero__kpi">
+            <span>@(IsLoading ? "Loading" : ModuleLabel(ActiveModule))</span>
+            <strong>@(IsLoading ? "—" : Rows.Count.ToString("N0"))</strong>
+        </div>
+    </header>
+
+    <section class="iv-card as-modules" aria-label="Setting modules">
+        <div class="as-modules__head">
+            <h2 class="iv-card__title">Modules</h2>
+            <p class="as-modules__hint">Pick a module to review or override its settings.</p>
+        </div>
+        <nav class="as-tabs" role="tablist" aria-label="Setting modules">
+            @foreach (var module in Modules)
+            {
+                var isActive = string.Equals(module, ActiveModule, StringComparison.Ordinal);
+                <button type="button"
+                        role="tab"
+                        aria-selected="@isActive.ToString().ToLowerInvariant()"
+                        class="as-tab @(isActive ? "is-active" : null)"
+                        @onclick="@(() => SelectModuleAsync(module))">
+                    <i class="@ModuleIcon(module)" aria-hidden="true"></i>
+                    <span>@ModuleLabel(module)</span>
+                </button>
+            }
+        </nav>
+    </section>
+
+    <section class="iv-card as-list">
+        <div class="as-list__head">
+            <div>
+                <h2 class="iv-card__title">@ModuleLabel(ActiveModule) settings</h2>
+                <p class="as-list__hint">
+                    @if (CanEdit)
+                    {
+                        <text>Edit a row to store a value at Branch, Company, or Global scope.</text>
+                    }
+                    else
+                    {
+                        <text>You can view settings for this company. Edit permission is required to change them.</text>
+                    }
+                </p>
+            </div>
+            @if (!IsLoading && Rows.Count > 0)
+            {
+                <span class="as-count">@Rows.Count setting@(Rows.Count == 1 ? "" : "s")</span>
+            }
+        </div>
+
+        @if (IsLoading)
+        {
+            <div class="iv-skeleton" aria-busy="true" aria-label="Loading settings">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                <div class="iv-skeleton__line"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+            </div>
+        }
+        else if (Rows.Count == 0)
+        {
+            <div class="as-empty">
+                <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
+                <div>
+                    <strong>No settings for this module yet</strong>
+                    <p>Reserved modules stay empty until a catalogue definition is added.</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="as-settings">
+                @foreach (var row in Rows)
+                {
+                    <article class="as-setting @(row.IsReadOnly ? "as-setting--readonly" : null) @(row.RejectedReason is not null ? "as-setting--warn" : null)">
+                        <div class="as-setting__main">
+                            <div class="as-setting__title-row">
+                                <h3 class="as-setting__title">@KeyTitle(row.Key)</h3>
+                                <code class="as-setting__key">@row.Key</code>
+                            </div>
+                            <p class="as-setting__desc">@(row.Description ?? "No description.")</p>
+                            <div class="as-setting__meta">
+                                <span class="iv-chip">@TypeLabel(row.Type)</span>
+                                <span class="iv-chip">@ScopesLabel(row)</span>
+                                <span class="iv-chip @ProvenanceChipClass(row)">@ProvenanceLabel(row)</span>
+                                @if (row.IsReadOnly)
+                                {
+                                    <span class="iv-chip as-chip--readonly">Owned elsewhere</span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(row.RejectedReason))
+                            {
+                                <div class="as-setting__warn" role="status">
+                                    <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                    <span>Stored value ignored — @row.RejectedReason</span>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="as-setting__value">
+                            <span class="as-setting__value-label">Effective value</span>
+                            <strong class="as-setting__value-text">@EffectiveValue(row)</strong>
+                            <span class="as-setting__audit">
+                                @if (row.IsReadOnly)
+                                {
+                                    <text>Managed on Company Info</text>
+                                }
+                                else if (row.HasAnyStoredRow && row.ModifiedDate is not null)
+                                {
+                                    <text>@row.ModifiedBy · @row.ModifiedDate?.ToString("yyyy-MM-dd HH:mm")</text>
+                                }
+                                else
+                                {
+                                    <text>Using code default</text>
+                                }
+                            </span>
+                        </div>
+
+                        <div class="as-setting__actions">
+                            @if (row.IsReadOnly)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Open company"
+                                          IconCssClass="fa-solid fa-arrow-up-right-from-square"
+                                          Click="@(() => OpenEditor(row))" />
+                            }
+                            else if (CanEdit)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                          Text="@(row.HasAnyStoredRow ? "Edit" : "Set")"
+                                          IconCssClass="fa-solid fa-pen-to-square"
+                                          Click="@(() => OpenEditor(row))" />
+                            }
+                            else
+                            {
+                                <span class="as-view-only">View only</span>
+                            }
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@if (EditRow is not null)
+{
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@($"{KeyTitle(EditRow.Key)} — {ModuleLabel(EditRow.Module)}")"
+             CloseOnOutsideClick="false"
+             Width="520px"
+             CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <div class="as-editor">
+                <div class="as-editor__intro">
+                    <p>@EditRow.Description</p>
+                    <div class="as-editor__defaults">
+                        <span class="iv-chip">Default: @(EditRow.DefaultValue ?? "none")</span>
+                        <span class="iv-chip">Allowed: @ScopesLabel(EditRow)</span>
+                        <span class="iv-chip @ProvenanceChipClass(EditRow)">Now: @ProvenanceLabel(EditRow) → @EffectiveValue(EditRow)</span>
+                    </div>
+                </div>
+
+                <div class="as-editor__grid">
+                    <div class="iv-field">
+                        <label class="iv-field__label">Stored at</label>
+                        <DxComboBox Data="@EditScopeOptions"
+                                    TextFieldName="@nameof(ScopeOption.Name)"
+                                    ValueFieldName="@nameof(ScopeOption.Value)"
+                                    Value="@EditScope"
+                                    ValueChanged="@((AppSettingScope scope) => OnScopeChanged(scope))"
+                                    ReadOnly="@(!CanEdit)"
+                                    CssClass="w-100" />
+                        <small class="as-editor__hint">
+                            Leave a scope empty to inherit from a broader level (or the code default).
+                        </small>
+                    </div>
+
+                    <div class="iv-field">
+                        <label class="iv-field__label">Value</label>
+                        @if (EditRow.Type == AppSettingType.Flag)
+                        {
+                            <DxCheckBox @bind-Checked="@EditBool" ReadOnly="@(!CanEdit)" />
+                        }
+                        else if (EditRow.Type == AppSettingType.Token)
+                        {
+                            <DxComboBox Data="@EditTokenOptions"
+                                        TextFieldName="@nameof(TokenOption.Name)"
+                                        ValueFieldName="@nameof(TokenOption.Value)"
+                                        @bind-Value="@EditText"
+                                        NullText="Not set — uses the default"
+                                        ReadOnly="@(!CanEdit)"
+                                        CssClass="w-100" />
+                        }
+                        else if (EditRow.Type == AppSettingType.Number)
+                        {
+                            <DxSpinEdit @bind-Value="@EditNumber"
+                                        ShowSpinButtons="false"
+                                        ReadOnly="@(!CanEdit)"
+                                        CssClass="w-100" />
+                        }
+                        else
+                        {
+                            <DxTextBox @bind-Text="@EditText"
+                                       maxlength="400"
+                                       NullText="Not set — uses the default"
+                                       ReadOnly="@(!CanEdit)"
+                                       CssClass="w-100" />
+                        }
+                    </div>
+
+                    <div class="iv-field as-editor__remark">
+                        <label class="iv-field__label">Remark</label>
+                        <DxTextBox @bind-Text="@EditRemark" maxlength="400" ReadOnly="@(!CanEdit)" CssClass="w-100" />
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(EditError))
+                {
+                    <div class="iv-toast iv-toast--err" role="alert">@EditError</div>
+                }
+
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        @if (CanEdit)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                      Enabled="@(!IsSubmitting)"
+                                      Click="@SaveAsync" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Clear (use default)"
+                                      Enabled="@(!IsSubmitting)"
+                                      Click="@ClearAsync" />
+                        }
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  Enabled="@(!IsSubmitting)"
+                                  Click="@ClosePopup" />
+                    </div>
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+}
+</MenuAuthorize>

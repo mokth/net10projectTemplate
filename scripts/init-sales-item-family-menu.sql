@@ -41,6 +41,20 @@ WHEN NOT MATCHED THEN
     VALUES (s.PermissionCode, s.PermissionName, s.PermissionType, s.Description, s.SortOrder, 1, SYSUTCDATETIME(), N'SEED');
 GO
 
+-- ── PRICE_OVERRIDE — plan Phase 4 ─────────────────────────────────────────────
+-- Authority to change a line price away from the price the engine resolved. Unlike VIEW_PRICE this is
+-- NOT a visibility flag: it gates a WRITE, and the four document services enforce it server-side, so a
+-- tampered post cannot invent a price. Seeded as 'Data' (per-record authority, not a menu action) and
+-- it must also be listed in PermissionCodes.All so it counts as built-in and cannot be deleted.
+MERGE dbo.Permission AS t
+USING (VALUES (N'PRICE_OVERRIDE', N'Override Line Price', N'Data', N'Authority to change a resolved sales line price', 22))
+      AS s(PermissionCode, PermissionName, PermissionType, Description, SortOrder)
+ON t.PermissionCode = s.PermissionCode
+WHEN NOT MATCHED THEN
+    INSERT (PermissionCode, PermissionName, PermissionType, Description, SortOrder, IsActive, CreatedDate, CreatedBy)
+    VALUES (s.PermissionCode, s.PermissionName, s.PermissionType, s.Description, s.SortOrder, 1, SYSUTCDATETIME(), N'SEED');
+GO
+
 -- ── Menu rows under SA_MASTER ─────────────────────────────────────────────────
 DECLARE @saMasterId int = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_MASTER');
 
@@ -89,10 +103,33 @@ WHERE m.MenuCode IN (N'SA_CUST_PRICE_GROUP', N'SA_ITEM_CUST')
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 GO
 
+-- ── PRICE_OVERRIDE on the six document screens (plan Phase 4) ─────────────────
+-- The five documents are SA_SO / SA_DO / SA_INVOICE / SA_QT, and the CN/DN screen is TWO menus
+-- (SA_CN and SA_DN) because SaCdn serves both, so six rows are needed for five screens.
+-- SA_QT was added after the initial version: quotations were originally excluded, which left an
+-- editable price on SaQt.razor with no gate. See alter-saqt-detail-price-override.sql.
+-- This GRANTS the right to the menu; a role still has to be granted it (see the role section below).
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode = N'PRICE_OVERRIDE'
+WHERE m.MenuCode IN (N'SA_SO', N'SA_DO', N'SA_INVOICE', N'SA_QT', N'SA_CN', N'SA_DN')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+GO
+
 -- ── Role grants — SUPPLIED BY THE DEPLOYMENT OWNER ────────────────────────────
 -- Default: mirror the roles already granted to SA_CUST_TYPE. Uncomment and verify before running.
+-- COLUMN IS `IsAllowed`, NOT `IsActive` — dbo.RoleMenuPermission is the one grant table that uses it.
+-- (Using IsActive here is a hard `Msg 207 Invalid column name` failure; it was the reason this script
+-- used to exit 1 at the very end, after all its real work had already succeeded.)
 --
--- INSERT INTO dbo.RoleMenuPermission (RoleId, MenuId, PermissionId, IsActive)
+-- NOTE: seeding a Permission row grants nothing to anybody. PRICE_OVERRIDE in particular reaches a
+-- ROLE only through a RoleMenuPermission row, so until the deployment owner grants it, the price box
+-- on the five sales document screens stays locked for every user.
+--
+-- INSERT INTO dbo.RoleMenuPermission (RoleId, MenuId, PermissionId, IsAllowed)
 -- SELECT src.RoleId, dst.MenuId, src.PermissionId, 1
 -- FROM dbo.RoleMenuPermission src
 -- INNER JOIN dbo.Menu srcMenu ON srcMenu.MenuId = src.MenuId AND srcMenu.MenuCode = N'SA_CUST_TYPE'
@@ -115,8 +152,8 @@ WHERE IsActive = 1
   AND MenuId IN (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_CUST_PRICE');
 
 UPDATE dbo.RoleMenuPermission
-SET IsActive = 0
-WHERE IsActive = 1
+SET IsAllowed = 0
+WHERE IsAllowed = 1
   AND MenuId IN (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_CUST_PRICE');
 
 UPDATE dbo.Menu

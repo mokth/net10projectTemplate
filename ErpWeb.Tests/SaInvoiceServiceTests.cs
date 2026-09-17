@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
@@ -453,6 +454,64 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Empty(save.PostWarnings);
     }
 
+    /// <summary>
+    /// Phase 2: the pricing provenance must be persisted on the invoice line, because a posted
+    /// invoice has to keep explaining a price whose price list may since have been changed.
+    /// </summary>
+    [Fact]
+    public async Task PricingProvenance_PersistsOnTheInvoiceLine()
+    {
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "A100",
+                    Qty = 1m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN",
+                    PricingSource = "CUSTOMER_ITEM",
+                    PricingRef = "MOQ=100"
+                }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var invoice = await db.SaInvoices.Include(x => x.Details).SingleAsync();
+        var detail = invoice.Details.Single();
+
+        Assert.Equal("CUSTOMER_ITEM", detail.PricingSource);
+        Assert.Equal("MOQ=100", detail.PricingRef);
+
+        // Provenance is EXPLANATORY: it must never be re-derived into a price.
+        Assert.Equal(10m, detail.UnitPrice);
+    }
+
+    /// <summary>A line saved with no provenance keeps NULL, which means "not recorded".</summary>
+    [Fact]
+    public async Task PricingProvenance_IsNullWhenTheCallerSuppliesNone()
+    {
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var detail = (await db.SaInvoices.Include(x => x.Details).SingleAsync()).Details.Single();
+
+        Assert.Null(detail.PricingSource);
+        Assert.Null(detail.PricingRef);
+    }
+
     [Fact]
     public async Task SaveNew_fails_commercial_gaps_before_numbering()
     {
@@ -535,6 +594,61 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True(ok.Succeeded, ok.ErrorMessage);
         Assert.Equal(1, numbering.IssuedCount);
         Assert.Equal("INV2609-0001", ok.InvNo);
+    }
+
+    [Fact]
+    public async Task SaveNew_reports_every_line_error_without_collapsing_duplicate_text()
+    {
+        // The tax-group lookup message carries no row number, so rows 1 and 2 produce exactly the
+        // same sentence while row 3 fails for a different reason. Every message must survive, the
+        // headline must name all three, and the per-row projection must not leak between rows.
+        const string badTax = "ZZZ-NOT-A-GROUP";
+        const string taxMessage = "Tax group 'ZZZ-NOT-A-GROUP' was not found.";
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "SR",
+            Lines =
+            [
+                new SaInvoiceLineRequest { ICode = "A100", Qty = 1m, UnitPrice = 10m, FrWarehouse = "MAIN", TaxGrCode = badTax },
+                new SaInvoiceLineRequest { ICode = "A100", Qty = 1m, UnitPrice = 10m, FrWarehouse = "MAIN", TaxGrCode = badTax },
+                new SaInvoiceLineRequest { ICode = "NO-SUCH-ITEM", Qty = 1m, UnitPrice = 10m, FrWarehouse = "MAIN" }
+            ]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, save.ErrorKind);
+
+        // Both identical-text errors are present and separately keyed: nothing was de-duplicated.
+        Assert.Equal(taxMessage, save.ValidationErrors["Lines[0].TaxGrCode"]);
+        Assert.Equal(taxMessage, save.ValidationErrors["Lines[1].TaxGrCode"]);
+        Assert.Contains("NO-SUCH-ITEM", save.ValidationErrors["Lines[2].ICode"], StringComparison.Ordinal);
+
+        // The service message names every cause instead of the generic literal, and repeats both copies.
+        Assert.NotEqual(ValidationMessageFormat.GenericFallback, save.ErrorMessage);
+        Assert.NotNull(save.ErrorMessage);
+        Assert.Equal(2, save.ErrorMessage!.Split(taxMessage).Length - 1);
+        Assert.Contains("NO-SUCH-ITEM", save.ErrorMessage, StringComparison.Ordinal);
+
+        // The per-row projection returns that row's message and never a neighbour's.
+        Assert.Equal(new[] { taxMessage }, ValidationMessageFormat.LineMessages(save.ValidationErrors, 1).ToArray());
+        Assert.Equal(new[] { taxMessage }, ValidationMessageFormat.LineMessages(save.ValidationErrors, 2).ToArray());
+        Assert.Single(ValidationMessageFormat.LineMessages(save.ValidationErrors, 3));
+        Assert.Empty(ValidationMessageFormat.LineMessages(save.ValidationErrors, 4));
+
+        // What the page actually renders: identical text stays attributable because every cause is
+        // labelled with its row, so the operator can tell two rows apart.
+        var displayed = ValidationMessageFormat.BuildHeadline(save.ValidationErrors, save.ErrorMessage);
+        Assert.Contains("Line 1", displayed, StringComparison.Ordinal);
+        Assert.Contains("Line 2", displayed, StringComparison.Ordinal);
+        Assert.Contains("Line 3", displayed, StringComparison.Ordinal);
+        Assert.Equal(2, displayed.Split(taxMessage).Length - 1);
     }
 
     [Fact]
@@ -2198,6 +2312,51 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             FrWarehouse = "MAIN",
             IsInclusive = inclusive
         };
+
+    /// <summary>
+    /// Phase 2: the e-Invoice structural edit lock. The UI disables the fields, but the service layer is
+    /// the authority - another API or background process must not be able to change the payload under a
+    /// submission.
+    /// </summary>
+    [Fact]
+    public async Task Update_and_delete_are_refused_while_the_einvoice_status_is_locked()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        // A submission accepted by MyInvois freezes the payload. RowVersion is seeded as well: SQLite
+        // never generates a rowversion for us, and the update path needs a usable token to reach the
+        // lock check at all.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE SaInvoice SET IrbmStatus = 'VALID', RowVersion = randomblob(8)");
+        }
+
+        var probe = await sut.GetAsync(save.InvNo!);
+        Assert.NotEmpty(probe.Document!.RowVersion);
+
+        var update = await UpdateDocAsync(sut, save.InvNo!, Request(qty: 2m, price: 10m));
+        Assert.False(update.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.BusinessRule, update.ErrorKind);
+        Assert.Contains("e-Invoice status", update.ErrorMessage);
+
+        // Delete rejects an absent token before it gets to the lock, so the token has to be real here too.
+        var delete = await sut.DeleteAsync(
+            [new SaInvoiceKeyedRequest { InvNo = save.InvNo!, RowVersion = probe.Document.RowVersion }]);
+        Assert.False(delete.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.BusinessRule, delete.ErrorKind);
+        Assert.Contains("e-Invoice status", delete.ErrorMessage);
+
+        // Nothing changed, and the lock survives the failed attempts.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var invoice = await db.SaInvoices.Include(x => x.Details).SingleAsync();
+            Assert.Equal(1m, invoice.Details.Single().Qty);
+            Assert.Equal(EInvoiceStatuses.Valid, invoice.IrbmStatus);
+        }
+    }
 
     private async Task<SaInvoiceOperationResult> ShipAsync(
         SaInvoiceService sut,

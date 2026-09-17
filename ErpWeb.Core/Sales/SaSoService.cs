@@ -1860,6 +1860,12 @@ public sealed class SaSoService : ISaSoService
                 StdUom = item.StdUom,
                 Warehouse = warehouse.Length == 0 ? null : warehouse,
                 UnitPrice = line.UnitPrice,
+                PricingSource = TruncateOptional(line.PricingSource, 40),
+                PricingRef = TruncateOptional(line.PricingRef, 60),
+                // Phase 4: normalised HERE so "NULL = never overridden" stays true - a line that echoes
+                // the resolved price back stores nothing.
+                OriginalUnitPrice = SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, line.OriginalUnitPrice),
+                OverrideReason = SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, line.OriginalUnitPrice, line.OverrideReason),
                 ItemDiscount = line.ItemDiscount,
                 ItemDiscount2 = line.ItemDiscount2,
                 ItemDiscount3 = line.ItemDiscount3,
@@ -1892,7 +1898,255 @@ public sealed class SaSoService : ISaSoService
             row.Calc.LocalAmount = SaInvoiceCalc.Money(row.Calc.NetAmount * rateResult.Rate);
         }
 
+        // Phase 4: price-override governance, enforced SERVER-SIDE because the page is not the
+        // execution point - a tampered post must not be able to invent a price. A line that echoes the
+        // resolved price back is not an override and needs neither the permission nor a reason.
+        var overrideError = SaPriceOverridePolicy.Validate(
+            prepared
+                .Select(x => new SaPriceOverrideDeclaration(x.UnitPrice, x.OriginalUnitPrice, x.OverrideReason))
+                .ToList(),
+            await CanAsync(PermissionCodes.PriceOverride, cancellationToken));
+        if (overrideError is not null)
+        {
+            return PrepareOutcome.Validation(
+                overrideError,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["UnitPrice"] = overrideError });
+        }
+
         return PrepareOutcome.Ok(customer!, currency, rateResult.Rate, prepared);
+    }
+
+    /// <summary>
+    /// Creates a Sales Order from an accepted Sales Quotation's <b>frozen commercial snapshot</b>.
+    /// <para>
+    /// This is the snapshot-import path promised by the quotation plan. It deliberately does
+    /// <b>not</b> call <c>PrepareLinesAsync</c>, does <b>not</b> re-resolve currency, does <b>not</b>
+    /// re-price lines and does <b>not</b> re-derive tax from the masters: the quotation's agreed
+    /// figures are the contract, so recomputing them would silently change what the customer
+    /// accepted. It still runs the parts that must not be bypassed — customer identity/active check,
+    /// SO document numbering, tenant stamps, audit stamps and the SO detail quantity invariant.
+    /// </para>
+    /// <para>
+    /// <b>Transaction ownership:</b> the caller owns the transaction. This method never begins,
+    /// commits or rolls back. The quotation conversion wraps it in a single transaction so the SO and
+    /// the quotation's CLOSED/CONVERTED state move together or not at all.
+    /// </para>
+    /// </summary>
+    public async Task<SaSoSnapshotImportResult> ImportQuotationSnapshotAsync(
+        AppDbContext db,
+        SaQt quotation,
+        string userId,
+        string? locationCode,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        ArgumentNullException.ThrowIfNull(quotation);
+
+        var lines = quotation.Details.OrderBy(x => x.Line).ToList();
+        if (lines.Count == 0)
+        {
+            return SaSoSnapshotImportResult.Fail("The quotation has no lines to convert.");
+        }
+
+        var customer = await _customers.GetByCodeAsync(
+            db, quotation.CompanyCode, quotation.CustCode, includeChildren: false, cancellationToken);
+        if (customer is null || !customer.IsActive)
+        {
+            return SaSoSnapshotImportResult.Fail("Customer was not found or is inactive.");
+        }
+
+        if (string.IsNullOrWhiteSpace(quotation.Currency))
+        {
+            return SaSoSnapshotImportResult.Fail("Currency is required.");
+        }
+
+        var soDate = quotation.QtDate == default ? _dates.Today.Date : quotation.QtDate.Date;
+        DocumentNumberResult issued;
+        try
+        {
+            issued = await _documentNumbers.NextAsync(
+                db,
+                "SO",
+                "",
+                soDate,
+                DocumentNumberRequestMode.New,
+                "AUTO",
+                cancellationToken);
+        }
+        catch (DocumentNumberingNotConfiguredException)
+        {
+            return SaSoSnapshotImportResult.Fail(
+                "SO numbering is not configured for this company/branch.");
+        }
+        catch (DocumentNumberingConfigurationException)
+        {
+            return SaSoSnapshotImportResult.Fail(
+                "SO numbering is not configured correctly. Contact an administrator.");
+        }
+        catch (DocumentNumberingOverflowException)
+        {
+            return SaSoSnapshotImportResult.Fail(
+                "The next SO number exceeds the configured length.");
+        }
+        catch (DocumentNumberingConcurrencyException)
+        {
+            return SaSoSnapshotImportResult.Fail(
+                "The Sales Order could not be created because of a database conflict. Try again.");
+        }
+
+        var now = DateTime.UtcNow;
+        var uid = Truncate(userId, 20);
+        var salesOrder = new SaSo
+        {
+            CompanyCode = quotation.CompanyCode,
+            BranchCode = quotation.BranchCode,
+            LocationCode = locationCode,
+            SoNo = issued.DocumentNumber,
+            SoDate = soDate,
+            Status = SaSoStatuses.New,
+            CustRel = 1,
+            IsCurrent = true,
+            LastCustRel = 1,
+            RevisionReason = null,
+            FulfillmentStatus = SaDualStatuses.None,
+            BillingStatus = SaDualStatuses.None,
+            CustCode = quotation.CustCode,
+            // The customer NAME is a snapshot of the quotation, not a fresh read of the master:
+            // the SO must reproduce the document the customer accepted.
+            CustName = UpperSnapshot(quotation.CustName, 200),
+            Currency = quotation.Currency.Trim(),
+            CurrRate = quotation.CurrRate,
+            Prefix = string.IsNullOrWhiteSpace(issued.PrefixUsed) ? null : issued.PrefixUsed.Trim(),
+            // Frozen totals — copied, never recomputed.
+            GrossAmnt = quotation.GrossAmnt,
+            Taxes = quotation.Taxes,
+            TotAmnt = quotation.TotAmnt,
+            // Source stamps: identify the exact quotation revision this SO came from.
+            QtNo = quotation.QtNo,
+            QtCustRel = quotation.CustRel,
+            CreatedDate = now,
+            CreatedBy = uid
+        };
+
+        SaDocApplicationService.TouchRowVersion(db, salesOrder);
+
+        // Reuse the ordinary SO header snapshot mapping so addresses / references are normalised by
+        // exactly the same rules as a hand-keyed SO. ShipVia and DeliveryTerms are QT-only and are
+        // intentionally absent from SaSoSaveRequest, so they can never leak onto the SO.
+        ApplyHeaderSnapshots(salesOrder, new SaSoSaveRequest
+        {
+            SoDate = soDate,
+            CustCode = quotation.CustCode,
+            CustPo = quotation.CustPo,
+            Ref1 = quotation.Ref1,
+            ProjId = quotation.ProjId,
+            Currency = quotation.Currency,
+            PayCode = quotation.PayCode,
+            TaxGrCode = quotation.TaxGrCode,
+            SalesRep = quotation.SalesRep,
+            Remarks = quotation.Remarks,
+            ShipName = quotation.ShipName,
+            ShipAddress1 = quotation.ShipAddress1,
+            ShipAddress2 = quotation.ShipAddress2,
+            ShipAddress3 = quotation.ShipAddress3,
+            ShipAddress4 = quotation.ShipAddress4,
+            ShipCity = quotation.ShipCity,
+            ShipState = quotation.ShipState,
+            ShipPostalCode = quotation.ShipPostalCode,
+            ShipCountry = quotation.ShipCountry,
+            ShipTel = quotation.ShipTel,
+            ShipFax = quotation.ShipFax,
+            InvName = quotation.InvName,
+            InvAddress1 = quotation.InvAddress1,
+            InvAddress2 = quotation.InvAddress2,
+            InvAddress3 = quotation.InvAddress3,
+            InvAddress4 = quotation.InvAddress4,
+            InvCity = quotation.InvCity,
+            InvState = quotation.InvState,
+            InvPostalCode = quotation.InvPostalCode,
+            InvCountry = quotation.InvCountry,
+            InvTel = quotation.InvTel,
+            InvFax = quotation.InvFax
+        });
+
+        foreach (var line in lines)
+        {
+            var detail = new SaSoDetail
+            {
+                CompanyCode = salesOrder.CompanyCode,
+                BranchCode = salesOrder.BranchCode,
+                SoNo = salesOrder.SoNo,
+                Line = line.Line,
+                CustRel = salesOrder.CustRel,
+                ICode = line.ICode,
+                IDesc = line.IDesc,
+                CustICode = line.CustICode,
+                UnitPrice = line.UnitPrice,
+                PricingSource = line.PricingSource,
+                PricingRef = line.PricingRef,
+                // Phase 4: a quotation carries NO override columns, so a SO created from one has nothing
+                // to declare - the line is not an override, which is why these stay NULL.
+                OriginalUnitPrice = null,
+                OverrideReason = null,
+                SellingUom = line.SellingUom,
+                StdUom = line.StdUom,
+                WtUom = line.WtUom,
+                StdQty = line.StdQty,
+                WtQty = line.WtQty,
+                StdPsize = line.StdPsize,
+                // Frozen line money: copied from the accepted quotation, not recalculated.
+                TaxAmt = line.TaxAmt,
+                OrderType = line.OrderType,
+                Remarks = line.Remarks,
+                Amount = line.Amount,
+                NetAmount = line.NetAmount,
+                Discount = line.Discount,
+                ItemDiscount = line.ItemDiscount,
+                ItemDiscount2 = line.ItemDiscount2,
+                ItemDiscount3 = line.ItemDiscount3,
+                ItemDiscount4 = line.ItemDiscount4,
+                ItemDiscount5 = line.ItemDiscount5,
+                ItemDiscount6 = line.ItemDiscount6,
+                ItemDiscAmount = line.ItemDiscAmount,
+                ItemDiscAmount1 = line.ItemDiscAmount1,
+                IDiscountType = line.IDiscountType,
+                Warehouse = line.Warehouse,
+                TaxGroup = line.TaxGroup,
+                IsInclusive = line.IsInclusive,
+                LocalAmount = line.LocalAmount,
+                StockControl = line.StockControl,
+                Classification = line.Classification,
+                DeliveryDate = line.DeliveryDate,
+                Eta = line.Eta,
+                Etd = line.Etd,
+                // A brand-new SO has no fulfilment yet.
+                ShippedQty = 0m,
+                DeliveredQty = 0m,
+                InvoicedQty = 0m,
+                WrittenOffQty = 0m,
+                // Source line stamps: which quotation revision + line this SO line consumed.
+                QtNo = salesOrder.QtNo,
+                QtLine = line.Line,
+                QtCustRel = salesOrder.QtCustRel,
+                QtConsumedQty = SaQtQty.RoundQty(line.OrderQty)
+            };
+            // Sets OrderQty and BalanceQty together (BalanceQty = OrderQty at zero delivered qty).
+            SaSoQty.SetOrderQty(detail, line.OrderQty);
+            salesOrder.Details.Add(detail);
+        }
+
+        db.SaSos.Add(salesOrder);
+        await db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Sales Order created from quotation snapshot. UserId={UserId} Company={Company} SoNo={SoNo} QtNo={QtNo} QtCustRel={QtCustRel}",
+            userId,
+            quotation.CompanyCode,
+            salesOrder.SoNo,
+            quotation.QtNo,
+            quotation.CustRel);
+
+        return SaSoSnapshotImportResult.Ok(salesOrder.SoNo, salesOrder.RowVersion ?? []);
     }
 
     private static void ApplyHeaderSnapshots(SaSo salesOrder, SaSoSaveRequest request)
@@ -1951,6 +2205,10 @@ public sealed class SaSoService : ISaSoService
                 IDesc = line.IDesc,
                 CustICode = line.CustICode,
                 UnitPrice = line.UnitPrice,
+                PricingSource = line.PricingSource,
+                PricingRef = line.PricingRef,
+                OriginalUnitPrice = line.OriginalUnitPrice,
+                OverrideReason = line.OverrideReason,
                 SellingUom = line.SellingUom,
                 StdUom = line.StdUom,
                 StdQty = line.StdQty,
@@ -1990,6 +2248,10 @@ public sealed class SaSoService : ISaSoService
         detail.IDesc = line.IDesc;
         detail.CustICode = line.CustICode;
         detail.UnitPrice = line.UnitPrice;
+        detail.PricingSource = line.PricingSource;
+        detail.PricingRef = line.PricingRef;
+        detail.OriginalUnitPrice = line.OriginalUnitPrice;
+        detail.OverrideReason = line.OverrideReason;
         detail.SellingUom = line.SellingUom;
         detail.StdUom = line.StdUom;
         detail.StdQty = line.StdQty;
@@ -2167,6 +2429,10 @@ public sealed class SaSoService : ISaSoService
                     StdUom = x.StdUom,
                     Warehouse = x.Warehouse,
                     UnitPrice = x.UnitPrice,
+                    PricingSource = x.PricingSource,
+                    PricingRef = x.PricingRef,
+                    OriginalUnitPrice = x.OriginalUnitPrice,
+                    OverrideReason = x.OverrideReason,
                     Amount = x.Amount,
                     ItemDiscount = x.ItemDiscount,
                     ItemDiscount2 = x.ItemDiscount2,
@@ -2220,6 +2486,10 @@ public sealed class SaSoService : ISaSoService
             StdUom = detail.StdUom,
             Warehouse = detail.Warehouse,
             UnitPrice = detail.UnitPrice,
+            PricingSource = detail.PricingSource,
+            PricingRef = detail.PricingRef,
+            OriginalUnitPrice = detail.OriginalUnitPrice,
+            OverrideReason = detail.OverrideReason,
             Amount = detail.Amount,
             ItemDiscount = detail.ItemDiscount,
             ItemDiscount2 = detail.ItemDiscount2,
@@ -2692,7 +2962,7 @@ public sealed class SaSoService : ISaSoService
 
         public SaSoOperationResult ToFail() =>
             Kind == SaSoErrorKind.Validation
-                ? SaSoOperationResult.FailValidation(Error ?? "Validation failed.", Errors)
+                ? SaSoOperationResult.FailValidation(ValidationMessageFormat.ResolveServiceMessage(Errors, Error), Errors)
                 : SaSoOperationResult.Fail(Error ?? "Unable to save the Sales Order.", Kind);
     }
 
@@ -2710,6 +2980,14 @@ public sealed class SaSoService : ISaSoService
         public string? StdUom { get; init; }
         public string? Warehouse { get; init; }
         public decimal UnitPrice { get; init; }
+        public string? PricingSource { get; init; }
+        public string? PricingRef { get; init; }
+
+        /// <summary>Phase 4: the engine price, non-null ONLY on a line an operator actually overrode.</summary>
+        public decimal? OriginalUnitPrice { get; init; }
+
+        /// <summary>Phase 4: the stated reason, non-null ONLY on a real override.</summary>
+        public string? OverrideReason { get; init; }
         public decimal ItemDiscount { get; init; }
         public decimal ItemDiscount2 { get; init; }
         public decimal ItemDiscount3 { get; init; }

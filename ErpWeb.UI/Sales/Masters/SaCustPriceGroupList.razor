@@ -114,6 +114,28 @@
                                     <label class="iv-field__label">Pack size</label>
                                     <DxSpinEdit @bind-Value="@LinePack" MinValue="0" ShowSpinButtons="false" />
                                 </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Min qty</label>
+                                    <DxSpinEdit @bind-Value="@LineMinQty" MinValue="0" ShowSpinButtons="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Max qty</label>
+                                    <DxSpinEdit @bind-Value="@LineMaxQty" MinValue="0" ShowSpinButtons="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Valid from</label>
+                                    <DxDateEdit @bind-Date="@LineValidFrom" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Valid to</label>
+                                    <DxDateEdit @bind-Date="@LineValidTo" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Currency</label>
+                                    <IvCodeComboBox Data="@CurrencyOptions"
+                                                    @bind-Value="@LineCurrency"
+                                                    NullText="Base currency" />
+                                </div>
                                 <div class="spg-editor__actions">
                                     <DxButton RenderStyle="@(LineEditKey is null ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
                                               Text="@(LineEditKey is null ? "Add line" : "Update line")"
@@ -185,6 +207,11 @@
                                             <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellingPrice)" Caption="Selling price" Width="130px" />
                                         }
                                         <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.SellPackSize)" Caption="Pack size" Width="110px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.MinQty)" Caption="Min qty" Width="90px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.MaxQty)" Caption="Max qty" Width="90px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.ValidFrom)" Caption="Valid from" Width="110px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.ValidTo)" Caption="Valid to" Width="110px" />
+                                        <DxGridDataColumn FieldName="@nameof(IvCustPriceLineVm.CurrencyCode)" Caption="Currency" Width="95px" />
                                     </Columns>
                                 </DxGrid>
                             </div>

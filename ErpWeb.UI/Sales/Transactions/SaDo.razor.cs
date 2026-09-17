@@ -91,6 +91,23 @@ public partial class SaDo : PageBase, IDisposable
     private bool? _taxable;
     private byte[] _rowVersion = [];
     private int _customerApplySeq;
+
+    /// <summary>Sequence guard for price resolution; a slow first response must not win over a newer one.</summary>
+    private int _priceApplySeq;
+
+    /// <summary>
+    /// Non-null when the engine refused to price the line. While it is set the popup Save is blocked,
+    /// because the alternative — the legacy <c>?? 0m</c> seed — silently ships the item for RM 0.00.
+    /// </summary>
+    private string? _priceBlockMessage;
+
+    /// <summary>Operator-facing provenance of the resolved price, e.g. "Customer item price (MOQ=100)".</summary>
+    private string? _priceHint;
+
+    /// <summary>
+    /// The discount slots the ENGINE last wrote, so re-resolving never clobbers a manual entry.
+    /// </summary>
+    private (decimal P1, decimal P2, decimal A1, decimal A2)? _autoDiscountSlots;
     private CancellationTokenSource _cts = new();
     private string? _shipConfirmMessage;
     private byte[]? _shipConfirmToken;
@@ -677,6 +694,9 @@ public partial class SaDo : PageBase, IDisposable
         };
         PopupDiscountIsAmount = false;
         PopupError = null;
+        _priceBlockMessage = null;
+        _priceHint = null;
+        _autoDiscountSlots = null;
         PopupVisible = true;
     }
 
@@ -814,6 +834,13 @@ public partial class SaDo : PageBase, IDisposable
         RefreshPackFromItem(Popup);
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
+        _priceBlockMessage = null;
+        _priceHint = null;
+
+        // Re-opening a draft line deliberately does NOT re-price it: the price is re-resolved only when
+        // a pricing input actually changes, so editing an unrelated field can never silently move the
+        // line to today's price. The stored slots become the baseline for that later comparison.
+        _autoDiscountSlots = (Popup.ItemDiscount, Popup.ItemDiscount2, Popup.ItemDiscAmount, Popup.ItemDiscAmount1);
         PopupVisible = true;
     }
 
@@ -830,12 +857,13 @@ public partial class SaDo : PageBase, IDisposable
         MarkDirty();
     }
 
-    protected void OnPopupItemChanged(string? iCode)
+    protected async Task OnPopupItemChangedAsync(string? iCode)
     {
         Popup.ICode = iCode ?? string.Empty;
         var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
         if (item is null)
         {
+            _priceHint = null;
             return;
         }
 
@@ -843,7 +871,7 @@ public partial class SaDo : PageBase, IDisposable
         Popup.StdUom = item.StdUom;
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
-        Popup.UnitPrice = item.SellingPrice ?? 0m;
+
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
         {
@@ -854,7 +882,102 @@ public partial class SaDo : PageBase, IDisposable
         {
             Popup.FrWarehouse = item.DefWarehouse ?? Warehouses.FirstOrDefault()?.WarehouseCode;
         }
+
+        // A new item means new discount rules.
+        _autoDiscountSlots = null;
+        Popup.ItemDiscount = Popup.ItemDiscount2 = Popup.ItemDiscount3 = 0m;
+        Popup.ItemDiscount4 = Popup.ItemDiscount5 = Popup.ItemDiscount6 = 0m;
+        Popup.ItemDiscAmount = Popup.ItemDiscAmount1 = 0m;
+        PopupDiscountIsAmount = false;
+
+        // UnitPrice is deliberately NOT seeded from item.SellingPrice: the server engine decides it,
+        // and a missing price must BLOCK rather than become RM 0.00.
+        await ResolvePopupPriceAsync(assignDiscountSlots: true);
     }
+
+    protected async Task OnPopupQuantityChangedAsync(decimal qty)
+    {
+        Popup.Qty = qty;
+        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+    }
+
+    /// <summary>
+    /// The single call site for line pricing. Stages 1-3 run server-side; stage 4 stays in
+    /// RecalcDocument. Every trigger funnels through here, with a sequence guard so a slow first
+    /// response cannot overwrite a newer one.
+    /// </summary>
+    private async Task ResolvePopupPriceAsync(bool assignDiscountSlots)
+    {
+        if (string.IsNullOrWhiteSpace(Popup.ICode) || string.IsNullOrWhiteSpace(CustCode))
+        {
+            return;
+        }
+
+        var seq = Interlocked.Increment(ref _priceApplySeq);
+
+        var result = await SalesRefService.ResolveLinePricingAsync(
+            new SaLinePricingRequest
+            {
+                CustCode = CustCode!,
+                ICode = Popup.ICode,
+                UOM = Popup.StdUom ?? string.Empty,
+                Qty = Popup.Qty,
+                DocDate = DoDate,
+                DocumentCurrency = Currency,
+                TaxPercent = ResolveTaxPercent(Popup.TaxGrCode),
+                IsInclusive = Popup.IsInclusive,
+                DiscountMethod = _discountMethod
+            },
+            _cts.Token);
+
+        if (seq != _priceApplySeq || _disposed)
+        {
+            return;
+        }
+
+        if (!result.Succeeded || result.Data is null)
+        {
+            _priceHint = null;
+            // A blocked line must not keep a stale provenance from an earlier successful resolve.
+            Popup.PricingSource = null;
+            Popup.PricingRef = null;
+            _priceBlockMessage = result.Message ?? "No price could be resolved for this line.";
+            PopupError = _priceBlockMessage;
+            return;
+        }
+
+        var priced = result.Data;
+
+        Popup.UnitPrice = priced.UnitPrice;
+        Popup.PricingSource = priced.PricingSourceToken;
+        Popup.PricingRef = priced.PricingRef;
+        _priceHint = priced.Describe();
+
+        if (assignDiscountSlots && DiscountSlotsAreUntouched())
+        {
+            Popup.ItemDiscount = priced.ItemDiscount;
+            Popup.ItemDiscount2 = priced.ItemDiscount2;
+            Popup.ItemDiscAmount = priced.ItemDiscAmount;
+            Popup.ItemDiscAmount1 = priced.ItemDiscAmount1;
+            PopupDiscountIsAmount = priced.ItemDiscAmount != 0m || priced.ItemDiscAmount1 != 0m;
+            _autoDiscountSlots = (priced.ItemDiscount, priced.ItemDiscount2, priced.ItemDiscAmount, priced.ItemDiscAmount1);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && PopupError == _priceBlockMessage)
+        {
+            PopupError = null;
+        }
+
+        _priceBlockMessage = null;
+    }
+
+    /// <summary>True when the discount fields still hold exactly what the engine last assigned.</summary>
+    private bool DiscountSlotsAreUntouched() =>
+        _autoDiscountSlots is not { } last
+        || (Popup.ItemDiscount == last.P1
+            && Popup.ItemDiscount2 == last.P2
+            && Popup.ItemDiscAmount == last.A1
+            && Popup.ItemDiscAmount1 == last.A2);
 
     protected void OnPopupDiscountModeChanged(bool amountMode)
     {
@@ -882,6 +1005,14 @@ public partial class SaDo : PageBase, IDisposable
         if (Popup.Qty <= 0m)
         {
             PopupError = "Quantity must be greater than zero.";
+            return;
+        }
+
+        // The engine refused to price this line. Saving it would persist a price the pricing rules
+        // never produced (the legacy defect was RM 0.00).
+        if (!string.IsNullOrWhiteSpace(_priceBlockMessage))
+        {
+            PopupError = _priceBlockMessage;
             return;
         }
 
@@ -1157,12 +1288,18 @@ public partial class SaDo : PageBase, IDisposable
             return true;
         }
 
+        // A previous attempt's field errors must never linger next to a different failure kind.
+        if (result.ErrorKind != SaDoErrorKind.Validation)
+        {
+            ValidationErrors.Clear();
+        }
+
         switch (result.ErrorKind)
         {
             case SaDoErrorKind.Validation:
                 ValidationErrors = result.ValidationErrors.ToDictionary(
                     x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
-                ErrorMessage = result.ErrorMessage ?? "Validation failed.";
+                ErrorMessage = BuildValidationMessage(ValidationErrors, result.ErrorMessage);
                 break;
             case SaDoErrorKind.Concurrency:
                 ConcurrencyVisible = true;
@@ -1382,6 +1519,25 @@ public sealed class SaDoLineVm
     public string? StdUom { get; set; }
     public string? FrWarehouse { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>
+    /// The engine's pricing provenance (plan Phase 2). Set when the price is resolved, persisted on
+    /// save, and never used to re-derive <see cref="UnitPrice"/>.
+    /// </summary>
+    public string? PricingSource { get; set; }
+
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the ENGINE resolved. The delivery-order popup has NO editable price, so this
+    /// screen never CREATES an override - the fields exist so a stored record round-trips instead of
+    /// being silently erased by an unrelated edit.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why an operator moved the price away from the resolved one.</summary>
+    public string? OverrideReason { get; set; }
+
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }
     public decimal ItemDiscount3 { get; set; }
@@ -1415,6 +1571,10 @@ public sealed class SaDoLineVm
         StdUom = StdUom,
         FrWarehouse = FrWarehouse,
         UnitPrice = UnitPrice,
+        PricingSource = PricingSource,
+        PricingRef = PricingRef,
+        OriginalUnitPrice = OriginalUnitPrice,
+        OverrideReason = OverrideReason,
         ItemDiscount = ItemDiscount,
         ItemDiscount2 = ItemDiscount2,
         ItemDiscount3 = ItemDiscount3,
@@ -1446,6 +1606,10 @@ public sealed class SaDoLineVm
             Qty = Qty,
             FrWarehouse = FrWarehouse,
             UnitPrice = UnitPrice,
+            PricingSource = PricingSource,
+            PricingRef = PricingRef,
+            OriginalUnitPrice = OriginalUnitPrice,
+            OverrideReason = OverrideReason,
             ItemDiscount = ItemDiscount,
             ItemDiscount2 = ItemDiscount2,
             ItemDiscount3 = ItemDiscount3,
@@ -1493,6 +1657,10 @@ public sealed class SaDoLineVm
             StdUom = dto.StdUom,
             FrWarehouse = dto.FrWarehouse,
             UnitPrice = dto.UnitPrice,
+            PricingSource = dto.PricingSource,
+            PricingRef = dto.PricingRef,
+            OriginalUnitPrice = dto.OriginalUnitPrice,
+            OverrideReason = dto.OverrideReason,
             ItemDiscount = dto.ItemDiscount,
             ItemDiscount2 = dto.ItemDiscount2,
             ItemDiscount3 = dto.ItemDiscount3,
@@ -1527,6 +1695,14 @@ public sealed class SaDoLineVm
             StdUom = dto.StdUom,
             FrWarehouse = dto.Warehouse,
             UnitPrice = dto.UnitPrice,
+            PricingSource = dto.PricingSource,
+            PricingRef = dto.PricingRef,
+            // Phase 4 NOTE - the override declaration is deliberately NOT copied from the Sales Order.
+            // The price control on this screen is read-only, so the DO is where goods move, not where a
+            // price is decided; copying it would make shipping demand PRICE_OVERRIDE from a clerk who
+            // never made the decision. The audit trail stays on the document that took it.
+            OriginalUnitPrice = null,
+            OverrideReason = null,
             ItemDiscount = dto.ItemDiscount,
             ItemDiscount2 = dto.ItemDiscount2,
             ItemDiscount3 = dto.ItemDiscount3,

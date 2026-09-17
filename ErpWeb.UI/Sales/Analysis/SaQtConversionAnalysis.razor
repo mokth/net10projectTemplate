@@ -1,0 +1,145 @@
+@page "/sales/analysis/qt-conversion"
+@using ErpWeb.UI.Components.Common
+@inherits SaAnalysisPageBase
+
+<PageTitle>Quotation Conversion</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesAnalysisQtConversion">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(LoadError))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@LoadError</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-signature"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Analysis</p>
+                <h1 class="iv-title">Quotation Conversion</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Current revisions only</span>
+                    <span class="iv-chip">Header totals</span>
+                </div>
+            </div>
+            @if (Result is not null)
+            {
+                <div class="iv-hero__kpi">
+                    <span>Win rate</span>
+                    <strong>@PercentText(Result.WinRatePercent)</strong>
+                </div>
+            }
+        </header>
+
+        <section class="iv-card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.5rem .75rem;">
+                <div class="iv-field">
+                    <label class="iv-field__label">From</label>
+                    <DxDateEdit @bind-Date="@DateFrom" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">To</label>
+                    <DxDateEdit @bind-Date="@DateTo" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Salesman</label>
+                    <IvCodeComboBox Data="@SalesmanOptions" @bind-Value="@SalesmanCode" NullText="All salesmen" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Break down by sales rep</label>
+                    <DxCheckBox @bind-Checked="@GroupBySalesRep" />
+                </div>
+            </div>
+
+            <div class="iv-toolbar-row" style="margin-top:.75rem;">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsLoading ? "Running…" : "Run")"
+                          Click="@RunAsync"
+                          Enabled="@(!IsLoading)" />
+                @if (Result is not null)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Export CSV"
+                              Click="@(() => Navigation.NavigateTo(ExportUrl, forceLoad: true))" />
+                }
+            </div>
+
+            <p class="iv-hint">
+                Only the <strong>current</strong> revision of each quotation counts, so a superseded
+                revision is never double-counted. Won means the quotation closed through conversion
+                (<code>CLOSED</code> + <code>CONVERTED</code>). Win rate = won ÷ (won + lost); it is N/A
+                when there is nothing won or lost to divide.
+            </p>
+        </section>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            </section>
+        }
+        else if (Result is not null)
+        {
+            <section class="iv-card">
+                <div class="iv-chips">
+                    <span class="iv-chip">Total @Result.Total.Count.ToString("N0") · @MoneyText(Result.Total.Amount)</span>
+                    <span class="iv-chip">Open @Result.Open.Count.ToString("N0") · @MoneyText(Result.Open.Amount)</span>
+                    <span class="iv-chip">Won @Result.Won.Count.ToString("N0") · @MoneyText(Result.Won.Amount)</span>
+                    <span class="iv-chip">Lost @Result.Lost.Count.ToString("N0") · @MoneyText(Result.Lost.Amount)</span>
+                    <span class="iv-chip">Expired @Result.Expired.Count.ToString("N0") · @MoneyText(Result.Expired.Amount)</span>
+                    <span class="iv-chip">Cancelled @Result.Cancelled.Count.ToString("N0") · @MoneyText(Result.Cancelled.Amount)</span>
+                    <span class="iv-chip">Win rate @PercentText(Result.WinRatePercent)</span>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <h2 class="pi-headline">Lost reasons</h2>
+                @if (Result.LostReasons.Count == 0)
+                {
+                    <p class="text-muted mb-0">No quotations in the range were marked lost.</p>
+                }
+                else
+                {
+                    <DxGrid Data="@Result.LostReasons" CssClass="w-100">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(SaQtLostReasonRow.Reason)" Caption="Reason" />
+                            <DxGridDataColumn FieldName="@nameof(SaQtLostReasonRow.Count)" Caption="Count" Width="110px" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaQtLostReasonRow.Amount)" Caption="Amount" Width="150px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        </Columns>
+                    </DxGrid>
+                }
+            </section>
+
+            @if (GroupBySalesRep && Result.BySalesRep.Count > 0)
+            {
+                <section class="iv-card">
+                    <h2 class="pi-headline">By sales rep</h2>
+                    <DxGrid Data="@Result.BySalesRep" CssClass="w-100">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(SaQtConversionBySalesRepRow.SalesRep)" Caption="Sales rep" Width="140px" />
+                            <DxGridDataColumn FieldName="Total.Count" Caption="Total" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="Total.Amount" Caption="Total amount" Width="140px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="Won.Count" Caption="Won" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="Won.Amount" Caption="Won amount" Width="140px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="Lost.Count" Caption="Lost" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="Lost.Amount" Caption="Lost amount" Width="140px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaQtConversionBySalesRepRow.WinRatePercent)" Caption="Win rate %" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        </Columns>
+                    </DxGrid>
+                </section>
+            }
+        }
+        else if (HasRun && !IsLoading)
+        {
+            <section class="iv-card">
+                <p class="text-muted mb-0">No current quotations match the current filters.</p>
+            </section>
+        }
+    </div>
+</MenuAuthorize>

@@ -1,0 +1,162 @@
+@page "/sales/analysis/summary"
+@using ErpWeb.UI.Components.Common
+@inherits SaAnalysisPageBase
+
+<PageTitle>Sales Summary</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesAnalysisSummary">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(LoadError))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@LoadError</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Analysis</p>
+                <h1 class="iv-title">Sales Summary</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Posted invoices only</span>
+                    <span class="iv-chip">@DimensionLabel(Dimension)</span>
+                </div>
+            </div>
+            @if (Result is not null)
+            {
+                <div class="iv-hero__kpi">
+                    <span>Invoice total</span>
+                    <strong>@MoneyText(Result.Totals.InvoiceTotal)</strong>
+                </div>
+            }
+        </header>
+
+        <section class="iv-card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.5rem .75rem;">
+                <div class="iv-field">
+                    <label class="iv-field__label">From</label>
+                    <DxDateEdit @bind-Date="@DateFrom" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">To</label>
+                    <DxDateEdit @bind-Date="@DateTo" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label code-style">Group by</label>
+                    <DxComboBox Data="@Dimensions"
+                                @bind-Value="@Dimension"
+                                TextField="@nameof(SaSalesSummaryDimensionOption.Label)"
+                                ValueField="@nameof(SaSalesSummaryDimensionOption.Value)"
+                                NullText="Select dimension"
+                                CssClass="w-100" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Salesman</label>
+                    <IvCodeComboBox Data="@SalesmanOptions" @bind-Value="@SalesmanCode" NullText="All salesmen" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer</label>
+                    <IvCodeComboBox Data="@CustomerOptions" @bind-Value="@CustCode" NullText="All customers" />
+                    <DxTextBox NullText="Search customers"
+                               maxlength="40"
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer Source (current)</label>
+                    <IvCodeComboBox Data="@SourceOptions" @bind-Value="@CustSource" NullText="All sources" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer type</label>
+                    <IvCodeComboBox Data="@TypeOptions" @bind-Value="@CustType" NullText="All types" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer group</label>
+                    <IvCodeComboBox Data="@GroupOptions" @bind-Value="@CustGroupCode" NullText="All groups" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Area</label>
+                    <IvCodeComboBox Data="@AreaOptions" @bind-Value="@AreaCode" NullText="All areas" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Industry</label>
+                    <IvCodeComboBox Data="@IndustryOptions" @bind-Value="@IndustryCode" NullText="All industries" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Channel</label>
+                    <IvCodeComboBox Data="@ChannelOptions" @bind-Value="@ChannelCode" NullText="All channels" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label code-style">Branch</label>
+                    <DxTextBox @bind-Text="@BranchCode" NullText="All branches" maxlength="5" />
+                </div>
+            </div>
+
+            <div class="iv-toolbar-row" style="margin-top:.75rem;">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsLoading ? "Running…" : "Run")"
+                          Click="@RunAsync"
+                          Enabled="@(!IsLoading)" />
+                @if (Result is not null)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Export CSV"
+                              Click="@(() => Navigation.NavigateTo(ExportUrl, forceLoad: true))" />
+                }
+            </div>
+
+            <p class="iv-hint">
+                Facts are <strong>posted</strong> invoices (a NEW invoice is excluded). Amounts are invoice
+                total / gross / tax — not accounting revenue. Customer Source is joined live from the
+                customer master, so it is <strong>current attribution</strong>: changing a customer's
+                source re-labels past periods until Phase 2 snapshots it.
+            </p>
+        </section>
+
+        @if (Result is not null)
+        {
+            <section class="iv-card">
+                <h2 class="pi-headline">Period totals (posted documents in range)</h2>
+                <div class="iv-chips">
+                    <span class="iv-chip">Invoices @Result.Totals.InvoiceCount.ToString("N0") · @MoneyText(Result.Totals.InvoiceTotal)</span>
+                    <span class="iv-chip">Credit notes @Result.Totals.CreditNoteCount.ToString("N0") · @MoneyText(Result.Totals.CreditNoteTotal)</span>
+                    <span class="iv-chip">Debit notes @Result.Totals.DebitNoteCount.ToString("N0") · @MoneyText(Result.Totals.DebitNoteTotal)</span>
+                    <span class="iv-chip">Net sales amount @MoneyText(Result.Totals.NetSalesAmount)</span>
+                </div>
+                <p class="iv-hint">
+                    Net sales amount = posted invoices + debit notes − credit notes. Credit and debit notes
+                    are stored positive and are netted here once. The chips honour the branch, customer and
+                    salesman filters; the dimensional grid below is posted-invoice-only.
+                </p>
+            </section>
+
+            <section class="iv-card">
+                @if (Result.Rows.Count == 0)
+                {
+                    <p class="text-muted mb-0">No posted invoices match the current filters.</p>
+                }
+                else
+                {
+                    <DxGrid Data="@Result.Rows" CssClass="w-100">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.Key)" Caption="@DimensionLabel(Dimension)" Width="180px" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.Description)" Caption="Description" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.InvoiceCount)" Caption="Invoices" Width="100px" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.InvoiceTotal)" Caption="Invoice total" Width="140px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.GrossAmount)" Caption="Gross" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.TaxAmount)" Caption="Tax" Width="120px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(SaSalesSummaryRow.SharePercent)" Caption="Share %" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        </Columns>
+                    </DxGrid>
+                }
+            </section>
+        }
+        else if (HasRun && !IsLoading)
+        {
+            <section class="iv-card">
+                <p class="text-muted mb-0">No posted invoices match the current filters.</p>
+            </section>
+        }
+    </div>
+</MenuAuthorize>

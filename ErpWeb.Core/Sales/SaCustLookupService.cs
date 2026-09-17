@@ -173,6 +173,9 @@ public sealed class SaCustLookupService : ISaCustLookupService
     public Task<IReadOnlyList<IvCodeLookupRow>> ListChannelsForAssignmentAsync(CancellationToken cancellationToken = default) =>
         ListMsCodesAsync(IvMsCodeTypes.Channel, cancellationToken);
 
+    public Task<IReadOnlyList<IvCodeLookupRow>> ListSourcesForAssignmentAsync(CancellationToken cancellationToken = default) =>
+        ListMsCodesAsync(IvMsCodeTypes.Source, cancellationToken);
+
     public Task<bool> ValidateTypeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListTypesForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
 
@@ -287,6 +290,9 @@ public sealed class SaCustLookupService : ISaCustLookupService
 
     public Task<bool> ValidateChannelAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListChannelsForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
+
+    public Task<bool> ValidateSourceAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateLegacyOrFailClosed(code, existingCode, ListSourcesForAssignmentAsync, allowLegacyEmptyBypass: true, cancellationToken);
 
     private async Task<IReadOnlyList<IvCodeLookupRow>> ListMsCodesAsync(string codeType, CancellationToken cancellationToken)
     {

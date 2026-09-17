@@ -66,6 +66,12 @@ public sealed class IvCustPriceGroupListRow
 
 public sealed class IvCustPriceLineVm
 {
+    /// <summary>
+    /// Surrogate key of the stored row. The UI assigns a UNIQUE NEGATIVE value to a line that has not
+    /// been saved yet, because an identity column has no id until the aggregate save returns one.
+    /// </summary>
+    public int Id { get; set; }
+
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
     public string UOM { get; set; } = string.Empty;
@@ -75,8 +81,27 @@ public sealed class IvCustPriceLineVm
 
     public decimal? SellPackSize { get; set; }
 
-    /// <summary>Key inside one price group (the child grid keys on this).</summary>
-    public string Key => $"{ICode};{UOM}";
+    /// <summary>Effective-from (date part). NULL reads as "always" when a legacy row is unmigrated.</summary>
+    public DateTime? ValidFrom { get; set; }
+
+    /// <summary>Last effective date, inclusive. NULL = open-ended.</summary>
+    public DateTime? ValidTo { get; set; }
+
+    /// <summary>Quantity band floor, inclusive. NULL or 0 = any quantity.</summary>
+    public decimal? MinQty { get; set; }
+
+    /// <summary>Quantity band ceiling, inclusive. NULL = unlimited.</summary>
+    public decimal? MaxQty { get; set; }
+
+    /// <summary>Currency of this line; blank = the company base currency.</summary>
+    public string? CurrencyCode { get; set; }
+
+    /// <summary>
+    /// Key inside one price group (the child grid keys on this). It is the surrogate id, NOT the
+    /// item/UOM: the SAME item and UOM legitimately hold several rows once quantity tiers and
+    /// promotions exist, so item+UOM stopped being unique in Phase 3.
+    /// </summary>
+    public string Key => Id != 0 ? $"#{Id}" : $"{ICode};{UOM};{ValidFrom:yyyyMMdd};{MinQty}";
 }
 
 public sealed class IvCustPriceGroupEditVm
@@ -90,14 +115,20 @@ public sealed class IvCustPriceGroupEditVm
 
 public sealed class IvCustPriceListRow
 {
+    public int Id { get; init; }
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
     public string UOM { get; init; } = string.Empty;
     public decimal? SellingPrice { get; init; }
     public decimal? SellPackSize { get; init; }
+    public DateTime? ValidFrom { get; init; }
+    public DateTime? ValidTo { get; init; }
+    public decimal? MinQty { get; init; }
+    public decimal? MaxQty { get; init; }
+    public string? CurrencyCode { get; init; }
 
     /// <summary>Grid key within one price group.</summary>
-    public string Key => $"{ICode};{UOM}";
+    public string Key => Id != 0 ? $"#{Id}" : $"{ICode};{UOM};{ValidFrom:yyyyMMdd};{MinQty}";
 }
 
 // ---------- SaItemCust ----------

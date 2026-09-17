@@ -1,5 +1,6 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Entities;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -25,6 +26,12 @@ public partial class AdminCompany : PageBase
     protected Company EditModel { get; set; } = new() { IsActive = true };
     protected CompanyBootstrapRequest BootstrapModel { get; set; } = CreateDefaultBootstrap();
     protected IReadOnlyList<Company> Companies { get; set; } = [];
+
+    /// <summary>
+    /// The pricing method as last persisted, so the save-time confirmation only fires on a real
+    /// NARROWING change rather than on every save of an already-restricted company.
+    /// </summary>
+    private string? _persistedSalesPriceMethod;
 
     protected bool IsSystemAdmin =>
         CurrentUser.IsInRole(ErpWeb.Core.Security.CompanyService.SystemAdminRole);
@@ -124,6 +131,8 @@ public partial class AdminCompany : PageBase
             }
             : CloneForEdit(selected);
 
+        _persistedSalesPriceMethod = selected?.SalesPriceMethod;
+
         if (selected is null && !IsSystemAdmin)
         {
             StatusMessage = "Company record is not available. Ask an administrator to create it.";
@@ -150,6 +159,7 @@ public partial class AdminCompany : PageBase
         ErrorMessage = string.Empty;
         StatusMessage = null;
         EditModel = CloneForEdit(result.Company);
+        _persistedSalesPriceMethod = result.Company.SalesPriceMethod;
     }
 
     protected Task OnAddNewClick()
@@ -172,6 +182,7 @@ public partial class AdminCompany : PageBase
             TimeZoneId = "Asia/Kuala_Lumpur",
             FiscalYearStartMonth = 1
         };
+        _persistedSalesPriceMethod = null;
         return Task.CompletedTask;
     }
 
@@ -190,6 +201,28 @@ public partial class AdminCompany : PageBase
             }
 
             return;
+        }
+
+        // Narrowing the method stops negotiated and price-list prices from applying, so the operator
+        // is asked to confirm the change rather than discovering it on the next sales document.
+        if (!IsCreateMode
+            && string.Equals(
+                SaCompanyPriceMethod.Normalize(EditModel.SalesPriceMethod),
+                SaCompanyPriceMethod.ItemDefaultOnly,
+                StringComparison.Ordinal)
+            && !string.Equals(
+                SaCompanyPriceMethod.Normalize(_persistedSalesPriceMethod),
+                SaCompanyPriceMethod.ItemDefaultOnly,
+                StringComparison.Ordinal))
+        {
+            var proceed = await JsRuntime.InvokeAsync<bool>(
+                "confirm",
+                "Use ONLY the item default selling price for this company? Customer-specific prices and "
+                + "price-list prices will stop applying to new document lines.");
+            if (!proceed)
+            {
+                return;
+            }
         }
 
         IsSubmitting = true;
@@ -317,6 +350,7 @@ public partial class AdminCompany : PageBase
             LogoUrl = data.LogoUrl,
             CurrencyCode = data.CurrencyCode,
             TimeZoneId = data.TimeZoneId,
+            SalesPriceMethod = data.SalesPriceMethod,
             FiscalYearStartMonth = data.FiscalYearStartMonth,
             IsActive = data.IsActive,
             CreatedDate = data.CreatedDate,
@@ -326,4 +360,15 @@ public partial class AdminCompany : PageBase
         };
 
     protected sealed record FiscalMonthOption(byte? Value, string Name);
+
+    /// <summary>Options for the per-company sales pricing method combo (plan 1.9).</summary>
+    protected static IReadOnlyList<PriceMethodOption> SalesPriceMethods { get; } =
+    [
+        new(SaCompanyPriceMethod.CustomerItemAndList, "Customer item, price list, then item default (recommended)"),
+        new(SaCompanyPriceMethod.CustomerItemOnly, "Customer item, then item default"),
+        new(SaCompanyPriceMethod.PriceListOnly, "Customer / group price list, then item default"),
+        new(SaCompanyPriceMethod.ItemDefaultOnly, "Item default selling price only")
+    ];
+
+    protected sealed record PriceMethodOption(string Value, string Name);
 }

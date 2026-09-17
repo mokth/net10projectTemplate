@@ -353,6 +353,23 @@ IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'CHANNEL' AND Code =
 IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'CHANNEL' AND Code = N'AGENT')
     INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'AGENT', N'Agent', N'CHANNEL');
 
+-- Sales-analysis Phase 1: customer lead source. Joined LIVE by the Source dimension, so this is
+-- current attribution rather than a historical snapshot (see scripts/alter-sacust-custsource.sql).
+IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'SOURCE' AND Code = N'WALK')
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'WALK', N'Walk-in', N'SOURCE');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'SOURCE' AND Code = N'REF')
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'REF', N'Referral', N'SOURCE');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'SOURCE' AND Code = N'WEB')
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'WEB', N'Website', N'SOURCE');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'SOURCE' AND Code = N'EXPO')
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'EXPO', N'Exhibition', N'SOURCE');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.IvMSCode WHERE CodeType = N'SOURCE' AND Code = N'AGENT')
+    INSERT INTO dbo.IvMSCode (Code, Name, CodeType) VALUES (N'AGENT', N'Agent', N'SOURCE');
+
 IF NOT EXISTS (SELECT 1 FROM dbo.SaCountry WHERE CountryCode = N'SG')
     INSERT INTO dbo.SaCountry (CountryCode, CountryName) VALUES (N'SG', N'Singapore');
 

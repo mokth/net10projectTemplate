@@ -28,6 +28,31 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
     protected IReadOnlyList<IvCodeLookupRow> StateOptions { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> CountryOptions { get; set; } = [];
 
+    // ---- Monthly targets (sales-analysis Phase 1) ----
+    // Targets are company-wide: they carry no branch, and attainment on the analysis screen ignores the
+    // optional branch filter. The grid shows one calendar year at a time; every month is upserted by
+    // (code, year, month), so saving a month twice updates it instead of failing.
+    protected int TargetYear { get; set; } = DateTime.Today.Year;
+    protected List<SalesRepTargetEntry> TargetMonths { get; set; } = [];
+    protected bool TargetsBusy { get; set; }
+    protected string? TargetMessage { get; set; }
+
+    /// <summary>Set while the popup shows a rep that exists, so the target panel has a key to save against.</summary>
+    protected bool ShowTargets => IsEditMode && !string.IsNullOrWhiteSpace(EditModel.Code);
+
+    protected static string MonthName(int month) => month switch
+    {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr", 5 => "May", 6 => "Jun",
+        7 => "Jul", 8 => "Aug", 9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec"
+    };
+
+    protected sealed class SalesRepTargetEntry
+    {
+        public int Month { get; init; }
+        public decimal Amount { get; set; }
+        public decimal Original { get; init; }
+    }
+
     public List<GridColumnData> Columns() =>
     [
         new()
@@ -135,6 +160,9 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         IsEditMode = false;
         EditEnabled = true;
         CanEditFromView = false;
+        TargetMonths = [];
+        TargetMessage = null;
+        TargetYear = DateTime.Today.Year;
         await LoadLookupsAsync();
         PopupVisible = true;
     }
@@ -155,6 +183,7 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
         await LoadLookupsAsync();
+        await LoadTargetsAsync();
         PopupVisible = true;
     }
 
@@ -174,6 +203,7 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
         EditEnabled = true;
         CanEditFromView = false;
         await LoadLookupsAsync();
+        await LoadTargetsAsync();
         PopupVisible = true;
     }
 
@@ -181,6 +211,133 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
     {
         StateOptions = await Lookups.ListStatesForAssignmentAsync();
         CountryOptions = await Lookups.ListCountriesForAssignmentAsync();
+    }
+
+    // ---- Monthly targets (sales-analysis Phase 1) ----
+
+    private async Task LoadTargetsAsync()
+    {
+        TargetMessage = null;
+        if (!ShowTargets)
+        {
+            TargetMonths = [];
+            return;
+        }
+
+        TargetsBusy = true;
+        TargetMonths = [];
+        try
+        {
+            var result = await RefService.ListSalesRepTargetsAsync(EditModel.Code, TargetYear);
+            if (!result.Succeeded)
+            {
+                TargetMessage = SaRefListMessages.FormatResultMessage(result);
+                return;
+            }
+
+            var byMonth = (result.Data ?? [])
+                .ToDictionary(x => x.Month, x => x.TargetAmount);
+
+            TargetMonths = Enumerable.Range(1, 12)
+                .Select(month => new SalesRepTargetEntry
+                {
+                    Month = month,
+                    Amount = byMonth.TryGetValue(month, out var amount) ? amount : 0m,
+                    Original = byMonth.TryGetValue(month, out var original) ? original : 0m
+                })
+                .ToList();
+        }
+        finally
+        {
+            TargetsBusy = false;
+        }
+    }
+
+    protected async Task ChangeTargetYearAsync(int delta)
+    {
+        TargetYear += delta;
+        await LoadTargetsAsync();
+    }
+
+    protected async Task SaveTargetsAsync()
+    {
+        if (IsSubmitting || TargetsBusy || !EditEnabled)
+        {
+            return;
+        }
+
+        var changed = TargetMonths.Where(x => x.Amount != x.Original).ToList();
+        if (changed.Count == 0)
+        {
+            TargetMessage = "No target changes to save.";
+            return;
+        }
+
+        if (changed.Any(x => x.Amount < 0m))
+        {
+            TargetMessage = "Target amounts cannot be negative.";
+            return;
+        }
+
+        TargetsBusy = true;
+        TargetMessage = null;
+        try
+        {
+            foreach (var entry in changed)
+            {
+                var result = await RefService.SaveSalesRepTargetAsync(new SaSalesRepTargetEditVm
+                {
+                    Code = EditModel.Code,
+                    Year = TargetYear,
+                    Month = entry.Month,
+                    TargetAmount = entry.Amount
+                });
+
+                if (!result.Succeeded)
+                {
+                    TargetMessage = SaRefListMessages.FormatResultMessage(result);
+                    return;
+                }
+            }
+
+            TargetMessage = $"Saved {TargetYear} targets.";
+            await LoadTargetsAsync();
+        }
+        finally
+        {
+            TargetsBusy = false;
+        }
+    }
+
+    protected async Task ClearTargetAsync(SalesRepTargetEntry entry)
+    {
+        if (IsSubmitting || TargetsBusy || !EditEnabled)
+        {
+            return;
+        }
+
+        if (entry.Original <= 0m && entry.Amount == 0m)
+        {
+            return;
+        }
+
+        TargetsBusy = true;
+        TargetMessage = null;
+        try
+        {
+            var result = await RefService.DeleteSalesRepTargetAsync(EditModel.Code, TargetYear, entry.Month);
+            if (!result.Succeeded && result.ErrorCode != IvMasterErrorCode.NotFound)
+            {
+                TargetMessage = SaRefListMessages.FormatResultMessage(result);
+                return;
+            }
+
+            await LoadTargetsAsync();
+        }
+        finally
+        {
+            TargetsBusy = false;
+        }
     }
 
     protected async Task SwitchViewToEditAsync()

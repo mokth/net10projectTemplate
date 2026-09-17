@@ -850,6 +850,12 @@ public partial class PoPr : PageBase, IAsyncDisposable
             return true;
         }
 
+        // A previous attempt's field errors must never linger next to a different failure kind.
+        if (result.ErrorKind != PoPrErrorKind.Validation)
+        {
+            ValidationErrors.Clear();
+        }
+
         switch (result.ErrorKind)
         {
             case PoPrErrorKind.Validation:
@@ -857,10 +863,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
                     x => x.Key,
                     x => x.Value,
                     StringComparer.OrdinalIgnoreCase);
-                var firstDetail = ValidationErrors.Values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-                ErrorMessage = !string.IsNullOrWhiteSpace(firstDetail)
-                    ? firstDetail
-                    : (result.ErrorMessage ?? "Validation failed.");
+                ErrorMessage = BuildValidationMessage(ValidationErrors, result.ErrorMessage);
                 break;
             case PoPrErrorKind.Concurrency:
                 ConcurrencyVisible = true;

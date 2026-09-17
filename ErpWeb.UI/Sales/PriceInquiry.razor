@@ -1,0 +1,131 @@
+@page "/sales/price-inquiry"
+@using ErpWeb.Core.Sales
+@using ErpWeb.UI.Admin.Master
+@using ErpWeb.UI.Components.Common
+@using Microsoft.AspNetCore.Components
+
+<PageTitle>Price Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesPriceInquiry">
+    <div class="iv-page">
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-magnifying-glass-dollar"></i></div>
+            <div>
+                <p class="iv-eyebrow">Sales</p>
+                <h1 class="iv-title">Price Inquiry</h1>
+            </div>
+        </header>
+
+        <p class="iv-hint">
+            Ask what a line would cost and why. The result comes from the same engine that prices
+            documents, so it can never disagree with what a Sales Order receives.
+        </p>
+
+        <div class="iv-card">
+            <div class="pi-inputs">
+                <div class="iv-field">
+                    <label class="iv-field__label code-style">Customer</label>
+                    <IvCodeComboBox Data="@CustomerOptions"
+                                    @bind-Value="@CustCode"
+                                    NullText="Type to search…"
+                                    InputCssClass="required-field code-style" />
+                    <DxTextBox Text="@CustomerSearch"
+                               NullText="Search customers"
+                               maxlength="40"
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label code-style">Item</label>
+                    <IvStockMasterPicker ICode="@ICode"
+                                         ICodeChanged="@(v => ICode = v)"
+                                         Selected="OnItemSelected"
+                                         InputCssClass="required-field code-style" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label code-style">UOM</label>
+                    <IvCodeComboBox Data="@UomOptions" @bind-Value="@Uom" NullText="Select UOM" InputCssClass="required-field code-style" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Qty</label>
+                    <DxSpinEdit @bind-Value="@Qty" MinValue="0" ShowSpinButtons="false" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Document date</label>
+                    <DxDateEdit @bind-Date="@DocDate" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Currency</label>
+                    <IvCodeComboBox Data="@CurrencyOptions" @bind-Value="@Currency" NullText="Base currency" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Tax %</label>
+                    <DxSpinEdit @bind-Value="@TaxPercent" MinValue="0" ShowSpinButtons="false" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Price is tax-inclusive</label>
+                    <DxCheckBox @bind-Checked="@IsInclusive" />
+                </div>
+            </div>
+
+            <div class="pi-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsBusy ? "Checking…" : "Explain price")"
+                          Click="@ExplainAsync"
+                          Enabled="@(!IsBusy)" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <p class="pi-error" role="alert">@ErrorMessage</p>
+            }
+        </div>
+
+        @if (Result is not null)
+        {
+            <div class="iv-card">
+                <h2 class="pi-headline">@Headline</h2>
+
+                @if (Result.Found)
+                {
+                    <p class="pi-summary">
+                        <strong>@Result.UnitPrice?.ToString("0.####")</strong>
+                        <span>per @Uom, tax-exclusive</span>
+                        @if (IsInclusive && InclusivePrice is not null)
+                        {
+                            <span class="pi-note">@InclusivePrice?.ToString("0.####") tax-inclusive on the line</span>
+                        }
+                    </p>
+                }
+
+                <table class="pi-ladder">
+                    <thead>
+                        <tr>
+                            <th>Level</th>
+                            <th>Applied</th>
+                            <th>Price</th>
+                            <th>Basis</th>
+                            <th>Why / why not</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var level in Result.Levels)
+                        {
+                            <tr class="@(level.Applied ? "pi-row--applied" : null)">
+                                <td>@level.SourceLabel</td>
+                                <td>@(level.Applied ? "Yes" : level.Eligible ? "No" : "n/a")</td>
+                                <td>@(level.UnitPrice?.ToString("0.####") ?? "—")</td>
+                                <td>@Basis(level)</td>
+                                <td>@(level.Applied ? "Produced the price." : level.Reason)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                <p class="pi-footnote">
+                    Company pricing method in force: <code>@Result.CompanyPriceMethod</code>.
+                    Change it on the company admin screen if a level should be considered.
+                </p>
+            </div>
+        }
+    </div>
+</MenuAuthorize>

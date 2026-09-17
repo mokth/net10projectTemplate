@@ -1,5 +1,6 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.Sales;
 using ErpWeb.Library.Security;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -619,6 +620,11 @@ public sealed class CompanyService : ICompanyService
             LogoUrl = NullIfWhiteSpace(source.LogoUrl),
             CurrencyCode = NormalizeCurrency(source.CurrencyCode),
             TimeZoneId = NullIfWhiteSpace(source.TimeZoneId),
+            // Server-side enforcement: a blank or unknown token from a crafted POST is coerced to the
+            // default method, and blank is preserved as NULL so "unset" stays distinguishable.
+            SalesPriceMethod = NullIfWhiteSpace(source.SalesPriceMethod) is { } priceMethod
+                ? SaCompanyPriceMethod.Normalize(priceMethod)
+                : null,
             FiscalYearStartMonth = source.FiscalYearStartMonth,
             IsActive = source.IsActive,
             CreatedDate = DateTime.UtcNow,
@@ -645,6 +651,9 @@ public sealed class CompanyService : ICompanyService
         entity.LogoUrl = NullIfWhiteSpace(source.LogoUrl);
         entity.CurrencyCode = NormalizeCurrency(source.CurrencyCode);
         entity.TimeZoneId = NullIfWhiteSpace(source.TimeZoneId);
+        entity.SalesPriceMethod = NullIfWhiteSpace(source.SalesPriceMethod) is { } priceMethod
+            ? SaCompanyPriceMethod.Normalize(priceMethod)
+            : null;
         entity.FiscalYearStartMonth = source.FiscalYearStartMonth;
         entity.IsActive = source.IsActive;
     }

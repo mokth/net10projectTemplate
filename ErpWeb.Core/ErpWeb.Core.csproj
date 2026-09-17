@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
+    <ProjectReference Include="..\ErpWeb.EInvoiceLib\ErpWeb.EInvoiceLib.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

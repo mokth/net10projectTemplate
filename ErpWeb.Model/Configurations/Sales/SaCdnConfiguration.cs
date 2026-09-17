@@ -55,6 +55,7 @@ public class SaCdnConfiguration : IEntityTypeConfiguration<SaCdn>
         builder.Property(e => e.IrbmValidOn).HasColumnName("IRBMValidOn").HasColumnType("datetime2");
         builder.Property(e => e.IrbmError).HasColumnName("IRBMError").HasMaxLength(500);
         builder.Property(e => e.IrbmStatus).HasColumnName("IRBMStatus").HasMaxLength(50);
+        builder.Property(e => e.IrbmOutcome).HasColumnName("IRBMOutcome").HasMaxLength(30);
         builder.Property(e => e.PostedDate).HasColumnType("datetime2");
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackDate).HasColumnType("datetime2");

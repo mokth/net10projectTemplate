@@ -17,4 +17,7 @@ public static class IvMsCodeTypes
     public const string PayCode = "PAYCODE";
     public const string Industry = "INDUSTRY";
     public const string Channel = "CHANNEL";
+
+    /// <summary>Customer lead / acquisition source (additive Ia: sales-analysis Phase 1).</summary>
+    public const string Source = "SOURCE";
 }

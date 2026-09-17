@@ -64,6 +64,16 @@ public class SaSo
     public string? Ref3 { get; set; }
     public string? Ref4 { get; set; }
 
+    /// <summary>
+    /// Source quotation this SO was converted from, when it came from one. Together with
+    /// <see cref="QtCustRel"/> this identifies the exact quotation revision, and a filtered unique
+    /// index (<c>UX_SaSO_QtSource</c>) allows only one SO per quotation revision.
+    /// </summary>
+    public string? QtNo { get; set; }
+
+    /// <summary>Revision of <see cref="QtNo"/> this SO was converted from. Null for non-quotation SOs.</summary>
+    public short? QtCustRel { get; set; }
+
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

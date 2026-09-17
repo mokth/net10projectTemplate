@@ -69,6 +69,10 @@ public class SaSoConfiguration : IEntityTypeConfiguration<SaSo>
         builder.Property(e => e.Ref3).HasMaxLength(50);
         builder.Property(e => e.Ref4).HasMaxLength(50);
 
+        // Sales Quotation source stamps (see scripts/alter-saso-qt-link-columns.sql).
+        builder.Property(e => e.QtNo).HasColumnName("QTNo").HasMaxLength(30);
+        builder.Property(e => e.QtCustRel).HasColumnName("QTCustRel");
+
         builder.Property(e => e.CreatedDate).HasColumnName("Created").HasColumnType("datetime2");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(20);
         builder.Property(e => e.ModifiedDate).HasColumnName("Updated").HasColumnType("datetime2");
@@ -91,5 +95,12 @@ public class SaSoConfiguration : IEntityTypeConfiguration<SaSo>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.CustCode })
             .HasDatabaseName("IX_SaSO_Company_Branch_CustCode");
+
+        // One Sales Order per quotation revision. Filtered so ordinary (non-quotation) SOs, which
+        // all carry NULL QtNo, are unaffected.
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.QtNo, e.QtCustRel })
+            .IsUnique()
+            .HasFilter("QTNo IS NOT NULL")
+            .HasDatabaseName("UX_SaSO_QtSource");
     }
 }

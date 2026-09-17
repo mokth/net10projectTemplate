@@ -62,6 +62,7 @@ public partial class SaCustEntry : PageBase
     protected IReadOnlyList<IvCodeLookupRow> PayCodes { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Industries { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Channels { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> Sources { get; set; } = [];
 
     private static readonly IvCodeLookupRow[] CreditTermOptions =
     [
@@ -569,6 +570,7 @@ public partial class SaCustEntry : PageBase
         PayCodes = await Lookups.ListPayCodesForAssignmentAsync();
         Industries = await Lookups.ListIndustriesForAssignmentAsync();
         Channels = await Lookups.ListChannelsForAssignmentAsync();
+        Sources = await Lookups.ListSourcesForAssignmentAsync();
     }
 
     private void CaptureCleanSnapshot() => _cleanSnapshot = Snapshot(Model);

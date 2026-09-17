@@ -28,6 +28,7 @@ public static class SaCustExportEndpoints
         [FromQuery] string? custGroupCode,
         [FromQuery] string? salesmanCode,
         [FromQuery] string? areaCode,
+        [FromQuery] string? custSource,
         [FromQuery] string? sortField,
         [FromQuery] bool sortDescending,
         CancellationToken cancellationToken)
@@ -45,6 +46,7 @@ public static class SaCustExportEndpoints
             CustGroupCode = custGroupCode,
             SalesmanCode = salesmanCode,
             AreaCode = areaCode,
+            CustSource = custSource,
             SortField = sortField,
             SortDescending = sortDescending,
             Skip = 0,
@@ -93,7 +95,7 @@ public static class SaCustExportEndpoints
 
             string[] headers =
             [
-                "Code", "Name", "Short Name", "Type", "Group", "Salesman", "Area",
+                "Code", "Name", "Short Name", "Type", "Group", "Salesman", "Area", "Source",
                 "City", "Tel", "Pay Term", "Currency", "Credit Limit", "Active"
             ];
 
@@ -111,6 +113,7 @@ public static class SaCustExportEndpoints
                     CellText(r.CustGroupCode),
                     CellText(r.SalesmanCode),
                     CellText(r.AreaCode),
+                    CellText(r.CustSource),
                     CellText(r.City),
                     CellText(r.Tel),
                     CellText(r.PayCode),

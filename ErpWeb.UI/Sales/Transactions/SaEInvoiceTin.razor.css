@@ -1,0 +1,54 @@
+/* e-Invoice TIN tools. The iv-* chrome is global; these are the page-local additions. */
+
+.tin-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.tin-result {
+    margin: 12px 0 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    border: 1px solid var(--iv-line, #d7dde5);
+    background: color-mix(in srgb, var(--iv-muted, #667085) 6%, var(--iv-surface, #fff));
+}
+
+.tin-result--ok {
+    background: #eaf7ef;
+    border-color: #a8d5b9;
+    color: #17663a;
+}
+
+.tin-result--err {
+    background: color-mix(in srgb, var(--danger, #b42318) 10%, #fff);
+    border-color: color-mix(in srgb, var(--danger, #b42318) 28%, #d7dde5);
+    color: var(--danger, #b42318);
+}
+
+.tin-table {
+    width: 100%;
+    margin-top: 12px;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.tin-table th,
+.tin-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--iv-line, #d7dde5);
+}
+
+.tin-table th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--iv-muted, #667085);
+}
+
+.tin-table__tin {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

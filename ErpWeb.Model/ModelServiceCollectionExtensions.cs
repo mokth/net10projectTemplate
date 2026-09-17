@@ -28,6 +28,7 @@ public static class ModelServiceCollectionExtensions
         services.AddScoped<ISaInvoiceRepository, SaInvoiceRepository>();
         services.AddScoped<ISaDoRepository, SaDoRepository>();
         services.AddScoped<ISaSoRepository, SaSoRepository>();
+        services.AddScoped<ISaQtRepository, SaQtRepository>();
         services.AddScoped<ISaCdnRepository, SaCdnRepository>();
         return services;
     }

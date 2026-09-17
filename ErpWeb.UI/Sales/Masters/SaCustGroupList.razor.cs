@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.UI.Admin.Master;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Masters;
 
@@ -12,8 +13,13 @@ public partial class SaCustGroupList : SaRefListPageBase<SaCustGroupListRow>
     protected override string MenuCode => MenuCodes.SalesCustGroup;
     protected override string EntityLabel => "Customer Group";
 
+    [Inject] protected ISaCustLookupService Lookups { get; set; } = default!;
+
     protected SaCustGroupEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>Phase 5: active price lists for the group's default price-list picker.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> PriceGroups { get; set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -33,10 +39,23 @@ public partial class SaCustGroupList : SaRefListPageBase<SaCustGroupListRow>
             FieldName = nameof(SaCustGroupListRow.Desc),
             DataType = "string",
             VisibleIndex = 2
+        },
+        new()
+        {
+            Caption = "Price list",
+            FieldName = nameof(SaCustGroupListRow.CustPriceCode),
+            DataType = "string",
+            VisibleIndex = 3,
+            Width = "140px"
         }
     ];
 
-    protected override async Task OnPageInitializedAsync() => await ReloadListAsync();
+    protected override async Task OnPageInitializedAsync()
+    {
+        // Phase 5: the picker is company-scoped and active-only, so it is loaded once per page.
+        PriceGroups = await Lookups.ListPriceGroupsForAssignmentAsync();
+        await ReloadListAsync();
+    }
 
     protected override async Task ReloadListAsync()
     {

@@ -23,6 +23,48 @@ public static class SaItemFamilyPriceSources
 }
 
 /// <summary>
+/// One named price source. The enum is the ordinal used by the walk; the token is what gets
+/// PERSISTED on the document line (<c>PricingSource</c>) and printed on the inquiry ladder, so the
+/// tokens are a stored contract — never rename one without a data migration.
+/// </summary>
+public enum SaPriceSource
+{
+    CustomerItem,
+    CustomerPriceList,
+    CustomerGroupPriceList,
+    ItemDefault
+}
+
+/// <summary>Stable persisted tokens for <see cref="SaPriceSource"/>.</summary>
+public static class SaPriceSourceTokens
+{
+    public const string CustomerItem = "CUSTOMER_ITEM";
+    public const string CustomerPriceList = "CUSTOMER_PRICE_LIST";
+    public const string CustomerGroupPriceList = "CUSTOMER_GROUP_PRICE_LIST";
+    public const string ItemDefault = "ITEM_DEFAULT";
+
+    /// <summary>Max width of the persisted <c>PricingSource</c> column on a document line.</summary>
+    public const int MaxLength = 40;
+
+    public static string For(SaPriceSource source) => source switch
+    {
+        SaPriceSource.CustomerItem => CustomerItem,
+        SaPriceSource.CustomerPriceList => CustomerPriceList,
+        SaPriceSource.CustomerGroupPriceList => CustomerGroupPriceList,
+        _ => ItemDefault
+    };
+
+    /// <summary>Operator-facing label, used by the popup hint and the price-inquiry ladder.</summary>
+    public static string Describe(SaPriceSource source) => source switch
+    {
+        SaPriceSource.CustomerItem => "Customer item price",
+        SaPriceSource.CustomerPriceList => "Customer price list",
+        SaPriceSource.CustomerGroupPriceList => "Customer group price list",
+        _ => "Item default selling price"
+    };
+}
+
+/// <summary>
 /// Price request — the §7 input key, plus the customer attributes the caller reads once from
 /// <c>SaCust</c>. <see cref="CustPriceCode"/> is deliberately not validated here: an unknown code
 /// falls through to the next source (D-6 clause 3 — legacy free text must never block a sale).
@@ -48,6 +90,20 @@ public sealed class SaItemFamilyPriceRequest
 
     /// <summary>Document currency; a candidate price list is base-currency only (D8).</summary>
     public string? DocumentCurrency { get; init; }
+
+    /// <summary>
+    /// The customer's GROUP price list (<c>SaCustGroup.CustPriceCode</c>). Because the walk order is
+    /// Customer Item → Customer List → Group List → Item Default, the customer's own assignment is
+    /// always tried first; the group's default is the fallback. Blank when the customer has no group,
+    /// the group has no default, or the company method excludes the group level.
+    /// </summary>
+    public string? GroupPriceCode { get; init; }
+
+    /// <summary>
+    /// The company pricing method token (<c>Company.SalesPriceMethod</c>). NULL/blank/unknown yields
+    /// the full specificity chain, which is the pre-migration behaviour.
+    /// </summary>
+    public string? CompanyPriceMethod { get; init; }
 }
 
 /// <summary>One <c>SaItemCust</c> row — the customer/item/UOM/MOQ override (§7 step 1).</summary>
@@ -70,6 +126,24 @@ public sealed class IvCustPriceCandidate
     public string ICode { get; init; } = string.Empty;
     public string UOM { get; init; } = string.Empty;
     public decimal? SellingPrice { get; init; }
+
+    /// <summary>
+    /// Window start; NULL is read as "always" so pre-migration rows keep working. Phase 3 makes the
+    /// column NOT NULL with a 1900-01-01 sentinel, so NULL here only guards unmigrated data.
+    /// </summary>
+    public DateTime? ValidFrom { get; init; }
+
+    /// <summary>Window end, inclusive; NULL = open-ended.</summary>
+    public DateTime? ValidTo { get; init; }
+
+    /// <summary>Band floor, inclusive; NULL or 0 = any quantity.</summary>
+    public decimal? MinQty { get; init; }
+
+    /// <summary>Band ceiling, inclusive; NULL = unlimited.</summary>
+    public decimal? MaxQty { get; init; }
+
+    /// <summary>Blank = the company base currency.</summary>
+    public string? Currency { get; init; }
 }
 
 /// <summary>One <c>IvStockMaster</c> row — the item's own default selling price (§7 step 3).</summary>
@@ -89,7 +163,16 @@ public sealed class IvStockMasterPriceCandidate
 public sealed class SaItemFamilyPriceCandidates
 {
     public IReadOnlyList<SaItemCustPriceCandidate> CustomerItems { get; init; } = [];
+
+    /// <summary>Lines of the price list assigned to the CUSTOMER (<c>SaCust.CustPriceCode</c>).</summary>
     public IReadOnlyList<IvCustPriceCandidate> PriceListLines { get; init; } = [];
+
+    /// <summary>
+    /// Lines of the price list assigned to the customer's GROUP (<c>SaCustGroup.CustPriceCode</c>).
+    /// Empty until Phase 5 adds the column; the walk then simply finds nothing at this level.
+    /// </summary>
+    public IReadOnlyList<IvCustPriceCandidate> GroupPriceListLines { get; init; } = [];
+
     public IReadOnlyList<IvStockMasterPriceCandidate> Items { get; init; } = [];
 }
 
@@ -111,8 +194,107 @@ public sealed class SaItemFamilyPriceResolution
     /// <summary>The winning MOQ band when the source is <c>SaItemCust</c>; otherwise null.</summary>
     public int? MatchedMoq { get; init; }
 
+    /// <summary>The named source that produced the price. Drives <see cref="PricingSourceToken"/>.</summary>
+    public SaPriceSource PricingSource { get; init; }
+
+    /// <summary>
+    /// The PERSISTED token for the winning source (plan Phase 2, <c>PricingSource</c> column). Distinct
+    /// from <see cref="Source"/>, which stays the legacy human label the shipped tests assert on.
+    /// </summary>
+    public string PricingSourceToken => SaPriceSourceTokens.For(PricingSource);
+
+    /// <summary>Readable token persisted as <c>PricingRef</c> (list code, <c>MOQ=100</c>, <c>QTY 10-99</c>).</summary>
+    public string? PricingRef { get; init; }
+
+    /// <summary>Inclusive band floor of the winning price-list line; null when the source is not a list.</summary>
+    public decimal? MatchedMinQty { get; init; }
+
+    /// <summary>Inclusive band ceiling of the winning price-list line; null = unlimited or not a list.</summary>
+    public decimal? MatchedMaxQty { get; init; }
+
+    /// <summary>Validity window of the winning line, when the source is a price list.</summary>
+    public DateTime? ValidFrom { get; init; }
+
+    public DateTime? ValidTo { get; init; }
+
+    /// <summary>Currency the winning price was stored in; blank = company base.</summary>
+    public string? Currency { get; init; }
+
     public static SaItemFamilyPriceResolution Blocked(string message) =>
         new() { Found = false, Message = message };
+}
+
+/// <summary>
+/// The outcome of ONE price source. Every source answers in this shape so the orchestrator can walk
+/// them uniformly and the inquiry ladder can explain a rejection without a second code path.
+/// </summary>
+public sealed class SaPriceSourceResult
+{
+    public bool Found { get; init; }
+    public SaPriceSource Source { get; init; }
+
+    /// <summary>Tax-EXCLUSIVE price; 0 when <see cref="Found"/> is false.</summary>
+    public decimal UnitPrice { get; init; }
+
+    /// <summary>Readable token persisted as <c>PricingRef</c> (list code, <c>MOQ=100</c>, <c>QTY 10-99</c>).</summary>
+    public string? Ref { get; init; }
+
+    /// <summary>The winning customer-item MOQ band, when the source is <see cref="SaPriceSource.CustomerItem"/>.</summary>
+    public int? Moq { get; init; }
+
+    public decimal? MinQty { get; init; }
+    public decimal? MaxQty { get; init; }
+    public DateTime? ValidFrom { get; init; }
+    public DateTime? ValidTo { get; init; }
+    public string? Currency { get; init; }
+
+    /// <summary>Why this source produced nothing. Always set when <see cref="Found"/> is false.</summary>
+    public string? RejectReason { get; init; }
+
+    /// <summary>
+    /// Set when a candidate EXISTS but is unusable (a currency mismatch). This STOPS the walk — it is
+    /// the fail-closed rule, not a fall-through. Never silently continue to a different source.
+    /// </summary>
+    public string? BlockingReason { get; init; }
+
+    public bool IsBlocking => !string.IsNullOrWhiteSpace(BlockingReason);
+
+    public string SourceToken => SaPriceSourceTokens.For(Source);
+
+    public static SaPriceSourceResult NotFound(SaPriceSource source, string? reason = null) =>
+        new()
+        {
+            Found = false,
+            Source = source,
+            RejectReason = reason ?? $"No {SaPriceSourceTokens.Describe(source).ToLowerInvariant()} for this item / UOM."
+        };
+
+    public static SaPriceSourceResult Blocked(SaPriceSource source, string reason) =>
+        new() { Found = false, Source = source, BlockingReason = reason, RejectReason = reason };
+
+    public static SaPriceSourceResult Ok(
+        SaPriceSource source,
+        decimal unitPrice,
+        string? reference,
+        int? moq = null,
+        decimal? minQty = null,
+        decimal? maxQty = null,
+        DateTime? validFrom = null,
+        DateTime? validTo = null,
+        string? currency = null) =>
+        new()
+        {
+            Found = true,
+            Source = source,
+            UnitPrice = unitPrice,
+            Ref = reference,
+            Moq = moq,
+            MinQty = minQty,
+            MaxQty = maxQty,
+            ValidFrom = validFrom,
+            ValidTo = validTo,
+            Currency = currency
+        };
 }
 
 /// <summary>
@@ -125,6 +307,17 @@ public static class SaItemFamilyPriceResolver
     public static bool IsDealerPriceMethod(string? priceMethod) =>
         !string.IsNullOrWhiteSpace(priceMethod) &&
         priceMethod.Contains("DEALER", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The legacy human label for a source. Kept because it is the shipped, test-pinned contract;
+    /// <see cref="SaPriceSourceTokens"/> is the new persisted token.
+    /// </summary>
+    public static string LegacySourceLabel(SaPriceSource source) => source switch
+    {
+        SaPriceSource.CustomerItem => SaItemFamilyPriceSources.CustomerItem,
+        SaPriceSource.ItemDefault => SaItemFamilyPriceSources.ItemSellingPrice,
+        _ => SaItemFamilyPriceSources.PriceList
+    };
 
     public static SaItemFamilyPriceResolution Resolve(
         SaItemFamilyPriceRequest request,
@@ -144,8 +337,77 @@ public static class SaItemFamilyPriceResolver
                 + "or store a customer-item price, before using this item.");
         }
 
-        // Step 1 — customer-specific override: highest MOQ <= qty wins; MOQ 0/blank is the base row.
-        var customerRow = candidates.CustomerItems
+        // Step 1 — walk ONLY the sources the company pricing method makes eligible, in the fixed
+        // specificity order. The method can remove a source; it can never reorder them.
+        foreach (var source in SaCompanyPriceMethod.ResolveSources(request.CompanyPriceMethod))
+        {
+            var result = ResolveSource(source, request, candidates);
+
+            // A candidate that EXISTS but is unusable (currency mismatch) stops the walk. Falling
+            // through would silently price the line from a different source than the data intends.
+            if (result.IsBlocking)
+            {
+                return SaItemFamilyPriceResolution.Blocked(result.BlockingReason!);
+            }
+
+            if (result.Found)
+            {
+                return new SaItemFamilyPriceResolution
+                {
+                    Found = true,
+                    Source = LegacySourceLabel(result.Source),
+                    ICode = iCode,
+                    UOM = uom,
+                    UnitPrice = result.UnitPrice,
+                    MatchedMoq = result.Moq,
+                    PricingSource = result.Source,
+                    PricingRef = result.Ref,
+                    MatchedMinQty = result.MinQty,
+                    MatchedMaxQty = result.MaxQty,
+                    ValidFrom = result.ValidFrom,
+                    ValidTo = result.ValidTo,
+                    Currency = result.Currency
+                };
+            }
+        }
+
+        // Step 2 — no candidate: block with a message the operator can act on (§8.9 rule 5).
+        return SaItemFamilyPriceResolution.Blocked(
+            $"No price found for item {iCode} / UOM {uom}. Store a customer-item price, a price-list line, "
+            + "or the item's selling price for this UOM.");
+    }
+
+    /// <summary>
+    /// Evaluate ONE source. This is the single definition of "does this source produce a price" — the
+    /// walk and the Phase-6 explanation ladder both go through here, so an inquiry can never disagree
+    /// with the price a document receives.
+    /// </summary>
+    public static SaPriceSourceResult ResolveSource(
+        SaPriceSource source,
+        SaItemFamilyPriceRequest request,
+        SaItemFamilyPriceCandidates candidates) => source switch
+        {
+            SaPriceSource.CustomerItem =>
+                SelectCustomerItem(request, candidates.CustomerItems),
+            SaPriceSource.CustomerPriceList =>
+                SelectPriceListLine(request, request.CustPriceCode, candidates.PriceListLines, SaPriceSource.CustomerPriceList),
+            SaPriceSource.CustomerGroupPriceList =>
+                SelectPriceListLine(request, request.GroupPriceCode, candidates.GroupPriceListLines, SaPriceSource.CustomerGroupPriceList),
+            _ => SelectItemDefault(request, candidates.Items)
+        };
+
+    /// <summary>Customer-item price (§7 step 1): highest MOQ &lt;= qty wins; MOQ 0/blank is the base row.</summary>
+    public static SaPriceSourceResult SelectCustomerItem(
+        SaItemFamilyPriceRequest request,
+        IReadOnlyList<SaItemCustPriceCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        var iCode = Normalize(request.ICode);
+        var uom = Normalize(request.UOM);
+
+        var row = candidates
             .Where(x => string.Equals(Normalize(x.ICode), iCode, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(Normalize(x.UOM), uom, StringComparison.OrdinalIgnoreCase)
                         && x.MOQ <= request.Qty)
@@ -153,82 +415,182 @@ public static class SaItemFamilyPriceResolver
             .OrderByDescending(x => x.MOQ)
             .FirstOrDefault();
 
-        if (customerRow is not null)
+        if (row is null)
         {
-            // §7.1 D8 — a currency mismatch fails closed rather than silently using another source.
-            if (!CurrencyMatches(customerRow.Currency, request.DocumentCurrency))
-            {
-                return SaItemFamilyPriceResolution.Blocked(
-                    $"The customer-item price for item {iCode} is stored in {customerRow.Currency} but this "
-                    + "document is in a different currency. Correct the customer-item price or the document "
-                    + "currency; conversion is not implicit.");
-            }
-
-            return new SaItemFamilyPriceResolution
-            {
-                Found = true,
-                Source = SaItemFamilyPriceSources.CustomerItem,
-                ICode = iCode,
-                UOM = uom,
-                UnitPrice = customerRow.UnitPrice,
-                MatchedMoq = customerRow.MOQ
-            };
+            return SaPriceSourceResult.NotFound(SaPriceSource.CustomerItem);
         }
 
-        // Step 2 — the assigned price list. An unknown CustPriceCode yields nothing (D-6 clause 3).
-        var priceListCode = Normalize(request.CustPriceCode);
-        if (priceListCode.Length > 0)
+        // §7.1 D8 — a currency mismatch fails closed rather than silently using another source.
+        if (!CurrencyMatches(row.Currency, request.DocumentCurrency))
         {
-            var line = candidates.PriceListLines
-                .Where(x => string.Equals(Normalize(x.CustPriceCode), priceListCode, StringComparison.OrdinalIgnoreCase)
-                            && string.Equals(Normalize(x.ICode), iCode, StringComparison.OrdinalIgnoreCase)
-                            && string.Equals(Normalize(x.UOM), uom, StringComparison.OrdinalIgnoreCase))
-                .Where(x => x.SellingPrice is > 0m)
-                .FirstOrDefault();
-
-            if (line is not null)
-            {
-                return new SaItemFamilyPriceResolution
-                {
-                    Found = true,
-                    Source = SaItemFamilyPriceSources.PriceList,
-                    ICode = iCode,
-                    UOM = uom,
-                    UnitPrice = line.SellingPrice
-                };
-            }
+            return SaPriceSourceResult.Blocked(
+                SaPriceSource.CustomerItem,
+                $"The customer-item price for item {iCode} is stored in {row.Currency} but this "
+                + "document is in a different currency. Correct the customer-item price or the document "
+                + "currency; conversion is not implicit.");
         }
 
-        // Step 3 — the item default, only when the document UOM is the item's selling UOM. No conversion.
-        var item = candidates.Items
-            .FirstOrDefault(x => string.Equals(Normalize(x.ICode), iCode, StringComparison.OrdinalIgnoreCase));
+        return SaPriceSourceResult.Ok(
+            SaPriceSource.CustomerItem,
+            row.UnitPrice!.Value,
+            $"MOQ={row.MOQ}",
+            moq: row.MOQ,
+            currency: row.Currency);
+    }
 
-        if (item is not null && item.IsActive && item.SellingPrice is > 0m)
+    /// <summary>
+    /// One price-list line, used for BOTH the customer's list and the group's list. A line qualifies
+    /// when it matches the list, item and UOM, the transaction date falls inside its validity window,
+    /// and the quantity falls inside its band. Ranking is <c>MinQty DESC</c>, then newest
+    /// <c>ValidFrom</c>, then item code — deterministic, never an arbitrary row.
+    /// </summary>
+    public static SaPriceSourceResult SelectPriceListLine(
+        SaItemFamilyPriceRequest request,
+        string? priceCode,
+        IReadOnlyList<IvCustPriceCandidate> lines,
+        SaPriceSource source)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(lines);
+
+        var code = Normalize(priceCode);
+        if (code.Length == 0)
         {
-            var sellingUom = Normalize(string.IsNullOrWhiteSpace(item.SellingUom) ? item.StdUom : item.SellingUom);
-            if (sellingUom.Length > 0 && string.Equals(sellingUom, uom, StringComparison.OrdinalIgnoreCase))
-            {
-                return new SaItemFamilyPriceResolution
-                {
-                    Found = true,
-                    Source = SaItemFamilyPriceSources.ItemSellingPrice,
-                    ICode = iCode,
-                    UOM = uom,
-                    UnitPrice = item.SellingPrice
-                };
-            }
+            return SaPriceSourceResult.NotFound(source, "No price list is assigned at this level.");
         }
 
-        // Step 4 — no candidate: block with a message the operator can act on (§8.9 rule 5).
-        return SaItemFamilyPriceResolution.Blocked(
-            $"No price found for item {iCode} / UOM {uom}. Store a customer-item price, a price-list line, "
-            + "or the item's selling price for this UOM.");
+        var iCode = Normalize(request.ICode);
+        var uom = Normalize(request.UOM);
+
+        var banded = lines
+            .Where(x => string.Equals(Normalize(x.CustPriceCode), code, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(Normalize(x.ICode), iCode, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(Normalize(x.UOM), uom, StringComparison.OrdinalIgnoreCase))
+            .Where(x => WithinWindow(x.ValidFrom, x.ValidTo, request.DocDate))
+            .Where(x => WithinBand(x.MinQty, x.MaxQty, request.Qty))
+            .Where(x => x.SellingPrice is > 0m)
+            .ToList();
+
+        if (banded.Count == 0)
+        {
+            return SaPriceSourceResult.NotFound(
+                source,
+                $"Price list {code} holds no price for item {iCode} / UOM {uom} on this date and quantity.");
+        }
+
+        // Currency is part of the MATCH: an exact match, or a blank line (= company base). A list that
+        // only holds a different currency blocks, so a foreign price is never applied as if it were local.
+        var usable = banded.Where(x => CurrencyMatches(x.Currency, request.DocumentCurrency)).ToList();
+        if (usable.Count == 0)
+        {
+            return SaPriceSourceResult.Blocked(
+                source,
+                $"Price list {code} holds a price for item {iCode} / UOM {uom}, but it is stored in "
+                + $"{banded[0].Currency} while this document is in {request.DocumentCurrency}. "
+                + "Conversion is not implicit.");
+        }
+
+        var winner = usable
+            // An EXPLICIT currency match outranks a blank (base-currency) line: blank stays usable
+            // because legacy data is sparse, but a price deliberately labelled in the document's
+            // currency is the better answer when both are present.
+            .OrderByDescending(x => ExactCurrencyMatch(x.Currency, request.DocumentCurrency) ? 1 : 0)
+            .ThenByDescending(x => x.MinQty ?? 0m)
+            .ThenByDescending(x => x.ValidFrom ?? DateTime.MinValue)
+            .ThenBy(x => x.ICode, StringComparer.OrdinalIgnoreCase)
+            .First();
+
+        var reference = $"{code} {DescribeBand(winner.MinQty, winner.MaxQty)}".Trim();
+
+        return SaPriceSourceResult.Ok(
+            source,
+            winner.SellingPrice!.Value,
+            reference,
+            minQty: winner.MinQty,
+            maxQty: winner.MaxQty,
+            validFrom: winner.ValidFrom,
+            validTo: winner.ValidTo,
+            currency: winner.Currency);
+    }
+
+    /// <summary>
+    /// Item default (§7 step 4): the item's own selling price, usable ONLY when the document UOM is the
+    /// item's selling UOM. No UOM conversion exists anywhere in this repository.
+    /// </summary>
+    public static SaPriceSourceResult SelectItemDefault(
+        SaItemFamilyPriceRequest request,
+        IReadOnlyList<IvStockMasterPriceCandidate> items)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(items);
+
+        var iCode = Normalize(request.ICode);
+        var uom = Normalize(request.UOM);
+
+        var item = items.FirstOrDefault(x =>
+            string.Equals(Normalize(x.ICode), iCode, StringComparison.OrdinalIgnoreCase));
+
+        if (item is null)
+        {
+            return SaPriceSourceResult.NotFound(SaPriceSource.ItemDefault, $"Item {iCode} was not found.");
+        }
+
+        if (!item.IsActive)
+        {
+            return SaPriceSourceResult.NotFound(SaPriceSource.ItemDefault, $"Item {iCode} is inactive.");
+        }
+
+        if (item.SellingPrice is not > 0m)
+        {
+            return SaPriceSourceResult.NotFound(SaPriceSource.ItemDefault, $"Item {iCode} has no selling price.");
+        }
+
+        var sellingUom = Normalize(string.IsNullOrWhiteSpace(item.SellingUom) ? item.StdUom : item.SellingUom);
+        if (sellingUom.Length == 0 || !string.Equals(sellingUom, uom, StringComparison.OrdinalIgnoreCase))
+        {
+            return SaPriceSourceResult.NotFound(
+                SaPriceSource.ItemDefault,
+                $"Item {iCode} sells in {sellingUom} but this line is {uom}; there is no UOM conversion.");
+        }
+
+        return SaPriceSourceResult.Ok(SaPriceSource.ItemDefault, item.SellingPrice!.Value, null);
+    }
+
+    /// <summary>Inclusive validity window, compared on the DATE PART; a NULL bound is open on that side.</summary>
+    public static bool WithinWindow(DateTime? validFrom, DateTime? validTo, DateTime docDate) =>
+        (validFrom is null || validFrom.Value.Date <= docDate.Date) &&
+        (validTo is null || validTo.Value.Date >= docDate.Date);
+
+    /// <summary>Inclusive quantity band; a NULL or 0 floor means "any quantity", a NULL ceiling means unlimited.</summary>
+    public static bool WithinBand(decimal? minQty, decimal? maxQty, decimal qty) =>
+        (minQty is null || minQty.Value <= qty) &&
+        (maxQty is null || maxQty.Value >= qty);
+
+    /// <summary>Readable band label for <c>PricingRef</c>; empty when the line applies to any quantity.</summary>
+    private static string DescribeBand(decimal? minQty, decimal? maxQty)
+    {
+        var floor = minQty ?? 0m;
+        if (floor <= 0m && maxQty is null)
+        {
+            return string.Empty;
+        }
+
+        return maxQty is null ? $"QTY {floor:0.####}+" : $"QTY {floor:0.####}-{maxQty.Value:0.####}";
     }
 
     /// <summary>Blank on either side means "not declared", which is not a mismatch (legacy data is sparse).</summary>
     private static bool CurrencyMatches(string? candidateCurrency, string? documentCurrency) =>
         string.IsNullOrWhiteSpace(candidateCurrency) ||
         string.IsNullOrWhiteSpace(documentCurrency) ||
+        string.Equals(Normalize(candidateCurrency), Normalize(documentCurrency), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Both sides declare a currency and they are the same. Used only to RANK candidates: an explicit
+    /// match beats a blank line, but a blank line is never rejected (it means "company base").
+    /// </summary>
+    private static bool ExactCurrencyMatch(string? candidateCurrency, string? documentCurrency) =>
+        !string.IsNullOrWhiteSpace(candidateCurrency) &&
+        !string.IsNullOrWhiteSpace(documentCurrency) &&
         string.Equals(Normalize(candidateCurrency), Normalize(documentCurrency), StringComparison.OrdinalIgnoreCase);
 
     private static string Normalize(string? value) => value?.Trim() ?? string.Empty;

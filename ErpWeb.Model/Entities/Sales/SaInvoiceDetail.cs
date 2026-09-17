@@ -41,5 +41,17 @@ public class SaInvoiceDetail
     public short? DoLine { get; set; }
     public decimal SoConsumedQty { get; set; }
 
+    /// <summary>WHICH price source produced <see cref="UnitPrice"/>; the persisted token, e.g. <c>CUSTOMER_ITEM</c>.</summary>
+    public string? PricingSource { get; set; }
+
+    /// <summary>Readable reference behind <see cref="PricingSource"/> (<c>PL1</c>, <c>MOQ=100</c>, <c>QTY 10-99</c>).</summary>
+    public string? PricingRef { get; set; }
+
+    /// <summary>Phase 4: the price the ENGINE resolved; NULL unless an operator overrode it.</summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why the resolved price was changed. Required by the service when an override exists.</summary>
+    public string? OverrideReason { get; set; }
+
     public SaInvoice Invoice { get; set; } = null!;
 }

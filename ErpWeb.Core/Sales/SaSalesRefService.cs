@@ -19,17 +19,20 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
     private readonly ICurrentDateService _dates;
+    private readonly ISaCustLookupService _lookups;
 
     public SaSalesRefService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService accessRights,
-        ICurrentDateService dates)
+        ICurrentDateService dates,
+        ISaCustLookupService lookups)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _accessRights = accessRights;
         _dates = dates;
+        _lookups = lookups;
     }
 
     // ===================== Customer Type =====================
@@ -348,6 +351,7 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
             {
                 Code = x.CustGroupCode,
                 Desc = x.CustGroupDesc,
+                CustPriceCode = x.CustPriceCode,
                 RowVersion = x.RowVersion ?? []
             }).ToList());
     }
@@ -416,6 +420,9 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
             errors["Desc"] = "Description is required.";
         }
 
+        // Phase 5: the group's default price list. Trimmed here; validated against the row below.
+        var priceCode = NormalizeOptionalCode(model.CustPriceCode);
+
         if (errors.Count > 0)
         {
             return IvMasterOperationResult<SaCustGroupEditVm>.Fail(
@@ -447,11 +454,18 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                         "Code");
                 }
 
+                var invalidNewPriceCode = await ValidateCustGroupPriceCodeAsync(priceCode, null, cancellationToken);
+                if (invalidNewPriceCode is not null)
+                {
+                    return invalidNewPriceCode;
+                }
+
                 var entity = new SaCustGroup
                 {
                     CompanyCode = ctx.CompanyCode!,
                     CustGroupCode = code,
                     CustGroupDesc = desc,
+                    CustPriceCode = priceCode,
                     CreatedDate = now,
                     CreatedBy = user,
                     ModifiedDate = now,
@@ -493,8 +507,17 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                     "This customer group was modified by another user.");
             }
 
+            // The value already on the row is tolerated, so a legacy code cannot block this edit.
+            var invalidPriceCode = await ValidateCustGroupPriceCodeAsync(
+                priceCode, tracked.CustPriceCode, cancellationToken);
+            if (invalidPriceCode is not null)
+            {
+                return invalidPriceCode;
+            }
+
             db.Entry(tracked).Property(x => x.RowVersion).OriginalValue = model.RowVersion;
             tracked.CustGroupDesc = desc;
+            tracked.CustPriceCode = priceCode;
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
@@ -3515,8 +3538,31 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
     {
         Code = x.CustGroupCode,
         Desc = x.CustGroupDesc,
+        CustPriceCode = x.CustPriceCode,
         RowVersion = x.RowVersion
     };
+
+    /// <summary>
+    /// Phase 5: a group's default price list must exist in the caller's company. Reuses the shipped
+    /// 3-clause D-6 contract verbatim — blank is allowed, an unknown code is rejected, and the value
+    /// already on the row is tolerated so a legacy value cannot block an unrelated edit.
+    /// Returns null when the assignment is acceptable.
+    /// </summary>
+    private async Task<IvMasterOperationResult<SaCustGroupEditVm>?> ValidateCustGroupPriceCodeAsync(
+        string? priceCode,
+        string? existingCode,
+        CancellationToken cancellationToken)
+    {
+        if (await _lookups.ValidateCustPriceCodeAssignmentAsync(priceCode, existingCode, cancellationToken))
+        {
+            return null;
+        }
+
+        return FailVm<SaCustGroupEditVm>(
+            IvMasterErrorCode.Validation,
+            $"Price group {priceCode} was not found in this company.",
+            nameof(SaCustGroupEditVm.CustPriceCode));
+    }
 
     private static SaAreaEditVm MapArea(IvAreaCode x) => new()
     {

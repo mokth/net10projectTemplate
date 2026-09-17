@@ -294,6 +294,21 @@ public sealed class SaCdnLineDto
     public decimal StdCustPsize { get; init; }
     public string? StdUom { get; init; }
     public decimal UnitPrice { get; init; }
+
+    /// <summary>
+    /// WHICH price source priced this line (plan Phase 2). NULL means "not recorded", NOT "no source".
+    /// Explanatory only: the price is frozen and is never re-derived from this.
+    /// </summary>
+    public string? PricingSource { get; init; }
+
+    public string? PricingRef { get; init; }
+
+    /// <summary>Phase 4: the price the ENGINE resolved; NULL unless an operator overrode it.</summary>
+    public decimal? OriginalUnitPrice { get; init; }
+
+    /// <summary>Phase 4: why the resolved price was changed; present only on a real override.</summary>
+    public string? OverrideReason { get; init; }
+
     public decimal Amount { get; init; }
     public decimal ItemDiscount { get; init; }
     public decimal ItemDiscount2 { get; init; }
@@ -405,6 +420,21 @@ public sealed class SaCdnLineRequest
     public string? IDesc { get; set; }
     public decimal Qty { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>The pricing provenance the engine reported; stored, never trusted for the price.</summary>
+    public string? PricingSource { get; set; }
+
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the page resolved. A value that DIFFERS from <see cref="UnitPrice"/> declares
+    /// an override, refused by the service without <c>PRICE_OVERRIDE</c> and a reason. Null declares nothing.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why the resolved price was changed. Required whenever an override is declared.</summary>
+    public string? OverrideReason { get; set; }
+
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }
     public decimal ItemDiscount3 { get; set; }

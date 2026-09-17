@@ -1,0 +1,115 @@
+@page "/sales/analysis/attainment"
+@using ErpWeb.UI.Components.Common
+@inherits SaAnalysisPageBase
+
+<PageTitle>Sales Rep Attainment</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesAnalysisAttainment">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(LoadError))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@LoadError</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-bullseye"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Analysis</p>
+                <h1 class="iv-title">Sales Rep Attainment</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Company-wide targets</span>
+                    <span class="iv-chip">Posted invoices only</span>
+                </div>
+            </div>
+            @if (Rows.Count > 0)
+            {
+                <div class="iv-hero__kpi">
+                    <span>Attainment</span>
+                    <strong>@PercentText(TotalAttainment)</strong>
+                </div>
+            }
+        </header>
+
+        <section class="iv-card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.5rem .75rem;">
+                <div class="iv-field">
+                    <label class="iv-field__label">From</label>
+                    <DxDateEdit @bind-Date="@DateFrom" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">To</label>
+                    <DxDateEdit @bind-Date="@DateTo" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Salesman</label>
+                    <IvCodeComboBox Data="@SalesmanOptions" @bind-Value="@SalesmanCode" NullText="All salesmen" />
+                </div>
+            </div>
+
+            <div class="iv-toolbar-row" style="margin-top:.75rem;">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsLoading ? "Running…" : "Run")"
+                          Click="@RunAsync"
+                          Enabled="@(!IsLoading)" />
+                @if (Rows.Count > 0)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Export CSV"
+                              Click="@(() => Navigation.NavigateTo(ExportUrl, forceLoad: true))" />
+                }
+            </div>
+
+            <p class="iv-hint">
+                Targets are <strong>company-wide</strong> and monthly. A date range uses the
+                <strong>full</strong> target of every month it touches — a range that ends mid-month is
+                never prorated, so only the actual is partial. A month with no target row counts as zero,
+                and a rep with a zero or missing target shows <strong>N/A</strong> rather than 0%.
+            </p>
+        </section>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            </section>
+        }
+        else if (Rows.Count > 0)
+        {
+            <section class="iv-card">
+                <DxGrid Data="@Rows" CssClass="w-100">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.Code)" Caption="Sales rep" Width="140px" />
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.Name)" Caption="Name" />
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.ActualAmount)" Caption="Actual (posted)" Width="150px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.TargetAmount)" Caption="Target" Width="140px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.AttainmentDisplay)" Caption="Attainment %" Width="130px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.MonthsWithTarget)" Caption="Months with target" Width="140px" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                </DxGrid>
+
+                <div class="iv-chips" style="margin-top:.75rem;">
+                    <span class="iv-chip">Actual @MoneyText(TotalActual)</span>
+                    <span class="iv-chip">Target @MoneyText(TotalTarget)</span>
+                    <span class="iv-chip">Attainment @PercentText(TotalAttainment)</span>
+                </div>
+                <p class="iv-hint">
+                    Attainment % is blank in the grid when the target is zero — N/A means "no target to
+                    measure against", not "no sales".
+                </p>
+            </section>
+        }
+        else if (HasRun && !IsLoading)
+        {
+            <section class="iv-card">
+                <p class="text-muted mb-0">No sales or targets match the current filters.</p>
+            </section>
+        }
+    </div>
+</MenuAuthorize>

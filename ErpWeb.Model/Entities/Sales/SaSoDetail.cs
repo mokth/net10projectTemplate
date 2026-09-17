@@ -58,5 +58,50 @@ public class SaSoDetail
     /// <summary>Estimated departure from warehouse / factory. Planning only; not an actual.</summary>
     public DateTime? Etd { get; set; }
 
+    /// <summary>
+    /// WHICH price source produced <see cref="UnitPrice"/> (plan Phase 2) — the persisted
+    /// <c>SaPriceSourceTokens</c> value, e.g. <c>CUSTOMER_ITEM</c>. Explanatory only: the price is
+    /// FROZEN at entry and is never re-derived from this.
+    /// </summary>
+    public string? PricingSource { get; set; }
+
+    /// <summary>
+    /// The readable reference behind <see cref="PricingSource"/> (<c>PL1</c>, <c>MOQ=100</c>,
+    /// <c>QTY 10-99</c>), so support can explain a price without a join.
+    /// </summary>
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the ENGINE resolved, retained only when an operator overrode it. NULL means
+    /// the line was never overridden, which is the normal case, so this column costs nothing until it
+    /// is used.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>
+    /// Phase 4: why the operator changed the resolved price. The service requires it whenever
+    /// <see cref="OriginalUnitPrice"/> is set, so an unexplained price change cannot reach the ledger.
+    /// </summary>
+    public string? OverrideReason { get; set; }
+
+    /// <summary>
+    /// Source quotation revision this line was converted from. Always stamped together with
+    /// <see cref="QtLine"/> and <see cref="QtConsumedQty"/>; null for manually entered SO lines.
+    /// </summary>
+    public string? QtNo { get; set; }
+
+    /// <summary>Line number on the source quotation revision (see <see cref="QtNo"/>).</summary>
+    public short? QtLine { get; set; }
+
+    /// <summary>Revision of <see cref="QtNo"/> this line was converted from.</summary>
+    public short? QtCustRel { get; set; }
+
+    /// <summary>
+    /// Quantity on the source quotation line that this SO line consumed. Written once by
+    /// <c>SaQtService.ConvertToSoAsync</c> under the QT → SO lock order and never mutated.
+    /// Named to parallel the existing <c>SoConsumedQty</c> convention on DO / Invoice details.
+    /// </summary>
+    public decimal QtConsumedQty { get; set; }
+
     public SaSo So { get; set; } = null!;
 }

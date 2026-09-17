@@ -1202,6 +1202,18 @@ public sealed class SaDocApplicationService : ISaDocApplication
         }
     }
 
+    /// <summary>
+    /// SQLite (tests) has no DB-generated rowversion, so the CLR value must be supplied. Mirrors
+    /// <see cref="TouchRowVersion(AppDbContext, SaSo)"/> for quotations.
+    /// </summary>
+    public static void TouchQtRowVersion(AppDbContext db, SaQt quotation)
+    {
+        if (!db.Database.IsSqlServer())
+        {
+            quotation.RowVersion = Guid.NewGuid().ToByteArray();
+        }
+    }
+
     internal static void TouchDoRowVersion(AppDbContext db, SaDo deliveryOrder)
     {
         if (!db.Database.IsSqlServer())

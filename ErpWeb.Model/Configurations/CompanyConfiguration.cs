@@ -34,9 +34,24 @@ public class CompanyConfiguration : IEntityTypeConfiguration<Company>
         builder.Property(e => e.CurrencyCode).HasMaxLength(3);
         builder.Property(e => e.TimeZoneId).HasMaxLength(64);
 
+        // Sales pricing method token; width mirrors SaCompanyPriceMethod.MaxLength in Core (the
+        // model layer must not reference Core, so the literal is intentional and must stay in sync).
+        builder.Property(e => e.SalesPriceMethod).HasMaxLength(32);
+
         builder.Property(e => e.CreatedBy).HasMaxLength(10);
         builder.Property(e => e.ModifiedBy).HasMaxLength(10);
         builder.Property(e => e.IsActive).HasDefaultValue(true);
+
+        // LHDN e-Invoice supplier profile. Non-secret only: the client id/secret and certificate
+        // password never live in the database (see EInvoiceServiceCollectionExtensions).
+        builder.Property(e => e.EInvMsicCode).HasColumnName("EInvMSICCode").HasMaxLength(20);
+        builder.Property(e => e.EInvBizDescription).HasMaxLength(300);
+        builder.Property(e => e.EInvSstNo).HasMaxLength(50);
+        builder.Property(e => e.EInvRegType).HasMaxLength(20);
+        builder.Property(e => e.EInvStateCode).HasMaxLength(10);
+        builder.Property(e => e.EInvCountryCode).HasMaxLength(10);
+        builder.Property(e => e.EInvOnBehalfTin).HasMaxLength(50);
+        builder.Property(e => e.EInvDocumentVersion).HasMaxLength(10);
 
         builder.HasIndex(e => e.CompanyCode)
             .IsUnique()

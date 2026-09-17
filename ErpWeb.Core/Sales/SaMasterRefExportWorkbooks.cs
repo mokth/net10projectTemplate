@@ -88,8 +88,15 @@ public static class SaMasterRefExportWorkbooks
 
     public static readonly string[] CustPriceGroupHeaders = ["Code", "Description", "Items", "Active"];
 
+    // Phase 3: a price list may hold SEVERAL rows for one item + UOM (quantity tiers and promotions),
+    // so the band, the validity window and the currency are part of what identifies a line. Without them
+    // the export produced indistinguishable duplicate rows and silently dropped the data that tells them
+    // apart. Currency BLANK means the company base currency, never "unknown".
     public static readonly string[] CustPriceHeaders =
-        ["Price Group", "Item", "Description", "UOM", "Selling Price", "Pack Size"];
+    [
+        "Price Group", "Item", "Description", "UOM", "Min Qty", "Max Qty",
+        "Valid From", "Valid To", "Currency", "Selling Price", "Pack Size"
+    ];
 
     public static readonly string[] ItemCustHeaders =
         ["Customer", "Item", "Description", "Customer Item Code", "UOM", "MOQ", "Unit Price", "Currency", "Status"];
@@ -116,6 +123,11 @@ public static class SaMasterRefExportWorkbooks
             CellText(r.ICode),
             CellText(r.IDesc),
             CellText(r.UOM),
+            CellText(r.MinQty?.ToString(CultureInfo.InvariantCulture)),
+            CellText(r.MaxQty?.ToString(CultureInfo.InvariantCulture)),
+            CellText(r.ValidFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+            CellText(r.ValidTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+            CellText(r.CurrencyCode),
             CellText(Money(r.SellingPrice)),
             CellText(Money(r.SellPackSize))
         }).ToList());

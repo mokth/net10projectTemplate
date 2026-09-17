@@ -1201,10 +1201,12 @@ public class SaRefMasterServiceTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), PermissionCodes.Export, It.IsAny<CancellationToken>()))
             .ReturnsAsync(canExport);
 
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(company, branch, location);
         return new SaSalesRefService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(company, branch, location),
+            tenant,
             access.Object,
-            new FixedCurrentDateService(FixedToday));
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory, tenant));
     }
 }

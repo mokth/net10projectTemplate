@@ -23,6 +23,7 @@ public class SaCustConfiguration : IEntityTypeConfiguration<SaCust>
         builder.Property(e => e.SubGroupCode).HasMaxLength(20);
         builder.Property(e => e.IndustryCode).HasMaxLength(20);
         builder.Property(e => e.ChannelCode).HasMaxLength(20);
+        builder.Property(e => e.CustSource).HasMaxLength(20);
 
         builder.Property(e => e.Address1).HasMaxLength(100);
         builder.Property(e => e.Address2).HasMaxLength(100);

@@ -16,6 +16,12 @@ public class SaCust
     public string? IndustryCode { get; set; }
     public string? ChannelCode { get; set; }
 
+    /// <summary>
+    /// Lead / acquisition source (IvMSCode <c>SOURCE</c>). Phase 1 sales analysis joins this live
+    /// value, so sales-by-source is <b>current</b> attribution, not a historical snapshot.
+    /// </summary>
+    public string? CustSource { get; set; }
+
     public string? Address1 { get; set; }
     public string? Address2 { get; set; }
     public string? Address3 { get; set; }

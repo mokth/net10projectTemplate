@@ -90,6 +90,24 @@ public partial class SaSo : PageBase, IDisposable
     private bool? _taxable;
     private byte[] _rowVersion = [];
     private int _customerApplySeq;
+
+    /// <summary>Sequence guard for price resolution; a slow first response must not win over a newer one.</summary>
+    private int _priceApplySeq;
+
+    /// <summary>
+    /// Non-null when the engine refused to price the line. While it is set the popup Save is blocked,
+    /// because the alternative — the legacy <c>?? 0m</c> seed — silently sells the item for RM 0.00.
+    /// </summary>
+    private string? _priceBlockMessage;
+
+    /// <summary>Operator-facing provenance of the resolved price, e.g. "Customer item price (MOQ=100)".</summary>
+    private string? _priceHint;
+
+    /// <summary>
+    /// The discount slots the ENGINE last wrote. Used to tell an untouched auto-assigned discount from
+    /// one the user has since edited, so re-resolving never clobbers a manual entry.
+    /// </summary>
+    private (decimal P1, decimal P2, decimal A1, decimal A2)? _autoDiscountSlots;
     private int? _shipToLine;
     private IReadOnlyList<SaCustAddressVm> _shipToOptions = [];
     private CancellationTokenSource _cts = new();
@@ -120,6 +138,14 @@ public partial class SaSo : PageBase, IDisposable
     protected bool IsHistoricalRevision => !IsCurrentDocument || IsSupersededStatus;
     protected bool IsReadOnlyPresentation => IsViewMode || IsClosedStatus;
     protected bool CanEditDocument => (IsNewMode || IsEditMode || IsReviseMode) && !IsViewMode && !IsClosedStatus && !IsHistoricalRevision;
+
+    /// <summary>
+    /// Phase 4: may this user move a line price away from the price the engine resolved? Without it the
+    /// price control renders READ-ONLY. The server enforces the same rule, so this only governs what
+    /// the operator can attempt, never what is accepted.
+    /// </summary>
+    protected bool CanOverridePrice { get; set; }
+
     protected bool CanEditCustomer => CanEditDocument && !IsShippedStatus;
     protected bool CanEditAddresses => CanEditDocument && !string.IsNullOrWhiteSpace(CustCode);
     protected bool CanEditFromView =>
@@ -197,6 +223,9 @@ public partial class SaSo : PageBase, IDisposable
         PopupVisible = false;
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.SalesOrder, PermissionCodes.Edit);
+        // Phase 4: without this the price control is read-only. The SERVER enforces the same rule, so
+        // this only governs what the operator can attempt, not what is accepted.
+        CanOverridePrice = await AccessRights.CanAsync(MenuCodes.SalesOrder, PermissionCodes.PriceOverride);
         var lookups = await Sos.GetLookupsAsync(_cts.Token);
         if (_disposed)
         {
@@ -686,6 +715,9 @@ public partial class SaSo : PageBase, IDisposable
         };
         PopupDiscountIsAmount = false;
         PopupError = null;
+        _priceBlockMessage = null;
+        _priceHint = null;
+        _autoDiscountSlots = null;
         PopupVisible = true;
     }
 
@@ -698,9 +730,23 @@ public partial class SaSo : PageBase, IDisposable
 
         _editingLine = line;
         Popup = line.Clone();
+
+        // Phase 4: an EXISTING line has no stored engine baseline unless it was ALREADY overridden, so
+        // adopt the price the document already carried as the baseline. Without this, changing the price
+        // on a reopened line would not be an override at all — no reason demanded, nothing recorded.
+        // `??=` keeps a real prior engine price when one exists, instead of overwriting it with the
+        // overridden value and losing the original.
+        Popup.OriginalUnitPrice ??= line.UnitPrice;
         RefreshPackFromItem(Popup);
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
+        _priceBlockMessage = null;
+        _priceHint = null;
+
+        // Re-opening a DRAFT line deliberately does NOT re-price it: the price is re-resolved only when
+        // a pricing input actually changes, so editing an unrelated field can never silently move the
+        // line to today's price. The stored slots become the baseline for that later comparison.
+        _autoDiscountSlots = (Popup.ItemDiscount, Popup.ItemDiscount2, Popup.ItemDiscAmount, Popup.ItemDiscAmount1);
         PopupVisible = true;
     }
 
@@ -721,12 +767,13 @@ public partial class SaSo : PageBase, IDisposable
         CanMutateLines
         && !(IsShippedStatus && line.ShippedQty > 0m);
 
-    protected void OnPopupItemChanged(string? iCode)
+    protected async Task OnPopupItemChangedAsync(string? iCode)
     {
         Popup.ICode = iCode ?? string.Empty;
         var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
         if (item is null)
         {
+            _priceHint = null;
             return;
         }
 
@@ -735,7 +782,7 @@ public partial class SaSo : PageBase, IDisposable
         Popup.SellingUom = item.SellingUom;
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
-        Popup.UnitPrice = item.SellingPrice ?? 0m;
+
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
         {
@@ -746,7 +793,140 @@ public partial class SaSo : PageBase, IDisposable
         {
             Popup.Warehouse = item.DefWarehouse ?? Warehouses.FirstOrDefault()?.WarehouseCode;
         }
+
+        // A new item means new discount rules: drop the previous auto-assignment so the engine may
+        // repopulate the slots for THIS item.
+        _autoDiscountSlots = null;
+        Popup.ItemDiscount = Popup.ItemDiscount2 = Popup.ItemDiscount3 = 0m;
+        Popup.ItemDiscount4 = Popup.ItemDiscount5 = Popup.ItemDiscount6 = 0m;
+        Popup.ItemDiscAmount = Popup.ItemDiscAmount1 = 0m;
+        PopupDiscountIsAmount = false;
+
+        // NOTE: UnitPrice is deliberately NOT seeded from item.SellingPrice here. The server engine
+        // decides it, and a missing price must block rather than become RM 0.00.
+        await ResolvePopupPriceAsync(assignDiscountSlots: true);
     }
+
+    protected async Task OnPopupQuantityChangedAsync(decimal qty)
+    {
+        Popup.OrderQty = qty;
+        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+    }
+
+    /// <summary>
+    /// Toggling the basis changes the STORED price, so the price is re-resolved. The discount slots are
+    /// left untouched: the user may have edited them, and the document engine recomputes the effective
+    /// discount from the slots on every recalculation anyway.
+    /// </summary>
+    protected async Task OnPopupBasisChangedAsync(bool inclusive)
+    {
+        Popup.IsInclusive = inclusive;
+        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+    }
+
+    protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
+    {
+        Popup.TaxGrCode = taxGrCode;
+        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// The single call site for line pricing. Stages 1-3 run server-side; stage 4 stays in
+    /// <see cref="RecalcDocument"/>. Every trigger (item, quantity, basis, tax) funnels through here.
+    /// </summary>
+    private async Task ResolvePopupPriceAsync(bool assignDiscountSlots)
+    {
+        if (string.IsNullOrWhiteSpace(Popup.ICode) || string.IsNullOrWhiteSpace(CustCode))
+        {
+            return;
+        }
+
+        var seq = Interlocked.Increment(ref _priceApplySeq);
+
+        var uom = !string.IsNullOrWhiteSpace(Popup.SellingUom)
+            ? Popup.SellingUom!
+            : Popup.StdUom ?? string.Empty;
+
+        var result = await SalesRefService.ResolveLinePricingAsync(
+            new SaLinePricingRequest
+            {
+                CustCode = CustCode!,
+                ICode = Popup.ICode,
+                UOM = uom,
+                Qty = Popup.OrderQty,
+                DocDate = SoDate,
+                DocumentCurrency = Currency,
+                IClass = Popup.Classification,
+                TaxPercent = ResolveTaxPercent(Popup.TaxGrCode),
+                IsInclusive = Popup.IsInclusive,
+                DiscountMethod = _discountMethod
+            },
+            _cts.Token);
+
+        if (seq != _priceApplySeq || _disposed)
+        {
+            return;
+        }
+
+        if (!result.Succeeded || result.Data is null)
+        {
+            _priceHint = null;
+            // A blocked line must not keep a stale provenance from an earlier successful resolve, and
+            // it must not keep a stale override baseline either — there is nothing left to compare to.
+            Popup.PricingSource = null;
+            Popup.PricingRef = null;
+            Popup.OriginalUnitPrice = null;
+            Popup.OverrideReason = null;
+            _priceBlockMessage = result.Message ?? "No price could be resolved for this line.";
+            PopupError = _priceBlockMessage;
+            return;
+        }
+
+        var priced = result.Data;
+
+        Popup.UnitPrice = priced.UnitPrice;
+        // Phase 4: a fresh resolution REBASES the override. The engine has just produced an
+        // authoritative price, so any override recorded against the previous one is meaningless.
+        Popup.OriginalUnitPrice = priced.UnitPrice;
+        Popup.OverrideReason = null;
+        Popup.PricingSource = priced.PricingSourceToken;
+        Popup.PricingRef = priced.PricingRef;
+        _priceHint = priced.Describe();
+
+        if (assignDiscountSlots && DiscountSlotsAreUntouched())
+        {
+            Popup.ItemDiscount = priced.ItemDiscount;
+            Popup.ItemDiscount2 = priced.ItemDiscount2;
+            Popup.ItemDiscAmount = priced.ItemDiscAmount;
+            Popup.ItemDiscAmount1 = priced.ItemDiscAmount1;
+            PopupDiscountIsAmount = priced.ItemDiscAmount != 0m || priced.ItemDiscAmount1 != 0m;
+            _autoDiscountSlots = (priced.ItemDiscount, priced.ItemDiscount2, priced.ItemDiscAmount, priced.ItemDiscAmount1);
+        }
+
+        // Clear a previous engine block, but never a user-facing validation message.
+        if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && PopupError == _priceBlockMessage)
+        {
+            PopupError = null;
+        }
+
+        _priceBlockMessage = null;
+    }
+
+    /// <summary>True when the discount fields still hold exactly what the engine last assigned.</summary>
+    private bool DiscountSlotsAreUntouched() =>
+        _autoDiscountSlots is not { } last
+        || (Popup.ItemDiscount == last.P1
+            && Popup.ItemDiscount2 == last.P2
+            && Popup.ItemDiscAmount == last.A1
+            && Popup.ItemDiscAmount1 == last.A2);
+
+    /// <summary>
+    /// Phase 4: has the operator moved the price away from what the engine resolved? A line with no
+    /// recorded engine price is NOT an override — there is nothing to compare against, and inventing a
+    /// requirement there would block ordinary entry (an older client, or a line typed without a resolve).
+    /// </summary>
+    private bool IsPriceOverridden() =>
+        Popup.OriginalUnitPrice is { } resolved && resolved != Popup.UnitPrice;
 
     protected void OnPopupDiscountModeChanged(bool amountMode)
     {
@@ -774,6 +954,22 @@ public partial class SaSo : PageBase, IDisposable
         if (Popup.OrderQty <= 0m)
         {
             PopupError = "Order quantity must be greater than zero.";
+            return;
+        }
+
+        // The engine refused to price this line. Saving it would persist a price the pricing rules
+        // never produced (the legacy defect was RM 0.00).
+        if (!string.IsNullOrWhiteSpace(_priceBlockMessage))
+        {
+            PopupError = _priceBlockMessage;
+            return;
+        }
+
+        // Phase 4: a price moved away from the resolved one is an override and needs a reason. Checked
+        // here for a clear message; the SERVER enforces the same rule and the permission.
+        if (IsPriceOverridden() && string.IsNullOrWhiteSpace(Popup.OverrideReason))
+        {
+            PopupError = SaPriceOverridePolicy.ReasonRequiredMessage;
             return;
         }
 
@@ -930,6 +1126,12 @@ public partial class SaSo : PageBase, IDisposable
             return true;
         }
 
+        // A previous attempt's field errors must never linger next to a different failure kind.
+        if (result.ErrorKind != SaSoErrorKind.Validation)
+        {
+            ValidationErrors.Clear();
+        }
+
         switch (result.ErrorKind)
         {
             case SaSoErrorKind.Validation:
@@ -937,10 +1139,7 @@ public partial class SaSo : PageBase, IDisposable
                     x => x.Key,
                     x => x.Value,
                     StringComparer.OrdinalIgnoreCase);
-                var firstDetail = ValidationErrors.Values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-                ErrorMessage = !string.IsNullOrWhiteSpace(firstDetail)
-                    ? firstDetail
-                    : (result.ErrorMessage ?? "Validation failed.");
+                ErrorMessage = BuildValidationMessage(ValidationErrors, result.ErrorMessage);
                 break;
             case SaSoErrorKind.Concurrency:
                 ConcurrencyVisible = true;
@@ -1116,6 +1315,25 @@ public sealed class SaSoLineVm
     public string? StdUom { get; set; }
     public string? Warehouse { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>
+    /// The engine's pricing provenance for this line (plan Phase 2). Set when the price is resolved,
+    /// persisted on save, and never used to re-derive <see cref="UnitPrice"/>.
+    /// </summary>
+    public string? PricingSource { get; set; }
+
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the ENGINE resolved, i.e. what <see cref="UnitPrice"/> was immediately after
+    /// resolution. If the saved <see cref="UnitPrice"/> differs, that is an OVERRIDE and the server
+    /// refuses it without <c>PRICE_OVERRIDE</c> and a reason. NULL means "no override declared".
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why an operator moved the price away from the resolved one.</summary>
+    public string? OverrideReason { get; set; }
+
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }
     public decimal ItemDiscount3 { get; set; }
@@ -1155,6 +1373,10 @@ public sealed class SaSoLineVm
         StdUom = StdUom,
         Warehouse = Warehouse,
         UnitPrice = UnitPrice,
+        PricingSource = PricingSource,
+        PricingRef = PricingRef,
+        OriginalUnitPrice = OriginalUnitPrice,
+        OverrideReason = OverrideReason,
         ItemDiscount = ItemDiscount,
         ItemDiscount2 = ItemDiscount2,
         ItemDiscount3 = ItemDiscount3,
@@ -1187,6 +1409,10 @@ public sealed class SaSoLineVm
             OrderQty = OrderQty,
             Warehouse = Warehouse,
             UnitPrice = UnitPrice,
+            PricingSource = PricingSource,
+            PricingRef = PricingRef,
+            OriginalUnitPrice = OriginalUnitPrice,
+            OverrideReason = OverrideReason,
             ItemDiscount = ItemDiscount,
             ItemDiscount2 = ItemDiscount2,
             ItemDiscount3 = ItemDiscount3,
@@ -1241,6 +1467,10 @@ public sealed class SaSoLineVm
             StdUom = dto.StdUom,
             Warehouse = dto.Warehouse,
             UnitPrice = dto.UnitPrice,
+            PricingSource = dto.PricingSource,
+            PricingRef = dto.PricingRef,
+            OriginalUnitPrice = dto.OriginalUnitPrice,
+            OverrideReason = dto.OverrideReason,
             ItemDiscount = dto.ItemDiscount,
             ItemDiscount2 = dto.ItemDiscount2,
             ItemDiscount3 = dto.ItemDiscount3,

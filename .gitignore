@@ -39,6 +39,7 @@ artifacts/
 
 # Secrets / local
 appsettings.*.local.json
+appsettings.local.json
 **/secrets.json
 .env
 .env.*
@@ -47,6 +48,9 @@ appsettings.*.local.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Runtime data: generated/signed e-Invoice JSON payloads and uploaded attachments
+ErpWeb/App_Data/
 
 # VS Code C# Dev Tools - Auto-generated runners
 .vscodecsdt/Runners/

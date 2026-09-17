@@ -126,6 +126,8 @@ BEGIN
         LocalAmount decimal(18,2) NOT NULL CONSTRAINT DF_SaDODetail_LocalAmount DEFAULT (0),
         StockControl bit NOT NULL CONSTRAINT DF_SaDODetail_StockControl DEFAULT (1),
         Classification nvarchar(50) NULL,
+        OriginalUnitPrice decimal(18,4) NULL,
+        OverrideReason nvarchar(100) NULL,
         CONSTRAINT PK_SaDODetail PRIMARY KEY CLUSTERED (CompanyCode, BranchCode, DONo, Line),
         CONSTRAINT FK_SaDODetail_SaDO FOREIGN KEY (CompanyCode, BranchCode, DONo)
             REFERENCES dbo.SaDO (CompanyCode, BranchCode, DONo) ON DELETE CASCADE

@@ -11,6 +11,14 @@ public class SaDoDetailConfiguration : IEntityTypeConfiguration<SaDoDetail>
         builder.ToTable("SaDODetail");
         builder.HasKey(e => new { e.CompanyCode, e.BranchCode, e.DoNo, e.Line });
 
+        // Pricing provenance (plan Phase 2): WHICH source priced the line. Explanatory only.
+        builder.Property(e => e.PricingSource).HasMaxLength(40);
+        builder.Property(e => e.PricingRef).HasMaxLength(60);
+
+        // Price override (plan Phase 4): the engine price is retained only when an operator changed it.
+        builder.Property(e => e.OriginalUnitPrice).HasPrecision(18, 4);
+        builder.Property(e => e.OverrideReason).HasMaxLength(100);
+
         builder.Property(e => e.CompanyCode).HasMaxLength(10).IsRequired();
         builder.Property(e => e.BranchCode).HasMaxLength(10).IsRequired();
         builder.Property(e => e.DoNo).HasColumnName("DONo").HasMaxLength(30).IsRequired();

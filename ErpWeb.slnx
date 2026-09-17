@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="ErpWeb.Core/ErpWeb.Core.csproj" />
+  <Project Path="ErpWeb.EInvoiceLib/ErpWeb.EInvoiceLib.csproj" Id="c16e9700-3769-455d-a163-da8bc0dea64c" />
   <Project Path="ErpWeb.Library/ErpWeb.Library.csproj" />
   <Project Path="ErpWeb.Model/ErpWeb.Model.csproj" />
   <Project Path="ErpWeb.Report/ErpWeb.Report.csproj" />

@@ -1,0 +1,151 @@
+@page "/sales/einvoice/tin"
+
+@inherits Components.Pages.PageBase
+
+<PageTitle>e-Invoice TIN Tools</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCode">
+    <div class="iv-page">
+        @if (StatusMessage is not null)
+        {
+            <div class="iv-toast @(StatusIsError ? "iv-toast--err" : "iv-toast--ok")" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-id-card"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · LHDN e-Invoice</p>
+                <h1 class="iv-title">TIN Tools</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Read-only</span>
+                    <span class="iv-chip">MyInvois taxpayer API</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Matches</span>
+                <strong>@SearchRows.Count.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <h2 class="iv-card__title">Validate TIN</h2>
+            <p class="iv-field__label">
+                Confirms that MyInvois recognises this TIN for the holder of the given identity document.
+            </p>
+            <div class="iv-form-grid">
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-validate-idtype">Identity type</label>
+                    <DxComboBox Data="@IdTypes"
+                                @bind-Value="@ValidateIdType"
+                                CssClass="w-100"
+                                id="tin-validate-idtype" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-validate-idvalue">Identity value</label>
+                    <DxTextBox @bind-Text="@ValidateIdValue"
+                               CssClass="w-100"
+                               NullText="BRN / NRIC / passport / army number"
+                               id="tin-validate-idvalue" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-validate-tin">TIN</label>
+                    <DxTextBox @bind-Text="@ValidateTinValue"
+                               CssClass="w-100"
+                               NullText="e.g. C1234567890"
+                               id="tin-validate-tin" />
+                </div>
+            </div>
+
+            <div class="tin-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsBusy ? "Checking…" : "Validate TIN")"
+                          IconCssClass="fa-solid fa-clipboard-check"
+                          Click="@OnValidateAsync"
+                          Enabled="@(!IsBusy)" />
+            </div>
+
+            @if (ValidateResult is not null)
+            {
+                <p class="tin-result @(ValidateResult.IsValid ? "tin-result--ok" : "tin-result--err")" role="status">
+                    @if (ValidateResult.IsValid)
+                    {
+                        <span><strong>Valid.</strong> MyInvois recognised TIN @ValidateResult.Tin for @ValidateResult.IdType @ValidateResult.IdValue.</span>
+                    }
+                    else
+                    {
+                        <span><strong>Not valid.</strong> @ValidateResult.ErrorMessage</span>
+                    }
+                </p>
+            }
+        </section>
+
+        <section class="iv-card">
+            <h2 class="iv-card__title">Search TIN</h2>
+            <p class="iv-field__label">Search by taxpayer name, or by an identity type with its value.</p>
+            <div class="iv-form-grid">
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-search-name">Taxpayer name</label>
+                    <DxTextBox @bind-Text="@SearchName"
+                               CssClass="w-100"
+                               NullText="Registered taxpayer name"
+                               id="tin-search-name" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-search-idtype">Identity type</label>
+                    <DxComboBox Data="@IdTypes"
+                                @bind-Value="@SearchIdType"
+                                CssClass="w-100"
+                                NullText="Any"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                id="tin-search-idtype" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label" for="tin-search-idvalue">Identity value</label>
+                    <DxTextBox @bind-Text="@SearchIdValue"
+                               CssClass="w-100"
+                               NullText="BRN / NRIC / passport / army number"
+                               id="tin-search-idvalue" />
+                </div>
+            </div>
+
+            <div class="tin-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsBusy ? "Searching…" : "Search TIN")"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          Click="@OnSearchAsync"
+                          Enabled="@(!IsBusy)" />
+            </div>
+
+            @if (SearchError is not null)
+            {
+                <p class="tin-result tin-result--err" role="alert">@SearchError</p>
+            }
+            else if (HasSearched)
+            {
+                @if (SearchRows.Count == 0)
+                {
+                    <p class="tin-result">No taxpayer matched.</p>
+                }
+                else
+                {
+                    <table class="tin-table">
+                        <thead>
+                            <tr><th>TIN</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in SearchRows)
+                            {
+                                <tr><td class="tin-table__tin">@row.Tin</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        </section>
+    </div>
+</MenuAuthorize>

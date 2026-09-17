@@ -199,10 +199,22 @@ BEGIN
         PostedBy nvarchar(20) NULL,
         RollbackDate datetime NULL,
         RollbackBy nvarchar(20) NULL,
+        -- LHDN e-Invoice state (names/spellings mirror dbo.SaCDN and are the EF contract).
+        IRNMCancelOn datetime2 NULL,
+        IRBMSubmitID nvarchar(50) NULL,
+        IRBMUUID nvarchar(50) NULL,
+        IRBMORIUUID nvarchar(50) NULL,
+        IRBMSentOn datetime2 NULL,
+        IRBMValidOn datetime2 NULL,
+        IRBMError nvarchar(500) NULL,
+        IRBMStatus nvarchar(50) NULL,
+        IRBMOutcome nvarchar(30) NULL,
         Created datetime2 NULL,
         UserID nvarchar(20) NULL,
-        Updated datetime2 NULL,
-        UpdatedUID nvarchar(20) NULL,
+        -- dbo.SaInvoice uses ModifiedDate/ModifiedBy, NOT the SaCust/SaSo/SaDo/SaCdn pair
+        -- Updated/UpdatedUID. SaInvoiceConfiguration maps to these names.
+        ModifiedDate datetime2 NULL,
+        ModifiedBy nvarchar(40) NULL,
         RowVersion rowversion NOT NULL,
         CONSTRAINT PK_SaInvoice PRIMARY KEY (CompanyCode, BranchCode, InvNo)
     );
@@ -222,6 +234,31 @@ GO
 IF COL_LENGTH(N'dbo.SaInvoice', N'RollbackBy') IS NULL ALTER TABLE dbo.SaInvoice ADD RollbackBy nvarchar(20) NULL;
 GO
 IF COL_LENGTH(N'dbo.SaInvoice', N'RowVersion') IS NULL ALTER TABLE dbo.SaInvoice ADD RowVersion rowversion NOT NULL;
+GO
+-- Audit pair + LHDN e-Invoice state. SaInvoiceConfiguration maps every one of these, and a
+-- full-entity read (the invoice list) selects ALL mapped columns - so a single missing column
+-- breaks the page with "Invalid column name" even though the grid shows none of them.
+IF COL_LENGTH(N'dbo.SaInvoice', N'ModifiedDate') IS NULL ALTER TABLE dbo.SaInvoice ADD ModifiedDate datetime2 NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'ModifiedBy') IS NULL ALTER TABLE dbo.SaInvoice ADD ModifiedBy nvarchar(40) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRNMCancelOn') IS NULL ALTER TABLE dbo.SaInvoice ADD IRNMCancelOn datetime2 NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMSubmitID') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMSubmitID nvarchar(50) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMUUID') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMUUID nvarchar(50) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMORIUUID') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMORIUUID nvarchar(50) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMSentOn') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMSentOn datetime2 NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMValidOn') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMValidOn datetime2 NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMError') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMError nvarchar(500) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMStatus') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMStatus nvarchar(50) NULL;
+GO
+IF COL_LENGTH(N'dbo.SaInvoice', N'IRBMOutcome') IS NULL ALTER TABLE dbo.SaInvoice ADD IRBMOutcome nvarchar(30) NULL;
 GO
 IF COL_LENGTH(N'dbo.SaInvoice', N'InvPrefix') IS NULL ALTER TABLE dbo.SaInvoice ADD InvPrefix nvarchar(20) NULL;
 GO
@@ -307,6 +344,8 @@ IF OBJECT_ID(N'dbo.SaInvoiceDetail', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SaInvoiceDetail (
         ID int IDENTITY(1,1) NOT NULL CONSTRAINT PK_SaInvoiceDetail PRIMARY KEY,
+        OriginalUnitPrice decimal(18,4) NULL,
+        OverrideReason nvarchar(100) NULL,
         CompanyCode nvarchar(10) NOT NULL,
         BranchCode nvarchar(10) NOT NULL,
         InvNo nvarchar(30) NOT NULL,

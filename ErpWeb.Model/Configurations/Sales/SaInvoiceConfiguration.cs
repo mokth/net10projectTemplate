@@ -68,13 +68,30 @@ public class SaInvoiceConfiguration : IEntityTypeConfiguration<SaInvoice>
         // Explicit alias: the SQL column is ProjID (see scripts/create-sainvoice.sql).
         builder.Property(e => e.ProjId).HasColumnName("ProjID").HasMaxLength(20);
         builder.Property(e => e.PostedDate).HasColumnType("datetime");
+
+        // LHDN e-Invoice state. Column names/spellings mirror SaCDN (IRNMCancelOn included) so the
+        // two document tables stay consistent.
+        builder.Property(e => e.IrnmCancelOn).HasColumnName("IRNMCancelOn").HasColumnType("datetime2");
+        builder.Property(e => e.IrbmSubmitId).HasColumnName("IRBMSubmitID").HasMaxLength(50);
+        builder.Property(e => e.IrbmUuid).HasColumnName("IRBMUUID").HasMaxLength(50);
+        builder.Property(e => e.IrbmOriUuid).HasColumnName("IRBMORIUUID").HasMaxLength(50);
+        builder.Property(e => e.IrbmSentOn).HasColumnName("IRBMSentOn").HasColumnType("datetime2");
+        builder.Property(e => e.IrbmValidOn).HasColumnName("IRBMValidOn").HasColumnType("datetime2");
+        builder.Property(e => e.IrbmError).HasColumnName("IRBMError").HasMaxLength(500);
+        builder.Property(e => e.IrbmStatus).HasColumnName("IRBMStatus").HasMaxLength(50);
+        builder.Property(e => e.IrbmOutcome).HasColumnName("IRBMOutcome").HasMaxLength(30);
+
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackDate).HasColumnType("datetime");
         builder.Property(e => e.RollbackBy).HasMaxLength(20);
+        // Audit pair spelled as the LIVE columns. dbo.SaInvoice is the one sales document table that
+        // does NOT use the legacy Updated/UpdatedUID pair (SaCust/SaSo/SaDo/SaCdn all do) - it uses
+        // ModifiedDate/ModifiedBy. Do not alias these back: a full-entity read (the invoice list)
+        // selects every mapped column, so a wrong name fails with "Invalid column name" on page load.
         builder.Property(e => e.CreatedDate).HasColumnName("Created").HasColumnType("datetime2");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(20);
-        builder.Property(e => e.ModifiedDate).HasColumnName("Updated").HasColumnType("datetime2");
-        builder.Property(e => e.ModifiedBy).HasColumnName("UpdatedUID").HasMaxLength(20);
+        builder.Property(e => e.ModifiedDate).HasColumnType("datetime2");
+        builder.Property(e => e.ModifiedBy).HasMaxLength(40);
         builder.Property(e => e.RowVersion).IsRowVersion();
 
         builder.HasMany(e => e.Details)
@@ -87,5 +104,12 @@ public class SaInvoiceConfiguration : IEntityTypeConfiguration<SaInvoice>
 
         builder.HasIndex(e => new { e.CompanyCode, e.CustCode })
             .HasDatabaseName("IX_SaInvoice_Company_CustCode");
+
+        // Sales-analysis Phase 1 (R8): the one index justified by the aggregate queries — dimensional
+        // summary / attainment / period chips all filter CompanyCode + Status and range on InvDate.
+        // Included columns cover the sums and groupings without widening the key.
+        builder.HasIndex(e => new { e.CompanyCode, e.Status, e.InvDate })
+            .IncludeProperties(e => new { e.TotAmnt, e.SalesmanCode, e.BranchCode })
+            .HasDatabaseName("IX_SaInvoice_Company_Status_InvDate");
     }
 }

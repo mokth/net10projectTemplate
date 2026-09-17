@@ -8,6 +8,12 @@ public sealed class SaCustListQuery
     public string? CustGroupCode { get; set; }
     public string? SalesmanCode { get; set; }
     public string? AreaCode { get; set; }
+
+    /// <summary>
+    /// Lead / acquisition source filter (sales-analysis Phase 1). Sales analysis joins this value live,
+    /// so the label everywhere is "Customer Source (current)".
+    /// </summary>
+    public string? CustSource { get; set; }
     public string? SortField { get; set; }
     public bool SortDescending { get; set; }
     public int Skip { get; set; }
@@ -23,6 +29,7 @@ public sealed class SaCustListRow
     public string? CustGroupCode { get; init; }
     public string? SalesmanCode { get; init; }
     public string? AreaCode { get; init; }
+    public string? CustSource { get; init; }
     public string? City { get; init; }
     public string? Tel { get; init; }
     public string? PayCode { get; init; }
@@ -87,6 +94,12 @@ public sealed class SaCustEditVm
     public string? SubGroupCode { get; set; }
     public string? IndustryCode { get; set; }
     public string? ChannelCode { get; set; }
+
+    /// <summary>
+    /// Lead / acquisition source. Phase 1 analysis joins this live, so sales-by-source is current
+    /// attribution rather than a historical snapshot (see the Sales Summary screen caption).
+    /// </summary>
+    public string? CustSource { get; set; }
     public bool IsActive { get; set; } = true;
 
     public string? Address1 { get; set; }

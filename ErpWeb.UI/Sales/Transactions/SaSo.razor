@@ -15,13 +15,7 @@
                 <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
-        {
-            <div class="sdoc-toast sdoc-toast--err" role="alert">
-                <span>@ErrorMessage</span>
-                <button type="button" class="sdoc-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
-            </div>
-        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
 
         @if (IsLoading)
         {
@@ -442,6 +436,27 @@
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Amount)" Caption="Amount" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn Caption="Issues" Width="220px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var issuesRow = (SaSoLineVm)context.DataItem;
+                                    var issues = LineErrorMessages(ValidationErrors, Lines.IndexOf(issuesRow) + 1);
+                                }
+                                @if (issues.Count > 0)
+                                {
+                                    <div class="sdoc-cell-stack" title="@string.Join(' ', issues)">
+                                        @foreach (var issue in issues.Take(2))
+                                        {
+                                            <span class="sdoc-field-error">@issue</span>
+                                        }
+                                        @if (issues.Count > 2)
+                                        {
+                                            <span class="sdoc-field-error">+@(issues.Count - 2) more</span>
+                                        }
+                                    </div>
+                                }
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                     </Columns>
                     <EmptyDataAreaTemplate>
                         <div class="sdoc-empty">
@@ -502,7 +517,7 @@
                                             TextFieldName="@nameof(SaSoItemLookupRow.DisplayText)"
                                             ValueFieldName="@nameof(SaSoItemLookupRow.ICode)"
                                             Value="@Popup.ICode"
-                                            ValueChanged="@((string? v) => OnPopupItemChanged(v))"
+                                            ValueChanged="@((string? v) => OnPopupItemChangedAsync(v))"
                                             SearchMode="ListSearchMode.AutoSearch"
                                             Enabled="@CanEditDocument"
                                             NullText="Select item"
@@ -530,7 +545,11 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Order qty" ColSpanMd="3">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.OrderQty" Increment="1m" Enabled="@CanEditDocument" InputCssClass="required-field" />
+                                <DxSpinEdit Value="@Popup.OrderQty"
+                                            ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
+                                            Increment="1m"
+                                            Enabled="@CanEditDocument"
+                                            InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
@@ -575,12 +594,37 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@CanEditDocument" />
+                                @* Phase 4: an operator without PRICE_OVERRIDE sees the resolved price read-only. *@
+                                <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@(CanEditDocument && CanOverridePrice)" />
                             </Template>
                         </DxFormLayoutItem>
+                        @if (!string.IsNullOrWhiteSpace(_priceHint))
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                                <Template>
+                                    <p class="sdoc-field-hint">Price source: @_priceHint</p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        @if (IsPriceOverridden())
+                        {
+                            <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.OverrideReason"
+                                               maxlength="100"
+                                               InputCssClass="required-field" />
+                                    <p class="sdoc-field-hint">
+                                        Price changed from the resolved @Popup.OriginalUnitPrice?.ToString("n4").
+                                        The original is recorded on the line.
+                                    </p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
                         <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
                             <Template>
-                                <DxCheckBox @bind-Checked="@Popup.IsInclusive" Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
+                                <DxCheckBox Checked="@Popup.IsInclusive"
+                                            CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))"
+                                            Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Line tax" ColSpanMd="6">
@@ -588,7 +632,8 @@
                                 <DxComboBox Data="@TaxGroups"
                                             TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
                                             ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
-                                            @bind-Value="@Popup.TaxGrCode"
+                                            Value="@Popup.TaxGrCode"
+                                            ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
                                             SearchMode="ListSearchMode.AutoSearch"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                             Enabled="@CanEditDocument"
@@ -674,7 +719,10 @@
                 <div class="sdoc-popup-footer">
                     <div class="sdoc-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => PopupVisible = false)" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@PopupPrimaryText" Click="@OnPopupSave" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@PopupPrimaryText"
+                                  Click="@OnPopupSave"
+                                  Enabled="@(string.IsNullOrWhiteSpace(_priceBlockMessage))" />
                     </div>
                 </div>
             </Content>

@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
     public DbSet<MsRunningNo> MsRunningNos => Set<MsRunningNo>();
     public DbSet<AdSmNum> AdSmNums => Set<AdSmNum>();
     public DbSet<AdSmNumDate> AdSmNumDates => Set<AdSmNumDate>();
+    public DbSet<AdSmParam> AdSmParams => Set<AdSmParam>();
     public DbSet<MsDept> MsDepts => Set<MsDept>();
     public DbSet<MsProject> MsProjects => Set<MsProject>();
 
@@ -63,11 +64,15 @@ public class AppDbContext : DbContext
     public DbSet<SaDoDetail> SaDoDetails => Set<SaDoDetail>();
     public DbSet<SaSo> SaSos => Set<SaSo>();
     public DbSet<SaSoDetail> SaSoDetails => Set<SaSoDetail>();
+    public DbSet<SaQt> SaQts => Set<SaQt>();
+    public DbSet<SaQtDetail> SaQtDetails => Set<SaQtDetail>();
+    public DbSet<SaEInvoiceLog> SaEInvoiceLogs => Set<SaEInvoiceLog>();
     public DbSet<SaDocApplication> SaDocApplications => Set<SaDocApplication>();
     public DbSet<SaDocApplicationBackfillSkip> SaDocApplicationBackfillSkips => Set<SaDocApplicationBackfillSkip>();
     public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();
     public DbSet<SaPaymentTerm> SaPaymentTerms => Set<SaPaymentTerm>();
     public DbSet<SaSalesRep> SaSalesReps => Set<SaSalesRep>();
+    public DbSet<SaSalesRepTarget> SaSalesRepTargets => Set<SaSalesRepTarget>();
     public DbSet<SaCustSubGroup> SaCustSubGroups => Set<SaCustSubGroup>();
     public DbSet<SaShipVia> SaShipVias => Set<SaShipVia>();
     public DbSet<SaSOType> SaSOTypes => Set<SaSOType>();

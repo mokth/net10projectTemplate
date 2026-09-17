@@ -183,6 +183,68 @@
                     </DxFormLayoutItem>
                 </DxFormLayout>
             </EditForm>
+
+            @if (ShowTargets)
+            {
+                <div class="iv-card" style="margin-top:1rem;">
+                    <div class="iv-hero" style="padding-bottom:.25rem;">
+                        <div>
+                            <p class="iv-eyebrow">Sales Analysis</p>
+                            <h3 class="iv-title" style="font-size:1.05rem;">Monthly Targets</h3>
+                        </div>
+                    </div>
+                    <p style="font-size:.8rem;opacity:.8;">
+                        Company-wide targets. Attainment compares them with posted invoice totals for the
+                        months the analysis date range touches — a partial month still uses the full target.
+                    </p>
+
+                    <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:.5rem;">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="◀" Click="@(() => ChangeTargetYearAsync(-1))" Enabled="@(!TargetsBusy)" />
+                        <strong>@TargetYear</strong>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="▶" Click="@(() => ChangeTargetYearAsync(1))" Enabled="@(!TargetsBusy)" />
+                        @if (EditEnabled)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(TargetsBusy ? "Working…" : "Save Targets")"
+                                      Click="@SaveTargetsAsync"
+                                      Enabled="@(!TargetsBusy)" />
+                        }
+                        @if (!string.IsNullOrWhiteSpace(TargetMessage))
+                        {
+                            <span style="font-size:.85rem;">@TargetMessage</span>
+                        }
+                    </div>
+
+                    @if (TargetsBusy)
+                    {
+                        <p>Loading targets…</p>
+                    }
+                    else
+                    {
+                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem .75rem;">
+                            @foreach (var entry in TargetMonths)
+                            {
+                                <div style="display:flex;align-items:center;gap:.5rem;">
+                                    <span style="width:2.5rem;font-size:.85rem;">@MonthName(entry.Month)</span>
+                                    <DxSpinEdit @bind-Value="@entry.Amount"
+                                                MinValue="0"
+                                                Increment="100m"
+                                                ShowSpinButtons="false"
+                                                ReadOnly="@(!EditEnabled)"
+                                                CssClass="target-amount" />
+                                    @if (EditEnabled)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Clear"
+                                                  Click="@(() => ClearTargetAsync(entry))"
+                                                  Enabled="@(!TargetsBusy)" />
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </Content>
     </DxPopup>
 

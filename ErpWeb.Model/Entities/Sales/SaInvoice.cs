@@ -71,6 +71,25 @@ public class SaInvoice
     /// <summary>Project code (MsProject). Optional, nvarchar(20). Column is <c>ProjID</c>.</summary>
     public string? ProjId { get; set; }
 
+    /// <summary>When the LHDN e-Invoice cancellation succeeded. Column is <c>IRNMCancelOn</c> (existing spelling).</summary>
+    public DateTime? IrnmCancelOn { get; set; }
+    /// <summary>MyInvois submission UID (batch). Set when the submission is accepted by the API.</summary>
+    public string? IrbmSubmitId { get; set; }
+    /// <summary>MyInvois document UUID.</summary>
+    public string? IrbmUuid { get; set; }
+    /// <summary>Original document UUID. Null on an invoice; set on CN/DN to the source invoice UUID.</summary>
+    public string? IrbmOriUuid { get; set; }
+    /// <summary>When MyInvois accepted the submission.</summary>
+    public DateTime? IrbmSentOn { get; set; }
+    /// <summary>When the mapped e-Invoice status became <c>VALID</c>.</summary>
+    public DateTime? IrbmValidOn { get; set; }
+    /// <summary>Short latest user-facing error. Full detail lives in <see cref="SaEInvoiceLog"/>.</summary>
+    public string? IrbmError { get; set; }
+    /// <summary>ERP e-Invoice lifecycle status (NEW/SUBMITTING/SUBMITTED/VALID/INVALID/FAILED/REJECTED/CANCELLED).</summary>
+    public string? IrbmStatus { get; set; }
+    /// <summary>When <see cref="IrbmStatus"/> is FAILED: <c>ConfirmedFailure</c> or <c>Unknown</c>.</summary>
+    public string? IrbmOutcome { get; set; }
+
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }

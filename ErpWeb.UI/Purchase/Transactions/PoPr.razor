@@ -14,13 +14,7 @@
                 <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
-        {
-            <div class="sdoc-toast sdoc-toast--err" role="alert">
-                <span>@ErrorMessage</span>
-                <button type="button" class="sdoc-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
-            </div>
-        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
 
         @if (IsLoading)
         {
@@ -290,6 +284,27 @@
                         }
                         <DxGridDataColumn FieldName="@nameof(PoPrLineVm.ToWarehouse)" Caption="Warehouse" Width="110px" />
                         <DxGridDataColumn FieldName="@nameof(PoPrLineVm.PoNo)" Caption="PO" Width="110px" />
+                        <DxGridDataColumn Caption="Issues" Width="220px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var issuesRow = (PoPrLineVm)context.DataItem;
+                                    var issues = LineErrorMessages(ValidationErrors, Lines.IndexOf(issuesRow) + 1);
+                                }
+                                @if (issues.Count > 0)
+                                {
+                                    <div class="sdoc-cell-stack" title="@string.Join(' ', issues)">
+                                        @foreach (var issue in issues.Take(2))
+                                        {
+                                            <span class="sdoc-field-error">@issue</span>
+                                        }
+                                        @if (issues.Count > 2)
+                                        {
+                                            <span class="sdoc-field-error">+@(issues.Count - 2) more</span>
+                                        }
+                                    </div>
+                                }
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                     </Columns>
                     <EmptyDataAreaTemplate>
                         <div class="sdoc-empty">

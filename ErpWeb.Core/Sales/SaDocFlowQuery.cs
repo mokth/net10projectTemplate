@@ -13,12 +13,19 @@ public static class SaDocFlowTypes
     /// <summary>Credit / debit note. Not a <see cref="SaDocTypes"/> member — CNs are not allocated.</summary>
     public const string Cn = "CN";
 
+    /// <summary>
+    /// Sales Quotation. Not a <see cref="SaDocTypes"/> member: QT → SO is recorded by source stamps
+    /// (<c>SaSO.QTNo</c> / <c>QTCustRel</c>), not by the allocation ledger.
+    /// </summary>
+    public const string Qt = "QT";
+
     public static string Normalize(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
     {
         "SO" or "SALESORDER" => So,
         "DO" or "DELIVERYORDER" => Do,
         "INV" or "INVOICE" => Inv,
         "CN" or "DN" or "CREDITNOTE" or "DEBITNOTE" => Cn,
+        "QT" or "QUOTATION" or "SALESQUOTATION" => Qt,
         var other => other
     };
 }
@@ -144,6 +151,44 @@ public sealed class SaDocFlowQuery : ISaDocFlowQuery
             }));
         }
 
+        // ── Quotation → Sales Order (source stamps, not ledger rows) ────────────────────
+        // The panel is opened by QT number, so every revision of that quotation is shown; the
+        // revision is carried in the edge label because the stamp identifies an exact revision.
+        if (type == SaDocFlowTypes.Qt)
+        {
+            var converted = await db.SaSos.AsNoTracking()
+                .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.QtNo == no && x.IsCurrent)
+                .Select(x => new { x.SoNo, x.QtCustRel, x.SoDate, x.Status, x.TotAmnt })
+                .ToListAsync(cancellationToken);
+
+            downstream.AddRange(converted.Select(x => new SaDocFlowNode
+            {
+                DocType = SaDocTypes.So,
+                DocNo = x.SoNo,
+                Amount = x.TotAmnt,
+                DocDate = x.SoDate,
+                Status = x.Status,
+                Relationship = $"QT rev {x.QtCustRel} → {SaDocTypes.So} (conversion)"
+            }));
+        }
+        else if (type == SaDocTypes.So)
+        {
+            var source = await db.SaSos.AsNoTracking()
+                .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.SoNo == no && x.IsCurrent)
+                .Select(x => new { x.QtNo, x.QtCustRel })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (source?.QtNo is { Length: > 0 } qtNo)
+            {
+                upstream.Add(new SaDocFlowNode
+                {
+                    DocType = SaDocFlowTypes.Qt,
+                    DocNo = qtNo,
+                    Relationship = $"QT rev {source.QtCustRel} → {SaDocTypes.So} (conversion)"
+                });
+            }
+        }
+
         // ── CN references (not ledger rows) ────────────────────────────────────────────
         if (type == SaDocFlowTypes.Cn)
         {
@@ -228,6 +273,7 @@ public sealed class SaDocFlowQuery : ISaDocFlowQuery
         var soNos = nodes.Where(x => x.DocType == SaDocTypes.So).Select(x => x.DocNo).Distinct().ToList();
         var doNos = nodes.Where(x => x.DocType == SaDocTypes.Do).Select(x => x.DocNo).Distinct().ToList();
         var invNos = nodes.Where(x => x.DocType == SaDocTypes.Inv).Select(x => x.DocNo).Distinct().ToList();
+        var qtNos = nodes.Where(x => x.DocType == SaDocFlowTypes.Qt).Select(x => x.DocNo).Distinct().ToList();
 
         var soInfo = soNos.Count == 0
             ? []
@@ -247,10 +293,17 @@ public sealed class SaDocFlowQuery : ISaDocFlowQuery
                 .Where(x => x.CompanyCode == company && x.BranchCode == branch && invNos.Contains(x.InvNo))
                 .Select(x => new { x.InvNo, x.InvDate, x.Status })
                 .ToListAsync(cancellationToken);
+        var qtInfo = qtNos.Count == 0
+            ? []
+            : await db.SaQts.AsNoTracking()
+                .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.IsCurrent && qtNos.Contains(x.QtNo))
+                .Select(x => new { x.QtNo, x.QtDate, x.Status })
+                .ToListAsync(cancellationToken);
 
         var soByNo = soInfo.ToDictionary(x => x.SoNo, StringComparer.OrdinalIgnoreCase);
         var doByNo = doInfo.ToDictionary(x => x.DoNo, StringComparer.OrdinalIgnoreCase);
         var invByNo = invInfo.ToDictionary(x => x.InvNo, StringComparer.OrdinalIgnoreCase);
+        var qtByNo = qtInfo.ToDictionary(x => x.QtNo, StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < nodes.Count; i++)
         {
@@ -272,6 +325,11 @@ public sealed class SaDocFlowQuery : ISaDocFlowQuery
             {
                 date ??= inv.InvDate;
                 status ??= inv.Status;
+            }
+            else if (node.DocType == SaDocFlowTypes.Qt && qtByNo.TryGetValue(node.DocNo, out var qt))
+            {
+                date ??= qt.QtDate;
+                status ??= qt.Status;
             }
 
             nodes[i] = new SaDocFlowNode

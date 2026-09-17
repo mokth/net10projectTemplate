@@ -2083,6 +2083,61 @@ public class SaSoServiceTests : IAsyncLifetime
         return db.SaDos.AsNoTracking().Single(x => x.DoNo == doNo).RowVersion ?? [];
     }
 
+    /// <summary>
+    /// Phase 2: the pricing provenance the engine reported must survive save and reload, and must
+    /// remain EXPLANATORY — it is never re-derived into a price.
+    /// </summary>
+    [Fact]
+    public async Task PricingProvenance_RoundTripsThroughSaveAndReload()
+    {
+        var sut = CreateSoSut();
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines = [SoLine("SVC1", 2m, 10m, pricingSource: "CUSTOMER_ITEM", pricingRef: "MOQ=100")]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.SoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        var line = get.Document!.Lines[0];
+        Assert.Equal("CUSTOMER_ITEM", line.PricingSource);
+        Assert.Equal("MOQ=100", line.PricingRef);
+        Assert.Equal(10m, line.UnitPrice);
+    }
+
+    /// <summary>A line written with no provenance keeps NULL, which means "not recorded".</summary>
+    [Fact]
+    public async Task PricingProvenance_IsNullWhenTheCallerSuppliesNone()
+    {
+        var sut = CreateSoSut();
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines = [SoLine("SVC1", 2m, 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.SoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        Assert.Null(get.Document!.Lines[0].PricingSource);
+        Assert.Null(get.Document.Lines[0].PricingRef);
+    }
+
     private static SaSoSaveRequest SoRequest(
         decimal qty,
         decimal price,
@@ -2102,13 +2157,136 @@ public class SaSoServiceTests : IAsyncLifetime
             Lines = [SoLine(iCode, qty, price, line)]
         };
 
-    private static SaSoLineRequest SoLine(string iCode, decimal qty, decimal price, int line = 0) =>
+    /// <summary>
+    /// Phase 4: an override WITH the permission and a reason is recorded, and the engine price the
+    /// operator departed from is RETAINED — that retention is the whole point, because otherwise nobody
+    /// can tell a legitimate discount from a typo after the fact.
+    /// </summary>
+    [Fact]
+    public async Task PriceOverride_WithPermissionAndReason_IsRecordedAndRetained()
+    {
+        var sut = CreateSoSut();
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines =
+            [
+                SoLine("SVC1", 2m, 8m, originalUnitPrice: 10m, overrideReason: "Manager approved a volume discount")
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.SoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        var line = get.Document!.Lines[0];
+        Assert.Equal(8m, line.UnitPrice);
+        Assert.Equal(10m, line.OriginalUnitPrice);
+        Assert.Equal("Manager approved a volume discount", line.OverrideReason);
+    }
+
+    /// <summary>
+    /// Phase 4: the check is SERVER-SIDE. A caller without PRICE_OVERRIDE is refused even though the
+    /// page would normally have made the price read-only — the page is not the execution point.
+    /// </summary>
+    [Fact]
+    public async Task PriceOverride_WithoutPermission_IsRejectedByTheService()
+    {
+        var sut = CreateSoSut(access: DenyPermission(PermissionCodes.PriceOverride));
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines = [SoLine("SVC1", 2m, 8m, originalUnitPrice: 10m, overrideReason: "discount")]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaSoErrorKind.Validation, save.ErrorKind);
+        Assert.Contains("permission", save.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Phase 4: an unexplained price change is refused even WITH the permission.</summary>
+    [Fact]
+    public async Task PriceOverride_WithoutAReason_IsRejectedByTheService()
+    {
+        var sut = CreateSoSut();
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines = [SoLine("SVC1", 2m, 8m, originalUnitPrice: 10m)]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaSoErrorKind.Validation, save.ErrorKind);
+        Assert.Contains("reason", save.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Phase 4: echoing the resolved price back is NOT an override, so the ordinary path needs neither
+    /// the permission nor a reason — and stores nothing, keeping "NULL = never overridden" true.
+    /// </summary>
+    [Fact]
+    public async Task PriceEchoingTheResolvedPrice_IsNotAnOverride()
+    {
+        var sut = CreateSoSut(access: DenyPermission(PermissionCodes.PriceOverride));
+
+        var save = await sut.SaveNewAsync(new SaSoSaveRequest
+        {
+            SoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            CustPo = "PO-1",
+            SalesRep = "SM1",
+            Lines = [SoLine("SVC1", 2m, 10m, originalUnitPrice: 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.SoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        var line = get.Document!.Lines[0];
+        Assert.Equal(10m, line.UnitPrice);
+        Assert.Null(line.OriginalUnitPrice);
+        Assert.Null(line.OverrideReason);
+    }
+
+    private static SaSoLineRequest SoLine(
+        string iCode,
+        decimal qty,
+        decimal price,
+        int line = 0,
+        string? pricingSource = null,
+        string? pricingRef = null,
+        decimal? originalUnitPrice = null,
+        string? overrideReason = null) =>
         new()
         {
             Line = line,
             ICode = iCode,
             OrderQty = qty,
-            UnitPrice = price
+            UnitPrice = price,
+            PricingSource = pricingSource,
+            PricingRef = pricingRef,
+            OriginalUnitPrice = originalUnitPrice,
+            OverrideReason = overrideReason
         };
 
     private static SaDoSaveRequest DoRequest(

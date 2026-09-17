@@ -1004,6 +1004,38 @@ public class SaCustServiceTests : IAsyncLifetime
         Assert.Equal("Beta Renamed Again", row.CustName);
     }
 
+    [Fact]
+    public async Task CustSource_IsValidatedOnSave_AndFiltersTheCustomerList()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvMsCodes.Add(new IvMsCode { Code = "WEB", Name = "Website", CodeType = IvMsCodeTypes.Source });
+            db.IvMsCodes.Add(new IvMsCode { Code = "WALK", Name = "Walk-in", CodeType = IvMsCodeTypes.Source });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+
+        var model = ValidNewModel("SRC01");
+        model.CustSource = "WEB";
+        var save = await sut.SaveAsync(model, isNew: true);
+        Assert.True(save.Succeeded, save.Message);
+        Assert.Equal("WEB", save.Data!.CustSource);
+
+        // An unknown source is rejected server-side; the dropdown is not the integrity boundary.
+        var bad = ValidNewModel("SRC02");
+        bad.CustSource = "NOPE";
+        var rejected = await sut.SaveAsync(bad, isNew: true);
+        Assert.False(rejected.Succeeded);
+        Assert.Contains(nameof(SaCustEditVm.CustSource), rejected.ValidationErrors.Keys);
+
+        // The list filter the analysis dimension mirrors.
+        var search = await sut.SearchAsync(new SaCustListQuery { CustSource = "WEB", Take = 50 });
+        Assert.True(search.Succeeded, search.Message);
+        Assert.Contains(search.Data!.Rows, x => x.CustCode == "SRC01" && x.CustSource == "WEB");
+        Assert.All(search.Data.Rows, x => Assert.Equal("WEB", x.CustSource));
+    }
+
     private static SaCustEditVm ValidNewModel(string code) =>
         new()
         {

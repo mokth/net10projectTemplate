@@ -23,6 +23,7 @@ namespace ErpWeb.UI.Sales.Masters;
 public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupListRow>
 {
     [Inject] private IIvInventoryLookupService InventoryLookups { get; set; } = default!;
+    [Inject] private ISaCustLookupService CustLookups { get; set; } = default!;
 
     protected override string MenuCode => MenuCodes.SalesCustPriceGroup;
     protected override string EntityLabel => "Price Group";
@@ -40,6 +41,9 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
     /// <summary>Ungated active UOM list (INV_UOM is not required to author a price list).</summary>
     protected IReadOnlyList<IvCodeLookupRow> UomOptions { get; set; } = [];
 
+    /// <summary>Phase 3: active currencies for a line. Blank is deliberately allowed = company base.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> CurrencyOptions { get; set; } = [];
+
     /// <summary>Description carried from the item picker into the line being added/updated.</summary>
     private string? _lineItemDesc;
 
@@ -48,6 +52,15 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
     protected string? LineUom { get; set; }
     protected decimal? LinePrice { get; set; }
     protected decimal? LinePack { get; set; }
+
+    // Phase 3: the item and UOM stopped being a unique identity once quantity tiers and promotions
+    // arrived, so the editor must also carry the band, the window and the currency to know which line
+    // it is editing.
+    protected decimal? LineMinQty { get; set; }
+    protected decimal? LineMaxQty { get; set; }
+    protected DateTime? LineValidFrom { get; set; }
+    protected DateTime? LineValidTo { get; set; }
+    protected string? LineCurrency { get; set; }
 
     /// <summary>Key of the line currently being edited; null = the editor is adding a new line.</summary>
     protected string? LineEditKey { get; set; }
@@ -204,6 +217,9 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
     {
         var uoms = await InventoryLookups.ListActiveUomsAsync();
         UomOptions = uoms.Succeeded ? uoms.Rows : [];
+
+        // Phase 3: the currency combo is optional by design - blank means the company base currency.
+        CurrencyOptions = await CustLookups.ListCurrenciesForAssignmentAsync();
     }
 
     /// <summary>
@@ -257,7 +273,17 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
         CanEditFromView = false;
     }
 
-    /// <summary>Adds the editor's line, or replaces the one being edited. Item + UOM form the line key.</summary>
+    /// <summary>
+    /// Phase 3: the natural identity of a price line. Item + UOM stopped being unique when quantity
+    /// tiers and promotions arrived (two bands legitimately start on the SAME ValidFrom), so the band
+    /// floor, the effective-from and the currency are all part of the identity. This mirrors
+    /// <see cref="IvCustPriceLineVm.Key"/> so the grid and the editor agree on what "the same line" is.
+    /// </summary>
+    private static string BuildLineKey(
+        string item, string uom, DateTime? validFrom, decimal? minQty, string? currency) =>
+        $"{item};{uom};{validFrom?.ToString("yyyyMMdd") ?? "always"};{minQty ?? 0m};{(currency ?? string.Empty).Trim().ToUpperInvariant()}";
+
+    /// <summary>Adds the editor's line, or replaces the one being edited, keyed on the NATURAL key.</summary>
     protected void OnLineAddOrUpdate()
     {
         var item = (LineItem ?? string.Empty).Trim().ToUpperInvariant();
@@ -268,20 +294,44 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
             return;
         }
 
-        var key = $"{item};{uom}";
-        var existing = EditModel.Lines.FirstOrDefault(l =>
-            string.Equals(l.Key, key, StringComparison.OrdinalIgnoreCase));
-
-        if (LineEditKey is not null && !string.Equals(LineEditKey, key, StringComparison.OrdinalIgnoreCase))
+        var currency = (LineCurrency ?? string.Empty).Trim().ToUpperInvariant();
+        if (currency.Length > 5)
         {
-            // The key was edited: remove the old line before adding the new one.
-            var previous = EditModel.Lines.FirstOrDefault(l =>
-                string.Equals(l.Key, LineEditKey, StringComparison.OrdinalIgnoreCase));
-            if (previous is not null)
-            {
-                EditModel.Lines.Remove(previous);
-            }
+            ErrorMessage = "Currency must be at most 5 characters.";
+            return;
+        }
 
+        if (LineMinQty is < 0m || LineMaxQty is < 0m)
+        {
+            ErrorMessage = "Quantity band values cannot be negative.";
+            return;
+        }
+
+        // Caught here for a clear message; the SERVICE still re-validates the band against every
+        // other line on the list (plan 3.4) inside the aggregate save.
+        if (LineMinQty is { } min && LineMaxQty is { } max && max < min)
+        {
+            ErrorMessage = "A line's maximum quantity cannot be less than its minimum.";
+            return;
+        }
+
+        if (LineValidFrom?.Date is { } from && LineValidTo?.Date is { } to && to < from)
+        {
+            ErrorMessage = "A line's valid-to date cannot be before its valid-from date.";
+            return;
+        }
+
+        var key = BuildLineKey(item, uom, LineValidFrom, LineMinQty, currency);
+
+        var existing = LineEditKey is null
+            ? null
+            : EditModel.Lines.FirstOrDefault(l =>
+                string.Equals(l.Key, LineEditKey, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null && !string.Equals(LineEditKey, key, StringComparison.OrdinalIgnoreCase))
+        {
+            // The identity was edited: drop the old line before adding the new one.
+            EditModel.Lines.Remove(existing);
             existing = null;
         }
 
@@ -289,7 +339,7 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
         {
             if (EditModel.Lines.Any(l => string.Equals(l.Key, key, StringComparison.OrdinalIgnoreCase)))
             {
-                ErrorMessage = $"Item {item} / UOM {uom} is already on this price list.";
+                ErrorMessage = $"Item {item} / UOM {uom} already has a price for this band and window on this list.";
                 return;
             }
 
@@ -299,7 +349,12 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
                 IDesc = _lineItemDesc,
                 UOM = uom,
                 SellingPrice = LinePrice,
-                SellPackSize = LinePack
+                SellPackSize = LinePack,
+                ValidFrom = LineValidFrom?.Date,
+                ValidTo = LineValidTo?.Date,
+                MinQty = LineMinQty ?? 0m,
+                MaxQty = LineMaxQty,
+                CurrencyCode = currency.Length == 0 ? null : currency
             });
         }
         else
@@ -307,6 +362,11 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
             existing.IDesc = _lineItemDesc ?? existing.IDesc;
             existing.SellingPrice = LinePrice;
             existing.SellPackSize = LinePack;
+            existing.ValidFrom = LineValidFrom?.Date;
+            existing.ValidTo = LineValidTo?.Date;
+            existing.MinQty = LineMinQty ?? 0m;
+            existing.MaxQty = LineMaxQty;
+            existing.CurrencyCode = currency.Length == 0 ? null : currency;
         }
 
         ErrorMessage = null;
@@ -319,6 +379,11 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
         LineUom = line.UOM;
         LinePrice = line.SellingPrice;
         LinePack = line.SellPackSize;
+        LineMinQty = line.MinQty;
+        LineMaxQty = line.MaxQty;
+        LineValidFrom = line.ValidFrom;
+        LineValidTo = line.ValidTo;
+        LineCurrency = line.CurrencyCode;
         _lineItemDesc = line.IDesc;
         LineEditKey = line.Key;
     }
@@ -338,6 +403,11 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
         LineUom = null;
         LinePrice = null;
         LinePack = null;
+        LineMinQty = null;
+        LineMaxQty = null;
+        LineValidFrom = null;
+        LineValidTo = null;
+        LineCurrency = null;
         _lineItemDesc = null;
         LineEditKey = null;
     }

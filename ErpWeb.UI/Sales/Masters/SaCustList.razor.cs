@@ -43,12 +43,14 @@ public partial class SaCustList : PageBase, IDisposable
     protected string? AppliedGroup;
     protected string? AppliedSalesman;
     protected string? AppliedArea;
+    protected string? AppliedSource;
     protected bool? AppliedIsActive = true;
 
     protected string? DraftType;
     protected string? DraftGroup;
     protected string? DraftSalesman;
     protected string? DraftArea;
+    protected string? DraftSource;
     protected string DraftActiveKey = "active";
 
     protected IReadOnlyList<IvCodeLookupRow> Types { get; set; } = [];
@@ -63,6 +65,9 @@ public partial class SaCustList : PageBase, IDisposable
     protected IReadOnlyList<IvCodeLookupRow> SalesReps { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Areas { get; set; } = [];
 
+    /// <summary>Lead / acquisition sources. Analysis joins this live, hence the "(current)" caption.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> Sources { get; set; } = [];
+
     protected SaCustGridDataSource DataSource { get; private set; } = default!;
 
     protected string TotalCountLabel => TotalCount == 1 ? "1 customer" : $"{TotalCount:N0} customers";
@@ -73,6 +78,7 @@ public partial class SaCustList : PageBase, IDisposable
         || !string.IsNullOrWhiteSpace(AppliedGroup)
         || !string.IsNullOrWhiteSpace(AppliedSalesman)
         || !string.IsNullOrWhiteSpace(AppliedArea)
+        || !string.IsNullOrWhiteSpace(AppliedSource)
         || AppliedIsActive is not null;
 
     protected string ConfirmMessage { get; set; } = string.Empty;
@@ -93,9 +99,10 @@ public partial class SaCustList : PageBase, IDisposable
         new() { Caption = "Type", FieldName = nameof(SaCustListRow.CustType), Width = "90px", VisibleIndex = 3 },
         new() { Caption = "Group", FieldName = nameof(SaCustListRow.CustGroupCode), Width = "100px", VisibleIndex = 4 },
         new() { Caption = "Salesman", FieldName = nameof(SaCustListRow.SalesmanCode), Width = "110px", VisibleIndex = 5 },
-        new() { Caption = "City", FieldName = nameof(SaCustListRow.City), Width = "110px", VisibleIndex = 6 },
-        new() { Caption = "Tel", FieldName = nameof(SaCustListRow.Tel), Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Active", FieldName = nameof(SaCustListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 8 }
+        new() { Caption = "Source", FieldName = nameof(SaCustListRow.CustSource), Width = "90px", VisibleIndex = 6 },
+        new() { Caption = "City", FieldName = nameof(SaCustListRow.City), Width = "110px", VisibleIndex = 7 },
+        new() { Caption = "Tel", FieldName = nameof(SaCustListRow.Tel), Width = "120px", VisibleIndex = 8 },
+        new() { Caption = "Active", FieldName = nameof(SaCustListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 9 }
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -231,6 +238,7 @@ public partial class SaCustList : PageBase, IDisposable
         DraftGroup = AppliedGroup;
         DraftSalesman = AppliedSalesman ?? string.Empty;
         DraftArea = AppliedArea ?? string.Empty;
+        DraftSource = AppliedSource;
         DraftActiveKey = AppliedIsActive switch
         {
             true => "active",
@@ -246,6 +254,7 @@ public partial class SaCustList : PageBase, IDisposable
         AppliedGroup = DraftGroup;
         AppliedSalesman = string.IsNullOrWhiteSpace(DraftSalesman) ? null : DraftSalesman.Trim();
         AppliedArea = string.IsNullOrWhiteSpace(DraftArea) ? null : DraftArea.Trim();
+        AppliedSource = DraftSource;
         AppliedIsActive = DraftActiveKey switch
         {
             "active" => true,
@@ -263,11 +272,13 @@ public partial class SaCustList : PageBase, IDisposable
         DraftGroup = null;
         DraftSalesman = string.Empty;
         DraftArea = string.Empty;
+        DraftSource = null;
         DraftActiveKey = "active";
         AppliedType = null;
         AppliedGroup = null;
         AppliedSalesman = null;
         AppliedArea = null;
+        AppliedSource = null;
         AppliedIsActive = true;
         FilterPopupVisible = false;
         SyncDataSourceFilters();
@@ -439,7 +450,8 @@ public partial class SaCustList : PageBase, IDisposable
             CustType = AppliedType,
             CustGroupCode = AppliedGroup,
             SalesmanCode = AppliedSalesman,
-            AreaCode = AppliedArea
+            AreaCode = AppliedArea,
+            CustSource = AppliedSource
         });
     }
 
@@ -492,6 +504,7 @@ public partial class SaCustList : PageBase, IDisposable
         Groups = groups;
         SalesReps = await Lookups.ListSalesRepsForAssignmentAsync();
         Areas = await Lookups.ListAreasForAssignmentAsync();
+        Sources = await Lookups.ListSourcesForAssignmentAsync();
     }
 
     private Dictionary<string, string?> BuildQueryDictionary()
@@ -527,6 +540,11 @@ public partial class SaCustList : PageBase, IDisposable
         if (!string.IsNullOrWhiteSpace(query.AreaCode))
         {
             dict["areaCode"] = query.AreaCode;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.CustSource))
+        {
+            dict["custSource"] = query.CustSource;
         }
 
         if (!string.IsNullOrWhiteSpace(query.SortField))

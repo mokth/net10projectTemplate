@@ -354,6 +354,18 @@ public sealed class SaDoLineDto
     public string? StdUom { get; init; }
     public string? FrWarehouse { get; init; }
     public decimal UnitPrice { get; init; }
+
+    /// <summary>WHICH price source priced this line; NULL means "not recorded", not "no source".</summary>
+    public string? PricingSource { get; init; }
+
+    public string? PricingRef { get; init; }
+
+    /// <summary>Phase 4: the price the ENGINE resolved; NULL unless an operator overrode it.</summary>
+    public decimal? OriginalUnitPrice { get; init; }
+
+    /// <summary>Phase 4: why the resolved price was changed; present only on a real override.</summary>
+    public string? OverrideReason { get; init; }
+
     public decimal Amount { get; init; }
     public decimal ItemDiscount { get; init; }
     public decimal ItemDiscount2 { get; init; }
@@ -443,6 +455,21 @@ public sealed class SaDoLineRequest
     public decimal Qty { get; set; }
     public string? FrWarehouse { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>The pricing provenance the engine reported; stored, never trusted for the price.</summary>
+    public string? PricingSource { get; set; }
+
+    public string? PricingRef { get; set; }
+
+    /// <summary>
+    /// Phase 4: the price the page resolved. A value that DIFFERS from <see cref="UnitPrice"/> declares
+    /// an override, refused by the service without <c>PRICE_OVERRIDE</c> and a reason. Null declares nothing.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; set; }
+
+    /// <summary>Phase 4: why the resolved price was changed. Required whenever an override is declared.</summary>
+    public string? OverrideReason { get; set; }
+
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }
     public decimal ItemDiscount3 { get; set; }
@@ -470,6 +497,25 @@ public sealed class SaDoBillableLineDto
     public decimal Qty { get; init; }
     public decimal RemainingBillableQty { get; init; }
     public decimal UnitPrice { get; init; }
+
+    /// <summary>
+    /// Carried so a DO→INV conversion can COPY the provenance verbatim (plan 2.3) instead of
+    /// re-resolving the price.
+    /// </summary>
+    public string? PricingSource { get; init; }
+
+    public string? PricingRef { get; init; }
+
+    /// <summary>
+    /// Phase 4: carried for the same reason as the provenance — if this line's price was overridden on
+    /// the delivery order, the invoice must keep the record of what the engine had resolved rather than
+    /// silently losing it at the conversion boundary.
+    /// </summary>
+    public decimal? OriginalUnitPrice { get; init; }
+
+    /// <summary>Phase 4: the override reason, carried so the explanation survives billing.</summary>
+    public string? OverrideReason { get; init; }
+
     public string? SellingUom { get; init; }
     public string? FrWarehouse { get; init; }
     public bool StockControl { get; init; }

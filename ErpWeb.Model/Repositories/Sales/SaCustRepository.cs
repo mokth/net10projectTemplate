@@ -193,6 +193,12 @@ public sealed class SaCustRepository : ISaCustRepository
             query = query.Where(x => x.AreaCode == area);
         }
 
+        if (!string.IsNullOrWhiteSpace(args.CustSource))
+        {
+            var source = args.CustSource.Trim();
+            query = query.Where(x => x.CustSource == source);
+        }
+
         if (!string.IsNullOrWhiteSpace(args.SearchText))
         {
             var term = args.SearchText.Trim();

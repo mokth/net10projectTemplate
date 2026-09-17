@@ -1604,7 +1604,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
 
         if (errors.Count > 0)
         {
-            return PrepareOutcome.Fail("Validation failed.", errors);
+            return PrepareOutcome.Fail(ValidationMessageFormat.JoinMessages(errors), errors);
         }
 
         return new PrepareOutcome

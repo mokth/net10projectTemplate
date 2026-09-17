@@ -23,6 +23,11 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // Machine/deployment overrides that must never be committed. appsettings.local.json is
+    // git-ignored and is where the MyInvois credentials live (see the "Einvoice" section);
+    // environment variables (Einvoice__EInv_SecretID, ...) override it in deployed environments.
+    builder.Configuration.AddJsonFile("appsettings.local.json", optional: true, reloadOnChange: true);
+
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
@@ -106,6 +111,7 @@ try
     app.MapPoSupplierExportEndpoints();
     app.MapPoMasterRefExportEndpoints();
     app.MapSaMasterRefExportEndpoints();
+    app.MapSaAnalysisExportEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();
     app.MapPoPrAttachmentEndpoints();

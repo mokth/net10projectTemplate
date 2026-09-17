@@ -1495,6 +1495,10 @@ public sealed class SaDoService : ISaDoService
                 Qty = detail.Qty,
                 RemainingBillableQty = remaining,
                 UnitPrice = detail.UnitPrice,
+                PricingSource = detail.PricingSource,
+                PricingRef = detail.PricingRef,
+                OriginalUnitPrice = detail.OriginalUnitPrice,
+                OverrideReason = detail.OverrideReason,
                 SellingUom = detail.SellingUom,
                 FrWarehouse = detail.FrWarehouse,
                 StockControl = detail.StockControl
@@ -2354,6 +2358,11 @@ public sealed class SaDoService : ISaDoService
                 SellingUom = sellingUom,
                 FrWarehouse = string.IsNullOrWhiteSpace(warehouse) ? null : warehouse,
                 UnitPrice = line.UnitPrice,
+                PricingSource = TruncateOptional(line.PricingSource, 40),
+                PricingRef = TruncateOptional(line.PricingRef, 60),
+                // Phase 4: normalised HERE so "NULL = never overridden" stays true.
+                OriginalUnitPrice = SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, line.OriginalUnitPrice),
+                OverrideReason = SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, line.OriginalUnitPrice, line.OverrideReason),
                 ItemDiscount = line.ItemDiscount,
                 ItemDiscount2 = line.ItemDiscount2,
                 ItemDiscount3 = line.ItemDiscount3,
@@ -2394,6 +2403,20 @@ public sealed class SaDoService : ISaDoService
         foreach (var row in prepared)
         {
             row.Calc.LocalAmount = SaInvoiceCalc.Money(row.Calc.NetAmount * rateResult.Rate);
+        }
+
+        // Phase 4: price-override governance, enforced SERVER-SIDE (the page is not the execution point).
+        // A line that echoes the resolved price back is not an override.
+        var overrideError = SaPriceOverridePolicy.Validate(
+            prepared
+                .Select(x => new SaPriceOverrideDeclaration(x.UnitPrice, x.OriginalUnitPrice, x.OverrideReason))
+                .ToList(),
+            await CanAsync(PermissionCodes.PriceOverride, cancellationToken));
+        if (overrideError is not null)
+        {
+            return PrepareOutcome.Validation(
+                overrideError,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["UnitPrice"] = overrideError });
         }
 
         return PrepareOutcome.Ok(customer!, currency, rateResult.Rate, prepared);
@@ -2553,6 +2576,10 @@ public sealed class SaDoService : ISaDoService
                 StdUom = line.StdUom,
                 FrWarehouse = line.FrWarehouse,
                 UnitPrice = line.UnitPrice,
+                PricingSource = line.PricingSource,
+                PricingRef = line.PricingRef,
+                OriginalUnitPrice = line.OriginalUnitPrice,
+                OverrideReason = line.OverrideReason,
                 Amount = line.Calc.Amount,
                 ItemDiscount = line.ItemDiscount,
                 ItemDiscount2 = line.ItemDiscount2,
@@ -2605,6 +2632,10 @@ public sealed class SaDoService : ISaDoService
                 StdUom = x.StdUom,
                 FrWarehouse = x.FrWarehouse,
                 UnitPrice = x.UnitPrice,
+                PricingSource = x.PricingSource,
+                PricingRef = x.PricingRef,
+                OriginalUnitPrice = x.OriginalUnitPrice,
+                OverrideReason = x.OverrideReason,
                 Amount = x.Amount,
                 ItemDiscount = x.ItemDiscount,
                 ItemDiscount2 = x.ItemDiscount2,
@@ -3034,7 +3065,7 @@ public sealed class SaDoService : ISaDoService
 
         public SaDoOperationResult ToFail() =>
             Kind == SaDoErrorKind.Validation
-                ? SaDoOperationResult.FailValidation(Error ?? "Validation failed.", Errors)
+                ? SaDoOperationResult.FailValidation(ValidationMessageFormat.ResolveServiceMessage(Errors, Error), Errors)
                 : SaDoOperationResult.Fail(Error ?? "Unable to save the delivery order.", Kind);
     }
 
@@ -3056,6 +3087,14 @@ public sealed class SaDoService : ISaDoService
         public string? SellingUom { get; init; }
         public string? FrWarehouse { get; init; }
         public decimal UnitPrice { get; init; }
+        public string? PricingSource { get; init; }
+        public string? PricingRef { get; init; }
+
+        /// <summary>Phase 4: the engine price, non-null ONLY on a line an operator actually overrode.</summary>
+        public decimal? OriginalUnitPrice { get; init; }
+
+        /// <summary>Phase 4: the stated reason, non-null ONLY on a real override.</summary>
+        public string? OverrideReason { get; init; }
         public decimal ItemDiscount { get; init; }
         public decimal ItemDiscount2 { get; init; }
         public decimal ItemDiscount3 { get; init; }

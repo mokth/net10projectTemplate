@@ -44,6 +44,13 @@ public interface ISaCustLookupService
     Task<IReadOnlyList<IvCodeLookupRow>> ListIndustriesForAssignmentAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListChannelsForAssignmentAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Customer lead / acquisition sources of the caller's company (sales-analysis Phase 1). Unlike the
+    /// other <c>IvMSCode</c> families, no company column exists on the code table, so this list is not
+    /// company-scoped and the same values are shared by every tenant.
+    /// </summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListSourcesForAssignmentAsync(CancellationToken cancellationToken = default);
+
     Task<bool> ValidateTypeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     /// <summary>
@@ -78,6 +85,14 @@ public interface ISaCustLookupService
     Task<bool> ValidateSalesmanCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateIndustryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateChannelAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Server-side check for <c>SaCust.CustSource</c> (sales-analysis Phase 1, the same three-clause
+    /// contract as the other customer references): blank is allowed; a non-blank value must exist as a
+    /// <c>SOURCE</c> code; and the value already on the row is tolerated so a legacy free-text source
+    /// cannot block an unrelated edit.
+    /// </summary>
+    Task<bool> ValidateSourceAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<IvCodeLookupRow>> ListTypesAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListGroupsAsync(CancellationToken cancellationToken = default);

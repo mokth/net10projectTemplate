@@ -1,5 +1,24 @@
 # Sales "Item Family" Reference Tables — Logic Spec
 
+> ## ⚠️ PARTLY SUPERSEDED (2026-09-17)
+>
+> This document is a study of the **legacy WebForms adapters** and the schema as it stood *before*
+> the pricing upgrade. It remains useful for the legacy behaviour it records, but the following parts
+> no longer describe the shipped system — read `docs/sales-pricing-engine.md` first:
+>
+> | Here | Shipped behaviour |
+> |---|---|
+> | `IvCustPrice` PK = `(CompanyCode, CustPriceCode, ICode, UOM)` | **surrogate `Id int IDENTITY`** plus a separate unique index, because two quantity bands may share one `ValidFrom` |
+> | `IvCustPrice.CustPriceCode nvarchar(10)` | `nvarchar(20)`, matching `SaCust.CustPriceCode` |
+> | `IvCustPrice` has no dates / bands / currency | gained `ValidFrom`, `ValidTo`, `MinQty`, `MaxQty`, `CurrencyCode` |
+> | the resolution chain lists **three** levels | **four**: Customer Item → Cust List → **Group List** → Item Default |
+> | prices are tax-exclusive with no stated boundary rule | grossed up once, in the orchestrator, before the discount is resolved |
+> | no per-company configuration | `Company.SalesPriceMethod` makes sources eligible per company |
+> | no record of where a price came from | `PricingSource`/`PricingRef` (+ override columns) on all four detail tables |
+>
+> The legacy sections below are deliberately **left as written** — they document what the old adapters
+> did, and rewriting them would destroy that record.
+
 Source of truth for porting the 5 Customer/Price/Discount reference screens from WebForms to the Blazor ERP.
 
 Studied from (this repo `ERPV55/ERP_5.5`):

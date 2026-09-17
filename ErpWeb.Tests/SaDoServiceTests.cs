@@ -1664,6 +1664,60 @@ public class SaDoServiceTests : IAsyncLifetime
         return bal.Id;
     }
 
+    /// <summary>
+    /// Phase 2: the delivery order must persist the pricing provenance it was given. SaDo has ONE
+    /// write site — its update path does RemoveRange + Clear and re-adds through AddDetails — so a
+    /// round trip here covers both create and edit.
+    /// </summary>
+    [Fact]
+    public async Task PricingProvenance_RoundTripsThroughSaveAndReload()
+    {
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            Lines = [Line("A100", 2m, 10m, pricingSource: "CUSTOMER_ITEM", pricingRef: "MOQ=100")]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.DoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        var line = get.Document!.Lines[0];
+        Assert.Equal("CUSTOMER_ITEM", line.PricingSource);
+        Assert.Equal("MOQ=100", line.PricingRef);
+        Assert.Equal(10m, line.UnitPrice);
+    }
+
+    /// <summary>A line written with no provenance keeps NULL, which means "not recorded".</summary>
+    [Fact]
+    public async Task PricingProvenance_IsNullWhenTheCallerSuppliesNone()
+    {
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            Lines = [Line("A100", 2m, 10m)]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var get = await sut.GetAsync(save.DoNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+
+        Assert.Null(get.Document!.Lines[0].PricingSource);
+        Assert.Null(get.Document.Lines[0].PricingRef);
+    }
+
     private static SaDoSaveRequest Request(
         decimal qty,
         decimal price,
@@ -1683,13 +1737,20 @@ public class SaDoServiceTests : IAsyncLifetime
             Lines = [Line(iCode ?? "A100", qty, price)]
         };
 
-    private static SaDoLineRequest Line(string iCode, decimal qty, decimal price) =>
+    private static SaDoLineRequest Line(
+        string iCode,
+        decimal qty,
+        decimal price,
+        string? pricingSource = null,
+        string? pricingRef = null) =>
         new()
         {
             ICode = iCode,
             Qty = qty,
             UnitPrice = price,
-            FrWarehouse = "MAIN"
+            FrWarehouse = "MAIN",
+            PricingSource = pricingSource,
+            PricingRef = pricingRef
         };
 
     private static SaDoKeyedRequest Keyed(string doNo, byte[] rowVersion) =>

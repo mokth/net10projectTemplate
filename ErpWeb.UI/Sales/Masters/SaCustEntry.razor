@@ -77,6 +77,7 @@
                             @Detail("Sub group", Model.SubGroupCode)
                             @Detail("Industry", Model.IndustryCode)
                             @Detail("Channel", Model.ChannelCode)
+                            @Detail("Source (current)", Model.CustSource)
                         </div>
                     </div>
                 </div>
@@ -327,6 +328,11 @@
                                     <label class="iv-field__label">Channel</label>
                                     <IvCodeComboBox Data="@Channels" @bind-Value="@Model.ChannelCode" NullText="Select channel" />
                                     @FieldError(nameof(SaCustEditVm.ChannelCode))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Source (current)</label>
+                                    <IvCodeComboBox Data="@Sources" @bind-Value="@Model.CustSource" NullText="Select source" />
+                                    @FieldError(nameof(SaCustEditVm.CustSource))
                                 </div>
                             </div>
                         </div>

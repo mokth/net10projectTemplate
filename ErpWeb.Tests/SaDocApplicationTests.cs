@@ -1464,6 +1464,8 @@ public class SaDocApplicationTests : IAsyncLifetime
         Assert.Equal("DO", SaDocFlowTypes.Normalize(" DeliveryOrder "));
         Assert.Equal("INV", SaDocFlowTypes.Normalize("invoice"));
         Assert.Equal("CN", SaDocFlowTypes.Normalize("dn"));
+        Assert.Equal("QT", SaDocFlowTypes.Normalize("quotation"));
+        Assert.Equal("QT", SaDocFlowTypes.Normalize("SalesQuotation"));
         Assert.Equal(string.Empty, SaDocFlowTypes.Normalize(null));
     }
 

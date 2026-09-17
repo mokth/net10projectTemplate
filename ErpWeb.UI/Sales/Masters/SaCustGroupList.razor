@@ -75,6 +75,17 @@
                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Default price list" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <IvCodeComboBox Data="@PriceGroups"
+                                            @bind-Value="@EditModel.CustPriceCode"
+                                            NullText="No default price list"
+                                            Enabled="@EditEnabled" />
+                            <small class="iv-field__hint">
+                                Used only when the customer has no price list of its own.
+                            </small>
+                        </Template>
+                    </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <div class="iv-popup-actions">

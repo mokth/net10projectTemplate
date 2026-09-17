@@ -49,13 +49,33 @@ public static class MenuCodes
     public const string SalesCustPriceGroup = "SA_CUST_PRICE_GROUP";
     public const string SalesItemCust = "SA_ITEM_CUST";
     public const string SalesDisGroupItem = "SA_DIS_GROUP_ITEM";
+
+    /// <summary>
+    /// Phase 6 — the price-inquiry screen. Read-only: it explains where a price came from and why the
+    /// other levels did not apply, so it needs ACCESS and nothing else.
+    /// </summary>
+    public const string SalesPriceInquiry = "SA_PRICE_INQUIRY";
+
+    // Sales-analysis Phase 1 (docs/sales-analysis-phase1). Read-only aggregate inquiries over posted
+    // invoices, company-wide sales-rep targets and quotation conversion. The parent carries no route.
+    public const string SalesAnalysis = "SA_ANALYSIS";
+    public const string SalesAnalysisSummary = "SA_SALES_SUMMARY";
+    public const string SalesAnalysisAttainment = "SA_SALES_ATTAINMENT";
+    public const string SalesAnalysisQtConversion = "SA_QT_CONVERSION";
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
     public const string SalesOrder = "SA_SO";
+    /// <summary>Sales Quotation — the commercial offer that precedes a Sales Order.</summary>
+    public const string SalesQuotation = "SA_QT";
     public const string SalesCreditNote = "SA_CN";
     public const string SalesDebitNote = "SA_DN";
     /// <summary>E7: report-only credit-note reservation screen.</summary>
     public const string SalesCdnReservations = "SA_CN_RESERVATIONS";
+    /// <summary>
+    /// LHDN e-Invoice TIN tools (<c>/sales/einvoice/tin</c>): validate a TIN against an identity
+    /// document and search taxpayers. Read-only against MyInvois - ACCESS only.
+    /// </summary>
+    public const string SalesEInvoiceTin = "SA_EINVOICE_TIN";
     public const string Purchase = "PURCHASE";
     public const string PurchaseMaster = "PO_MASTER";
     public const string PurchaseSupplierProfile = "PO_SUPPLIER";
@@ -84,6 +104,13 @@ public static class MenuCodes
     public const string AdminSmNumDate = "SA_SM_NUM_DATE";
     public const string AdminDept = "ADMIN_DEPT";
     public const string AdminProject = "ADMIN_PROJECT";
+
+    /// <summary>
+    /// The dynamic application settings screen (<c>/admin/settings</c>). Reads of a setting are NOT gated
+    /// by this code — they are a server capability — but listing, saving and clearing are, because those
+    /// are the admin screen's operations.
+    /// </summary>
+    public const string AdminSettings = "ADMIN_SETTINGS";
     /// <summary>Obsolete alias — use <see cref="AdminSmNum"/>.</summary>
     public const string SalesSmNum = AdminSmNum;
     /// <summary>Obsolete alias — use <see cref="AdminSmNumDate"/>.</summary>

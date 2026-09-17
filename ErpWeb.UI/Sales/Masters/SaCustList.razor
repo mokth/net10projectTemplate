@@ -169,6 +169,13 @@
                                             NullText="Any area" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Source (current)" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Sources"
+                                            @bind-Value="@DraftSource"
+                                            NullText="Any source" />
+                        </Template>
+                    </DxFormLayoutItem>
                 </DxFormLayout>
             </div>
             <div class="iv-popup-footer">

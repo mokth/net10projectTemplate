@@ -567,6 +567,11 @@ public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
             ? InventoryTenantTestHelper.CreateTenantContext(string.Empty, "HQ", "SITE")
             : InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "SITE");
 
-        return new SaSalesRefService(_factory, tenant, access.Object, new FixedCurrentDateService(FixedToday));
+        return new SaSalesRefService(
+            _factory,
+            tenant,
+            access.Object,
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory, tenant));
     }
 }

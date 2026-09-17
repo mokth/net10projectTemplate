@@ -1,0 +1,919 @@
+@page "/sales/quotations/{Mode:regex(^(new|edit|view|revise)$)}"
+@page "/sales/quotations/{Mode:regex(^(new|edit|view|revise)$)}/{QtNo}"
+@page "/sales/quotations/view/{QtNo}/{CustRel:int}"
+
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesQuotation">
+    <SaDocPage>
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="sdoc-toast sdoc-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
+        @if (!string.IsNullOrWhiteSpace(WarningMessage))
+        {
+            <div class="sdoc-toast sdoc-toast--warn" role="status">
+                <span>@WarningMessage</span>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="sdoc-loading">
+                <p class="mb-0">Loading quotation…</p>
+            </div>
+        }
+        else
+        {
+            <header class="sdoc-titlebar">
+                <h1 class="sdoc-titlebar__title" title="@($"{PageHeading} · {QtNoDisplay}")">@PageHeading · @QtNoDisplay</h1>
+                <span class="sdoc-titlebar__status" title="@($"{StatusDisplay} · {ConversionStatusDisplay}")">
+                    @StatusDisplay
+                    <span class="sdoc-titlebar__status-extra">Revision @CustRelDisplay · Valid until @ValidUntil.ToString("dd/MM/yyyy")</span>
+                </span>
+                <div class="sdoc-titlebar__kpi">
+                    <span>Total incl. tax</span>
+                    <strong>@TotAmnt.ToString("n2")</strong>
+                </div>
+            </header>
+
+            @if (IsExpiredDisplay)
+            {
+                <div class="sdoc-toast sdoc-toast--warn" role="status">
+                    <span>
+                        This offer lapsed on @ValidUntil.ToString("dd/MM/yyyy").
+                        @if (StatusDisplay == SaQtStatuses.Accepted)
+                        {
+                            <text>It is still ACCEPTED, but it cannot be converted until it is revised and accepted again.</text>
+                        }
+                        else
+                        {
+                            <text>It can no longer be sent, accepted or converted.</text>
+                        }
+                    </span>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(ConvertedSoNo))
+            {
+                <div class="sdoc-toast sdoc-toast--ok" role="status">
+                    <span>Converted to Sales Order <strong>@ConvertedSoNo</strong>.</span>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Open sales order"
+                              IconCssClass="fa-solid fa-arrow-up-right-from-square"
+                              Click="@OpenConvertedSo" />
+                </div>
+            }
+
+            @if (Revisions.Count > 0)
+            {
+                <section class="sdoc-master saso-revisions">
+                    <div class="saso-revisions__head">Revision history</div>
+                    <div class="saso-revisions__list">
+                        @foreach (var revision in Revisions)
+                        {
+                            <button type="button"
+                                    class="saso-revisions__item"
+                                    title="@revision.RevisionReason"
+                                    @onclick="() => NavigateRevisionView(revision.CustRel)">
+                                <span>Rev @revision.CustRel</span>
+                                <span>@revision.Status</span>
+                                <span>@(revision.CreatedBy ?? "-")</span>
+                                <span>@(revision.CreatedDate?.ToString("dd/MM/yyyy HH:mm") ?? "-")</span>
+                                <span>@(revision.RevisionReason ?? "-")</span>
+                            </button>
+                        }
+                    </div>
+                </section>
+            }
+
+            <section class="sdoc-master">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Document</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Quotation no." ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@QtNoDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                                <Template>
+                                    <DxDateEdit Date="@QtDate"
+                                                DateChanged="@(async (DateTime d) => await OnQtDateChanged(d))"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@CanEditDocument"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Valid until" ColSpanMd="12">
+                                <Template>
+                                    <DxDateEdit Date="@ValidUntil"
+                                                DateChanged="@(async (DateTime d) => await OnValidUntilChanged(d))"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@CanEditDocument"
+                                                InputCssClass="required-field" />
+                                    @FieldError("ValidUntil")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Customer</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@Customers"
+                                                TextFieldName="@nameof(SaSoCustomerLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(SaSoCustomerLookupRow.CustCode)"
+                                                Value="@CustCode"
+                                                ValueChanged="@(async (string? v) => await OnCustCodeChanged(v))"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditCustomer"
+                                                NullText="Select customer"
+                                                CssClass="w-100 required-field" />
+                                    @FieldError("CustCode")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" />
+                                    @if (HasCustomer && !CurrRateValid)
+                                    {
+                                        <p class="sdoc-field-error">Valid FX rate is required.</p>
+                                    }
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Contact person" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@ContactPerson" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Terms</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                                <Template>
+                                    <IvCodeComboBox Data="@PayCodes" Value="@PayCode" ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))" Enabled="@CanEditDocument" NullText="Select payment term" InputCssClass="required-field" />
+                                    @FieldError("PayCode")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@TaxGroups"
+                                                TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
+                                                Value="@TaxGrCode"
+                                                ValueChanged="@(async (string? v) => await OnTaxGrCodeChanged(v))"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditDocument"
+                                                NullText="Select tax group"
+                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                    @FieldError("TaxGrCode")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Salesman" ColSpanMd="12">
+                                <Template>
+                                    <IvCodeComboBox Data="@SalesReps"
+                                                    Value="@SalesRep"
+                                                    ValueChanged="@(v => { SalesRep = v; MarkDirtyOnly(); })"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select salesman" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>References and delivery terms</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Ref no." ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Customer RFQ / Reference" ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="@CustPo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" NullText="Customer-side reference" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Project" ColSpanMd="3">
+                                <Template>
+                                    <IvCodeComboBox Data="@Projects"
+                                                    Value="@ProjId"
+                                                    ValueChanged="@(v => { ProjId = v; MarkDirtyOnly(); })"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select project" />
+                                    @FieldError("ProjId")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Ship via" ColSpanMd="3">
+                                <Template>
+                                    <DxTextBox @bind-Text="@ShipVia" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Delivery terms" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@DeliveryTerms" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="200" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Revision reason" ColSpanMd="6">
+                                <Template>
+                                    <DxMemo @bind-Text="@RevisionReason"
+                                            @bind-Text:after="MarkDirtyOnly"
+                                            Rows="2"
+                                            Enabled="@IsReviseMode"
+                                            MaxLength="200"
+                                            NullText="Reason for this revision" />
+                                    @FieldError("RevisionReason")
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Internal remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="@InternalRemarks"
+                                            @bind-Text:after="MarkDirtyOnly"
+                                            Rows="2"
+                                            Enabled="@CanEditDocument"
+                                            MaxLength="500"
+                                            NullText="Internal only — never printed on the customer's quotation" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+
+                <div class="sdoc-address-tabs">
+                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                        <DxTabPage Text="Billing">
+                            <div class="sdoc-tab">
+                                <DxFormLayout SizeMode="SizeMode.Small">
+                                    <DxFormLayoutItem Caption="Bill name" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvName" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                            @FieldError("InvName")
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 1" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvAddress1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                            @FieldError("InvAddress1")
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 2" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvAddress2" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 3" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvAddress3" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 4" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvAddress4" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="City" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvCity" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="State" ColSpanMd="3">
+                                        <Template>
+                                            <IvCodeComboBox Data="@States"
+                                                            Value="@InvState"
+                                                            ValueChanged="@(v => { InvState = v; MarkDirtyOnly(); })"
+                                                            Enabled="@CanEditAddresses"
+                                                            NullText="Select state" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Postal" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvPostalCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Country" ColSpanMd="3">
+                                        <Template>
+                                            <IvCodeComboBox Data="@Countries"
+                                                            Value="@InvCountry"
+                                                            ValueChanged="@(v => { InvCountry = v; MarkDirtyOnly(); })"
+                                                            Enabled="@CanEditAddresses"
+                                                            NullText="Select country" />
+                                            @FieldError("InvCountry")
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Tel" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvTel" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Fax" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@InvFax" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </DxFormLayout>
+                            </div>
+                        </DxTabPage>
+                        <DxTabPage Text="Shipping">
+                            <div class="sdoc-tab">
+                                <DxFormLayout SizeMode="SizeMode.Small">
+                                    <DxFormLayoutItem Caption="Ship to" ColSpanMd="6">
+                                        <Template>
+                                            <DxComboBox Data="@ShipToOptions"
+                                                        TData="SaCustAddressVm"
+                                                        TValue="int?"
+                                                        TextFieldName="@nameof(SaCustAddressVm.DisplayText)"
+                                                        ValueFieldName="@nameof(SaCustAddressVm.Line)"
+                                                        Value="@ShipToLine"
+                                                        ValueChanged="@OnShipToLineChanged"
+                                                        SearchMode="ListSearchMode.AutoSearch"
+                                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                        Enabled="@CanEditAddresses"
+                                                        NullText="Select ship-to address"
+                                                        CssClass="w-100" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Ship name" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipName" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 1" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipAddress1" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 2" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipAddress2" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 3" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipAddress3" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Address 4" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipAddress4" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="City" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipCity" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="State" ColSpanMd="3">
+                                        <Template>
+                                            <IvCodeComboBox Data="@States"
+                                                            Value="@ShipState"
+                                                            ValueChanged="@(v => { ShipState = v; OnShipFieldEdited(); })"
+                                                            Enabled="@CanEditAddresses"
+                                                            NullText="Select state" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Postal" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipPostalCode" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Country" ColSpanMd="3">
+                                        <Template>
+                                            <IvCodeComboBox Data="@Countries"
+                                                            Value="@ShipCountry"
+                                                            ValueChanged="@(v => { ShipCountry = v; OnShipFieldEdited(); })"
+                                                            Enabled="@CanEditAddresses"
+                                                            NullText="Select country" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Tel" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipTel" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Fax" ColSpanMd="3">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@ShipFax" @bind-Text:after="OnShipFieldEdited" Enabled="@CanEditAddresses" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </DxFormLayout>
+                            </div>
+                        </DxTabPage>
+                        <DxTabPage Text="Remarks">
+                            <div class="sdoc-tab">
+                                <DxMemo @bind-Text="@Remarks" @bind-Text:after="MarkDirtyOnly" Rows="5" Enabled="@CanEditDocument" CssClass="w-100" />
+                                @FieldError("Remarks")
+                            </div>
+                        </DxTabPage>
+                    </DxTabs>
+                </div>
+            </section>
+
+            <section class="sdoc-items">
+                <div class="sdoc-items__head">
+                    <h2 class="sdoc-items__title">Items</h2>
+                    @if (CanEditDocument)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Add item"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OnNewLineClick"
+                                  Enabled="@CanMutateLines" />
+                    }
+                </div>
+
+                @FieldError("Lines")
+
+                <DxGrid Data="@Lines"
+                        KeyFieldName="@nameof(SaQtLineVm.Line)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        CssClass="sdoc-line-grid">
+                    <Columns>
+                        @if (CanEditDocument)
+                        {
+                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (SaQtLineVm)context.DataItem;
+                                    }
+                                    <div class="sdoc-row-actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  Click="@(() => EditLine(line))"
+                                                  Enabled="@CanMutateLines" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  Click="@(() => RemoveLine(line))"
+                                                  Enabled="@CanMutateLines" />
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        }
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Line)" Caption="#" Width="56px" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ICode)" Caption="Item" Width="170px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var itemLine = (SaQtLineVm)context.DataItem;
+                                }
+                                <div class="sdoc-cell-stack">
+                                    <span class="sdoc-cell-stack__primary">@itemLine.ICode</span>
+                                    <span class="sdoc-cell-stack__secondary">@itemLine.IDesc</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Warehouse)" Caption="Warehouse" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.OrderQty)" Caption="Order qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ConvertedQty)" Caption="Converted" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.RemainingQty)" Caption="Remaining" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.DeliveryDate)" Caption="Delivery" Width="110px" DisplayFormat="dd/MM/yyyy" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Amount)" Caption="Amount" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn Caption="Issues" Width="220px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var issuesRow = (SaQtLineVm)context.DataItem;
+                                    var issues = LineErrorMessages(ValidationErrors, Lines.IndexOf(issuesRow) + 1);
+                                }
+                                @if (issues.Count > 0)
+                                {
+                                    <div class="sdoc-cell-stack" title="@string.Join(' ', issues)">
+                                        @foreach (var issue in issues.Take(2))
+                                        {
+                                            <span class="sdoc-field-error">@issue</span>
+                                        }
+                                        @if (issues.Count > 2)
+                                        {
+                                            <span class="sdoc-field-error">+@(issues.Count - 2) more</span>
+                                        }
+                                    </div>
+                                }
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                    </Columns>
+                    <EmptyDataAreaTemplate>
+                        <div class="sdoc-empty">
+                            <h3>No items yet</h3>
+                            <p>@(CanEditDocument ? "Select a customer with a valid FX rate, then add items." : "This quotation has no lines.")</p>
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+
+                <div class="sdoc-totals">
+                    <div><span>TOTAL EXCL TAX</span><strong>@GrossAmnt.ToString("n2")</strong></div>
+                    <div><span>TOTAL TAX</span><strong>@Taxes.ToString("n2")</strong></div>
+                    <div><span>TOTAL INCL TAX</span><strong>@TotAmnt.ToString("n2")</strong></div>
+                </div>
+            </section>
+
+            <SaDocFlowPanel DocType="QT" DocNo="@QtNoDisplay" />
+
+            <footer class="sdoc-footer">
+                <p class="sdoc-footer__hint">@(_isDirty ? "Unsaved changes" : "Ready") · @LineCountLabel</p>
+                <div class="sdoc-footer__actions">
+                    @if (IsReadOnlyPresentation)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@OnClose" />
+                        @if (CanReviseAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Revise" IconCssClass="fa-solid fa-code-branch" Click="@OnReviseFromView" Enabled="@CanEditPermission" />
+                        }
+                        @if (CanEditFromView)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
+                        }
+                        @if (CanSendAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Send" IconCssClass="fa-solid fa-paper-plane" Click="@OnSendAsync" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanAcceptAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Accept" IconCssClass="fa-solid fa-thumbs-up" Click="@OnAcceptAsync" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanConvertAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Convert to Sales Order" IconCssClass="fa-solid fa-right-left" Click="@(() => ConvertVisible = true)" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanLoseAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Mark lost" IconCssClass="fa-solid fa-thumbs-down" Click="@OpenLosePopup" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanCancelAction)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel" IconCssClass="fa-solid fa-ban" Click="@(() => CancelVisible = true)" Enabled="@(!IsSubmitting)" />
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancelAsync" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@OnSaveAsync"
+                                  Enabled="@CanSave" />
+                    }
+                </div>
+            </footer>
+        }
+
+        <DxPopup HeaderText="@PopupTitle"
+                 CloseOnOutsideClick="false"
+                 Width="760px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="@PopupVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    @if (!string.IsNullOrWhiteSpace(PopupError))
+                    {
+                        <p class="sdoc-popup-error">@PopupError</p>
+                    }
+                    <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
+                        <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                            <Template>
+                                <DxComboBox Data="@Items"
+                                            TextFieldName="@nameof(SaSoItemLookupRow.DisplayText)"
+                                            ValueFieldName="@nameof(SaSoItemLookupRow.ICode)"
+                                            Value="@Popup.ICode"
+                                            ValueChanged="@((string? v) => OnPopupItemChangedAsync(v))"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            Enabled="@CanEditDocument"
+                                            NullText="Select item"
+                                            CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Description" ColSpanMd="8">
+                            <Template>
+                                <DxTextBox @bind-Text="@Popup.IDesc" ReadOnly="true" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Warehouses"
+                                            TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                            ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                            @bind-Value="@Popup.Warehouse"
+                                            Enabled="@CanEditDocument" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Customer item" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@Popup.CustICode" Enabled="@CanEditDocument" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Order qty" ColSpanMd="3">
+                            <Template>
+                                <DxSpinEdit Value="@Popup.OrderQty"
+                                            ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
+                                            Increment="1m"
+                                            Enabled="@CanEditDocument"
+                                            InputCssClass="required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
+                            <Template>
+                                <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Delivery date" ColSpanMd="4">
+                            <Template>
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.DeliveryDate"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="ETD" ColSpanMd="4">
+                            <Template>
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.Etd"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="ETA" ColSpanMd="4">
+                            <Template>
+                                <DxDateEdit T="DateTime?"
+                                            @bind-Date="@Popup.Eta"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanEditDocument"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
+                            <Template>
+                                @* Plan Phase 4: the price is editable only with PRICE_OVERRIDE. Locked rather than
+                                   hidden, so an operator without the right still SEES the resolved price. *@
+                                <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@CanEditLinePrice" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        @if (!string.IsNullOrWhiteSpace(_priceHint))
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                                <Template>
+                                    <p class="sdoc-field-hint">Price source: @_priceHint</p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        @if (IsPriceOverridden())
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                                <Template>
+                                    <p class="sdoc-field-hint">
+                                        Overriding the resolved price of @((Popup.OriginalUnitPrice ?? Popup.UnitPrice).ToString("n4")) — a reason is required.
+                                    </p>
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Override reason" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox Text="@Popup.OverrideReason"
+                                               TextChanged="@((string? v) => Popup.OverrideReason = v)"
+                                               MaxLength="100"
+                                               NullText="Why was the resolved price changed?" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
+                            <Template>
+                                <DxCheckBox Checked="@Popup.IsInclusive"
+                                            CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))"
+                                            Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Line tax" ColSpanMd="6">
+                            <Template>
+                                <DxComboBox Data="@TaxGroups"
+                                            TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
+                                            ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
+                                            Value="@Popup.TaxGrCode"
+                                            ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            Enabled="@CanEditDocument"
+                                            NullText="Use header tax"
+                                            CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Discount mode" ColSpanMd="12">
+                            <Template>
+                                <div class="sdoc-discount-mode">
+                                    <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)"
+                                              Text="Percent"
+                                              Click="@(() => OnPopupDiscountModeChanged(false))"
+                                              Enabled="@CanEditDocument" />
+                                    <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                              Text="Amount"
+                                              Click="@(() => OnPopupDiscountModeChanged(true))"
+                                              Enabled="@CanEditDocument" />
+                                </div>
+                            </Template>
+                        </DxFormLayoutItem>
+                        @if (PopupDiscountIsAmount)
+                        {
+                            <DxFormLayoutItem Caption="Disc amt 1" ColSpanMd="6" BeginRow="true">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc amt 2" ColSpanMd="6">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount1" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        else
+                        {
+                            <DxFormLayoutItem Caption="Disc %1" ColSpanMd="4" BeginRow="true">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc %2" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount2" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc %3" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount3" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc %4" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount4" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc %5" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount5" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Disc %6" ColSpanMd="4">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount6" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@Popup.Remarks" Enabled="@CanEditDocument" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Preview" ColSpanMd="12">
+                            <Template>
+                                <div class="sdoc-amount-preview">
+                                    <span>Amount @PopupCalc.Amount.ToString("n2") · Tax @PopupCalc.TaxAmt.ToString("n2")</span>
+                                    <strong>Net @PopupCalc.NetAmount.ToString("n2")</strong>
+                                </div>
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="sdoc-popup-footer">
+                    <div class="sdoc-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => PopupVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@PopupPrimaryText"
+                                  Click="@OnPopupSave"
+                                  Enabled="@(string.IsNullOrWhiteSpace(_priceBlockMessage))" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Mark quotation lost"
+                 CloseOnOutsideClick="false"
+                 Width="520px"
+                 CssClass="common-popup"
+                 @bind-Visible="@LoseVisible">
+            <Content>
+                <p class="sdoc-popup-hint">A reason is required so the loss is auditable.</p>
+                <DxMemo @bind-Text="@LostReasonDraft" Rows="3" MaxLength="200" CssClass="w-100" NullText="Why was this quotation lost?" />
+                @if (!string.IsNullOrWhiteSpace(LoseError))
+                {
+                    <p class="sdoc-popup-error">@LoseError</p>
+                }
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LoseVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Mark lost" Click="@OnLoseAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Convert to Sales Order"
+                 CloseOnOutsideClick="false"
+                 Width="520px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConvertVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">
+                    Create one Sales Order from <strong>@QtNoDisplay</strong> revision @CustRelDisplay?
+                    The quotation's agreed prices, discounts and taxes are copied exactly — they are not recalculated.
+                    This quotation will be closed as CONVERTED.
+                </p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ConvertVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Convert" Click="@OnConvertAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Cancel quotation"
+                 CloseOnOutsideClick="false"
+                 Width="460px"
+                 CssClass="common-popup"
+                 @bind-Visible="@CancelVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">Cancel @QtNoDisplay? A cancelled quotation is terminal; raise a revision to quote again.</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep" Click="@(() => CancelVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel quotation" Click="@OnCancelDocumentAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Discard changes?"
+                 CloseOnOutsideClick="false"
+                 Width="420px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConfirmDiscardVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Change customer?"
+                 CloseOnOutsideClick="false"
+                 Width="420px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConfirmCustChangeVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">Changing customer will clear quotation lines. Continue?</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelCustChange" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Change customer" Click="@ConfirmCustChangeAsync" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Reload required"
+                 CloseOnOutsideClick="false"
+                 Width="460px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConcurrencyVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">This quotation was changed by another user. Reload the latest version before continuing.</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => ConcurrencyVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload latest" Click="@ReloadLatestAsync" />
+                </div>
+            </Content>
+        </DxPopup>
+    </SaDocPage>
+</MenuAuthorize>
+
+@code {
+    private RenderFragment FieldError(string field) => __builder =>
+    {
+        if (ValidationErrors.TryGetValue(field, out var message) && !string.IsNullOrWhiteSpace(message))
+        {
+            <p class="sdoc-field-error">@message</p>
+        }
+    };
+}

@@ -23,76 +23,41 @@ public sealed class InventoryTenantScope
     public required string UserId { get; init; }
 }
 
+/// <summary>
+/// Inventory-facing tenant context. Delegates to the shared <see cref="ITenantScopeContext"/> so there
+/// is exactly ONE implementation of claim normalisation; this type exists only to keep the
+/// <see cref="InventoryTenantScope"/> shape stable for its existing callers.
+///
+/// <para>
+/// Do NOT add normalisation logic here. Change <see cref="TenantScopeContext"/> instead, or the two will
+/// drift and one module will accept a company code that another rejects.
+/// </para>
+/// </summary>
 public sealed class InventoryTenantContext : IInventoryTenantContext
 {
-    private const int MaxCompanyLength = 5;
-    private const int MaxBranchLength = 5;
-    private const int MaxLocationLength = 10;
-    private const int MaxUserIdLength = 10;
+    private readonly ITenantScopeContext _scope;
 
-    private readonly ICurrentUserService _currentUser;
-
-    public InventoryTenantContext(ICurrentUserService currentUser)
+    public InventoryTenantContext(ITenantScopeContext scope)
     {
-        _currentUser = currentUser;
+        _scope = scope;
     }
 
-    public InventoryTenantScope? TryCompanyScope() =>
-        BuildScope(requireBranch: false, requireLocation: false);
+    public InventoryTenantScope? TryCompanyScope() => Map(_scope.TryCompanyScope());
 
-    public InventoryTenantScope? TryBranchScope() =>
-        BuildScope(requireBranch: true, requireLocation: false);
+    public InventoryTenantScope? TryBranchScope() => Map(_scope.TryBranchScope());
 
-    public InventoryTenantScope? TryWriteScope() =>
-        BuildScope(requireBranch: true, requireLocation: true);
+    public InventoryTenantScope? TryWriteScope() => Map(_scope.TryWriteScope());
 
-    private InventoryTenantScope? BuildScope(bool requireBranch, bool requireLocation)
-    {
-        if (!_currentUser.IsAuthenticated ||
-            string.IsNullOrWhiteSpace(_currentUser.SubjectUid))
-        {
-            return null;
-        }
-
-        var company = NormalizeClaim(_currentUser.CompanyCode, MaxCompanyLength);
-        var userId = NormalizeClaim(_currentUser.UserId, MaxUserIdLength);
-        if (company is null || userId is null)
-        {
-            return null;
-        }
-
-        var branch = NormalizeClaim(_currentUser.BranchCode, MaxBranchLength);
-        var location = NormalizeClaim(_currentUser.LocationCode, MaxLocationLength);
-
-        if (requireBranch && branch is null)
-        {
-            return null;
-        }
-
-        if (requireLocation && location is null)
-        {
-            return null;
-        }
-
-        return new InventoryTenantScope
-        {
-            CompanyCode = company,
-            BranchCode = branch,
-            LocationCode = location,
-            UserId = userId
-        };
-    }
-
-    private static string? NormalizeClaim(string? value, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var trimmed = value.Trim();
-        return trimmed.Length > maxLength ? null : trimmed;
-    }
+    private static InventoryTenantScope? Map(TenantScope? scope) =>
+        scope is null
+            ? null
+            : new InventoryTenantScope
+            {
+                CompanyCode = scope.CompanyCode,
+                BranchCode = scope.BranchCode,
+                LocationCode = scope.LocationCode,
+                UserId = scope.UserId
+            };
 }
 
 internal static class InventoryLeftoverSite

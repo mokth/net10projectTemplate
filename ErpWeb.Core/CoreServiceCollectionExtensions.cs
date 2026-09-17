@@ -1,4 +1,5 @@
 using ErpWeb.Core.Admin;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 
 using ErpWeb.Core.Sales;
@@ -83,7 +84,19 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+        services.AddScoped<ITenantScopeContext, TenantScopeContext>();
+
         services.AddScoped<IInventoryTenantContext, InventoryTenantContext>();
+
+        services.AddMemoryCache();
+
+        services.AddSingleton<ErpWeb.Core.Settings.AppSettingCacheVersions>();
+
+        services.AddScoped<ErpWeb.Core.Settings.IAppSettingValueProvider, ErpWeb.Core.Settings.SaPriceMethodSettingProvider>();
+
+        services.AddScoped<ErpWeb.Core.Settings.AppSettingProviderRegistry>();
+
+        services.AddScoped<ErpWeb.Core.Settings.IAppSettingService, ErpWeb.Core.Settings.AppSettingService>();
 
         services.AddScoped<IUserAdminService, UserAdminService>();
 
@@ -176,9 +189,26 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();
         services.AddScoped<ISaDoService, SaDoService>();
-        services.AddScoped<ISaSoService, SaSoService>();
+        // The quotation converter needs SaSoService's snapshot-import entry point (it is deliberately
+        // off the ISaSoService contract), so the concrete type is registered and both registrations
+        // resolve to the SAME scoped instance.
+        services.AddScoped<SaSoService>();
+        services.AddScoped<ISaSoService>(sp => sp.GetRequiredService<SaSoService>());
+        services.AddScoped<ISaQtService, SaQtService>();
         services.AddScoped<ISaCdnService, SaCdnService>();
         services.AddScoped<ISaDocApplication, SaDocApplicationService>();
+
+        services.AddScoped<ISaSalesAnalysisService, SaSalesAnalysisService>();
+
+
+
+        // LHDN MyInvois e-Invoice adapter. Registered scoped so per-company credentials stay
+
+        // isolated per request.
+
+        services.AddErpWebEInvoice(configuration);
+
+
 
         return services;
 

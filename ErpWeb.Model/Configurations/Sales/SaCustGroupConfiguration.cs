@@ -14,6 +14,7 @@ public class SaCustGroupConfiguration : IEntityTypeConfiguration<SaCustGroup>
         builder.Property(e => e.CompanyCode).HasMaxLength(10).IsRequired();
         builder.Property(e => e.CustGroupCode).HasMaxLength(40).IsRequired();
         builder.Property(e => e.CustGroupDesc).HasMaxLength(200);
+        builder.Property(e => e.CustPriceCode).HasMaxLength(20);
         builder.Property(e => e.BranchCode).HasMaxLength(10);
         builder.Property(e => e.LocationCode).HasMaxLength(20);
         builder.Property(e => e.CreatedDate).HasColumnName("Created");

@@ -71,6 +71,100 @@ public sealed partial class SaSalesRefService
     private static string NormalizeOptionalCode(string? value) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToUpperInvariant();
 
+    /// <summary>
+    /// Phase 3 — a price line reduced to what the save path needs. The band and the window are part of a
+    /// line's identity, so this list can no longer be keyed on item + UOM.
+    /// </summary>
+    private sealed record NormalizedPriceLine(
+        int Id,
+        string ICode,
+        string? IDesc,
+        string UOM,
+        decimal? Price,
+        decimal? PackSize,
+        DateTime ValidFrom,
+        DateTime? ValidTo,
+        decimal MinQty,
+        decimal? MaxQty,
+        string? CurrencyCode);
+
+    /// <summary>
+    /// Does a payload line correspond to a stored row? By SURROGATE id when the UI sent one (that is the
+    /// authoritative link), otherwise by the natural key — which is what lets an unchanged line update in
+    /// place instead of being deleted and re-inserted.
+    /// </summary>
+    private static bool MatchesStoredLine(NormalizedPriceLine line, IvCustPrice row) =>
+        line.Id > 0
+            ? row.Id == line.Id
+            : KeysEqual(row.ICode, line.ICode)
+              && KeysEqual(row.UOM, line.UOM)
+              && row.ValidFrom.Date == line.ValidFrom
+              && row.MinQty == line.MinQty
+              && string.Equals(
+                     NormalizeOptionalCode(row.CurrencyCode),
+                     line.CurrencyCode ?? string.Empty,
+                     StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Phase 3 (plan 3.4) — the dual-range overlap rule. Two lines are ambiguous only when they share an
+    /// item, a UOM AND a currency, their quantity ranges touch, AND their validity windows touch. Both
+    /// ranges must overlap; either one alone is a legitimate row and must be accepted.
+    ///
+    /// The comparisons come from <see cref="SaItemFamilyRuleMatch"/>, the same helpers the shipped
+    /// <c>SaDisGroupItem</c> rule uses, so the two masters cannot drift apart.
+    /// </summary>
+    /// <returns>An operator-facing message for the first ambiguity, or null when the set is clean.</returns>
+    private static string? FindOverlappingPriceLines(IReadOnlyList<NormalizedPriceLine> lines)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            for (var j = i + 1; j < lines.Count; j++)
+            {
+                var a = lines[i];
+                var b = lines[j];
+
+                if (!KeysEqual(a.ICode, b.ICode) || !KeysEqual(a.UOM, b.UOM))
+                {
+                    continue;
+                }
+
+                // Currency is part of the overlap identity: a MYR tier and a USD tier over the same band
+                // may coexist, because the resolver filters by currency before it ranks.
+                if (!string.Equals(
+                        a.CurrencyCode ?? string.Empty,
+                        b.CurrencyCode ?? string.Empty,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // A NULL ceiling means infinity, so an open-ended band overlaps everything at or above
+                // its floor.
+                if (!SaItemFamilyRuleMatch.BandsOverlap(
+                        a.MinQty, a.MaxQty ?? decimal.MaxValue,
+                        b.MinQty, b.MaxQty ?? decimal.MaxValue))
+                {
+                    continue;
+                }
+
+                if (!SaItemFamilyRuleMatch.WindowsOverlap(a.ValidFrom, a.ValidTo, b.ValidFrom, b.ValidTo))
+                {
+                    continue;
+                }
+
+                var band = a.MaxQty is null
+                    ? $"quantity {a.MinQty:0.####} and above"
+                    : $"quantity {a.MinQty:0.####} to {a.MaxQty:0.####}";
+
+                return $"Item {a.ICode} / UOM {a.UOM} already has a price for {band} effective "
+                     + $"{a.ValidFrom:yyyy-MM-dd} that also applies here. Adjust the quantity band or the "
+                     + "validity window so only one line can match.";
+            }
+        }
+
+        return null;
+    }
+
     private async Task<HashSet<string>> ActiveItemCodesAsync(AppDbContext db, string company, CancellationToken cancellationToken) =>
         (await db.IvStockMasters.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.IsActive)
@@ -197,14 +291,20 @@ public sealed partial class SaSalesRefService
         var canViewPrice = await CanViewPriceAsync(MenuCodes.SalesCustPriceGroup, cancellationToken);
         var lines = await db.IvCustPrices.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.CustPriceCode == code)
-            .OrderBy(x => x.ICode).ThenBy(x => x.UOM)
+            .OrderBy(x => x.ICode).ThenBy(x => x.UOM).ThenBy(x => x.ValidFrom).ThenBy(x => x.MinQty)
             .Select(x => new IvCustPriceLineVm
             {
+                Id = x.Id,
                 ICode = x.ICode,
                 IDesc = x.IDesc,
                 UOM = x.UOM,
                 SellingPrice = canViewPrice ? x.SellingPrice : null,
-                SellPackSize = x.SellPackSize
+                SellPackSize = x.SellPackSize,
+                ValidFrom = x.ValidFrom,
+                ValidTo = x.ValidTo,
+                MinQty = x.MinQty,
+                MaxQty = x.MaxQty,
+                CurrencyCode = x.CurrencyCode
             })
             .ToListAsync(cancellationToken);
 
@@ -268,7 +368,7 @@ public sealed partial class SaSalesRefService
                 .ToListAsync(cancellationToken);
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var normalizedLines = new List<(string ICode, string? IDesc, string UOM, decimal? Price, decimal? PackSize)>();
+        var normalizedLines = new List<NormalizedPriceLine>();
         for (var i = 0; i < lines.Count; i++)
         {
             var line = lines[i];
@@ -276,13 +376,56 @@ public sealed partial class SaSalesRefService
             var iCode = ValidateAndNormalizeCode(errors, $"Lines[{i}].ICode", $"{label} item", line.ICode, ItemCodeMax);
             var uom = ValidateAndNormalizeCode(errors, $"Lines[{i}].UOM", $"{label} UOM", line.UOM, UomMax);
 
-            if (iCode.Length > 0 && uom.Length > 0 && !seen.Add($"{iCode};{uom}"))
+            // Phase 3 — the band and the window are part of a line's IDENTITY, so the same item and UOM
+            // may appear more than once (quantity tiers, promotions).
+            var validFrom = (line.ValidFrom ?? IvCustPrice.AlwaysValidFrom).Date;
+            var validTo = line.ValidTo?.Date;
+            var minQty = line.MinQty ?? 0m;
+            var maxQty = line.MaxQty;
+            var currency = NormalizeOptionalCode(line.CurrencyCode).ToUpperInvariant();
+
+            if (minQty < 0m)
             {
-                errors[$"Lines[{i}].ICode"] = $"{label}: item {iCode} / UOM {uom} appears more than once.";
+                errors[$"Lines[{i}].MinQty"] = $"{label}: quantity from cannot be negative.";
             }
 
-            var stored = storedLines.FirstOrDefault(x =>
-                KeysEqual(x.ICode, iCode) && KeysEqual(x.UOM, uom));
+            if (maxQty is not null && maxQty.Value < minQty)
+            {
+                errors[$"Lines[{i}].MaxQty"] = $"{label}: quantity to cannot be below quantity from.";
+            }
+
+            if (validTo is not null && validTo.Value < validFrom)
+            {
+                errors[$"Lines[{i}].ValidTo"] = $"{label}: valid to cannot be before valid from.";
+            }
+
+            var naturalKey = $"{iCode};{uom};{validFrom:yyyyMMdd};{minQty};{currency}";
+            if (iCode.Length > 0 && uom.Length > 0 && !seen.Add(naturalKey))
+            {
+                errors[$"Lines[{i}].ICode"] =
+                    $"{label}: item {iCode} / UOM {uom} already has a price for the same effective date and quantity band.";
+            }
+
+            // The normalised line has to exist BEFORE the stored row is located, because matching is by
+            // the id/natural key this record carries (item + UOM alone stopped being an identity).
+            var candidate = new NormalizedPriceLine(
+                line.Id,
+                iCode,
+                line.IDesc,
+                uom,
+                line.SellingPrice,
+                line.SellPackSize,
+                validFrom,
+                validTo,
+                minQty,
+                maxQty,
+                currency.Length == 0 ? null : currency);
+
+            var stored = storedLines.FirstOrDefault(x => MatchesStoredLine(candidate, x));
+            if (line.Id > 0 && stored is null)
+            {
+                errors[$"Lines[{i}].Id"] = $"{label}: this price line no longer exists in this price group. Reload and try again.";
+            }
 
             if (iCode.Length > 0 && !validItems.Contains(iCode) && stored is null)
             {
@@ -300,7 +443,21 @@ public sealed partial class SaSalesRefService
             }
 
             var requestedPrice = canViewPrice ? line.SellingPrice : stored?.SellingPrice;
-            normalizedLines.Add((iCode, line.IDesc, uom, requestedPrice, line.SellPackSize));
+            normalizedLines.Add(candidate with { Price = requestedPrice });
+        }
+
+        // Phase 3 (plan 3.4) — a save is rejected when TWO lines for the same item, UOM and currency
+        // overlap in BOTH the quantity range AND the validity window. Overlapping in only ONE of them is
+        // legitimate and must be accepted: a tier change effective later, or a promotion restricted to
+        // a different band. The comparisons come from SaItemFamilyRuleMatch, the same helpers the
+        // shipped SaDisGroupItem rule uses, so the two masters cannot drift apart.
+        if (errors.Count == 0)
+        {
+            var overlap = FindOverlappingPriceLines(normalizedLines);
+            if (overlap is not null)
+            {
+                errors[nameof(model.Lines)] = overlap;
+            }
         }
 
         if (errors.Count > 0)
@@ -371,16 +528,21 @@ public sealed partial class SaSalesRefService
                 .Where(x => x.CompanyCode == company && x.CustPriceCode == code)
                 .ToListAsync(cancellationToken);
 
-            foreach (var existing in currentLines.Where(x =>
-                         !normalizedLines.Any(n => KeysEqual(n.ICode, x.ICode) && KeysEqual(n.UOM, x.UOM))))
+            // Pass 1 — drop the rows the payload no longer carries, and persist that BEFORE inserting.
+            // Phase 3 made a line's identity include its effective-from and its band floor, so an edit can
+            // move a line onto a natural key that another row still holds; deleting first frees the key
+            // instead of tripping the unique index. Still one transaction, so a failure rolls back both.
+            var doomed = currentLines.Where(x => !normalizedLines.Any(n => MatchesStoredLine(n, x))).ToList();
+            if (doomed.Count > 0)
             {
-                db.IvCustPrices.Remove(existing);
+                db.IvCustPrices.RemoveRange(doomed);
+                await db.SaveChangesAsync(cancellationToken);
             }
 
+            // Pass 2 — update what stayed, insert what is new.
             foreach (var line in normalizedLines)
             {
-                var existing = currentLines.FirstOrDefault(x =>
-                    KeysEqual(x.ICode, line.ICode) && KeysEqual(x.UOM, line.UOM));
+                var existing = currentLines.FirstOrDefault(x => MatchesStoredLine(line, x));
 
                 if (existing is null)
                 {
@@ -394,6 +556,11 @@ public sealed partial class SaSalesRefService
                         CustPriceDesc = desc,
                         SellingPrice = line.Price,
                         SellPackSize = line.PackSize,
+                        ValidFrom = line.ValidFrom,
+                        ValidTo = line.ValidTo,
+                        MinQty = line.MinQty,
+                        MaxQty = line.MaxQty,
+                        CurrencyCode = line.CurrencyCode,
                         CreatedDate = now,
                         CreatedBy = user,
                         ModifiedDate = now,
@@ -404,10 +571,17 @@ public sealed partial class SaSalesRefService
                 }
                 else
                 {
+                    existing.ICode = line.ICode;
+                    existing.UOM = line.UOM;
                     existing.IDesc = line.IDesc;
                     existing.CustPriceDesc = desc;
                     existing.SellingPrice = line.Price;
                     existing.SellPackSize = line.PackSize;
+                    existing.ValidFrom = line.ValidFrom;
+                    existing.ValidTo = line.ValidTo;
+                    existing.MinQty = line.MinQty;
+                    existing.MaxQty = line.MaxQty;
+                    existing.CurrencyCode = line.CurrencyCode;
                     existing.ModifiedDate = now;
                     existing.ModifiedBy = user;
                 }
@@ -424,7 +598,7 @@ public sealed partial class SaSalesRefService
         catch (DbUpdateException ex) when (IsDuplicateKey(ex))
         {
             await tx.RollbackAsync(cancellationToken);
-            return FailVm<IvCustPriceGroupEditVm>(IvMasterErrorCode.DuplicateKey, "The same item and UOM already exists in this price group.", nameof(model.Lines));
+            return FailVm<IvCustPriceGroupEditVm>(IvMasterErrorCode.DuplicateKey, "This price group already holds a price for the same item, UOM, effective date and quantity band.", nameof(model.Lines));
         }
 
         return await GetCustPriceGroupAsync(code, cancellationToken);
@@ -616,14 +790,20 @@ public sealed partial class SaSalesRefService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var rows = await db.IvCustPrices.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.CustPriceCode == code)
-            .OrderBy(x => x.ICode).ThenBy(x => x.UOM)
+            .OrderBy(x => x.ICode).ThenBy(x => x.UOM).ThenBy(x => x.ValidFrom).ThenBy(x => x.MinQty)
             .Select(x => new IvCustPriceListRow
             {
+                Id = x.Id,
                 ICode = x.ICode,
                 IDesc = x.IDesc,
                 UOM = x.UOM,
                 SellingPrice = canViewPrice ? x.SellingPrice : null,
-                SellPackSize = x.SellPackSize
+                SellPackSize = x.SellPackSize,
+                ValidFrom = x.ValidFrom,
+                ValidTo = x.ValidTo,
+                MinQty = x.MinQty,
+                MaxQty = x.MaxQty,
+                CurrencyCode = x.CurrencyCode
             })
             .ToListAsync(cancellationToken);
 

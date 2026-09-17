@@ -55,7 +55,9 @@ public sealed class PoOrderService : IPoOrderService
 
 		public PoOrderOperationResult ToFail()
 		{
-			return (Kind == PoOrderErrorKind.Validation) ? PoOrderOperationResult.FailValidation(Error ?? "Validation failed.", Errors) : PoOrderOperationResult.Fail(Error ?? "Unable to save the Purchase Order.", Kind);
+			return (Kind == PoOrderErrorKind.Validation)
+				? PoOrderOperationResult.FailValidation(ValidationMessageFormat.ResolveServiceMessage(Errors, Error), Errors)
+				: PoOrderOperationResult.Fail(Error ?? "Unable to save the Purchase Order.", Kind);
 		}
 	}
 
@@ -606,7 +608,7 @@ public sealed class PoOrderService : IPoOrderService
 					{
 						await tx.RollbackAsync(cancellationToken);
 						await DiscardDraftSafeAsync(tempDocId, cancellationToken);
-						poOrderOperationResult = PoOrderOperationResult.FailValidation("Validation failed.", refErrors);
+						poOrderOperationResult = PoOrderOperationResult.FailValidation(ValidationMessageFormat.JoinMessages(refErrors), refErrors);
 					}
 					else
 					{
@@ -1071,7 +1073,7 @@ public sealed class PoOrderService : IPoOrderService
 						if (refErrors != null)
 						{
 							await tx.RollbackAsync(cancellationToken);
-							poOrderOperationResult = PoOrderOperationResult.FailValidation("Validation failed.", refErrors);
+							poOrderOperationResult = PoOrderOperationResult.FailValidation(ValidationMessageFormat.JoinMessages(refErrors), refErrors);
 						}
 						else
 						{

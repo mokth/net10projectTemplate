@@ -1,0 +1,73 @@
+@using ErpWeb.Core.Services
+
+@* Shared validation surface for the document entry pages (sales + purchase).
+   Renders EVERY entry from the server dictionary in deterministic order and never de-duplicates or
+   filters a row-scoped message: two different rows may legitimately carry identical text, and both
+   must remain visible. Falls back to the plain server message when there is no dictionary.
+   See ValidationMessageFormat for the ordering / de-duplication contract. *@
+@if (Ordered.Count > 0)
+{
+    <div class="sdoc-toast sdoc-toast--err" role="alert">
+        <div class="sdoc-toast__body">
+            <strong>@Heading</strong>
+            <ul class="sdoc-warn-list">
+                @foreach (var entry in Ordered)
+                {
+                    @* title keeps the raw server key reachable for support and for grepping the service. *@
+                    <li title="@entry.Key">@ValidationMessageFormat.Label(entry.Key): @entry.Value</li>
+                }
+            </ul>
+        </div>
+        @if (OnDismiss.HasDelegate)
+        {
+            <button type="button" class="sdoc-toast__close" @onclick="OnDismiss" aria-label="Dismiss">×</button>
+        }
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(FallbackMessage))
+{
+    <div class="sdoc-toast sdoc-toast--err" role="alert">
+        <span>@FallbackMessage</span>
+        @if (OnDismiss.HasDelegate)
+        {
+            <button type="button" class="sdoc-toast__close" @onclick="OnDismiss" aria-label="Dismiss">×</button>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// The server's field-keyed validation dictionary. This is the authoritative payload; the
+    /// component renders all of it.
+    /// </summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyDictionary<string, string> Errors { get; set; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Headline shown above the list. Defaults to a neutral prompt so the specific causes are not
+    /// printed twice (they are already in the list).
+    /// </summary>
+    [Parameter]
+    public string Heading { get; set; } = "Fix these before saving:";
+
+    /// <summary>
+    /// Message used only when <see cref="Errors"/> is empty — i.e. a non-validation failure such as
+    /// Concurrency, NotFound or Authorization.
+    /// </summary>
+    [Parameter]
+    public string? FallbackMessage { get; set; }
+
+    [Parameter]
+    public EventCallback OnDismiss { get; set; }
+
+    private IReadOnlyList<KeyValuePair<string, string>> Ordered { get; set; } = [];
+
+    protected override void OnParametersSet()
+    {
+        Ordered = ValidationMessageFormat
+            .Order(Errors)
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Value))
+            .ToList();
+    }
+}

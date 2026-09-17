@@ -559,6 +559,7 @@ public sealed class SaCustService : ISaCustService
         SetIfChanged(entity, snapshot, () => entity.SubGroupCode, v => entity.SubGroupCode = v, NullIfWhiteSpace(model.SubGroupCode));
         SetIfChanged(entity, snapshot, () => entity.IndustryCode, v => entity.IndustryCode = v, NullIfWhiteSpace(model.IndustryCode));
         SetIfChanged(entity, snapshot, () => entity.ChannelCode, v => entity.ChannelCode = v, NullIfWhiteSpace(model.ChannelCode));
+        SetIfChanged(entity, snapshot, () => entity.CustSource, v => entity.CustSource = v, NullIfWhiteSpace(model.CustSource));
         entity.IsActive = model.IsActive;
 
         entity.Address1 = NullIfWhiteSpace(model.Address1);
@@ -731,6 +732,11 @@ public sealed class SaCustService : ISaCustService
             errors["ChannelCode"] = $"Channel '{model.ChannelCode}' is not valid.";
         }
 
+        if (!await _lookups.ValidateSourceAssignmentAsync(model.CustSource, existingSnapshot?.CustSource, cancellationToken))
+        {
+            errors[nameof(model.CustSource)] = $"Source '{model.CustSource}' is not valid.";
+        }
+
         if (!await _lookups.ValidateCurrencyAssignmentAsync(model.Currency, existingSnapshot?.Currency, cancellationToken))
         {
             errors["Currency"] = $"Currency '{model.Currency}' is not valid.";
@@ -815,6 +821,7 @@ public sealed class SaCustService : ISaCustService
         CustGroupCode = x.CustGroupCode,
         SalesmanCode = x.SalesmanCode,
         AreaCode = x.AreaCode,
+        CustSource = x.CustSource,
         City = x.City,
         Tel = x.Tel,
         PayCode = x.PayCode,
@@ -865,6 +872,7 @@ public sealed class SaCustService : ISaCustService
             SubGroupCode = x.SubGroupCode,
             IndustryCode = x.IndustryCode,
             ChannelCode = x.ChannelCode,
+            CustSource = x.CustSource,
             IsActive = x.IsActive,
             Address1 = x.Address1,
             Address2 = x.Address2,
@@ -945,6 +953,7 @@ public sealed class SaCustService : ISaCustService
         CustGroupCode = query.CustGroupCode,
         SalesmanCode = query.SalesmanCode,
         AreaCode = query.AreaCode,
+        CustSource = query.CustSource,
         SortField = query.SortField,
         SortDescending = query.SortDescending,
         Skip = query.Skip,

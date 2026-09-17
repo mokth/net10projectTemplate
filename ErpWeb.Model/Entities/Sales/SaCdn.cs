@@ -52,6 +52,8 @@ public class SaCdn
     public DateTime? IrbmValidOn { get; set; }
     public string? IrbmError { get; set; }
     public string? IrbmStatus { get; set; }
+    /// <summary>When <see cref="IrbmStatus"/> is FAILED: <c>ConfirmedFailure</c> or <c>Unknown</c>.</summary>
+    public string? IrbmOutcome { get; set; }
 
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
