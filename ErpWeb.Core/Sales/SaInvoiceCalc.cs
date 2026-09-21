@@ -9,6 +9,13 @@ public static class SaInvoiceStatuses
 public static class SaInvoiceLimits
 {
     public const int MaxPostSelection = 3;
+
+    /// <summary>
+    /// Hard cap on how many invoices one interactive batch e-Invoice action (Submit / E-Status /
+    /// Cancel) may carry. Keeps the request inside the MyInvois rate limits and the grid responsive;
+    /// it is applied AFTER case-insensitive deduplication.
+    /// </summary>
+    public const int MaxEInvoiceBatchSelection = 10;
 }
 
 public static class SaInvoiceCalc

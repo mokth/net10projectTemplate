@@ -4,6 +4,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.EInvoiceLib.Store;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -73,6 +74,12 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
 
     /// <summary>Every menu code that <see cref="IAccessRightService"/> was asked about, in order.</summary>
     public List<(string Menu, string Permission)> PermissionChecks { get; } = [];
+
+    /// <summary>
+    /// Permissions this host must refuse, regardless of <c>authorized</c>. Lets a test withhold one
+    /// right (for example SUBMIT) while keeping the rest of the menu usable.
+    /// </summary>
+    public HashSet<string> DeniedPermissions { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public EInvoiceOptions Settings { get; set; } = new()
     {
@@ -150,7 +157,7 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             .ReturnsAsync((string menu, string permission, CancellationToken _) =>
             {
                 host.PermissionChecks.Add((menu, permission));
-                return authorized;
+                return authorized && !host.DeniedPermissions.Contains(permission);
             });
 
         return host;
@@ -202,12 +209,23 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             NullLogger<SaEInvoiceService>.Instance);
     }
 
-    /// <summary>Company e-Invoice profile complete enough to pass ERP validation for the invoice path.</summary>
+    /// <summary>
+    /// Company e-Invoice profile complete enough to pass ERP validation for the invoice path.
+    /// <para>
+    /// <paramref name="eInvOnBehalfTin"/> matters: since the company profile gained
+    /// <c>EInvOnBehalfTin</c>, THAT column is the supplier TIN the service validates and maps
+    /// (<c>SaEInvoiceService.GetSupplierAsync</c>), so a company seeded without it is refused with
+    /// "Supplier TIN is required" before any MyInvois call. Pass null to exercise that refusal.
+    /// </para>
+    /// </summary>
     public async Task SeedCompanyAsync(
         string? companyCode = null,
         bool enabled = true,
         string? state = "Selangor",
-        string? country = "Malaysia")
+        string? country = "Malaysia",
+        string? msic = "62010",
+        string? phone = "0312345678",
+        string? eInvOnBehalfTin = "C1234567890")
     {
         var code = companyCode ?? _company;
         await using var db = await Factory.CreateDbContextAsync();
@@ -218,7 +236,7 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             LegalName = "Demo Sdn Bhd",
             RegistrationNo = "202301234567",
             TaxNo = "C1234567890",
-            Phone = "0312345678",
+            Phone = phone,
             Email = "billing@demo.test",
             Address1 = "1 Jalan Demo",
             City = "Shah Alam",
@@ -226,13 +244,14 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             PostCode = "40100",
             Country = country,
             EInvEnabled = enabled,
-            EInvMsicCode = "62010",
+            EInvMsicCode = msic,
             EInvBizDescription = "Software development",
             EInvSstNo = "A01-2345-67890123",
             EInvRegType = "BRN",
             EInvStateCode = "10",
             EInvCountryCode = "MYS",
             EInvDocumentVersion = "1.0",
+            EInvOnBehalfTin = eInvOnBehalfTin,
             IsActive = true
         });
 
@@ -260,6 +279,29 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
     {
         var code = companyCode ?? _company;
         await using var db = await Factory.CreateDbContextAsync();
+
+        // Buyer e-Invoice identity is read live from the customer master (and frozen onto the document
+        // only when a submission claims SUBMITTING), so every seeded invoice needs a matching customer
+        // row. It is kept in step with buyerTin so a test can control what the master holds.
+        var customer = await db.SaCusts
+            .FirstOrDefaultAsync(x => x.CompanyCode == code && x.CustCode == "CUST01");
+        if (customer is null)
+        {
+            customer = new SaCust
+            {
+                CompanyCode = code,
+                CustCode = "CUST01",
+                CustName = "Buyer Sdn Bhd"
+            };
+            db.SaCusts.Add(customer);
+        }
+
+        customer.TinNo = buyerTin;
+        customer.CustBrn = "202201234567";
+        customer.RegType = "BRN";
+        customer.InvEmail = null;
+        customer.Email = "ap@buyer.test";
+        customer.GstregNo = "A01-2345-67890123";
 
         var invoice = new SaInvoice
         {
@@ -430,6 +472,21 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
     public async Task BumpInvoiceRowVersionAsync(string? invNo = null)
     {
         await using var db = await Factory.CreateDbContextAsync();
+
+        if (db.Database.IsSqlServer())
+        {
+            // SQL Server OWNS a rowversion column: it is illegal to assign it, and it bumps on ANY update
+            // that touches the row. A no-op self-assignment is therefore the provider-correct equivalent
+            // of the SQLite branch below, which writes a random blob into the column. Using
+            // `randomblob(8)` here (the previous code) threw "not a recognized built-in function name",
+            // which surfaced as an MyInvois transport failure instead of a concurrency conflict.
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE SaInvoice SET InvNo = InvNo WHERE CompanyCode = {0} AND InvNo = {1}",
+                _company,
+                invNo ?? InvNo);
+            return;
+        }
+
         await db.Database.ExecuteSqlRawAsync(
             "UPDATE SaInvoice SET RowVersion = randomblob(8) WHERE CompanyCode = {0} AND InvNo = {1}",
             _company,
@@ -486,7 +543,10 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        _connection.Dispose();
+        // Null for a host built over a caller-owned factory (the SQL Server concurrency suite), where
+        // there is no SQLite connection to dispose. Disposing it unconditionally threw an NRE in
+        // teardown, which reported the SQL Server tests as failed *after* they had done their work.
+        _connection?.Dispose();
         return ValueTask.CompletedTask;
     }
 }

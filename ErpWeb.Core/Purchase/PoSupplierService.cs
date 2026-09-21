@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -509,7 +510,7 @@ public sealed class PoSupplierService : IPoSupplierService
                 State = NullIfWhiteSpace(addr.State),
                 PostalCode = NullIfWhiteSpace(addr.PostalCode),
                 Country = NullIfWhiteSpace(addr.Country),
-                Tel = NullIfWhiteSpace(addr.Tel),
+                Tel = PhoneNumberFormat.ToStored(addr.Tel),
                 Fax = NullIfWhiteSpace(addr.Fax)
             };
             InventoryLeftoverSite.Apply(child, writeScope);
@@ -539,7 +540,8 @@ public sealed class PoSupplierService : IPoSupplierService
         SetIfChanged(entity, snapshot, () => entity.CategoryCode, v => entity.CategoryCode = v, NullIfWhiteSpace(model.CategoryCode));
         SetIfChanged(entity, snapshot, () => entity.CreditorSubGroup, v => entity.CreditorSubGroup = v, NullIfWhiteSpace(model.CreditorSubGroup));
         SetIfChanged(entity, snapshot, () => entity.AreaCode, v => entity.AreaCode = v, NullIfWhiteSpace(model.AreaCode));
-        SetIfChanged(entity, snapshot, () => entity.RegType, v => entity.RegType = v, NullIfWhiteSpace(model.RegType));
+        SetIfChanged(entity, snapshot, () => entity.RegType, v => entity.RegType = v,
+            RegistrationTypeForWrite(model.RegType));
         SetIfChanged(entity, snapshot, () => entity.PoPrefix, v => entity.PoPrefix = v, NullIfWhiteSpace(model.PoPrefix));
         entity.IsActive = model.IsActive;
         SetIfChanged(entity, snapshot, () => entity.Lmw, v => entity.Lmw = v, model.Lmw);
@@ -553,7 +555,7 @@ public sealed class PoSupplierService : IPoSupplierService
         entity.State = NullIfWhiteSpace(model.State);
         entity.PostalCode = NullIfWhiteSpace(model.PostalCode);
         entity.Country = NullIfWhiteSpace(model.Country);
-        entity.Tel = NullIfWhiteSpace(model.Tel);
+        entity.Tel = PhoneNumberFormat.ToStored(model.Tel);
         entity.Fax = NullIfWhiteSpace(model.Fax);
         entity.Telex = NullIfWhiteSpace(model.Telex);
         entity.Email = NullIfWhiteSpace(model.Email);
@@ -563,28 +565,28 @@ public sealed class PoSupplierService : IPoSupplierService
         entity.Title = NullIfWhiteSpace(model.Title);
         entity.Department = NullIfWhiteSpace(model.Department);
         entity.ContactEmail = NullIfWhiteSpace(model.ContactEmail);
-        entity.ContactTelp = NullIfWhiteSpace(model.ContactTelp);
+        entity.ContactTelp = PhoneNumberFormat.ToStored(model.ContactTelp);
         entity.ContactFax = NullIfWhiteSpace(model.ContactFax);
 
         entity.ContactPerson2 = NullIfWhiteSpace(model.ContactPerson2);
         entity.Title2 = NullIfWhiteSpace(model.Title2);
         entity.Department2 = NullIfWhiteSpace(model.Department2);
         entity.ContactEmail2 = NullIfWhiteSpace(model.ContactEmail2);
-        entity.ContactTelp2 = NullIfWhiteSpace(model.ContactTelp2);
+        entity.ContactTelp2 = PhoneNumberFormat.ToStored(model.ContactTelp2);
         entity.ContactFax2 = NullIfWhiteSpace(model.ContactFax2);
 
         entity.ContactPerson3 = NullIfWhiteSpace(model.ContactPerson3);
         entity.Title3 = NullIfWhiteSpace(model.Title3);
         entity.Department3 = NullIfWhiteSpace(model.Department3);
         entity.ContactEmail3 = NullIfWhiteSpace(model.ContactEmail3);
-        entity.ContactTelp3 = NullIfWhiteSpace(model.ContactTelp3);
+        entity.ContactTelp3 = PhoneNumberFormat.ToStored(model.ContactTelp3);
         entity.ContactFax3 = NullIfWhiteSpace(model.ContactFax3);
 
         entity.ContactPerson4 = NullIfWhiteSpace(model.ContactPerson4);
         entity.Title4 = NullIfWhiteSpace(model.Title4);
         entity.Department4 = NullIfWhiteSpace(model.Department4);
         entity.ContactEmail4 = NullIfWhiteSpace(model.ContactEmail4);
-        entity.ContactTelp4 = NullIfWhiteSpace(model.ContactTelp4);
+        entity.ContactTelp4 = PhoneNumberFormat.ToStored(model.ContactTelp4);
         entity.ContactFax4 = NullIfWhiteSpace(model.ContactFax4);
 
         SetIfChanged(entity, snapshot, () => entity.Taxable, v => entity.Taxable = v, model.Taxable);
@@ -687,6 +689,9 @@ public sealed class PoSupplierService : IPoSupplierService
             }
         }
 
+        AddRegistrationTypeError(errors, model.RegType, snapshot?.RegType);
+        AddPhoneError(errors, nameof(model.Tel), model.Tel, snapshot?.Tel);
+
         return errors;
     }
 
@@ -751,7 +756,68 @@ public sealed class PoSupplierService : IPoSupplierService
             {
                 errors[$"Addresses[{i}].State"] = $"Address {line}: state '{addr.State}' is not valid.";
             }
+
+            AddPhoneError(errors, $"Addresses[{i}].Tel", addr.Tel, existing?.Tel);
         }
+    }
+
+    /// <summary>
+    /// LHDN registration type must be one of the shared <see cref="EInvoiceRegistrationTypes"/> values.
+    /// Blank stays allowed, and a legacy value already on the row is tolerated while it is unchanged.
+    /// </summary>
+    private static void AddRegistrationTypeError(
+        Dictionary<string, string> errors,
+        string? regType,
+        string? existingRegType)
+    {
+        if (string.IsNullOrWhiteSpace(regType) || EInvoiceRegistrationTypes.IsValid(regType))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingRegType)
+            && string.Equals(regType.Trim(), existingRegType.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        errors["RegType"] = "Registration type must be one of BRN, NRIC, PASSPORT or ARMY.";
+    }
+
+    /// <summary>
+    /// Canonical value when recognised; otherwise the raw trimmed value, which is only reachable for a
+    /// legacy row that passed validation unchanged.
+    /// </summary>
+    private static string? RegistrationTypeForWrite(string? regType) =>
+        EInvoiceRegistrationTypes.Normalize(regType) ?? NullIfWhiteSpace(regType);
+
+    /// <summary>
+    /// A telephone number must be E.164. Mirrors <see cref="AddRegistrationTypeError"/>: a value already on
+    /// the row is tolerated while it is unchanged, so correcting an unrelated field can never be blocked by
+    /// historical data that predates the rule.
+    /// </summary>
+    /// <remarks>
+    /// Blank and ERP placeholders (<c>NA</c>, <c>-</c>, <c>0</c>) are accepted here because the write path
+    /// stores them as NULL, which is a legitimate "no number" for a master record.
+    /// </remarks>
+    private static void AddPhoneError(
+        Dictionary<string, string> errors,
+        string key,
+        string? phone,
+        string? existingPhone)
+    {
+        if (PhoneNumberFormat.Validate(phone, "Telephone") is not { } message)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingPhone)
+            && string.Equals(phone?.Trim(), existingPhone.Trim(), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        errors[key] = message;
     }
 
     private static bool PaymentCreditChanged(PoSupplierEditVm model, PoSupplierEditVm snapshot) =>

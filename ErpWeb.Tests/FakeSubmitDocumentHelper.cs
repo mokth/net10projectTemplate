@@ -23,6 +23,12 @@ internal sealed class FakeSubmitDocumentHelper : ISubmitDocumentHelper
 
     public List<DocumentHeader> Submitted { get; } = [];
 
+    /// <summary>The uuid list passed to each <c>CancelDocument</c> / <c>RejectDocument</c> call, in order.</summary>
+    public List<List<string>> CancelledUuids { get; } = [];
+
+    /// <summary>The cancel payload passed to each <c>CancelDocument</c> call, in order.</summary>
+    public List<CancelDocument> CancelledDocuments { get; } = [];
+
     /// <summary>
     /// Raised while a submit is "at MyInvois", so a test can simulate another session changing the row
     /// under the in-flight submission.
@@ -98,6 +104,86 @@ internal sealed class FakeSubmitDocumentHelper : ISubmitDocumentHelper
     /// <summary>A blank token: the request never left the process.</summary>
     public static GeneralResult<SuccessSubmit> NeverSent() =>
         new() { IsSuccess = false, error = "Invalid JWT Token! Token is blank." };
+
+    // ─────────────────────────── multi-document batch builders ───────────────────────────
+
+    /// <summary>One response carrying several accepted documents, as MyInvois returns for a batch.</summary>
+    public static GeneralResult<SuccessSubmit> AcceptedMany(
+        IEnumerable<string> codeNumbers,
+        string submissionUid = "SUB-1") =>
+        new()
+        {
+            IsSuccess = true,
+            result = new SuccessSubmit
+            {
+                submissionUID = submissionUid,
+                acceptedDocuments = codeNumbers
+                    .Select(x => new AcceptedDocuments { invoiceCodeNumber = x, uuid = "UUID-" + x })
+                    .ToList(),
+                rejectedDocuments = []
+            }
+        };
+
+    /// <summary>One response carrying rejected documents, each with its own error.</summary>
+    public static GeneralResult<SuccessSubmit> RejectedMany(
+        IEnumerable<(string CodeNumber, string Message)> rejected,
+        string submissionUid = "SUB-REJ") =>
+        new()
+        {
+            IsSuccess = false,
+            result = new SuccessSubmit
+            {
+                submissionUID = submissionUid,
+                acceptedDocuments = [],
+                rejectedDocuments = rejected
+                    .Select(x => new RejectedDocuments
+                    {
+                        invoiceCodeNumber = x.CodeNumber,
+                        error = new ErrorRespone { code = "400", message = x.Message }
+                    })
+                    .ToList()
+            }
+        };
+
+    /// <summary>A mixed batch response: some accepted, some rejected, in one submission.</summary>
+    public static GeneralResult<SuccessSubmit> Mixed(
+        IEnumerable<string> accepted,
+        IEnumerable<(string CodeNumber, string Message)> rejected,
+        string submissionUid = "SUB-MIX") =>
+        new()
+        {
+            IsSuccess = true,
+            result = new SuccessSubmit
+            {
+                submissionUID = submissionUid,
+                acceptedDocuments = accepted
+                    .Select(x => new AcceptedDocuments { invoiceCodeNumber = x, uuid = "UUID-" + x })
+                    .ToList(),
+                rejectedDocuments = rejected
+                    .Select(x => new RejectedDocuments
+                    {
+                        invoiceCodeNumber = x.CodeNumber,
+                        error = new ErrorRespone { code = "400", message = x.Message }
+                    })
+                    .ToList()
+            }
+        };
+
+    /// <summary>
+    /// A response that carries per-document lists but mentions none of the submitted documents. Used to
+    /// prove an unmatched document never becomes a success.
+    /// </summary>
+    public static GeneralResult<SuccessSubmit> AcceptedOther(string submissionUid = "SUB-1") =>
+        new()
+        {
+            IsSuccess = true,
+            result = new SuccessSubmit
+            {
+                submissionUID = submissionUid,
+                acceptedDocuments = [new AcceptedDocuments { invoiceCodeNumber = "SOMEONE-ELSE", uuid = "UUID-OTHER" }],
+                rejectedDocuments = []
+            }
+        };
 
     /// <summary>A submitted document that MyInvois later validated.</summary>
     public static GeneralResult<Submission> SubmissionWith(string documentNo, string status, string? uuid = null) =>
@@ -196,12 +282,16 @@ internal sealed class FakeSubmitDocumentHelper : ISubmitDocumentHelper
     public Task<GeneralResult<CancelRespone>> CancelDocument(CancelDocument doc, List<string> uuid)
     {
         Calls.Add(nameof(CancelDocument));
+        CancelledUuids.Add([.. uuid]);
+        CancelledDocuments.Add(doc);
         return Task.FromResult(CancelHandler(doc));
     }
 
     public Task<GeneralResult<CancelRespone>> RejectDocument(CancelDocument doc, List<string> uuid)
     {
         Calls.Add(nameof(RejectDocument));
+        CancelledUuids.Add([.. uuid]);
+        CancelledDocuments.Add(doc);
         return Task.FromResult(CancelHandler(doc));
     }
 

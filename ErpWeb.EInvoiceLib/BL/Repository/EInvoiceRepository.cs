@@ -178,138 +178,17 @@ namespace ErpWeb.EInvoiceLib.BL.Repository
             return access_token;
         }
 
-        public async Task AddSubmissionAsync(SuccessSubmit submit)
-        {
-            try
-            {
-                EInvDocSubmission doc = new EInvDocSubmission();
-                doc.submissionUUID = submit.submissionUID;
-                doc.companyID = submit.companyID;
-                doc.documentID = submit.documentID;
-                doc.documentNo = submit.documentNo;
-                doc.documentType = "POS";
-
-                if (submit.acceptedDocuments.Count > 0)
-                {
-                    doc.uuid = submit.acceptedDocuments[0].uuid;
-                    doc.internalId = submit.acceptedDocuments[0].invoiceCodeNumber;
-                }
-                using (var db = await CreateDbContext())
-                {
-                    var found = await db.EInvDocSubmissions
-                        .Where(x => x.submissionUUID == doc.submissionUUID && x.uuid == doc.uuid)
-                        .FirstOrDefaultAsync();
-                    if (found == null)
-                    {
-                        doc.status = "Submitted";
-                        doc.dateTimeIssued = DateTime.Now;
-                        db.Add(doc);
-                        await db.SaveChangesAsync();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Error adding submission to database");
-                _logger.LogError(ex.Message, ex);
-            }
-        }
-
-        public async Task<EInvDocSubmission?> getSubmissionAsync(string submissionID, string uuid)
-        {
-            EInvDocSubmission? doc = null;
-            try
-            {
-                using (var db = await CreateDbContext())
-                {
-                    doc = await db.EInvDocSubmissions
-                        .Where(x => x.submissionUUID == submissionID && x.uuid == uuid)
-                        .FirstOrDefaultAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Error getting submission from database");
-                _logger.LogError(ex.Message, ex);
-            }
-            return doc;
-        }
-
-        public async Task<EInvDocSubmission?> getSubmissionByCompIdAsync(string companyID, string documentNo, int docID)
-        {
-            EInvDocSubmission? doc = null;
-            try
-            {
-                using (var db = await CreateDbContext())
-                {
-                    doc = await db.EInvDocSubmissions
-                        .Where(x => x.companyID == companyID && x.documentNo == documentNo && x.documentID == docID)
-                        .FirstOrDefaultAsync();
-
-                    if (doc == null)
-                    {
-                        doc = await db.EInvDocSubmissions
-                            .Where(x => x.internalId == documentNo)
-                            .FirstOrDefaultAsync();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Error getting submission from database");
-                _logger.LogError(ex.Message, ex);
-            }
-            return doc;
-        }
-
-        public async Task UpdateSubmissionAsync(Submission submit)
-        {
-            try
-            {
-                string uuid = "";
-                if (submit.documentSummary.Count > 0)
-                {
-                    uuid = submit.documentSummary[0].uuid;
-                }
-                using (var db = await CreateDbContext())
-                {
-                    var found = await db.EInvDocSubmissions
-                        .Where(x => x.submissionUUID == submit.submissionUid && x.uuid == uuid)
-                        .FirstOrDefaultAsync();
-                    if (found != null)
-                    {
-                        found.issuerName = submit.documentSummary[0].issuerName;
-                        found.cancelDateTime = submit.documentSummary[0].cancelDateTime;
-                        found.createdByUserId = submit.documentSummary[0].createdByUserId;
-                        found.dateTimeIssued = submit.documentSummary[0].dateTimeIssued;
-                        found.dateTimeReceived = submit.documentSummary[0].dateTimeReceived;
-                        found.dateTimeValidated = submit.documentSummary[0].dateTimeValidated;
-                        found.document = submit.documentSummary[0].document;
-                        found.documentStatusReason = submit.documentSummary[0].documentStatusReason;
-                        found.internalId = submit.documentSummary[0].internalId;
-                        found.issuerName = submit.documentSummary[0].issuerName;
-                        found.issuerTin = submit.documentSummary[0].issuerTin;
-                        found.longId = submit.documentSummary[0].longId;
-                        found.netAmount = submit.documentSummary[0].netAmount;
-                        found.receiverId = submit.documentSummary[0].receiverId;
-                        found.receiverName = submit.documentSummary[0].receiverName;
-                        found.rejectRequestDateTime = submit.documentSummary[0].rejectRequestDateTime;
-                        found.total = submit.documentSummary[0].total;
-                        found.totalDiscount = submit.documentSummary[0].totalDiscount;
-                        found.totalSales = submit.documentSummary[0].totalSales;
-                        found.typeName = submit.documentSummary[0].typeName;
-                        found.typeVersionName = submit.documentSummary[0].typeVersionName;
-                        found.total = submit.documentSummary[0].total;
-                        found.status = submit.documentSummary[0].status;
-                        await db.SaveChangesAsync();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Error updating submission");
-                _logger.LogError(ex.Message, ex);
-            }
-        }
+        // The four dbo.EInvDocSubmission methods were REMOVED from this repository (plan Phase 4):
+        // AddSubmissionAsync, getSubmissionAsync, getSubmissionByCompIdAsync and UpdateSubmissionAsync.
+        //
+        // Why removing them is both safe and desirable:
+        //   * They read/wrote the same physical table through a DIFFERENT, narrower EF model
+        //     (BL/Entity/SaDocSubmission.cs), and AddSubmissionAsync hard-coded documentType = "POS".
+        //   * getSubmissionByCompIdAsync carried a fallback that matched internalId == documentNo, which
+        //     is not a valid document identity.
+        //   * ErpWeb now owns the table through AppDbContext + EInvoiceSubmissionWriter, with the unique
+        //     index (companyID, submissionUUID, documentType, documentNo) as the single authority.
+        //
+        // Token access (above) and the LHDN API client are deliberately untouched.
     }
 }

@@ -85,6 +85,16 @@ public interface ISaSalesRefService
     Task<DeleteCheckResult> CanDeleteTaxGroupsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
     Task<IvMasterOperationResult<object>> DeleteTaxGroupsAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// LHDN tax types (IvMSCode rows with <c>CodeType = "TAX"</c>) that a tax group may map to on an
+    /// e-Invoice line. Ungated on purpose: the tax-group popup needs the list to render and to validate,
+    /// and the caller has already passed the tax-group menu gate. Blank codes are dropped, and codes
+    /// longer than the 2-character <c>SaTaxGroup.TaxType</c> column are omitted so they can never be
+    /// selected. Named <c>TaxType</c> (not TaxGroup) because it describes the LHDN tax type, not the
+    /// ERP <see cref="SaTaxGroup"/> record itself.
+    /// </summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListTaxTypesForAssignmentAsync(CancellationToken cancellationToken = default);
+
     // -------- Flat sales code-reference family (docs/sales-master-plan.md) --------
     // All six are Level A (DB RowVersion on the VM) — there is no expectedFingerprint argument.
 
@@ -431,6 +441,10 @@ public sealed class SaTaxGroupListRow
     public string Code { get; init; } = string.Empty;
     public string? Desc { get; init; }
     public decimal Percentage { get; init; }
+
+    /// <summary>LHDN tax type (IvMSCode <c>TAX</c> code) this group maps to on an e-Invoice line.</summary>
+    public string? TaxType { get; init; }
+
     public string CompanyCode { get; init; } = string.Empty;
     public string? BranchCode { get; init; }
     public string? LocationCode { get; init; }
@@ -442,6 +456,13 @@ public sealed class SaTaxGroupEditVm
     public string? Desc { get; set; }
     public decimal Percentage { get; set; }
     public string? TaxGlCode { get; set; }
+
+    /// <summary>
+    /// LHDN tax type chosen from the IvMSCode <c>TAX</c> family. Blank is normalised to <c>06</c>
+    /// ("Not Applicable") by <c>SaveTaxGroupAsync</c>.
+    /// </summary>
+    public string? TaxType { get; set; }
+
     public string CompanyCode { get; set; } = string.Empty;
     public string? BranchCode { get; set; }
     public string? LocationCode { get; set; }

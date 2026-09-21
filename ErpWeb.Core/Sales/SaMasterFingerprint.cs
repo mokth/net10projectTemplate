@@ -37,7 +37,7 @@ public static class SaMasterFingerprint
             vm.IsActive));
 
     public static string TaxGroup(SaTaxGroupEditVm vm) =>
-        Hash(new TaxGroupPayload(vm.Desc, vm.Percentage, vm.TaxGlCode));
+        Hash(new TaxGroupPayload(vm.Desc, vm.Percentage, vm.TaxGlCode, vm.TaxType));
 
     private static string Hash<T>(T payload)
     {
@@ -63,5 +63,5 @@ public static class SaMasterFingerprint
         decimal? CommissionRate,
         bool IsActive);
 
-    private sealed record TaxGroupPayload(string? Desc, decimal Percentage, string? TaxGlCode);
+    private sealed record TaxGroupPayload(string? Desc, decimal Percentage, string? TaxGlCode, string? TaxType);
 }

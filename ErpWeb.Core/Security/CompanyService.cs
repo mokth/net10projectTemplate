@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.Sales;
@@ -595,6 +596,18 @@ public sealed class CompanyService : ICompanyService
         {
             return "Currency code must be 3 characters.";
         }
+        if (!string.IsNullOrWhiteSpace(company.EInvRegType)
+            && !EInvoiceRegistrationTypes.IsValid(company.EInvRegType))
+        {
+            return "e-Invoice ID type must be one of BRN, NRIC, PASSPORT or ARMY.";
+        }
+        // E.164 is what LHDN requires of the supplier telephone, and this screen is the only place the
+        // company's number is captured, so a malformed value is refused here rather than surfacing later as
+        // a MyInvois rejection on every submission. A blank number stays the submission gate's problem.
+        if (PhoneNumberFormat.Validate(company.Phone, "Company phone") is { } phoneError)
+        {
+            return phoneError;
+        }
         return null;
     }
 
@@ -606,7 +619,9 @@ public sealed class CompanyService : ICompanyService
             LegalName = NullIfWhiteSpace(source.LegalName),
             RegistrationNo = NullIfWhiteSpace(source.RegistrationNo),
             TaxNo = NullIfWhiteSpace(source.TaxNo),
-            Phone = NullIfWhiteSpace(source.Phone),
+            // ToStored is trim-preserving: a recognisable number is stored canonically as E.164, and one this
+            // helper cannot recognise is kept exactly as typed (validation above has already refused it).
+            Phone = PhoneNumberFormat.ToStored(source.Phone),
             Fax = NullIfWhiteSpace(source.Fax),
             Email = NullIfWhiteSpace(source.Email),
             Website = NullIfWhiteSpace(source.Website),
@@ -627,6 +642,16 @@ public sealed class CompanyService : ICompanyService
                 : null,
             FiscalYearStartMonth = source.FiscalYearStartMonth,
             IsActive = source.IsActive,
+            // LHDN e-Invoice supplier profile (master data only; credentials live in configuration).
+            EInvEnabled = source.EInvEnabled,
+            EInvMsicCode = NullIfWhiteSpace(source.EInvMsicCode),
+            EInvBizDescription = NullIfWhiteSpace(source.EInvBizDescription),
+            EInvSstNo = NullIfWhiteSpace(source.EInvSstNo),
+            EInvRegType = NormalizeUpper(source.EInvRegType),
+            EInvStateCode = NullIfWhiteSpace(source.EInvStateCode),
+            EInvCountryCode = NormalizeUpper(source.EInvCountryCode),
+            EInvOnBehalfTin = NullIfWhiteSpace(source.EInvOnBehalfTin),
+            EInvDocumentVersion = NullIfWhiteSpace(source.EInvDocumentVersion),
             CreatedDate = DateTime.UtcNow,
             CreatedBy = Truncate(userId, 10)
         };
@@ -637,7 +662,7 @@ public sealed class CompanyService : ICompanyService
         entity.LegalName = NullIfWhiteSpace(source.LegalName);
         entity.RegistrationNo = NullIfWhiteSpace(source.RegistrationNo);
         entity.TaxNo = NullIfWhiteSpace(source.TaxNo);
-        entity.Phone = NullIfWhiteSpace(source.Phone);
+        entity.Phone = PhoneNumberFormat.ToStored(source.Phone);
         entity.Fax = NullIfWhiteSpace(source.Fax);
         entity.Email = NullIfWhiteSpace(source.Email);
         entity.Website = NullIfWhiteSpace(source.Website);
@@ -656,6 +681,17 @@ public sealed class CompanyService : ICompanyService
             : null;
         entity.FiscalYearStartMonth = source.FiscalYearStartMonth;
         entity.IsActive = source.IsActive;
+        // LHDN e-Invoice supplier profile (master data only; credentials live in configuration and
+        // are never read from or written to the company row).
+        entity.EInvEnabled = source.EInvEnabled;
+        entity.EInvMsicCode = NullIfWhiteSpace(source.EInvMsicCode);
+        entity.EInvBizDescription = NullIfWhiteSpace(source.EInvBizDescription);
+        entity.EInvSstNo = NullIfWhiteSpace(source.EInvSstNo);
+        entity.EInvRegType = NormalizeUpper(source.EInvRegType);
+        entity.EInvStateCode = NullIfWhiteSpace(source.EInvStateCode);
+        entity.EInvCountryCode = NormalizeUpper(source.EInvCountryCode);
+        entity.EInvOnBehalfTin = NullIfWhiteSpace(source.EInvOnBehalfTin);
+        entity.EInvDocumentVersion = NullIfWhiteSpace(source.EInvDocumentVersion);
     }
 
     private static string NormalizeOrDefault(string? value, string fallback, int maxLength)
@@ -668,7 +704,9 @@ public sealed class CompanyService : ICompanyService
         return Truncate(trimmed, maxLength);
     }
 
-    private static string? NormalizeCurrency(string? value)
+    private static string? NormalizeCurrency(string? value) => NormalizeUpper(value);
+
+    private static string? NormalizeUpper(string? value)
     {
         var trimmed = NullIfWhiteSpace(value);
         return trimmed?.ToUpperInvariant();

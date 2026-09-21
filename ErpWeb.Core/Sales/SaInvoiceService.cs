@@ -259,7 +259,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             SalesmanCode = customer.SalesmanCode,
             DiscountMethod = customer.DiscountMethod,
             DecPoint = customer.DecPoint,
-            InvEmail = customer.Email,
+            InvEmail = ResolveInvoiceEmail(customer),
             BuyerTin = customer.TinNo,
             BuyerBrn = customer.CustBrn,
             InvName = useMainBill ? customer.CustName : customer.InvName,
@@ -380,7 +380,10 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 LineCount = countByInv.GetValueOrDefault(x.InvNo),
                 CreatedDate = x.CreatedDate,
                 CreatedBy = x.CreatedBy,
-                RowVersion = x.RowVersion
+                RowVersion = x.RowVersion,
+                IrbmStatus = x.IrbmStatus,
+                IrbmOutcome = x.IrbmOutcome,
+                IrbmUuid = x.IrbmUuid
             }).ToList()
         });
     }
@@ -1664,6 +1667,18 @@ public sealed class SaInvoiceService : ISaInvoiceService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaInvoicePostingItemResult.Failed(invNo, "Only POSTED invoices can be rolled back.");
+            }
+
+            // The e-Invoice payload is frozen while the document is SUBMITTING / SUBMITTED / VALID. An
+            // unpost would leave a live MyInvois document pointing at a document the ERP no longer
+            // treats as posted, so it is refused here as it already is for edit and delete. Cancel the
+            // e-Invoice first when the cancellation window still allows it.
+            if (EInvoiceStatuses.IsLocked(invoice.IrbmStatus))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(invNo,
+                    $"Invoice {invNo} cannot be rolled back while its e-Invoice status is "
+                    + $"{EInvoiceStatuses.Normalize(invoice.IrbmStatus)}. Cancel the e-Invoice first.");
             }
 
             if (expectedRowVersion is { Length: > 0 })
@@ -2964,7 +2979,9 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
     /// <summary>
     /// Server-owned snapshots (DueDate, AR GL, KPI, e-invoice IDs) vs user-owned bill/ship/pay.
-    /// BuyerTin/BuyerBrn/InvEmail/line Classification preserve when already set on the request.
+    /// Buyer e-Invoice identity (TIN/BRN/RegType/email) is always re-taken from the customer master:
+    /// the invoice columns are a review/audit snapshot, not an editable source. Line Classification is
+    /// resolved onto <see cref="PreparedLine"/> during <c>PrepareLinesAsync</c>.
     /// </summary>
     private static async Task ApplyMasterSnapshotsAsync(
         AppDbContext db,
@@ -2993,22 +3010,29 @@ public sealed class SaInvoiceService : ISaInvoiceService
         invoice.AreaCode = TruncateOptional(customer.AreaCode, 20);
         invoice.IndustryCode = TruncateOptional(customer.IndustryCode, 20);
         invoice.ChannelCode = TruncateOptional(customer.ChannelCode, 20);
-        invoice.BuyerRegType = TruncateOptional(customer.RegType, 20);
+        // Canonical when recognised; a legacy value already on the customer is kept as-is so the
+        // snapshot still mirrors the live read (SaEInvoiceService.LoadBuyerIdentityAsync uses the same rule).
+        invoice.BuyerRegType = TruncateOptional(EInvoiceRegistrationTypes.Normalize(customer.RegType) ?? customer.RegType, 20);
         invoice.GstregNo = TruncateOptional(customer.GstregNo, 50);
 
-        invoice.BuyerTin = string.IsNullOrWhiteSpace(request.BuyerTin)
-            ? TruncateOptional(customer.TinNo, 20)
-            : TruncateOptional(request.BuyerTin, 20);
-        invoice.BuyerBrn = string.IsNullOrWhiteSpace(request.BuyerBrn)
-            ? TruncateOptional(customer.CustBrn, 50)
-            : TruncateOptional(request.BuyerBrn, 50);
-        invoice.InvEmail = string.IsNullOrWhiteSpace(request.InvEmail)
-            ? TruncateOptional(customer.Email, 100)
-            : TruncateOptional(request.InvEmail, 100);
+        // Never from the request: the customer master is the source of truth until a submission attempt
+        // freezes these onto the document (SaEInvoiceService claims SUBMITTING). A stale TIN on an open
+        // invoice is therefore corrected by fixing the customer, with no unpost/rollback.
+        invoice.BuyerTin = TruncateOptional(customer.TinNo, 20);
+        invoice.BuyerBrn = TruncateOptional(customer.CustBrn, 50);
+        invoice.InvEmail = TruncateOptional(ResolveInvoiceEmail(customer), 100);
 
         // Classification already resolved onto PreparedLine during PrepareLinesAsync.
         _ = lines;
     }
+
+    /// <summary>
+    /// The customer email an invoice should send e-Invoice mail to: the dedicated invoice email when
+    /// the customer maintains one, otherwise the main email. Shared by the customer-defaults lookup and
+    /// the save snapshot so the screen and the stored document cannot disagree.
+    /// </summary>
+    private static string? ResolveInvoiceEmail(SaCust customer) =>
+        string.IsNullOrWhiteSpace(customer.InvEmail) ? customer.Email : customer.InvEmail;
 
     public static bool HasTax(decimal taxes) => SaInvoiceCalc.HasTax(taxes);
 
@@ -3194,6 +3218,42 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 nameof(inv.InvTel),
                 "Telephone or email is required.",
                 SaInvoicePostReasonCodes.BuyerContact);
+        }
+
+        // e-Invoice readiness. When the company sends e-Invoices, LHDN needs the buyer TIN plus a valid
+        // registration type and the identity number for that type. These columns are the customer master
+        // snapshot taken at save time, so a gap here means the CUSTOMER PROFILE has to be completed -
+        // there is nothing to fix by re-opening the invoice.
+        var einvoiceEnabled = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode)
+            .Select(x => x.EInvEnabled)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (einvoiceEnabled)
+        {
+            if (Norm(inv.BuyerTin) is null)
+            {
+                result.Add(
+                    nameof(inv.BuyerTin),
+                    "Buyer TIN is required for e-Invoice (set it on the customer profile).",
+                    SaInvoicePostReasonCodes.BuyerId);
+            }
+
+            if (!EInvoiceRegistrationTypes.IsValid(inv.BuyerRegType))
+            {
+                result.Add(
+                    "BuyerRegType",
+                    "Buyer registration type must be BRN, NRIC, PASSPORT or ARMY (set it on the customer profile).",
+                    SaInvoicePostReasonCodes.BuyerId);
+            }
+
+            if (Norm(inv.BuyerBrn) is null)
+            {
+                result.Add(
+                    nameof(inv.BuyerBrn),
+                    "Buyer identity number is required for the selected registration type (set it on the customer profile).",
+                    SaInvoicePostReasonCodes.BuyerId);
+            }
         }
 
         if (Norm(inv.BuyerTin) is null && Norm(inv.BuyerBrn) is null)

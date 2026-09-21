@@ -302,7 +302,7 @@ WHERE m.MenuCode IN (N'SA_SM_NUM', N'SA_SM_NUM_DATE')
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
-INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'SUBMIT', N'CANCEL')
 WHERE m.MenuCode = N'SA_INVOICE'
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp

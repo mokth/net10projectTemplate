@@ -1,4 +1,5 @@
 using System.Data.Common;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
@@ -977,6 +978,18 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
             errors["Desc"] = "Description is required.";
         }
 
+        // UneceUom is picked from the global MsLHDNUOM list. Blank falls back to the LHDN default; a
+        // non-blank value must fit the LHDN code (3 chars) — reject rather than silently truncate.
+        var unece = (model.UneceUom ?? string.Empty).Trim();
+        if (unece.Length == 0)
+        {
+            unece = LhdnDefaults.UneceUom;
+        }
+        else if (unece.Length > 3)
+        {
+            errors["UneceUom"] = "UNECE unit code must be at most 3 characters.";
+        }
+
         if (errors.Count > 0)
         {
             return IvMasterOperationResult<IvUomEditVm>.Fail(
@@ -1004,12 +1017,17 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                         IvMasterErrorCode.DuplicateKey, "UOM code already exists.", "Code");
                 }
 
+                if (!await IsUneceUomAcceptableAsync(db, unece, currentUnece: null, cancellationToken))
+                {
+                    return FailUneceUom(unece);
+                }
+
                 var entity = new MsUom
                 {
                     CompanyCode = ctx.CompanyCode!,
                     UomCode = code,
                     UomDesc = desc,
-                    UneceUom = TruncateOptional(model.UneceUom, 10),
+                    UneceUom = unece,
                     IsActive = model.IsActive,
                     CreatedDate = now,
                     CreatedBy = user,
@@ -1049,8 +1067,14 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
             }
 
             db.Entry(tracked).Property(x => x.RowVersion).OriginalValue = model.RowVersion;
+
+            if (!await IsUneceUomAcceptableAsync(db, unece, tracked.UneceUom, cancellationToken))
+            {
+                return FailUneceUom(unece);
+            }
+
             tracked.UomDesc = desc;
-            tracked.UneceUom = TruncateOptional(model.UneceUom, 10);
+            tracked.UneceUom = unece;
             tracked.IsActive = model.IsActive;
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
@@ -2307,6 +2331,46 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         IvMasterErrorCode code,
         string? message = null) =>
         IvMasterOperationResult<object>.Fail(code, message ?? MessageFor(code));
+
+    private static IvMasterOperationResult<IvUomEditVm> FailUneceUom(string unece) =>
+        IvMasterOperationResult<IvUomEditVm>.Fail(
+            IvMasterErrorCode.Validation,
+            "Validation failed.",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["UneceUom"] = $"UNECE unit code '{unece}' was not found in the LHDN unit list."
+            });
+
+    /// <summary>
+    /// <c>MsUOM.UNECE_UOM</c> is picked from the global MsLHDNUOM list. The LHDN default is always
+    /// accepted (it is what the application itself writes, and it must stay savable if the reference
+    /// table has not been loaded yet). Any other non-blank code must exist in the list, except when it
+    /// is the value already on the row — the legacy tolerance the customer reference fields use in
+    /// <c>ValidateLegacyOrFailClosed</c>, so free text that predates the lookup never blocks an
+    /// unrelated edit.
+    /// </summary>
+    private static async Task<bool> IsUneceUomAcceptableAsync(
+        AppDbContext db,
+        string unece,
+        string? currentUnece,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(unece, LhdnDefaults.UneceUom, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentUnece)
+            && string.Equals(unece, currentUnece.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var upper = unece.ToUpperInvariant();
+        return await db.MsLhdnUoms
+            .AsNoTracking()
+            .AnyAsync(x => x.Code != null && x.Code.ToUpper() == upper, cancellationToken);
+    }
 
     private static IvWarehouseEditVm MapWarehouse(IvWarehouse x) => new()
     {

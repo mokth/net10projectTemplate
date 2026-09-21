@@ -37,6 +37,7 @@ public class AppDbContext : DbContext
     public DbSet<IvWarehouse> IvWarehouses => Set<IvWarehouse>();
     public DbSet<IvLocation> IvLocations => Set<IvLocation>();
     public DbSet<MsUom> MsUoms => Set<MsUom>();
+    public DbSet<MsLhdnUom> MsLhdnUoms => Set<MsLhdnUom>();
     public DbSet<IvStockMaster> IvStockMasters => Set<IvStockMaster>();
     public DbSet<IvLot> IvLots => Set<IvLot>();
     public DbSet<IvBalLoc> IvBalLocs => Set<IvBalLoc>();
@@ -67,6 +68,9 @@ public class AppDbContext : DbContext
     public DbSet<SaQt> SaQts => Set<SaQt>();
     public DbSet<SaQtDetail> SaQtDetails => Set<SaQtDetail>();
     public DbSet<SaEInvoiceLog> SaEInvoiceLogs => Set<SaEInvoiceLog>();
+
+    /// <summary>Legacy table dbo.EInvDocSubmission — one row per submitted e-Invoice document.</summary>
+    public DbSet<EInvDocSubmission> EInvDocSubmissions => Set<EInvDocSubmission>();
     public DbSet<SaDocApplication> SaDocApplications => Set<SaDocApplication>();
     public DbSet<SaDocApplicationBackfillSkip> SaDocApplicationBackfillSkips => Set<SaDocApplicationBackfillSkip>();
     public DbSet<SaTaxGroup> SaTaxGroups => Set<SaTaxGroup>();

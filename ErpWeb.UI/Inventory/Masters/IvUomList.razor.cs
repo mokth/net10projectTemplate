@@ -1,7 +1,9 @@
 using DevExpress.Blazor;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Inventory.Masters;
 
@@ -10,8 +12,17 @@ public partial class IvUomList : IvRefListPageBase<IvUomListRow>
     protected override string MenuCode => MenuCodes.InventoryUom;
     protected override string EntityLabel => "UOM";
 
+    [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
+
     protected IvUomEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>LHDN UNECE unit codes offered by the UneceUom picker (global MsLHDNUOM table).</summary>
+    protected IReadOnlyList<IvCodeLookupRow> UneceUomOptions => _uneceUomOptions;
+
+    protected bool IsLoadingUneceUoms { get; set; }
+
+    private readonly List<IvCodeLookupRow> _uneceUomOptions = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -50,7 +61,51 @@ public partial class IvUomList : IvRefListPageBase<IvUomListRow>
         }
     ];
 
-    protected override async Task OnPageInitializedAsync() => await ReloadListAsync();
+    protected override async Task OnPageInitializedAsync()
+    {
+        await LoadUneceUomOptionsAsync();
+        await ReloadListAsync();
+    }
+
+    private async Task LoadUneceUomOptionsAsync()
+    {
+        IsLoadingUneceUoms = true;
+        try
+        {
+            var result = await Lookups.ListLhdnUomsAsync();
+            _uneceUomOptions.Clear();
+            if (result.Succeeded)
+            {
+                _uneceUomOptions.AddRange(result.Rows);
+            }
+        }
+        finally
+        {
+            IsLoadingUneceUoms = false;
+        }
+    }
+
+    /// <summary>
+    /// A value already on the row (legacy free text, or a code since removed from MsLHDNUOM) is not in
+    /// the picker list yet is the row's real value. Keep it visible instead of showing an empty combo,
+    /// and the service tolerates saving it unchanged. The same guard covers the H87 default when the
+    /// reference table has not been loaded.
+    /// </summary>
+    private void EnsureUneceUomOption(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return;
+        }
+
+        var trimmed = code.Trim();
+        if (_uneceUomOptions.Any(x => string.Equals(x.Code, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _uneceUomOptions.Insert(0, new IvCodeLookupRow { Code = trimmed, Desc = "(not in LHDN list)" });
+    }
 
     protected override async Task ReloadListAsync()
     {
@@ -100,7 +155,8 @@ public partial class IvUomList : IvRefListPageBase<IvUomListRow>
             return;
         }
 
-        EditModel = new IvUomEditVm { IsActive = true };
+        EditModel = new IvUomEditVm { IsActive = true, UneceUom = LhdnDefaults.UneceUom };
+        EnsureUneceUomOption(EditModel.UneceUom);
         ErrorMessage = null;
         IsEditMode = false;
         EditEnabled = true;
@@ -194,6 +250,7 @@ public partial class IvUomList : IvRefListPageBase<IvUomListRow>
         }
 
         EditModel = result.Data;
+        EnsureUneceUomOption(EditModel.UneceUom);
         ErrorMessage = null;
         return true;
     }

@@ -162,6 +162,195 @@ public class SaEInvoiceLifecycleTests
             x.Menu == MenuCodes.SalesInvoice && x.Permission == PermissionCodes.Submit);
     }
 
+    // ─────────────────────────────── POSTED gate ───────────────────────────────
+
+    /// <summary>
+    /// The UI only offers e-Invoice for a posted invoice; the service re-checks so another caller
+    /// cannot send a draft that is still being edited. The refusal happens before the SUBMITTING
+    /// claim, so nothing reaches MyInvois and the document is not left locked.
+    /// </summary>
+    [Fact]
+    public async Task Submit_is_refused_for_an_invoice_that_is_not_posted()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync(status: "NEW");
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.StateRule, result.ErrorKind);
+        Assert.Contains("POSTED", result.ErrorMessage);
+        Assert.Empty(host.Helper.Calls);
+
+        var saved = await host.GetInvoiceAsync();
+        Assert.Null(saved!.IrbmStatus);
+    }
+
+    [Fact]
+    public async Task Retry_is_refused_for_an_invoice_that_is_not_posted()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        // A confirmed failure would normally allow Retry, but the invoice is still a draft.
+        await host.SeedInvoiceAsync(
+            status: "NEW",
+            irbmStatus: EInvoiceStatuses.Failed,
+            irbmOutcome: EInvoiceOutcomes.ConfirmedFailure);
+        var service = host.CreateService();
+
+        var result = await service.RetryAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.StateRule, result.ErrorKind);
+        Assert.Contains("POSTED", result.ErrorMessage);
+        Assert.Empty(host.Helper.Calls);
+    }
+
+    [Fact]
+    public async Task A_cancelled_invoice_can_be_submitted_again_with_a_new_myinvois_identity()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        // Cancelled at MyInvois: the ERP invoice is still POSTED and the old identifiers remain.
+        await host.SeedInvoiceAsync(
+            status: "POSTED",
+            irbmStatus: EInvoiceStatuses.Cancelled,
+            irbmUuid: "UUID-OLD",
+            irbmSubmitId: "SUB-OLD");
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(EInvoiceStatuses.Submitted, result.Status);
+        Assert.Equal("UUID-INV-1001", result.Uuid);
+
+        // The new submission replaces the cancelled document's identity...
+        var saved = await host.GetInvoiceAsync();
+        Assert.Equal("UUID-INV-1001", saved!.IrbmUuid);
+        Assert.Equal("SUB-1", saved.IrbmSubmitId);
+        Assert.Null(saved.IrbmOutcome);
+
+        // ...and the audit trail starts a fresh attempt chain for the resubmission.
+        var logs = await host.LogsAsync(EInvoiceTestHost.InvNo);
+        Assert.Single(logs);
+        Assert.Equal(EInvoiceActions.Submit, logs[0].Action);
+        Assert.Equal(1, logs[0].AttemptNo);
+    }
+
+    [Fact]
+    public async Task A_company_profile_missing_its_msic_code_is_refused_before_any_myinvois_call()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync(msic: null);
+        await host.SeedInvoiceAsync();
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.Validation, result.ErrorKind);
+        Assert.Contains("Supplier.Msic", result.ValidationErrors.Keys);
+        Assert.Empty(host.Helper.Calls);
+    }
+
+    [Fact]
+    public async Task A_non_E164_supplier_telephone_is_refused_before_any_myinvois_call()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync(phone: "A-phone");
+        await host.SeedInvoiceAsync();
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.Validation, result.ErrorKind);
+        Assert.Contains("Supplier.Phone", result.ValidationErrors.Keys);
+        Assert.Contains("E.164", result.ValidationErrors["Supplier.Phone"], StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(host.Helper.Calls);
+    }
+
+    [Fact]
+    public async Task A_non_E164_buyer_telephone_is_refused_and_points_at_the_document_snapshot()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync();
+        // The billing telephone is a snapshot frozen onto the document, so repairing the customer profile
+        // alone would not fix this invoice - the message has to say so.
+        await host.UpdateInvoiceAsync(EInvoiceTestHost.InvNo, x => x.InvTel = "A-phone");
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.Validation, result.ErrorKind);
+        Assert.Contains("Buyer.Phone", result.ValidationErrors.Keys);
+        Assert.Contains("re-save", result.ValidationErrors["Buyer.Phone"], StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(host.Helper.Calls);
+    }
+
+    [Fact]
+    public async Task A_local_format_telephone_is_accepted_and_submitted_as_E164()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync(phone: "03-1234 5678");
+        await host.SeedInvoiceAsync();
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        // Asserted on the document the library receives, so this covers the payload itself rather than the
+        // mapper in isolation.
+        var submitted = Assert.Single(host.Helper.Submitted);
+        Assert.Equal("+60312345678", submitted.Supplier.PhoneNo);
+        Assert.Equal("+60398765432", submitted.Customer.PhoneNo);
+    }
+
+    [Fact]
+    public async Task Refresh_is_refused_without_the_submit_permission()
+    {
+        await using var host = EInvoiceTestHost.Create(authorized: false);
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync(irbmStatus: EInvoiceStatuses.Submitted, irbmUuid: "UUID-INV-1001");
+        var service = host.CreateService();
+
+        var result = await service.RefreshAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.Authorization, result.ErrorKind);
+        Assert.Empty(host.Helper.Calls);
+        Assert.Contains(host.PermissionChecks, x =>
+            x.Menu == MenuCodes.SalesInvoice && x.Permission == PermissionCodes.Submit);
+    }
+
+    [Fact]
+    public async Task Cancel_is_refused_without_the_cancel_permission()
+    {
+        await using var host = EInvoiceTestHost.Create(authorized: false);
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync(
+            irbmStatus: EInvoiceStatuses.Valid,
+            irbmUuid: "UUID-INV-1001",
+            irbmValidOn: DateTime.UtcNow.AddHours(-1));
+        var service = host.CreateService();
+
+        var result = await service.CancelAsync(EInvoiceTestHost.InvoiceKey(), "Wrong buyer details.");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(SaEInvoiceErrorKind.Authorization, result.ErrorKind);
+        Assert.Empty(host.Helper.Calls);
+        Assert.Contains(host.PermissionChecks, x =>
+            x.Menu == MenuCodes.SalesInvoice && x.Permission == PermissionCodes.Cancel);
+
+        var saved = await host.GetInvoiceAsync();
+        Assert.Equal(EInvoiceStatuses.Valid, saved!.IrbmStatus);
+    }
+
     // ─────────────────────────────── Timeout → Recover ───────────────────────────────
 
     [Fact]

@@ -18,7 +18,7 @@ public partial class SaEInvoiceTin : Components.Pages.PageBase
 
     protected string MenuCode => MenuCodes.SalesEInvoiceTin;
 
-    protected static IReadOnlyList<string> IdTypes { get; } = ["NRIC", "BRN", "PASSPORT", "ARMY"];
+    protected static IReadOnlyList<string> IdTypes { get; } = EInvoiceRegistrationTypes.All;
 
     // ── Validate ──
     protected string ValidateIdType { get; set; } = "BRN";

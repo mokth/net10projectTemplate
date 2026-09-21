@@ -142,7 +142,9 @@ public partial class SaEInvoicePanel : ComponentBase
     private bool CanSubmit => CanAct && _canSubmitPermission && (_status?.CanSubmit ?? false);
     private bool CanRetry => CanAct && _canSubmitPermission && (_status?.CanRetry ?? false);
     private bool CanRecover => CanAct && (_canSubmitPermission || _canCancelPermission) && (_status?.CanRecover ?? false);
-    private bool CanRefresh => CanAct && (_status?.CanRefresh ?? false);
+    // Refresh calls MyInvois, and the service authorizes it with SUBMIT permission, so the button
+    // must require the same grant instead of offering an action the server will refuse.
+    private bool CanRefresh => CanAct && _canSubmitPermission && (_status?.CanRefresh ?? false);
     private bool CanCancel => CanAct && _canCancelPermission && (_status?.CanCancel ?? false);
 
     private Task OnValidateAsync() =>

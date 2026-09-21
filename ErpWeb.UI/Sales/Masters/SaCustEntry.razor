@@ -1,5 +1,6 @@
 @page "/sales/customers/{Mode:regex(^(new|edit|view)$)}"
 @page "/sales/customers/{Mode:regex(^(new|edit|view)$)}/{*CustCode}"
+@using ErpWeb.Core.EInvoice
 @inherits PageBase
 
 <PageTitle>@PageHeading</PageTitle>
@@ -412,7 +413,13 @@
                                     </div>
                                     <div class="iv-field">
                                         <label class="iv-field__label">Reg type</label>
-                                        <DxTextBox @bind-Text="@Model.RegType" maxlength="20" />
+                                        <DxComboBox Data="@EInvoiceRegistrationTypes.Options"
+                                                    @bind-Value="@Model.RegType"
+                                                    TextFieldName="@nameof(EInvoiceRegistrationTypeOption.Name)"
+                                                    ValueFieldName="@nameof(EInvoiceRegistrationTypeOption.Value)"
+                                                    NullText="Select reg type"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                        @FieldError(nameof(SaCustEditVm.RegType))
                                     </div>
                                 </div>
                             </div>

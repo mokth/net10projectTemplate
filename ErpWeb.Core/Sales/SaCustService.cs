@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -445,7 +446,9 @@ public sealed class SaCustService : ISaCustService
                 State = addr.State,
                 PostalCode = addr.PostalCode,
                 Country = addr.Country,
-                Tel = addr.Tel,
+                // Previously written raw, so an address-book number reached the database with whatever
+                // whitespace and separators the user typed.
+                Tel = PhoneNumberFormat.ToStored(addr.Tel),
                 Fax = addr.Fax
             });
         }
@@ -467,7 +470,7 @@ public sealed class SaCustService : ISaCustService
                 Title = contact.Title,
                 Department = contact.Department,
                 ContactEmail = contact.ContactEmail,
-                ContactTelp = contact.ContactTelp,
+                ContactTelp = PhoneNumberFormat.ToStored(contact.ContactTelp),
                 ContactFax = contact.ContactFax
             });
         }
@@ -490,7 +493,7 @@ public sealed class SaCustService : ISaCustService
         entity.Title = NullIfWhiteSpace(line1.Title);
         entity.Department = NullIfWhiteSpace(line1.Department);
         entity.ContactEmail = NullIfWhiteSpace(line1.ContactEmail);
-        entity.ContactTelp = NullIfWhiteSpace(line1.ContactTelp);
+        entity.ContactTelp = PhoneNumberFormat.ToStored(line1.ContactTelp);
         entity.ContactFax = NullIfWhiteSpace(line1.ContactFax);
     }
 
@@ -506,7 +509,7 @@ public sealed class SaCustService : ISaCustService
             entity.InvState = model.State;
             entity.InvPostalCode = model.PostalCode;
             entity.InvCountry = model.Country;
-            entity.InvTel = model.Tel;
+            entity.InvTel = PhoneNumberFormat.ToStored(model.Tel);
             entity.InvFax = model.Fax;
             entity.InvEmail = model.Email;
             entity.InvWebsite = model.Website;
@@ -522,7 +525,7 @@ public sealed class SaCustService : ISaCustService
             entity.ShipState = model.State;
             entity.ShipPostalCode = model.PostalCode;
             entity.ShipCountry = model.Country;
-            entity.ShipTel = model.Tel;
+            entity.ShipTel = PhoneNumberFormat.ToStored(model.Tel);
             entity.ShipFax = model.Fax;
             entity.ShipEmail = model.Email;
             entity.ShipWebsite = model.Website;
@@ -537,7 +540,7 @@ public sealed class SaCustService : ISaCustService
             entity.ShipState = NullIfWhiteSpace(model.ShipState);
             entity.ShipPostalCode = NullIfWhiteSpace(model.ShipPostalCode);
             entity.ShipCountry = NullIfWhiteSpace(model.ShipCountry);
-            entity.ShipTel = NullIfWhiteSpace(model.ShipTel);
+            entity.ShipTel = PhoneNumberFormat.ToStored(model.ShipTel);
             entity.ShipFax = NullIfWhiteSpace(model.ShipFax);
             entity.ShipEmail = NullIfWhiteSpace(model.ShipEmail);
             entity.ShipWebsite = NullIfWhiteSpace(model.ShipWebsite);
@@ -569,15 +572,16 @@ public sealed class SaCustService : ISaCustService
         entity.City = NullIfWhiteSpace(model.City);
         entity.State = NullIfWhiteSpace(model.State);
         entity.PostalCode = NullIfWhiteSpace(model.PostalCode);
-        entity.Country = NullIfWhiteSpace(model.Country);
-        entity.Tel = NullIfWhiteSpace(model.Tel);
-        entity.Fax = NullIfWhiteSpace(model.Fax);
+            entity.Country = NullIfWhiteSpace(model.Country);
+            entity.Tel = PhoneNumberFormat.ToStored(model.Tel);
+            entity.Fax = NullIfWhiteSpace(model.Fax);
         entity.Email = NullIfWhiteSpace(model.Email);
         entity.Website = NullIfWhiteSpace(model.Website);
         SetIfChanged(entity, snapshot, () => entity.CjLmw, v => entity.CjLmw = v, NullIfWhiteSpace(model.CjLmw));
         SetIfChanged(entity, snapshot, () => entity.CustBrn, v => entity.CustBrn = v, NullIfWhiteSpace(model.CustBrn));
         SetIfChanged(entity, snapshot, () => entity.TinNo, v => entity.TinNo = v, NullIfWhiteSpace(model.TinNo));
-        SetIfChanged(entity, snapshot, () => entity.RegType, v => entity.RegType = v, NullIfWhiteSpace(model.RegType));
+        SetIfChanged(entity, snapshot, () => entity.RegType, v => entity.RegType = v,
+            RegistrationTypeForWrite(model.RegType));
         SetIfChanged(entity, snapshot, () => entity.Remark, v => entity.Remark = v, NullIfWhiteSpace(model.Remark));
         SetIfChanged(entity, snapshot, () => entity.AppInvoice, v => entity.AppInvoice = v, model.AppInvoice);
         SetIfChanged(entity, snapshot, () => entity.AppShip, v => entity.AppShip = v, model.AppShip);
@@ -673,7 +677,78 @@ public sealed class SaCustService : ISaCustService
             errors["GlCode"] = "GL code is required when payment/credit fields change.";
         }
 
+        AddRegistrationTypeError(errors, model.RegType, snapshot?.RegType);
+        AddPhoneError(errors, nameof(model.Tel), model.Tel, snapshot?.Tel);
+
+        // The ship-to number is only captured separately when shipment is NOT the main address, so it is
+        // only validated in that case (mirroring how ShipCountry is handled above).
+        if (!UsesMainShip(model))
+        {
+            AddPhoneError(errors, nameof(model.ShipTel), model.ShipTel, snapshot?.ShipTel);
+        }
+
         return errors;
+    }
+
+    /// <summary>
+    /// LHDN registration type must be one of the shared <see cref="EInvoiceRegistrationTypes"/> values.
+    /// Blank stays allowed (the e-Invoice preflight blocks it later), and a legacy value already on the
+    /// row is tolerated while it is unchanged so an unrelated edit cannot strand historical data.
+    /// </summary>
+    private static void AddRegistrationTypeError(
+        Dictionary<string, string> errors,
+        string? regType,
+        string? existingRegType)
+    {
+        if (string.IsNullOrWhiteSpace(regType) || EInvoiceRegistrationTypes.IsValid(regType))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingRegType)
+            && string.Equals(regType.Trim(), existingRegType.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        errors["RegType"] = "Registration type must be one of BRN, NRIC, PASSPORT or ARMY.";
+    }
+
+    /// <summary>
+    /// Canonical value when recognised; otherwise the raw trimmed value, which is only reachable for a
+    /// legacy row that passed validation unchanged (so the write never silently wipes it).
+    /// </summary>
+    private static string? RegistrationTypeForWrite(string? regType) =>
+        EInvoiceRegistrationTypes.Normalize(regType) ?? NullIfWhiteSpace(regType);
+
+    /// <summary>
+    /// A telephone number must be E.164. Mirrors <see cref="AddRegistrationTypeError"/>: a value already on
+    /// the row is tolerated while it is unchanged, so correcting an unrelated field can never be blocked by
+    /// historical data that predates the rule.
+    /// </summary>
+    /// <remarks>
+    /// Blank and ERP placeholders (<c>NA</c>, <c>-</c>, <c>0</c>) are accepted here because the write path
+    /// stores them as NULL, which is a legitimate "no number" for a master record. The e-Invoice submission
+    /// gate is the layer that refuses a placeholder, because LHDN needs a real number.
+    /// </remarks>
+    private static void AddPhoneError(
+        Dictionary<string, string> errors,
+        string key,
+        string? phone,
+        string? existingPhone)
+    {
+        if (PhoneNumberFormat.Validate(phone, "Telephone") is not { } message)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingPhone)
+            && string.Equals(phone?.Trim(), existingPhone.Trim(), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        errors[key] = message;
     }
 
     private async Task AddLookupValidationErrorsAsync(
@@ -792,6 +867,8 @@ public sealed class SaCustService : ISaCustService
             {
                 errors[$"Addresses[{i}].State"] = $"Address {line}: state '{addr.State}' is not valid.";
             }
+
+            AddPhoneError(errors, $"Addresses[{i}].Tel", addr.Tel, existing?.Tel);
         }
     }
 

@@ -145,6 +145,13 @@ public interface IIvInventoryLookupService
 
     Task<IvInventoryLookupResult> ListActiveUomsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// LHDN UNECE unit-of-measure codes from the global <c>MsLHDNUOM</c> table. Ungated (like the other
+    /// inventory lookup lists): the UOM master page's picker must work for a user who can edit UOMs but
+    /// does not carry an inventory transaction menu. Blank codes are excluded and duplicates collapsed.
+    /// </summary>
+    Task<IvInventoryLookupResult> ListLhdnUomsAsync(CancellationToken cancellationToken = default);
+
     Task<IvInventoryLookupResult> ListActiveStatusesAsync(CancellationToken cancellationToken = default);
 
     Task<bool> LotExistsAsync(
@@ -434,6 +441,39 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             Code = x.UomCode,
             Desc = x.UomDesc
         }).ToList());
+    }
+
+    public async Task<IvInventoryLookupResult> ListLhdnUomsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = Authorize();
+        if (ctx.Error is not null)
+        {
+            return IvInventoryLookupResult.Fail(ctx.Error);
+        }
+
+        var rows = await _common.ListLhdnUomsAsync(cancellationToken);
+
+        // The table has no unique constraint on Code, so collapse any duplicates before they reach a
+        // picker (a duplicated option would look like a bug to the user).
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var options = new List<IvCodeLookupRow>();
+        foreach (var row in rows)
+        {
+            var code = (row.Code ?? string.Empty).Trim();
+            if (code.Length == 0 || !seen.Add(code))
+            {
+                continue;
+            }
+
+            options.Add(new IvCodeLookupRow
+            {
+                Code = code,
+                Desc = row.Measurement
+            });
+        }
+
+        return IvInventoryLookupResult.OkRows(options);
     }
 
     public async Task<IvInventoryLookupResult> ListActiveStatusesAsync(

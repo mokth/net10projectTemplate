@@ -83,10 +83,11 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="UneceUom" ColSpanMd="6" BeginRow="true">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.UneceUom"
-                                       maxlength="10"
-                                       ReadOnly="@(!EditEnabled)"
-                                       InputCssClass="code-style" />
+                            <IvCodeComboBox Data="@UneceUomOptions"
+                                            @bind-Value="@EditModel.UneceUom"
+                                            Enabled="@EditEnabled"
+                                            IsLoading="@IsLoadingUneceUoms"
+                                            NullText="Select UNECE unit" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">

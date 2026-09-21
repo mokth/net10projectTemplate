@@ -284,6 +284,68 @@ public class CompanyServiceBootstrapTests : IAsyncLifetime
         Assert.Equal("Not authorized.", result.ErrorMessage);
     }
 
+    [Fact]
+    public async Task UpdateCompany_persists_the_einvoice_supplier_profile()
+    {
+        var system = CreateSut(systemAdmin: true);
+        int companyId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            companyId = await db.Companies.Where(x => x.CompanyCode == "DEMO").Select(x => x.CompanyId).SingleAsync();
+        }
+
+        var model = new Company
+        {
+            CompanyId = companyId,
+            CompanyName = "Demo Company",
+            FiscalYearStartMonth = 1,
+            IsActive = true,
+            EInvEnabled = true,
+            EInvMsicCode = "62010",
+            EInvBizDescription = "Software development",
+            EInvSstNo = "A01-2345-67890123",
+            EInvRegType = "brn",
+            EInvStateCode = "10",
+            EInvCountryCode = "mys",
+            EInvOnBehalfTin = "C1234567890",
+            EInvDocumentVersion = "1.0"
+        };
+
+        var result = await system.UpdateCompanyAsync(model);
+        Assert.True(result.Succeeded, result.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var saved = await db.Companies.SingleAsync(x => x.CompanyId == companyId);
+            Assert.True(saved.EInvEnabled);
+            Assert.Equal("62010", saved.EInvMsicCode);
+            Assert.Equal("Software development", saved.EInvBizDescription);
+            Assert.Equal("A01-2345-67890123", saved.EInvSstNo);
+            // Codes are normalised to the form LhdnCodeLookup compares against.
+            Assert.Equal("BRN", saved.EInvRegType);
+            Assert.Equal("10", saved.EInvStateCode);
+            Assert.Equal("MYS", saved.EInvCountryCode);
+            Assert.Equal("C1234567890", saved.EInvOnBehalfTin);
+            Assert.Equal("1.0", saved.EInvDocumentVersion);
+        }
+    }
+
+    /// <summary>
+    /// MyInvois credentials (client id, secret, certificate) are deployment configuration, never
+    /// company master data. If a credential column is ever added to the entity this guard fails, so
+    /// the Admin company form cannot accidentally round-trip a secret.
+    /// </summary>
+    [Fact]
+    public void Company_entity_exposes_no_credential_fields()
+    {
+        var names = typeof(Company).GetProperties().Select(x => x.Name).ToList();
+
+        Assert.DoesNotContain(names, n =>
+            n.Contains("Secret", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Password", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Cert", StringComparison.OrdinalIgnoreCase));
+    }
+
     private CompanyService CreateSut(
         bool systemAdmin = true,
         bool admin = false,

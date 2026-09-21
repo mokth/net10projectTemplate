@@ -1,9 +1,11 @@
 using System.Collections;
 using System.Timers;
 using DevExpress.Blazor;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Repositories.Sales;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -14,6 +16,7 @@ namespace ErpWeb.UI.Sales.Transactions;
 public partial class SaInvoiceList : PageBase, IDisposable
 {
     [Inject] private ISaInvoiceService Invoices { get; set; } = default!;
+    [Inject] private ISaEInvoiceService EInvoices { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     private DxGrid? _grid;
@@ -35,6 +38,21 @@ public partial class SaInvoiceList : PageBase, IDisposable
     protected bool CanDelete;
     protected bool CanPost;
     protected bool CanRollback;
+    protected bool CanSubmitEInv;
+    protected bool CanCancelEInv;
+
+    /// <summary>
+    /// True while a batch e-Invoice action is running. The three e-Invoice toolbar buttons and the
+    /// confirm action are disabled so a double click cannot fire two batches.
+    /// </summary>
+    protected bool IsEInvoiceBusy;
+
+    /// <summary>Shared reason for a batch cancellation; required and limited to 300 characters by MyInvois.</summary>
+    protected string EInvoiceCancelReason = string.Empty;
+
+    protected bool EInvoiceResultsVisible;
+    protected string EInvoiceResultsTitle = string.Empty;
+    protected List<SaEInvoiceBatchItemResult> EInvoiceResults { get; set; } = [];
 
     protected string? AppliedStatus;
     protected DateTime? AppliedDateFrom;
@@ -45,16 +63,34 @@ public partial class SaInvoiceList : PageBase, IDisposable
 
     protected string ConfirmMessage { get; set; } = string.Empty;
     protected string ConfirmAction { get; set; } = "DELETE";
+
+    private const string EInvSubmitAction = "EINV_SUBMIT";
+    private const string EInvStatusAction = "EINV_STATUS";
+    private const string EInvCancelAction = "EINV_CANCEL";
+
+    private static bool IsEInvoiceAction(string action) =>
+        action is EInvSubmitAction or EInvStatusAction or EInvCancelAction;
+
+    protected bool IsCancelAction => ConfirmAction == EInvCancelAction;
+    protected bool CanConfirmAction =>
+        !IsSubmitting && (!IsCancelAction || !string.IsNullOrWhiteSpace(EInvoiceCancelReason));
+
     protected string ConfirmButtonText => ConfirmAction switch
     {
         "POST" => "Post",
         "ROLLBACK" => "Rollback",
+        EInvSubmitAction => "Submit",
+        EInvStatusAction => "Refresh",
+        EInvCancelAction => "Cancel e-Invoice",
         _ => "Delete"
     };
     protected ButtonRenderStyle ConfirmButtonStyle => ConfirmAction switch
     {
         "POST" => ButtonRenderStyle.Primary,
         "ROLLBACK" => ButtonRenderStyle.Warning,
+        EInvSubmitAction => ButtonRenderStyle.Primary,
+        EInvStatusAction => ButtonRenderStyle.Primary,
+        EInvCancelAction => ButtonRenderStyle.Danger,
         _ => ButtonRenderStyle.Danger
     };
 
@@ -78,10 +114,14 @@ public partial class SaInvoiceList : PageBase, IDisposable
         new() { Caption = "Invoice", FieldName = nameof(SaInvoiceListRow.InvNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
         new() { Caption = "Date", FieldName = nameof(SaInvoiceListRow.InvDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
         new() { Caption = "Status", FieldName = nameof(SaInvoiceListRow.Status), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "Customer", FieldName = nameof(SaInvoiceListRow.CustCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 5 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 6 },
-        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 7 }
+        new() { Caption = "E-Inv", FieldName = nameof(SaInvoiceListRow.IrbmStatus), Width = "110px", VisibleIndex = 4 },
+        new() { Caption = "Customer", FieldName = nameof(SaInvoiceListRow.CustCode), Width = "120px", VisibleIndex = 5 },
+        new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 6 },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 7 },
+        new() { Caption="E-UUID"   , FieldName=nameof(SaInvoiceListRow.IrbmUuid)     ,DataType="link",VisibleIndex=8},
+        new()  { Caption="E-Status"     , FieldName=nameof(SaInvoiceListRow.IrbmStatus)        ,DataType="string",VisibleIndex=8 },
+
+        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 10 }
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -95,12 +135,17 @@ public partial class SaInvoiceList : PageBase, IDisposable
         CanDelete = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Delete);
         CanPost = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Post);
         CanRollback = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Rollback);
+        CanSubmitEInv = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Submit);
+        CanCancelEInv = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Cancel);
         Buttons =
         [
             new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
             new() { Text = "POST", IConClass = "fas fa-check", Style = "success", Enabled = CanPost },
             new() { Text = "ROLLBACK", IConClass = "fas fa-rotate-left", Style = "warning", Enabled = CanRollback },
-            new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete }
+            new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete },
+            new() { Text = "SUBMIT", IConClass = "fas fa-paper-plane", Style = "primary", Enabled = CanSubmitEInv, ToolTip = "Submit the selected invoices to MyInvois" },
+            new() { Text = "E-STATUS", IConClass = "fas fa-arrows-rotate", Style = "primary", Enabled = CanSubmitEInv, ToolTip = "Refresh the MyInvois status of the selected invoices" },
+            new() { Text = "CANCEL", IConClass = "fas fa-ban", Style = "danger", Enabled = CanCancelEInv, ToolTip = "Cancel the selected e-Invoices at MyInvois" }
         ];
         ActionButtons =
         [
@@ -123,6 +168,13 @@ public partial class SaInvoiceList : PageBase, IDisposable
     protected async Task OnButtonClick(SelectedButtonInfo<SaInvoiceListRow> info)
     {
         var mode = (info.SelectedButton.Text ?? string.Empty).ToUpperInvariant();
+
+        // A batch e-Invoice action is in flight: ignore re-entry instead of starting a second batch.
+        if (IsEInvoiceBusy && mode is "SUBMIT" or "E-STATUS" or "CANCEL")
+        {
+            return;
+        }
+
         switch (mode)
         {
             case "NEW":
@@ -132,6 +184,9 @@ public partial class SaInvoiceList : PageBase, IDisposable
             case "DELETE": await BeginDeleteAsync(); break;
             case "POST": await BeginPostAsync(); break;
             case "ROLLBACK": await BeginRollbackAsync(); break;
+            case "SUBMIT": await BeginEInvoiceAsync(EInvSubmitAction); break;
+            case "E-STATUS": await BeginEInvoiceAsync(EInvStatusAction); break;
+            case "CANCEL": await BeginEInvoiceAsync(EInvCancelAction); break;
             case "REFRESH": await ReloadGridAsync(); break;
         }
     }
@@ -231,6 +286,14 @@ public partial class SaInvoiceList : PageBase, IDisposable
             return;
         }
 
+        // The e-Invoice actions report per-row outcomes, so they run on their own path (and own popup)
+        // rather than the single summary toast used by POST / ROLLBACK / DELETE.
+        if (IsEInvoiceAction(ConfirmAction))
+        {
+            await ExecuteEInvoiceBatchAsync();
+            return;
+        }
+
         using var blocking = BeginBlockingWork("Please wait. This action is still running.");
         IsSubmitting = true;
         ErrorMessage = null;
@@ -291,6 +354,19 @@ public partial class SaInvoiceList : PageBase, IDisposable
     {
         _searchDebounce?.Stop();
         _searchDebounce?.Dispose();
+    }
+
+    protected async Task onSelectColHandle(SelectedColumnInfo info)
+    {
+
+        if (info != null)
+        {
+            if (info.Fieldname == nameof(SaInvoiceListRow.IrbmUuid))
+            {
+                string uuid = info.Value;
+
+            }
+        }
     }
 
     protected static string StatusChipClass(string? status) =>
@@ -358,6 +434,243 @@ public partial class SaInvoiceList : PageBase, IDisposable
         ConfirmVisible = true;
         return Task.CompletedTask;
     }
+
+    private async Task BeginEInvoiceAsync(string action)
+    {
+        if (IsEInvoiceBusy)
+        {
+            return;
+        }
+
+        var permitted = action == EInvCancelAction ? CanCancelEInv : CanSubmitEInv;
+        if (!permitted)
+        {
+            StatusMessage = "Access Denied!!";
+            return;
+        }
+
+        var rows = DistinctSelectedRows();
+        if (rows.Count == 0)
+        {
+            StatusMessage = "No Record Selected!";
+            return;
+        }
+
+        if (rows.Count > SaInvoiceLimits.MaxEInvoiceBatchSelection)
+        {
+            ErrorMessage = $"Select at most {SaInvoiceLimits.MaxEInvoiceBatchSelection} invoices per e-Invoice action.";
+            return;
+        }
+
+        // Pre-flight snapshot for the confirmation prompt ONLY. It is not the eligibility verdict: the
+        // service re-authorizes, reloads and re-validates every row when the action is confirmed.
+        var keys = rows.Select(ToEInvoiceKey).ToList();
+        IReadOnlyList<SaEInvoiceStatusView?> preview;
+        try
+        {
+            preview = await EInvoices.GetStatusManyAsync(keys);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            return;
+        }
+
+        var eligible = new List<string>();
+        var skipped = new List<string>();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var reason = EInvoiceIneligibleReason(rows[i], i < preview.Count ? preview[i] : null, action);
+            if (reason is null)
+            {
+                eligible.Add(rows[i].InvNo);
+            }
+            else
+            {
+                skipped.Add($"{rows[i].InvNo} ({reason})");
+            }
+        }
+
+        if (eligible.Count == 0)
+        {
+            ErrorMessage = "None of the selected invoices can be used for this action. " + string.Join("; ", skipped);
+            return;
+        }
+
+        ConfirmAction = action;
+        ConfirmMessage = BuildEInvoiceConfirmMessage(action, eligible.Count, rows.Count, skipped);
+        EInvoiceCancelReason = string.Empty;
+        ConfirmVisible = true;
+    }
+
+    private async Task ExecuteEInvoiceBatchAsync()
+    {
+        using var blocking = BeginBlockingWork("Please wait. The e-Invoice action is still running.");
+        IsSubmitting = true;
+        IsEInvoiceBusy = true;
+        SetEInvoiceButtonsEnabled(false);
+        ErrorMessage = null;
+        StatusMessage = null;
+        try
+        {
+            var action = ConfirmAction;
+            var keys = DistinctSelectedRows().Select(ToEInvoiceKey).ToList();
+            var reason = EInvoiceCancelReason;
+
+            SaEInvoiceBatchResult result = action switch
+            {
+                EInvSubmitAction => await EInvoices.SubmitManyAsync(keys),
+                EInvStatusAction => await EInvoices.RefreshManyAsync(keys),
+                _ => await EInvoices.CancelManyAsync(keys, reason)
+            };
+
+            ConfirmVisible = false;
+            EInvoiceCancelReason = string.Empty;
+
+            if (result.Refused)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            EInvoiceResults = result.Items.ToList();
+            EInvoiceResultsTitle = action switch
+            {
+                EInvSubmitAction => "Submit to MyInvois",
+                EInvStatusAction => "MyInvois status refresh",
+                _ => "Cancel e-Invoice at MyInvois"
+            };
+            EInvoiceResultsVisible = true;
+
+            StatusMessage = $"{EInvoiceResultsTitle}: {result.SucceededCount} succeeded, "
+                            + $"{result.FailedCount} failed, {result.SkippedCount} skipped.";
+
+            // Keep the selection when a row needs attention so the operator can retry just those rows.
+            if (result.FailedCount == 0 && result.SkippedCount == 0)
+            {
+                _selectedRows.Clear();
+            }
+
+            await ReloadGridAsync();
+        }
+        catch (Exception ex)
+        {
+            ConfirmVisible = false;
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsEInvoiceBusy = false;
+            IsSubmitting = false;
+            SetEInvoiceButtonsEnabled(true);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// Disables (or restores) the three e-Invoice toolbar buttons while a batch runs, so the toolbar
+    /// matches the <see cref="IsEInvoiceBusy"/> guard that already rejects re-entry.
+    /// </summary>
+    private void SetEInvoiceButtonsEnabled(bool enabled)
+    {
+        foreach (var button in Buttons)
+        {
+            switch (button.Text)
+            {
+                case "SUBMIT":
+                case "E-STATUS":
+                    button.Enabled = enabled && CanSubmitEInv;
+                    break;
+                case "CANCEL":
+                    button.Enabled = enabled && CanCancelEInv;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Trimmed, deduplicated selection. The cap is applied to this list, never to the raw selection.</summary>
+    private List<SaInvoiceListRow> DistinctSelectedRows() =>
+        _selectedRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.InvNo))
+            .GroupBy(x => x.InvNo.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+    
+    private static SaEInvoiceDocumentKey ToEInvoiceKey(SaInvoiceListRow row) =>
+        new() { DocumentType = EInvoiceDocumentTypes.Invoice, DocumentNo = row.InvNo.Trim() };
+
+    /// <summary>
+    /// Why this row would be skipped, or null when it looks eligible. Mirrors <see cref="SaEInvoiceStatusView"/>
+    /// and the POSTED rule; the service is still the authority.
+    /// </summary>
+    private static string? EInvoiceIneligibleReason(SaInvoiceListRow row, SaEInvoiceStatusView? view, string action)
+    {
+        switch (action)
+        {
+            case EInvSubmitAction:
+                if (!string.Equals(row.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "not POSTED";
+                }
+
+                if (view is null)
+                {
+                    return "no e-Invoice record";
+                }
+
+                return view.CanRecover ? "run Recover first" : view.CanSubmit ? null : "e-Invoice " + view.Status;
+
+            case EInvStatusAction:
+                if (view is null)
+                {
+                    return "no e-Invoice record";
+                }
+
+                return view.CanRefresh ? null : "e-Invoice " + view.Status;
+
+            case EInvCancelAction:
+                if (view is null)
+                {
+                    return "no e-Invoice record";
+                }
+
+                return view.CanCancel ? null : "e-Invoice " + view.Status;
+
+            default:
+                return null;
+        }
+    }
+
+    private static string BuildEInvoiceConfirmMessage(string action, int eligibleCount, int total, List<string> skipped)
+    {
+        var message = action switch
+        {
+            EInvStatusAction => $"Refresh the MyInvois status of {eligibleCount} selected invoice(s)?",
+            EInvSubmitAction => $"Submit {eligibleCount} selected invoice(s) to MyInvois?",
+            _ => $"Cancel {eligibleCount} selected e-Invoice(s) at MyInvois?"
+        };
+
+        if (skipped.Count > 0)
+        {
+            message += $" {skipped.Count} of {total} will be skipped: {string.Join("; ", skipped)}.";
+        }
+
+        return message;
+    }
+
+    protected void DismissEInvoiceResults() => EInvoiceResultsVisible = false;
+
+    protected static string EInvoiceResultOutcome(SaEInvoiceBatchItemResult item) =>
+        item.Succeeded ? "OK"
+        : item.Skipped ? "Skipped"
+        : item.RecoveryRequired ? "Recover"
+        : "Failed";
+
+    protected static string EInvoiceResultClass(SaEInvoiceBatchItemResult item) =>
+        item.Succeeded ? "iv-einv-ok"
+        : item.Skipped ? "iv-einv-skip"
+        : "iv-einv-fail";
 
     private async Task ReloadGridAsync()
     {

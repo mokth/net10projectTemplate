@@ -1,4 +1,5 @@
 using System.Data.Common;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -1650,8 +1651,8 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
         var state = TruncateOptional(model.State, 50);
         var postal = TruncateOptional(model.PostalCode, 20);
         var country = TruncateOptional(model.Country, 50);
-        var tel = TruncateOptional(model.Tel, 50);
-        var mobile = TruncateOptional(model.Mobile, 50);
+        var tel = TruncateOptional(PhoneNumberFormat.ToStored(model.Tel), 50);
+        var mobile = TruncateOptional(PhoneNumberFormat.ToStored(model.Mobile), 50);
         var email = TruncateOptional(model.Email, 100);
 
         var now = _dates.Now;
@@ -1671,6 +1672,17 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                         IvMasterErrorCode.DuplicateKey,
                         "Sales rep code already exists.",
                         "Code");
+                }
+
+                var createPhoneErrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                AddPhoneError(createPhoneErrors, "Tel", model.Tel, null);
+                AddPhoneError(createPhoneErrors, "Mobile", model.Mobile, null);
+                if (createPhoneErrors.Count > 0)
+                {
+                    // FailVm carries a single field, so the dictionary overload is used directly (the same
+                    // one the header validation above returns through).
+                    return IvMasterOperationResult<SaSalesRepEditVm>.Fail(
+                        IvMasterErrorCode.Validation, "Validation failed.", createPhoneErrors);
                 }
 
                 var entity = new SaSalesRep
@@ -1721,6 +1733,17 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 return FailVm<SaSalesRepEditVm>(
                     IvMasterErrorCode.Concurrency,
                     "This record was modified by another user.");
+            }
+
+            var phoneErrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            AddPhoneError(phoneErrors, "Tel", model.Tel, tracked.Tel);
+            AddPhoneError(phoneErrors, "Mobile", model.Mobile, tracked.Mobile);
+            if (phoneErrors.Count > 0)
+            {
+                // FailVm carries a single field, so the dictionary overload is used directly (the same one
+                // the header validation above returns through).
+                return IvMasterOperationResult<SaSalesRepEditVm>.Fail(
+                    IvMasterErrorCode.Validation, "Validation failed.", phoneErrors);
             }
 
             tracked.SrepName = name;
@@ -1838,6 +1861,42 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
 
     // ===================== Tax Group =====================
 
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListTaxTypesForAssignmentAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // IvMSCode carries no company column, so this family is shared by every tenant (same as the
+        // customer STATE/TAX/PAYCODE lists in SaCustLookupService).
+        var rows = await db.IvMsCodes
+            .AsNoTracking()
+            .Where(x => x.CodeType == IvMsCodeTypes.Tax)
+            .OrderBy(x => x.Code)
+            .Select(x => new { x.Code, x.Name })
+            .ToListAsync(cancellationToken);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var options = new List<IvCodeLookupRow>();
+        foreach (var row in rows)
+        {
+            var code = (row.Code ?? string.Empty).Trim();
+            // SaTaxGroup.TaxType is nvarchar(2): anything longer could not be saved, so it must never
+            // appear as a selectable option.
+            if (code.Length == 0 || code.Length > 2 || !seen.Add(code))
+            {
+                continue;
+            }
+
+            options.Add(new IvCodeLookupRow
+            {
+                Code = code,
+                Desc = string.IsNullOrWhiteSpace(row.Name) ? code : row.Name
+            });
+        }
+
+        return options;
+    }
+
     public async Task<IvMasterOperationResult<IReadOnlyList<SaTaxGroupListRow>>> ListTaxGroupsAsync(
         CancellationToken cancellationToken = default)
     {
@@ -1860,6 +1919,7 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.TaxGrCode,
                 Desc = x.TaxGrDesc,
                 Percentage = x.Percentage,
+                TaxType = x.TaxType,
                 CompanyCode = x.CompanyCode,
                 BranchCode = x.BranchCode,
                 LocationCode = x.LocationCode
@@ -1944,6 +2004,18 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
             errors["Percentage"] = "Percentage must have at most 6 decimal places.";
         }
 
+        // LHDN tax type: blank falls back to 06 ("Not Applicable"); a non-blank value must fit the
+        // nvarchar(2) column and come from the IvMSCode TAX family.
+        var taxType = (model.TaxType ?? string.Empty).Trim();
+        if (taxType.Length == 0)
+        {
+            taxType = LhdnDefaults.TaxType;
+        }
+        else if (taxType.Length > 2)
+        {
+            errors["TaxType"] = "Tax type must be at most 2 characters.";
+        }
+
         if (errors.Count > 0)
         {
             return IvMasterOperationResult<SaTaxGroupEditVm>.Fail(
@@ -1975,6 +2047,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                         "Code");
                 }
 
+                if (!await IsTaxTypeAcceptableAsync(db, taxType, currentTaxType: null, cancellationToken))
+                {
+                    return FailTaxType(taxType);
+                }
+
                 var entity = new SaTaxGroup
                 {
                     CompanyCode = ctx.CompanyCode!,
@@ -1982,6 +2059,7 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                     TaxGrDesc = desc,
                     Percentage = model.Percentage,
                     TaxGlCode = TruncateOptional(model.TaxGlCode, 20),
+                    TaxType = taxType,
                     CreatedDate = now,
                     CreatedBy = user,
                     ModifiedDate = now,
@@ -2015,9 +2093,15 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                     "This record was modified by another user.");
             }
 
+            if (!await IsTaxTypeAcceptableAsync(db, taxType, tracked.TaxType, cancellationToken))
+            {
+                return FailTaxType(taxType);
+            }
+
             tracked.TaxGrDesc = desc;
             tracked.Percentage = model.Percentage;
             tracked.TaxGlCode = TruncateOptional(model.TaxGlCode, 20);
+            tracked.TaxType = taxType;
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
@@ -3348,6 +3432,48 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
     private static bool HasExcessScale(decimal value, int scale) =>
         value != decimal.Round(value, scale, MidpointRounding.AwayFromZero);
 
+    private static IvMasterOperationResult<SaTaxGroupEditVm> FailTaxType(string taxType) =>
+        IvMasterOperationResult<SaTaxGroupEditVm>.Fail(
+            IvMasterErrorCode.Validation,
+            "Validation failed.",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["TaxType"] = $"LHDN tax type '{taxType}' was not found in the TAX code list."
+            });
+
+    /// <summary>
+    /// <c>SaTaxGroup.TaxType</c> is picked from the IvMSCode <c>TAX</c> family, which has no company
+    /// column. The LHDN default is always accepted (the application itself writes it, and it must stay
+    /// savable if the family has not been populated). Any other non-blank code must exist in the family,
+    /// except when it is the value already on the row — the legacy tolerance the customer reference
+    /// fields use in <c>ValidateLegacyOrFailClosed</c>, so free text that predates the lookup never
+    /// blocks an unrelated edit.
+    /// </summary>
+    private static async Task<bool> IsTaxTypeAcceptableAsync(
+        AppDbContext db,
+        string taxType,
+        string? currentTaxType,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(taxType, LhdnDefaults.TaxType, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentTaxType)
+            && string.Equals(taxType, currentTaxType.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var upper = taxType.ToUpperInvariant();
+        return await db.IvMsCodes
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.CodeType == IvMsCodeTypes.Tax && x.Code.ToUpper() == upper,
+                cancellationToken);
+    }
+
     private static void ValidateOptionalLength(
         Dictionary<string, string> errors,
         string field,
@@ -3619,6 +3745,7 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
         Desc = x.TaxGrDesc,
         Percentage = x.Percentage,
         TaxGlCode = x.TaxGlCode,
+        TaxType = x.TaxType,
         CompanyCode = x.CompanyCode,
         BranchCode = x.BranchCode,
         LocationCode = x.LocationCode
@@ -3652,6 +3779,36 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
         HomeCurPerUnit = x.HomeCurPerUnit,
         Status = x.Status
     };
+
+    /// <summary>
+    /// A telephone number must be E.164. Mirrors the customer and supplier masters: a value already on the
+    /// row is tolerated while it is unchanged, so correcting an unrelated field can never be blocked by
+    /// historical data that predates the rule.
+    /// </summary>
+    /// <remarks>
+    /// This is called inside the create/update branches rather than beside the other field checks, because
+    /// the update path has to read the stored row first — which it does for the fingerprint check anyway —
+    /// to know whether the number actually changed.
+    /// </remarks>
+    private static void AddPhoneError(
+        Dictionary<string, string> errors,
+        string key,
+        string? phone,
+        string? existingPhone)
+    {
+        if (PhoneNumberFormat.Validate(phone, "Telephone") is not { } message)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingPhone)
+            && string.Equals(phone?.Trim(), existingPhone.Trim(), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        errors[key] = message;
+    }
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];

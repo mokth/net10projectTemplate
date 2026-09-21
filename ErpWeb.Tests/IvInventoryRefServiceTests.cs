@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -257,6 +258,94 @@ public class IvInventoryRefServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await db.IvWarehouses.CountAsync(x =>
             x.CompanyCode == "DEMO" && x.WarehouseCode == "OTHER"));
+    }
+
+    [Fact]
+    public async Task Uom_Create_DefaultsUneceUomToH87_WhenBlank()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveUomAsync(
+            new IvUomEditVm { Code = "PCS", Desc = "Piece", IsActive = true },
+            isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(LhdnDefaults.UneceUom, result.Data!.UneceUom);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.MsUoms.SingleAsync(x => x.CompanyCode == "DEMO" && x.UomCode == "PCS");
+        Assert.Equal("H87", row.UneceUom);
+    }
+
+    [Fact]
+    public async Task Uom_Create_AcceptsACodeFromTheLhdnUnitList()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.MsLhdnUoms.Add(new MsLhdnUom { Code = "KGM", Measurement = "kilogram" });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.SaveUomAsync(
+            new IvUomEditVm { Code = "KG", Desc = "Kilogram", UneceUom = "kgm", IsActive = true },
+            isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal("kgm", result.Data!.UneceUom);
+    }
+
+    [Fact]
+    public async Task Uom_Create_RejectsACodeOutsideTheLhdnUnitList_WithoutTruncating()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveUomAsync(
+            new IvUomEditVm { Code = "BOX", Desc = "Box", UneceUom = "BOX", IsActive = true },
+            isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("UneceUom"));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.MsUoms.AnyAsync(x => x.CompanyCode == "DEMO" && x.UomCode == "BOX"));
+    }
+
+    [Fact]
+    public async Task Uom_Create_RejectsAnUneceCodeLongerThanTheLhdnColumn()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveUomAsync(
+            new IvUomEditVm { Code = "LONG", Desc = "Too long", UneceUom = "ABCD", IsActive = true },
+            isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("UneceUom"));
+    }
+
+    [Fact]
+    public async Task Uom_List_OnlyOffersCodesFromTheLhdnTable()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.MsLhdnUoms.Add(new MsLhdnUom { Code = "C62", Measurement = "one" });
+            db.MsLhdnUoms.Add(new MsLhdnUom { Code = "C62", Measurement = "duplicate" });
+            db.MsLhdnUoms.Add(new MsLhdnUom { Code = "", Measurement = "blank" });
+            await db.SaveChangesAsync();
+        }
+
+        var lookups = new IvInventoryLookupService(
+            Mock.Of<ICurrentUserService>(x =>
+                x.IsAuthenticated == true && x.CompanyCode == "DEMO" && x.BranchCode == "HQ"),
+            Mock.Of<IIvStockMasterRepository>(),
+            new IvStockCommonRepository(_factory),
+            _factory);
+
+        var result = await lookups.ListLhdnUomsAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("C62", Assert.Single(result.Rows).Code);
+        Assert.Equal("one", result.Rows[0].Desc);
     }
 
     [Fact]

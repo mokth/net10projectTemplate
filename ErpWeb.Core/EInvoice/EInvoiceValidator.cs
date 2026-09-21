@@ -1,3 +1,5 @@
+using ErpWeb.Core.Services;
+
 namespace ErpWeb.Core.EInvoice;
 
 /// <summary>
@@ -48,6 +50,8 @@ public sealed class EInvoiceValidator
         Require(errors, "Supplier.City", supplier.City, "Supplier city is required.");
         Require(errors, "Supplier.PostalCode", supplier.PostalCode, "Supplier postal code is required.");
         Require(errors, "Supplier.Phone", supplier.Phone, "Supplier phone number is required.");
+        RequireE164(errors, "Supplier.Phone", supplier.Phone, "Supplier telephone",
+            "Correct it on the company profile.");
 
         if (!string.IsNullOrWhiteSpace(supplier.CompanyName) && supplier.CompanyName!.Length > 300)
         {
@@ -83,11 +87,16 @@ public sealed class EInvoiceValidator
         Require(errors, "Buyer.City", document.CustomerCity, "Customer city is required.");
         Require(errors, "Buyer.PostalCode", document.CustomerPostalCode, "Customer postal code is required.");
         Require(errors, "Buyer.Phone", document.CustomerPhone, "Customer phone number is required.");
+        // Unlike the registration type, the buyer telephone is a snapshot frozen onto the document, so
+        // fixing the customer profile alone does not repair an already-posted invoice.
+        RequireE164(errors, "Buyer.Phone", document.CustomerPhone, "Customer telephone",
+            "Correct it on the customer profile, then re-open and re-save this document so the billing " +
+            "address is refreshed.");
 
         if (LhdnCodeLookup.TryRegistrationType(document.CustomerRegType) is null)
         {
             errors["Buyer.RegType"] =
-                "Customer registration type must be one of NRIC, PASSPORT, BRN or ARMY.";
+                "Customer registration type must be one of BRN, NRIC, PASSPORT or ARMY (correct it on the customer profile).";
         }
 
         if (LhdnCodeLookup.TryStateCode(document.CustomerState) is null)
@@ -228,6 +237,38 @@ public sealed class EInvoiceValidator
         if (string.IsNullOrWhiteSpace(value))
         {
             errors[key] = message;
+        }
+    }
+
+    /// <summary>
+    /// A supplied telephone number must be E.164. Blank is <see cref="Require"/>'s business, so a missing
+    /// number and a malformed number never produce two competing messages for the same field.
+    /// </summary>
+    /// <remarks>
+    /// "Supplied" deliberately includes an ERP placeholder such as <c>NA</c>, <c>-</c> or <c>0</c>: those
+    /// are not blank, so <see cref="Require"/> passes them, yet they carry no number at all.
+    /// </remarks>
+    /// <param name="fieldLabel">How the field is named in the message.</param>
+    /// <param name="hint">Appended when malformed, to say where the value has to be corrected.</param>
+    private static void RequireE164(
+        Dictionary<string, string> errors,
+        string key,
+        string? value,
+        string fieldLabel,
+        string hint)
+    {
+        if (PhoneNumberFormat.Validate(value, fieldLabel) is { } message)
+        {
+            errors[key] = $"{message} {hint}";
+        }
+        else if (!string.IsNullOrWhiteSpace(value) && PhoneNumberFormat.Normalize(value) is null)
+        {
+            // Neither blank (that is Require's business) nor malformed, yet still meaningless: an ERP
+            // placeholder such as "NA", "-" or "0". Require lets it through because it is not blank, and
+            // Validate accepts it as "no value supplied", so without this branch the placeholder would
+            // reach the payload verbatim and be refused by MyInvois with an opaque error instead of being
+            // stopped here with a field-keyed one.
+            errors[key] = $"{fieldLabel} '{value.Trim()}' is a placeholder, not a telephone number. {hint}";
         }
     }
 }

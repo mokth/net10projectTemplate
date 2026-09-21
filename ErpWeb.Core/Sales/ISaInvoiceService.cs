@@ -200,6 +200,15 @@ public sealed class SaInvoiceListRow
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
+
+    /// <summary>MyInvois lifecycle status (<c>IRBMStatus</c>) so the list can show and gate E-Invoice actions.</summary>
+    public string? IrbmStatus { get; init; }
+
+    /// <summary>Discriminates a FAILED <see cref="IrbmStatus"/> into confirmed failure vs unknown.</summary>
+    public string? IrbmOutcome { get; init; }
+
+    /// <summary>MyInvois document UUID once MyInvois has accepted the invoice.</summary>
+    public string? IrbmUuid { get; init; }
 }
 
 public sealed class SaInvoiceListPage

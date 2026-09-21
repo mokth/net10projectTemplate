@@ -1,3 +1,4 @@
+using ErpWeb.Core.Services;
 using ErpWeb.EInvoiceLib.Model.InputData;
 
 namespace ErpWeb.Core.EInvoice;
@@ -18,6 +19,13 @@ public sealed class MappedEInvoiceDocument
 /// This is a pure translation: it never talks to the database or to MyInvois. Any value it cannot
 /// translate (an unrecognised state or country code, for example) is returned as an ERP validation
 /// issue rather than being guessed.
+/// </para>
+/// <para>
+/// Telephone numbers are the one value it rewrites instead of rejecting, because the UBL payload must
+/// carry E.164. That is a formatting rule, not inference: a recognisable number is canonicalised for the
+/// payload (<c>03-9876 5432</c> becomes <c>+60398765432</c>) and an unrecognisable one is passed through
+/// untouched, because refusing it is <see cref="EInvoiceValidator"/>'s job - a submission should fail
+/// with a field-keyed ERP message rather than reaching MyInvois.
 /// </para>
 /// </summary>
 public sealed class EInvoiceDocumentMapper
@@ -86,6 +94,8 @@ public sealed class EInvoiceDocumentMapper
             RefDocumentNo = document.RefDocumentNo,
             OriginInvoiceUUID = document.OriginUuid,
             IssueDate = document.DocumentDate,
+            InvoicePeriodStartDate= document.DocumentDate.ToString("yyyy-MM-dd"),
+            InvoicePeriodEndDate = document.DocumentDate.ToString("yyyy-MM-dd"),
             docType = MapDocumentType(document.DocumentType),
             Currency = currency,
             ForeignCurrency = currency,
@@ -116,7 +126,12 @@ public sealed class EInvoiceDocumentMapper
                 StateCode = supplierState,
                 CountryCode = supplierCountry,
                 PostalCode = supplier.PostalCode,
-                PhoneNo = supplier.Phone,
+                // LHDN expects E.164. Canonicalizing here — not only at master-data save time — is what
+                // rescues rows captured before the rule existed and what cleans an operator's
+                // transaction-level override. ToStored is trim-preserving, so this is formatting rather
+                // than inference: an unrecognisable value is left exactly as the user typed it, and
+                // EInvoiceValidator is the gate that refuses it with an actionable message.
+                PhoneNo = ToE164OrNull(supplier.Phone),
                 Email = supplier.Email
             },
             Customer = new PartyInfo
@@ -134,7 +149,9 @@ public sealed class EInvoiceDocumentMapper
                 StateCode = buyerState,
                 CountryCode = buyerCountry,
                 PostalCode = document.CustomerPostalCode,
-                PhoneNo = document.CustomerPhone,
+                // This is the snapshot taken onto the document, not the live customer row, so a legacy value
+                // is canonicalised here rather than being rejected.
+                PhoneNo = ToE164OrNull(document.CustomerPhone),
                 Email = document.CustomerEmail
             },
             documentDetails = document.Lines.Select(line => new DocumentDetail
@@ -143,14 +160,17 @@ public sealed class EInvoiceDocumentMapper
                 ItemCode = line.ItemCode,
                 ItemDesc = line.ItemDesc,
                 Qty = (double)line.Qty,
-                UOM = line.Uom,
+                // Safety net only: SaEInvoiceService already translates the ERP UOM/tax group into LHDN
+                // codes. A blank here means a caller bypassed that resolution (or a hand-built source),
+                // so substitute the LHDN default rather than sending an empty code.
+                UOM = string.IsNullOrWhiteSpace(line.Uom) ? LhdnDefaults.UneceUom : line.Uom,
                 UnitPrice = (double)line.UnitPrice,
                 GrossAmount = (double)line.GrossAmount,
                 AmountExclTax = (double)line.AmountExclTax,
                 AmountIncTax = (double)(line.AmountExclTax + line.TaxAmount),
                 DiscountAmount = (double)line.DiscountAmount,
                 TaxAmount = (double)line.TaxAmount,
-                TaxType = line.TaxType,
+                TaxType = string.IsNullOrWhiteSpace(line.TaxType) ? LhdnDefaults.TaxType : line.TaxType,
                 TaxPerCent = line.TaxPercent,
                 ClassificationCode = line.ClassificationCode
             }).ToList()
@@ -158,6 +178,19 @@ public sealed class EInvoiceDocumentMapper
 
         return new MappedEInvoiceDocument { Header = header };
     }
+
+    /// <summary>
+    /// The E.164 form of a telephone number for the payload, or <c>null</c> when the source had no usable
+    /// value.
+    /// </summary>
+    /// <remarks>
+    /// This is a fallback for values that predate the format rule or were overridden on a document: the
+    /// payload gets the canonical form when it can be derived, and otherwise the original value goes
+    /// through unchanged so <see cref="EInvoiceValidator"/> can refuse it with an actionable message.
+    /// A blank or placeholder value becomes <c>null</c> rather than whitespace or <c>"NA"</c>, which is what
+    /// keeps the library's existing "telephone is blank" guard meaningful.
+    /// </remarks>
+    private static string? ToE164OrNull(string? phone) => PhoneNumberFormat.ToStored(phone);
 
     /// <summary>
     /// ERP <c>SaEInvoiceDocumentType</c> code (INV/CN/DN/…, see <c>EInvoiceDocumentTypes</c>) mapped to

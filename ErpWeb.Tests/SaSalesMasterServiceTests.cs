@@ -525,6 +525,103 @@ public class SaSalesMasterServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TaxGroup_Create_DefaultsTaxTypeTo06()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveTaxGroupAsync(new SaTaxGroupEditVm
+        {
+            Code = "NOTAX",
+            Desc = "No LHDN tax type supplied",
+            Percentage = 0m
+        }, isNew: true, expectedFingerprint: null);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal("06", result.Data!.TaxType);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.SaTaxGroups.SingleAsync(x => x.CompanyCode == "DEMO" && x.TaxGrCode == "NOTAX");
+        Assert.Equal("06", row.TaxType);
+    }
+
+    [Fact]
+    public async Task TaxGroup_Create_AcceptsTaxTypeFromTheTaxCodeFamily()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvMsCodes.Add(new IvMsCode { Code = "01", Name = "Sales Tax", CodeType = IvMsCodeTypes.Tax });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.SaveTaxGroupAsync(new SaTaxGroupEditVm
+        {
+            Code = "ST01",
+            Desc = "Standard rated",
+            Percentage = 8m,
+            TaxType = "01"
+        }, isNew: true, expectedFingerprint: null);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal("01", result.Data!.TaxType);
+    }
+
+    [Fact]
+    public async Task TaxGroup_Create_RejectsATaxTypeOutsideTheTaxCodeFamily()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveTaxGroupAsync(new SaTaxGroupEditVm
+        {
+            Code = "BADTX",
+            Desc = "Unknown LHDN tax type",
+            Percentage = 8m,
+            TaxType = "99"
+        }, isNew: true, expectedFingerprint: null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("TaxType"));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.SaTaxGroups.AnyAsync(x => x.CompanyCode == "DEMO" && x.TaxGrCode == "BADTX"));
+    }
+
+    [Fact]
+    public async Task TaxGroup_Create_RejectsATaxTypeLongerThanTheColumn()
+    {
+        var sut = CreateSut();
+        var result = await sut.SaveTaxGroupAsync(new SaTaxGroupEditVm
+        {
+            Code = "LONGTX",
+            Desc = "Too long for nvarchar(2)",
+            Percentage = 8m,
+            TaxType = "123"
+        }, isNew: true, expectedFingerprint: null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("TaxType"));
+    }
+
+    [Fact]
+    public async Task TaxTypes_List_IsTheTaxFamilyOnly_WithBlankAndOverLengthCodesDropped()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvMsCodes.Add(new IvMsCode { Code = "01", Name = "Sales Tax", CodeType = IvMsCodeTypes.Tax });
+            db.IvMsCodes.Add(new IvMsCode { Code = "", Name = "Blank", CodeType = IvMsCodeTypes.Tax });
+            db.IvMsCodes.Add(new IvMsCode { Code = "999", Name = "Too long", CodeType = IvMsCodeTypes.Tax });
+            db.IvMsCodes.Add(new IvMsCode { Code = "SR", Name = "Standard Rated", CodeType = IvMsCodeTypes.PayCode });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var list = await sut.ListTaxTypesForAssignmentAsync();
+
+        Assert.Equal(new[] { "01" }, list.Select(x => x.Code));
+        Assert.Equal("Sales Tax", list[0].Desc);
+    }
+
+    [Fact]
     public async Task SalesRep_Delete_InUse_WhenCustomerReferences()
     {
         await using (var db = await _factory.CreateDbContextAsync())

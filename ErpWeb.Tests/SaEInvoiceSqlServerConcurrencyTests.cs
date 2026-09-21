@@ -1,7 +1,9 @@
 using ErpWeb.Core.EInvoice;
+using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ErpWeb.Tests;
 
@@ -20,7 +22,11 @@ namespace ErpWeb.Tests;
 /// </summary>
 public class SaEInvoiceSqlServerConcurrencyTests : IAsyncLifetime
 {
-    private const string Company = "EINV01";
+    // 5 characters on purpose: TenantScopeContext rejects a company claim longer than
+    // MaxCompanyLength (5), and Company.CompanyCode is nvarchar(5). The previous value "EINV01" was six
+    // characters, so seeding threw "String or binary data would be truncated" — which is why this suite
+    // could never actually run: it only ever reported PASSED by self-skipping.
+    private const string Company = "EINV1";
     private const string Branch = "HQ";
 
     internal const string TestConnectionKey = "SqlServerTestConnection";
@@ -164,11 +170,20 @@ public class SaEInvoiceSqlServerConcurrencyTests : IAsyncLifetime
         }
 
         cmd.CommandText = "SELECT COUNT(*) FROM sys.tables WHERE name = N'SaEInvoiceLog'";
+        if (Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 0)
+        {
+            return false;
+        }
+
+        // This suite also writes the e-Invoice submission registry, so that table has to exist too.
+        cmd.CommandText = "SELECT COUNT(*) FROM sys.tables WHERE name = N'EInvDocSubmission'";
         return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
     }
 
     private static async Task CleanupAsync(AppDbContext db)
     {
+        // The registry is keyed by companyID, not CompanyCode, and nothing FK-references it.
+        await db.Database.ExecuteSqlRawAsync($"DELETE FROM dbo.EInvDocSubmission WHERE companyID = N'{Company}'");
         await db.Database.ExecuteSqlRawAsync($"DELETE FROM dbo.SaEInvoiceLog WHERE CompanyCode = N'{Company}'");
         await db.Database.ExecuteSqlRawAsync($"DELETE FROM dbo.SaInvoiceDetail WHERE CompanyCode = N'{Company}'");
         await db.Database.ExecuteSqlRawAsync($"DELETE FROM dbo.SaInvoice WHERE CompanyCode = N'{Company}'");
@@ -245,6 +260,9 @@ public class SaEInvoiceSqlServerConcurrencyTests : IAsyncLifetime
         var inFlight = await host.GetInvoiceAsync(Company);
         Assert.Equal(EInvoiceStatuses.Submitting, inFlight!.IrbmStatus);
         Assert.Null(inFlight.IrbmUuid);
+        // The buyer identity claimed for the in-flight submission was committed with the SUBMITTING
+        // transition, so the row that Recover reconciles still records what was actually sent.
+        Assert.Equal("C9876543210", inFlight.BuyerTin);
 
         host.Helper.Calls.Clear();
         host.Helper.SubmissionHandler = _ =>
@@ -259,5 +277,75 @@ public class SaEInvoiceSqlServerConcurrencyTests : IAsyncLifetime
         var saved = await host.GetInvoiceAsync(Company);
         Assert.Equal(EInvoiceStatuses.Valid, saved!.IrbmStatus);
         Assert.Equal("UUID-RACE-1", saved.IrbmUuid);
+    }
+
+    /// <summary>
+    /// The submission-registry race: several sessions write the SAME four-part key
+    /// (<c>companyID, submissionUUID, documentType, documentNo</c>) at once. A find-then-insert writer
+    /// sees "no row" in every session and every session inserts, so the unique index has to reject all
+    /// but one. This is the case SQLite cannot reproduce, and the reason plan D-10 requires a
+    /// deterministic duplicate-key recovery instead of a hopeful find-then-insert.
+    ///
+    /// <para>
+    /// The contract asserted is the FINAL STATE (exactly one row), not that the database threw: throwing
+    /// is the database doing its job, and the writer turning that into an update is the writer doing its.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_history_writes_for_the_same_key_produce_exactly_one_row()
+    {
+        if (SkipWithoutSqlServer())
+        {
+            return;
+        }
+
+        const string SubmissionId = "SUB-RACE";
+        const int Racers = 8;
+
+        await using var host = EInvoiceTestHost.CreateWithFactory(_factory!, Company, Branch);
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync();
+
+        var scope = new TenantScope { CompanyCode = Company, BranchCode = Branch, UserId = "racer" };
+        var key = EInvoiceTestHost.InvoiceKey();
+        var start = new ManualResetEventSlim(false);
+
+        var runs = Enumerable.Range(0, Racers)
+            .Select(_ => Task.Run(() =>
+            {
+                start.Wait();
+                return EInvoiceSubmissionWriter.RecordSubmitAsync(
+                    _factory!,
+                    scope,
+                    key,
+                    submissionId: SubmissionId,
+                    uuid: "UUID-RACE",
+                    internalId: EInvoiceTestHost.InvNo,
+                    documentCount: Racers,
+                    overallStatus: EInvoiceStatuses.Submitted,
+                    submittedOnUtc: DateTime.UtcNow,
+                    logger: NullLogger.Instance);
+            }))
+            .ToArray();
+
+        start.Set();
+        var outcomes = await Task.WhenAll(runs);
+
+        // Every racer either inserted or recovered into an update. A Failed means the recovery path did
+        // not do its job, which is exactly what this test exists to catch.
+        Assert.DoesNotContain(EInvoiceHistoryWrite.Failed, outcomes);
+        Assert.Contains(EInvoiceHistoryWrite.Inserted, outcomes);
+
+        await using var db = await _factory!.CreateDbContextAsync();
+        var rows = await db.EInvDocSubmissions.AsNoTracking()
+            .Where(x => x.CompanyId == Company
+                        && x.SubmissionUuid == SubmissionId
+                        && x.DocumentType == EInvoiceDocumentTypes.Invoice
+                        && x.DocumentNo == EInvoiceTestHost.InvNo)
+            .ToListAsync();
+
+        var row = Assert.Single(rows);
+        Assert.Equal(EInvoiceStatuses.Submitted, row.Status);
+        Assert.Equal("UUID-RACE", row.Uuid);
     }
 }

@@ -53,6 +53,31 @@ public static class EInvoiceStatuses
     /// <summary>True when payload-changing edits must be refused.</summary>
     public static bool IsLocked(string? status) => Locked.Contains(Normalize(status));
 
+    /// <summary>
+    /// True when the buyer identity (TIN, identity number, registration type, email) stored on the
+    /// document is the frozen snapshot of what was actually sent to MyInvois, so it must <b>not</b> be
+    /// rebuilt from the customer master.
+    /// <para>
+    /// Frozen from the moment a submission claims <c>SUBMITTING</c> (the claim persists the identity
+    /// that is about to be signed), and kept through <c>SUBMITTED</c> / <c>VALID</c> for audit and for
+    /// credit/debit notes. A <c>FAILED</c> + <c>Unknown</c> outcome is also treated as frozen: a request
+    /// may be in flight, and <c>Recover</c> must reconcile the values that were claimed, not a
+    /// subsequently edited customer.
+    /// </para>
+    /// <para>
+    /// <c>NEW</c>, <c>INVALID</c>, <c>REJECTED</c>, <c>CANCELLED</c> and <c>FAILED</c> +
+    /// <c>ConfirmedFailure</c> stay live: <c>CanSubmit</c> allows them to be (re)sent, and a resend has
+    /// to pick up the corrected customer master.
+    /// </para>
+    /// </summary>
+    public static bool IsBuyerIdentityFrozen(string? status, string? outcome = null)
+    {
+        var normalized = Normalize(status);
+        return normalized is Submitting or Submitted or Valid
+               || (normalized == Failed
+                   && string.Equals(outcome, EInvoiceOutcomes.Unknown, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>True when the document already holds (or is obtaining) a MyInvois identity.</summary>
     public static bool IsSubmittedOrBeyond(string? status)
     {

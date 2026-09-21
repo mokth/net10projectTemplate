@@ -1,4 +1,5 @@
 using DevExpress.Blazor;
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
@@ -14,6 +15,11 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
 
     protected SaTaxGroupEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>LHDN tax types (IvMSCode <c>TAX</c> family) offered by the Tax type picker.</summary>
+    protected IReadOnlyList<IvCodeLookupRow> TaxTypeOptions => _taxTypeOptions;
+
+    private readonly List<IvCodeLookupRow> _taxTypeOptions = [];
     private string? _loadedFingerprint;
 
     public List<GridColumnData> Columns() =>
@@ -45,10 +51,18 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
         },
         new()
         {
+            Caption = "TaxType",
+            FieldName = nameof(SaTaxGroupListRow.TaxType),
+            DataType = "string",
+            VisibleIndex = 4,
+            Width = "90px"
+        },
+        new()
+        {
             Caption = "Company",
             FieldName = nameof(SaTaxGroupListRow.CompanyCode),
             DataType = "string",
-            VisibleIndex = 4,
+            VisibleIndex = 5,
             Width = "100px"
         },
         new()
@@ -56,7 +70,7 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
             Caption = "Branch",
             FieldName = nameof(SaTaxGroupListRow.BranchCode),
             DataType = "string",
-            VisibleIndex = 5,
+            VisibleIndex = 6,
             Width = "90px"
         },
         new()
@@ -64,12 +78,45 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
             Caption = "Location",
             FieldName = nameof(SaTaxGroupListRow.LocationCode),
             DataType = "string",
-            VisibleIndex = 6,
+            VisibleIndex = 7,
             Width = "100px"
         }
     ];
 
-    protected override async Task OnPageInitializedAsync() => await ReloadListAsync();
+    protected override async Task OnPageInitializedAsync()
+    {
+        await LoadTaxTypeOptionsAsync();
+        await ReloadListAsync();
+    }
+
+    private async Task LoadTaxTypeOptionsAsync()
+    {
+        var options = await RefService.ListTaxTypesForAssignmentAsync();
+        _taxTypeOptions.Clear();
+        _taxTypeOptions.AddRange(options);
+    }
+
+    /// <summary>
+    /// A value already on the row (legacy free text, or a TAX code longer than the nvarchar(2) column
+    /// that is therefore not offered) is still the row's real value. Keep it visible instead of showing
+    /// an empty combo; the service tolerates saving it unchanged. The same guard covers the 06 default
+    /// when the TAX family has not been populated.
+    /// </summary>
+    private void EnsureTaxTypeOption(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return;
+        }
+
+        var trimmed = code.Trim();
+        if (_taxTypeOptions.Any(x => string.Equals(x.Code, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _taxTypeOptions.Insert(0, new IvCodeLookupRow { Code = trimmed, Desc = "(not in TAX list)" });
+    }
 
     protected override async Task ReloadListAsync()
     {
@@ -112,7 +159,8 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
             return;
         }
 
-        EditModel = new SaTaxGroupEditVm();
+        EditModel = new SaTaxGroupEditVm { TaxType = LhdnDefaults.TaxType };
+        EnsureTaxTypeOption(EditModel.TaxType);
         _loadedFingerprint = null;
         ErrorMessage = null;
         IsEditMode = false;
@@ -218,6 +266,7 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
         }
 
         EditModel = result.Data;
+        EnsureTaxTypeOption(EditModel.TaxType);
         _loadedFingerprint = SaMasterFingerprint.TaxGroup(EditModel);
         ErrorMessage = null;
         return true;

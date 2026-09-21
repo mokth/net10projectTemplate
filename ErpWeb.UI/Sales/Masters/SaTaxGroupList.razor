@@ -92,6 +92,14 @@
                                        ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Tax type" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <IvCodeComboBox Data="@TaxTypeOptions"
+                                            @bind-Value="@EditModel.TaxType"
+                                            Enabled="@EditEnabled"
+                                            NullText="Select LHDN tax type" />
+                        </Template>
+                    </DxFormLayoutItem>
                     @* @if (IsEditMode)
                     {
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Company" ColSpanMd="4" BeginRow="true">

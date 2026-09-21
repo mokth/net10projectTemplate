@@ -112,6 +112,20 @@ public static class LhdnCodeLookup
             return null;
         }
 
+        // Canonical values first: EInvoiceRegistrationTypes is the single source of truth for what the
+        // ERP writes. Legacy free text ("SSM", "MyKad", ...) is only read for historical rows.
+        if (EInvoiceRegistrationTypes.Normalize(value) is { } canonical)
+        {
+            return canonical switch
+            {
+                EInvoiceRegistrationTypes.Brn => TINRegistrationType.BRN,
+                EInvoiceRegistrationTypes.Nric => TINRegistrationType.NRIC,
+                EInvoiceRegistrationTypes.Passport => TINRegistrationType.PASSPORT,
+                EInvoiceRegistrationTypes.Army => TINRegistrationType.ARMY,
+                _ => null
+            };
+        }
+
         return Normalize(value) switch
         {
             "nric" or "ic" or "mykad" or "identity card" => TINRegistrationType.NRIC,

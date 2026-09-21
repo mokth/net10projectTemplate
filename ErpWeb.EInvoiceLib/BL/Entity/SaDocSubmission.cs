@@ -8,6 +8,17 @@ using System.Threading.Tasks;
 
 namespace ErpWeb.EInvoiceLib.BL.Entity
 {
+    /// <summary>
+    /// LEGACY schema reference. Deliberately <b>not mapped by any DbContext</b> any more (plan Phase 4):
+    /// ErpWeb owns dbo.EInvDocSubmission through
+    /// <c>ErpWeb.Model/Entities/Sales/EInvDocSubmission.cs</c> + <c>AppDbContext</c>.
+    /// <para>
+    /// Kept only because it is the in-repo record of the original column names. It is also <b>narrower
+    /// than the live table</b>: Phase 0 found 17 further payload-capture columns (supplierTIN, buyerTIN,
+    /// direction, ...) that this class never mapped. Do not re-register it - a second EF owner for the
+    /// same table is the drift this consolidation removed.
+    /// </para>
+    /// </summary>
     [Table("EInvDocSubmission", Schema = "dbo")]
     public partial class EInvDocSubmission
     {

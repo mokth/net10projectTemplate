@@ -1,0 +1,97 @@
+>>> database / object
+database_name server_name object_id
+------------- ----------- ---------
+ERPWeb LAPTOP-N3NQSB16\SQLEXPRESS 281768061
+>>> 0.1 COLUMNS
+column_id column_name type_name max_length precision scale is_nullable is_identity
+--------- ----------- --------- ---------- --------- ----- ----------- -----------
+1 ID int 4 10 0 0 1
+2 uuid nvarchar 100 0 0 1 0
+3 submissionUUID nvarchar 100 0 0 1 0
+4 longId nvarchar 200 0 0 1 0
+5 internalId nvarchar 60 0 0 1 0
+6 typeName nvarchar 40 0 0 1 0
+7 typeVersionName nvarchar 40 0 0 1 0
+8 issuerTin nvarchar 40 0 0 1 0
+9 issuerName nvarchar 500 0 0 1 0
+10 receiverId nvarchar 60 0 0 1 0
+11 receiverName nvarchar 500 0 0 1 0
+12 dateTimeIssued datetime 8 23 3 1 0
+13 dateTimeReceived datetime 8 23 3 1 0
+14 dateTimeValidated datetime 8 23 3 1 0
+15 totalSales decimal 9 18 2 1 0
+16 totalDiscount decimal 9 18 2 1 0
+17 netAmount decimal 9 18 2 1 0
+18 total decimal 9 18 2 1 0
+19 status nvarchar 40 0 0 0 0
+20 cancelDateTime datetime 8 23 3 1 0
+21 rejectRequestDateTime datetime 8 23 3 1 0
+22 documentStatusReason nvarchar 500 0 0 1 0
+23 createdByUserId nvarchar 140 0 0 1 0
+24 document text 16 0 0 1 0
+25 companyID nvarchar 40 0 0 1 0
+26 documentID int 4 10 0 1 0
+27 documentNo nvarchar 60 0 0 1 0
+28 documentType nvarchar 6 0 0 1 0
+29 supplierTIN nvarchar 40 0 0 1 0
+30 supplierName nvarchar 500 0 0 1 0
+31 buyerName nvarchar 500 0 0 1 0
+32 buyerTIN nvarchar 40 0 0 1 0
+33 receiverTIN nvarchar 40 0 0 1 0
+34 receiverIDType nvarchar 100 0 0 1 0
+35 submissionChannel nvarchar 40 0 0 1 0
+36 intermediaryName nvarchar 500 0 0 1 0
+37 intermediaryTIN nvarchar 40 0 0 1 0
+38 intermediaryROB nvarchar 60 0 0 1 0
+39 issuerID nvarchar 100 0 0 1 0
+40 issuerIDType nvarchar 40 0 0 1 0
+41 documentCurrency nvarchar 20 0 0 1 0
+42 direction nvarchar 20 0 0 1 0
+>>> 0.1b NO-NULL COLUMNS WITHOUT A DEFAULT (insert-blockers for the app)
+column_name type_name is_identity
+----------- --------- -----------
+status nvarchar 0
+>>> 0.2 TRIGGERS  (a row here means AbstractContext must declare HasTrigger)
+name is_disabled is_instead_of_trigger
+---- ----------- ---------------------
+>>> 0.3 INDEXES
+index_id name type_desc is_unique is_primary_key is_unique_constraint has_filter filter_definition
+-------- ---- --------- --------- -------------- -------------------- ---------- -----------------
+0 NULL HEAP 0 0 0 0 NULL
+>>> 0.3b INDEX COLUMNS
+index_name key_ordinal is_included_column column_name
+---------- ----------- ------------------ -----------
+>>> 0.3c FOREIGN KEYS
+name referenced_table
+---- ----------------
+>>> 0.3d DEFAULT CONSTRAINTS
+name column_name definition
+---- ----------- ----------
+>>> 0.3e CHECK CONSTRAINTS
+name definition
+---- ----------
+>>> 0.3f ROW COUNT
+row_count
+---------
+0
+>>> 0.3g THE FIVE ADDITIVE COLUMNS (NULL = not yet added)
+BranchCode_bytes OverallStatus_bytes DocumentCount_bytes CreatedOn_bytes LastSyncedOn_bytes
+---------------- ------------------- ------------------- --------------- ------------------
+NULL NULL NULL NULL NULL
+>>> 0.4 DUPLICATE CANDIDATE KEYS - BLOCKING (empty result set = safe to add the unique index)
+companyID submissionUUID documentType documentNo Cnt
+--------- -------------- ------------ ---------- ---
+>>> 0.5 NULL companyID (NULL counts as EQUAL in a SQL Server unique index)
+null_companyID_rows
+-------------------
+0
+>>> 0.5b companyID widths actually in use
+companyID_len rows_count
+------------- ----------
+>>> 0.6 QUICK SAMPLE (newest 20 rows)
+ID companyID submissionUUID uuid documentNo documentType status dateTimeIssued createdByUserId
+-- --------- -------------- ---- ---------- ------------ ------ -------------- ---------------
+>>> 0.7 documentType / status DISTRIBUTION (legacy writes documentType = 'POS')
+documentType status Cnt
+------------ ------ ---
+>>> END OF REPORT

@@ -1,4 +1,5 @@
 @page "/admin/company"
+@using ErpWeb.Core.EInvoice
 @inherits PageBase
 
 <PageTitle>Company Info</PageTitle>
@@ -322,6 +323,84 @@
                                                     NullText="Customer item, price list, then item default (recommended)"
                                                     ReadOnly="@(!CanMutate)" />
                                         <small>Selects WHICH price sources may apply to a sales line. The evaluation order is fixed by specificity and is not configurable here.</small>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="12">
+                            <HeaderContentTemplate>LHDN e-Invoice</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Enabled" ColSpanMd="3">
+                                    <Template>
+                                        <DxCheckBox @bind-Checked="@EditModel.EInvEnabled"
+                                                    AllowIndeterminateState="false"
+                                                    ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="ID Type" ColSpanMd="3">
+                                    <Template>
+                                        <DxComboBox Data="@EInvRegistrationTypes"
+                                                    @bind-Value="@EditModel.EInvRegType"
+                                                    TextFieldName="@nameof(EInvoiceRegistrationTypeOption.Name)"
+                                                    ValueFieldName="@nameof(EInvoiceRegistrationTypeOption.Value)"
+                                                    NullText="BRN"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="MSIC Code" ColSpanMd="3">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvMsicCode"
+                                                   maxlength="10"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Document Version" ColSpanMd="3">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvDocumentVersion"
+                                                   maxlength="10"
+                                                   NullText="App default"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Business Description" ColSpanMd="8" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvBizDescription"
+                                                   maxlength="200"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="SST No" ColSpanMd="4">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvSstNo"
+                                                   maxlength="50"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="LHDN State Code" ColSpanMd="3" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvStateCode"
+                                                   maxlength="2"
+                                                   NullText="From company state"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="LHDN Country Code" ColSpanMd="3">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvCountryCode"
+                                                   maxlength="3"
+                                                   NullText="From company country"
+                                                   ReadOnly="@(!CanMutate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="On-Behalf TIN" ColSpanMd="6">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@EditModel.EInvOnBehalfTin"
+                                                   maxlength="20"
+                                                   NullText="Blank submits directly"
+                                                   ReadOnly="@(!CanMutate)" />
+                                        <small>Supplier profile for MyInvois. TIN, registration no and address come from Identity and Address above. API credentials (client id, secret, certificate) are deployment configuration and are never stored on the company record.</small>
                                     </Template>
                                 </DxFormLayoutItem>
                             </Items>

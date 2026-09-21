@@ -1272,9 +1272,11 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Save_preserves_BuyerTin_BuyerBrn_InvEmail_Classification()
+    public async Task Save_always_takes_buyer_identity_from_the_customer_master()
     {
         var sut = CreateSut();
+        // The request carries different values on purpose: the customer master is the source of truth
+        // for e-Invoice identity, so the screen cannot pin a stale/incorrect TIN on the document.
         var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
         {
             InvDate = FixedToday,
@@ -1282,9 +1284,9 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             Currency = "MYR",
             PayCode = "NET30",
             SalesmanCode = "SM1",
-            BuyerTin = "KEEP-TIN",
-            BuyerBrn = "KEEP-BRN",
-            InvEmail = "keep@invoice.com",
+            BuyerTin = "IGNORED-TIN",
+            BuyerBrn = "IGNORED-BRN",
+            InvEmail = "ignored@invoice.com",
             Lines =
             [
                 new SaInvoiceLineRequest
@@ -1297,9 +1299,11 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             ]
         });
         Assert.True(save.Succeeded, save.ErrorMessage);
-        Assert.Equal("KEEP-TIN", save.Document!.BuyerTin);
-        Assert.Equal("KEEP-BRN", save.Document.BuyerBrn);
-        Assert.Equal("keep@invoice.com", save.Document.InvEmail);
+        // CUST01 holds TIN01 / BRN01 / alpha@example.com (no dedicated invoice email).
+        Assert.Equal("TIN01", save.Document!.BuyerTin);
+        Assert.Equal("BRN01", save.Document.BuyerBrn);
+        Assert.Equal("alpha@example.com", save.Document.InvEmail);
+        // Only Classification is still caller-owned.
         Assert.Equal("KEEP-CLASS", save.Document.Lines.Single().Classification);
 
         var update = await UpdateDocAsync(sut, save.InvNo!, new SaInvoiceSaveRequest
@@ -1309,9 +1313,9 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             Currency = "MYR",
             PayCode = "NET30",
             SalesmanCode = "SM1",
-            BuyerTin = "KEEP-TIN",
-            BuyerBrn = "KEEP-BRN",
-            InvEmail = "keep@invoice.com",
+            BuyerTin = "IGNORED-TIN",
+            BuyerBrn = "IGNORED-BRN",
+            InvEmail = "ignored@invoice.com",
             Lines =
             [
                 new SaInvoiceLineRequest
@@ -1324,10 +1328,35 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             ]
         });
         Assert.True(update.Succeeded, update.ErrorMessage);
-        Assert.Equal("KEEP-TIN", update.Document!.BuyerTin);
-        Assert.Equal("KEEP-BRN", update.Document.BuyerBrn);
-        Assert.Equal("keep@invoice.com", update.Document.InvEmail);
+        Assert.Equal("TIN01", update.Document!.BuyerTin);
+        Assert.Equal("BRN01", update.Document.BuyerBrn);
+        Assert.Equal("alpha@example.com", update.Document.InvEmail);
         Assert.Equal("KEEP-CLASS", update.Document.Lines.Single().Classification);
+    }
+
+    [Fact]
+    public async Task Save_follows_the_customer_master_when_the_profile_is_corrected()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.Equal("TIN01", save.Document!.BuyerTin);
+
+        // Fixing the profile is enough: the next save (and the submit claim) picks the corrected identity
+        // up, with no rollback/unpost of anything already on the document.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var cust = await db.SaCusts.SingleAsync(x => x.CustCode == "CUST01");
+            cust.TinNo = "TIN-FIXED";
+            cust.CustBrn = "BRN-FIXED";
+            cust.RegType = "NRIC";
+            await db.SaveChangesAsync();
+        }
+
+        var update = await UpdateDocAsync(sut, save.InvNo!, Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(update.Succeeded, update.ErrorMessage);
+        Assert.Equal("TIN-FIXED", update.Document!.BuyerTin);
+        Assert.Equal("BRN-FIXED", update.Document.BuyerBrn);
     }
 
     [Fact]
@@ -2229,6 +2258,70 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         var rollback = await sut.RollbackAsync([save.InvNo!]);
         Assert.False(rollback.Succeeded);
         Assert.Contains("CN0001", rollback.Posting[0].ErrorMessage ?? string.Empty);
+    }
+
+    /// <summary>
+    /// The e-Invoice payload is frozen while the document is in flight or live at MyInvois. An unpost
+    /// would leave a MyInvois document pointing at an invoice the ERP no longer treats as posted, so
+    /// rollback is refused with the same locked set the edit/delete paths use.
+    /// </summary>
+    [Theory]
+    [InlineData(EInvoiceStatuses.Submitting)]
+    [InlineData(EInvoiceStatuses.Submitted)]
+    [InlineData(EInvoiceStatuses.Valid)]
+    public async Task Invoice_rollback_is_blocked_while_the_einvoice_is_locked(string irbmStatus)
+    {
+        var sut = CreateSut();
+        await SeedBalLocAsync(10m);
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await ShipAsync(sut, save.InvNo!)).Succeeded);
+        Assert.True((await sut.PostAsync([save.InvNo!])).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE SaInvoice SET IrbmStatus = {0}, RowVersion = randomblob(8)", irbmStatus);
+        }
+
+        var rollback = await sut.RollbackAsync([save.InvNo!]);
+
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("e-Invoice status", rollback.Posting[0].ErrorMessage ?? string.Empty);
+
+        // Nothing moved: the invoice is still posted and the stock batch is untouched.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(SaInvoiceStatuses.Posted, (await db.SaInvoices.SingleAsync()).Status);
+            Assert.Equal(IvBatchStatuses.Posted,
+                (await db.IvTrxBatches.SingleAsync(x => x.TrxType == IvTrxTypes.SalesOut)).BatchStatus);
+        }
+    }
+
+    [Fact]
+    public async Task Invoice_rollback_is_allowed_once_the_einvoice_is_cancelled()
+    {
+        var sut = CreateSut();
+        await SeedBalLocAsync(10m);
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await ShipAsync(sut, save.InvNo!)).Succeeded);
+        Assert.True((await sut.PostAsync([save.InvNo!])).Succeeded);
+
+        // CANCELLED is not in the locked set: the MyInvois document is no longer live.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE SaInvoice SET IrbmStatus = 'CANCELLED', RowVersion = randomblob(8)");
+        }
+
+        var rollback = await sut.RollbackAsync([save.InvNo!]);
+
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(SaInvoiceStatuses.New, (await db.SaInvoices.SingleAsync()).Status);
+        }
     }
 
     [Fact]

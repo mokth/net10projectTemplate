@@ -62,6 +62,49 @@ public interface ISaEInvoiceService
         SaEInvoiceDocumentKey key,
         CancellationToken cancellationToken = default);
 
+    // ─────────────────────────────── Batch operations ───────────────────────────────
+
+    /// <summary>
+    /// Submit several documents in ONE MyInvois submission (MyInvois accepts up to 100 documents per
+    /// call). Ineligible documents are skipped and reported; the eligible ones still run.
+    /// <para>
+    /// The selection is normalized and deduplicated case-insensitively before the cap is applied, so
+    /// a duplicated selection counts once. Every key is re-authorized, reloaded and re-validated here;
+    /// <see cref="GetStatusManyAsync"/> is never trusted as the eligibility verdict.
+    /// </para>
+    /// </summary>
+    Task<SaEInvoiceBatchResult> SubmitManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Re-read the MyInvois status of several submitted documents, one call per document, matching the
+    /// single-document <see cref="RefreshAsync"/> semantics. Refresh is read-only and never destroys
+    /// state, so an unrecognised or failed read leaves the current status alone.
+    /// </summary>
+    Task<SaEInvoiceBatchResult> RefreshManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Cancel several submitted/valid documents using one shared reason. Each document is cancelled by
+    /// its own MyInvois call and committed independently, so a later failure never rolls back an
+    /// earlier success.
+    /// </summary>
+    Task<SaEInvoiceBatchResult> CancelManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        string reason,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Pre-flight status snapshot for the list-page confirmation prompt, index-aligned with
+    /// <paramref name="keys"/>; an element is null when the document has no e-Invoice state to read.
+    /// Requires document access only, and is <b>never</b> authoritative for execution.
+    /// </summary>
+    Task<IReadOnlyList<SaEInvoiceStatusView?>> GetStatusManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Ask MyInvois whether a TIN belongs to the holder of the given identity document.
     /// Read-only: nothing is submitted and no document state changes.

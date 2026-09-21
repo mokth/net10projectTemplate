@@ -82,6 +82,7 @@
                                       ShowFilterRow="false"
                                       ShowGroupPanel="false"
                                       allowSelect="true"
+                                      OnSelectedColumnHandle="@onSelectColHandle"
                                       OnGridInstance="@OnGridInstance"
                                       OnSelectionsEventHandle="@OnSelectionsEvent"
                                       OnButtonEventHandle="@OnButtonClick"
@@ -163,6 +164,16 @@
              @bind-Visible="@ConfirmVisible">
         <Content>
             <p class="iv-confirm__copy">@ConfirmMessage</p>
+            @if (IsCancelAction)
+            {
+                <div class="iv-einv-reason">
+                    <div class="iv-einv-reason__label">Cancellation reason (required, max 300 characters)</div>
+                    <DxTextBox @bind-Text="@EInvoiceCancelReason"
+                               MaxLength="300"
+                               NullText="e.g. Wrong buyer details"
+                               CssClass="w-100" />
+                </div>
+            }
             <div class="iv-popup-footer">
                 <div class="iv-popup-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -172,7 +183,50 @@
                     <DxButton RenderStyle="@ConfirmButtonStyle"
                               Text="@ConfirmButtonText"
                               Click="@ConfirmActionAsync"
-                              Enabled="@(!IsSubmitting)" />
+                              Enabled="@CanConfirmAction" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@EInvoiceResultsTitle"
+             CloseOnOutsideClick="false"
+             Width="680px"
+             CssClass="common-popup"
+             @bind-Visible="@EInvoiceResultsVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <div class="iv-einv-results">
+                    <table class="iv-einv-results__table">
+                        <thead>
+                            <tr>
+                                <th>Invoice</th>
+                                <th>Result</th>
+                                <th>Status</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in EInvoiceResults)
+                            {
+                                <tr>
+                                    <td>@item.DocumentNo</td>
+                                    <td>
+                                        <span class="iv-einv-chip @EInvoiceResultClass(item)">@EInvoiceResultOutcome(item)</span>
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(item.Status) ? "-" : item.Status)</td>
+                                    <td>@item.ErrorMessage</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@DismissEInvoiceResults" />
                 </div>
             </div>
         </Content>

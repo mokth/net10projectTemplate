@@ -1,5 +1,6 @@
 @page "/purchase/suppliers/{Mode:regex(^(new|edit|view)$)}"
 @page "/purchase/suppliers/{Mode:regex(^(new|edit|view)$)}/{*SuppCode}"
+@using ErpWeb.Core.EInvoice
 @inherits PageBase
 
 <PageTitle>@PageHeading</PageTitle>
@@ -319,7 +320,13 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Reg type</label>
-                                    <DxTextBox @bind-Text="@Model.RegType" maxlength="20" />
+                                    <DxComboBox Data="@EInvoiceRegistrationTypes.Options"
+                                                @bind-Value="@Model.RegType"
+                                                TextFieldName="@nameof(EInvoiceRegistrationTypeOption.Name)"
+                                                ValueFieldName="@nameof(EInvoiceRegistrationTypeOption.Value)"
+                                                NullText="Select reg type"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                    @FieldError("RegType")
                                 </div>
                             </div>
                         </div>

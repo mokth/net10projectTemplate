@@ -695,20 +695,12 @@ public partial class SaInvoice : PageBase, IDisposable
         _taxable = d.Taxable;
         _discountMethod = d.DiscountMethod;
         _decPoint = d.DecPoint == true;
-        if (string.IsNullOrWhiteSpace(InvEmail))
-        {
-            InvEmail = d.InvEmail;
-        }
-
-        if (string.IsNullOrWhiteSpace(BuyerTin))
-        {
-            BuyerTin = d.BuyerTin;
-        }
-
-        if (string.IsNullOrWhiteSpace(BuyerBrn))
-        {
-            BuyerBrn = d.BuyerBrn;
-        }
+        // Buyer e-Invoice identity is master data: always re-take it from the selected customer.
+        // The invoice controls for these fields are read-only, and SaInvoiceService re-snapshots them
+        // server-side on save, so the screen and the stored document cannot drift apart.
+        InvEmail = d.InvEmail;
+        BuyerTin = d.BuyerTin;
+        BuyerBrn = d.BuyerBrn;
 
         InvName = d.InvName;
         InvAddress1 = d.InvAddress1;

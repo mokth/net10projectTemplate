@@ -259,7 +259,7 @@
                                         @FieldError("InvCountry")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Tel or email" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="Tel" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvTel" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="@ContactRequiredCss" />
                                         @FieldError("InvTel")
@@ -267,7 +267,7 @@
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Email" ColSpanMd="3">
                                     <Template>
-                                        <DxTextBox @bind-Text="@InvEmail" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="@ContactRequiredCss" />
+                                        <DxTextBox @bind-Text="@InvEmail" Enabled="@CanEditAddresses" InputCssClass="@ContactRequiredCss" />
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Fax" ColSpanMd="3">
@@ -277,13 +277,13 @@
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="TIN or BRN" ColSpanMd="3">
                                     <Template>
-                                        <DxTextBox @bind-Text="@BuyerTin" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="@BuyerIdRequiredCss" />
+                                        <DxTextBox @bind-Text="@BuyerTin" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                         @FieldError("BuyerTin")
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="BRN" ColSpanMd="3">
                                     <Template>
-                                        <DxTextBox @bind-Text="@BuyerBrn" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="@BuyerIdRequiredCss" />
+                                        <DxTextBox @bind-Text="@BuyerBrn" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                     </Template>
                                 </DxFormLayoutItem>
                             </DxFormLayout>

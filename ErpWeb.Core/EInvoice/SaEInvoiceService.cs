@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.EInvoiceLib.GenerateDoc;
 using ErpWeb.EInvoiceLib.Interface;
@@ -34,6 +35,12 @@ namespace ErpWeb.Core.EInvoice;
 /// </summary>
 public sealed class SaEInvoiceService : ISaEInvoiceService
 {
+    /// <summary>
+    /// MyInvois limits the Cancel Document <c>reason</c> to 300 characters. Enforced in the service so
+    /// every caller (panel, list, background job) is covered rather than trusting the UI.
+    /// </summary>
+    private const int MaxCancelReasonLength = 300;
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly ITenantScopeContext _tenant;
     private readonly IAccessRightService _accessRights;
@@ -178,6 +185,12 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         string? errorMessage = null;
         string? reconcileUserMessage = null;
 
+        // Captured inside the HTTP block below so the submission registry can be written after the
+        // business commit without re-asking MyInvois (plan 3.7 - Recover passes the summary payload).
+        DocumentSummary? matchedDocument = null;
+        string? submissionOverallStatus = null;
+        int? submissionDocumentCount = null;
+
         try
         {
             // Step 1 (locked order): if we have a submission id, ask MyInvois about that submission.
@@ -186,9 +199,12 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 var submission = await _helper.GetSubmission(state.SubmitId!);
                 if (submission.IsSuccess && submission.result is not null)
                 {
+                    submissionOverallStatus = submission.result.overallStatus;
+                    submissionDocumentCount = submission.result.documentCount;
                     var match = FindDocumentInSubmission(submission.result, state.DocumentNo);
                     if (match is not null)
                     {
+                        matchedDocument = match;
                         myInvoisStatus = match.status;
                         uuid = match.uuid;
                         submissionId = match.submissionUid ?? submissionId;
@@ -321,6 +337,20 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 return ConcurrencyFailure(key);
             }
 
+            // Submission registry: upsert after the business commit (plan 3.7). `loaded.SubmitId` is the
+            // ERP document's own submission id, so a mismatched API payload cannot land on another row.
+            await EInvoiceSubmissionWriter.ApplyStatusAsync(
+                _dbFactory,
+                scope,
+                key,
+                submissionId: loaded.SubmitId,
+                summary: matchedDocument,
+                detail: null,
+                overallStatus: submissionOverallStatus,
+                documentCount: submissionDocumentCount,
+                logger: _logger,
+                cancellationToken: cancellationToken);
+
             return new SaEInvoiceResult
             {
                 Succeeded = outcome != ReconcileOutcome.Uncertain,
@@ -364,7 +394,9 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
             if (string.IsNullOrWhiteSpace(loaded.Uuid))
             {
-                return SaEInvoiceResult.Fail(key, "This document has no MyInvois UUID to refresh.");
+                return SaEInvoiceResult.Fail(key,
+                    "This document has no MyInvois UUID to refresh.",
+                    status: EInvoiceStatuses.Normalize(loaded.Status));
             }
 
             state = loaded;
@@ -373,12 +405,25 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
         var requestTime = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        var detail = await _helper.GetDocumentDetail(state.Uuid!);
+        GeneralResult<DocumentValidatation>? detail;
+        try
+        {
+            detail = await _helper.GetDocumentDetail(state.Uuid!);
+        }
+        catch (Exception ex)
+        {
+            // Refresh is read-only. A transport failure must not abort a batch refresh or be mistaken
+            // for a status change: keep the current status and report the error.
+            _logger.LogError(ex, "e-Invoice refresh threw for {Document}", key);
+            detail = null;
+        }
         stopwatch.Stop();
 
-        var myInvoisStatus = detail.result?.status;
-        var errorCode = detail.IsSuccess ? null : detail.errorCode;
-        var errorMessage = detail.IsSuccess ? null : detail.error;
+        var myInvoisStatus = detail?.result?.status;
+        var errorCode = detail is { IsSuccess: false } ? detail.errorCode : null;
+        var errorMessage = detail is null
+            ? "MyInvois could not be reached to refresh this document."
+            : detail.IsSuccess ? null : detail.error;
 
         await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken))
         {
@@ -389,7 +434,7 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             }
 
             var applied = false;
-            if (detail.IsSuccess && SaEInvoiceStatusMap.IsRecognised(myInvoisStatus))
+            if (detail is { IsSuccess: true } && SaEInvoiceStatusMap.IsRecognised(myInvoisStatus))
             {
                 var mapped = SaEInvoiceStatusMap.FromMyInvoisDocumentStatus(myInvoisStatus);
                 loaded.Status = mapped;
@@ -406,7 +451,7 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
                 applied = true;
             }
-            else if (!detail.IsSuccess)
+            else if (detail is null || !detail.IsSuccess)
             {
                 loaded.Error = Truncate(errorMessage, 500);
             }
@@ -434,6 +479,20 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             {
                 return ConcurrencyFailure(key);
             }
+
+            // Submission registry: refresh in place (plan 3.7). A non-successful detail response carries
+            // no payload, so only a successful one is passed - and a null field never erases history.
+            await EInvoiceSubmissionWriter.ApplyStatusAsync(
+                _dbFactory,
+                scope,
+                key,
+                submissionId: loaded.SubmitId,
+                summary: null,
+                detail: detail is { IsSuccess: true } ? detail.result : null,
+                overallStatus: null,
+                documentCount: null,
+                logger: _logger,
+                cancellationToken: cancellationToken);
 
             return new SaEInvoiceResult
             {
@@ -469,6 +528,14 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             return SaEInvoiceResult.Fail(key, "A cancellation reason is mandatory.", SaEInvoiceErrorKind.Validation);
         }
 
+        // MyInvois limits the reason to 300 characters; a longer value is refused before any HTTP call.
+        if (reason.Trim().Length > MaxCancelReasonLength)
+        {
+            return SaEInvoiceResult.Fail(key,
+                $"The cancellation reason cannot exceed {MaxCancelReasonLength} characters.",
+                SaEInvoiceErrorKind.Validation);
+        }
+
         var scope = gate.Scope!;
         var correlationId = Guid.NewGuid();
 
@@ -485,12 +552,15 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             if (status is not (EInvoiceStatuses.Submitted or EInvoiceStatuses.Valid))
             {
                 return SaEInvoiceResult.Fail(key,
-                    "Only a SUBMITTED or VALID e-Invoice can be cancelled.");
+                    "Only a SUBMITTED or VALID e-Invoice can be cancelled.",
+                    status: status);
             }
 
             if (string.IsNullOrWhiteSpace(loaded.Uuid))
             {
-                return SaEInvoiceResult.Fail(key, "This document has no MyInvois UUID to cancel.");
+                return SaEInvoiceResult.Fail(key,
+                    "This document has no MyInvois UUID to cancel.",
+                    status: status);
             }
 
             // Cancel window is measured from validation (the LHDN rule: 72 hours from the document's
@@ -502,7 +572,8 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 if (age.TotalHours > _options.CancelWindowHours)
                 {
                     return SaEInvoiceResult.Fail(key,
-                        $"The {_options.CancelWindowHours}-hour cancellation window has passed. Issue a credit/debit note instead.");
+                        $"The {_options.CancelWindowHours}-hour cancellation window has passed. Issue a credit/debit note instead.",
+                        status: status);
                 }
             }
 
@@ -581,6 +652,25 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 return ConcurrencyFailure(key);
             }
 
+            // Submission registry: a SUCCESSFUL cancel marks the row cancelled (plan 3.8). A failed
+            // cancel must not touch history - the financial document is unchanged and only the short
+            // error plus the audit row changed.
+            if (cancelled)
+            {
+                await EInvoiceSubmissionWriter.ApplyStatusAsync(
+                    _dbFactory,
+                    scope,
+                    key,
+                    submissionId: loaded.SubmitId,
+                    summary: null,
+                    detail: null,
+                    overallStatus: null,
+                    documentCount: null,
+                    logger: _logger,
+                    cancelOnUtc: loaded.CancelOn ?? DateTime.UtcNow,
+                    cancellationToken: cancellationToken);
+            }
+
             return new SaEInvoiceResult
             {
                 Succeeded = cancelled,
@@ -641,7 +731,244 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             })
             .ToListAsync(cancellationToken);
 
-        return new SaEInvoiceStatusView
+        return ToStatusView(key, state, history);
+    }
+
+    // ─────────────────────────────── Batch operations ───────────────────────────────
+
+    public async Task<SaEInvoiceBatchResult> SubmitManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeKeys(keys);
+        var refused = ValidateBatchSelection(normalized);
+        if (refused is not null)
+        {
+            return refused;
+        }
+
+        var run = await SubmitBatchAsync(normalized, EInvoiceActions.Submit, cancellationToken);
+        if (run.Refusal is not null)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                run.Refusal.ErrorMessage ?? "The action was refused.",
+                run.Refusal.ErrorKind);
+        }
+
+        return SaEInvoiceBatchResult.From(run.Rows.Select(ToBatchItem).ToList());
+    }
+
+    public async Task<SaEInvoiceBatchResult> RefreshManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeKeys(keys);
+        var refused = ValidateBatchSelection(normalized);
+        if (refused is not null)
+        {
+            return refused;
+        }
+
+        var unauthorized = await RefuseIfUnauthorizedAsync(normalized, PermissionCodes.Submit, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return SaEInvoiceBatchResult.Failed(unauthorized.ErrorMessage ?? "Not authorized.", unauthorized.ErrorKind);
+        }
+
+        var rows = new List<BatchRowOutcome>(normalized.Count);
+        foreach (var key in normalized)
+        {
+            // One call per document and commit, matching the panel's per-document refresh. Refresh is
+            // read-only, so a failure here never destroys the current status.
+            SaEInvoiceResult result;
+            try
+            {
+                result = await RefreshAsync(key, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "e-Invoice batch refresh threw for {Document}", key);
+                result = SaEInvoiceResult.Fail(key, ex.Message, SaEInvoiceErrorKind.MyInvois);
+            }
+
+            rows.Add(new BatchRowOutcome
+            {
+                Key = key,
+                Result = result,
+                Skipped = IsIneligibleResult(result)
+            });
+        }
+
+        return SaEInvoiceBatchResult.From(rows.Select(ToBatchItem).ToList());
+    }
+
+    public async Task<SaEInvoiceBatchResult> CancelManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeKeys(keys);
+        var refused = ValidateBatchSelection(normalized);
+        if (refused is not null)
+        {
+            return refused;
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return SaEInvoiceBatchResult.Failed("A cancellation reason is mandatory.", SaEInvoiceErrorKind.Validation);
+        }
+
+        if (reason.Trim().Length > MaxCancelReasonLength)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                $"The cancellation reason cannot exceed {MaxCancelReasonLength} characters.",
+                SaEInvoiceErrorKind.Validation);
+        }
+
+        var unauthorized = await RefuseIfUnauthorizedAsync(normalized, PermissionCodes.Cancel, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return SaEInvoiceBatchResult.Failed(unauthorized.ErrorMessage ?? "Not authorized.", unauthorized.ErrorKind);
+        }
+
+        var rows = new List<BatchRowOutcome>(normalized.Count);
+        foreach (var key in normalized)
+        {
+            // Each cancellation is its own MyInvois call with its own commit, so a later failure never
+            // rolls back an earlier success. Sequential on purpose: LHDN allows 12 cancel requests/min.
+            SaEInvoiceResult result;
+            try
+            {
+                result = await CancelAsync(key, reason, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "e-Invoice batch cancellation threw for {Document}", key);
+                result = SaEInvoiceResult.Fail(key, ex.Message, SaEInvoiceErrorKind.MyInvois);
+            }
+
+            rows.Add(new BatchRowOutcome
+            {
+                Key = key,
+                Result = result,
+                Skipped = IsIneligibleResult(result)
+            });
+        }
+
+        return SaEInvoiceBatchResult.From(rows.Select(ToBatchItem).ToList());
+    }
+
+    public async Task<IReadOnlyList<SaEInvoiceStatusView?>> GetStatusManyAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeKeys(keys);
+        var views = new List<SaEInvoiceStatusView?>(normalized.Count);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        foreach (var key in normalized)
+        {
+            // Access-only pre-flight. This is a convenience snapshot for the confirmation prompt and is
+            // deliberately NOT the eligibility verdict: the Many operations re-authorize and re-validate.
+            var gate = await AuthorizeAsync(key, PermissionCodes.Access, cancellationToken);
+            if (gate.Error is not null)
+            {
+                views.Add(null);
+                continue;
+            }
+
+            var state = await LoadStateAsync(db, gate.Scope!, key, tracking: false, cancellationToken);
+            views.Add(state is null ? null : ToStatusView(key, state));
+        }
+
+        return views;
+    }
+
+    /// <summary>
+    /// Trims, drops blanks and deduplicates case-insensitively while preserving the caller's order.
+    /// The batch cap is applied AFTER this, so selecting the same invoice twice counts once.
+    /// </summary>
+    private static List<SaEInvoiceDocumentKey> NormalizeKeys(IReadOnlyList<SaEInvoiceDocumentKey>? keys) =>
+        (keys ?? [])
+            .Where(x => x is not null && !string.IsNullOrWhiteSpace(x.DocumentNo))
+            .Select(x => new SaEInvoiceDocumentKey
+            {
+                DocumentType = (x.DocumentType ?? string.Empty).Trim().ToUpperInvariant(),
+                DocumentNo = x.DocumentNo.Trim()
+            })
+            .GroupBy(x => (Type: x.DocumentType.ToUpperInvariant(), No: x.DocumentNo.ToUpperInvariant()))
+            .Select(g => g.First())
+            .ToList();
+
+    private static SaEInvoiceBatchResult? ValidateBatchSelection(IReadOnlyList<SaEInvoiceDocumentKey> keys)
+    {
+        if (keys.Count == 0)
+        {
+            return SaEInvoiceBatchResult.Failed("Select at least one invoice.", SaEInvoiceErrorKind.Validation);
+        }
+
+        if (keys.Count > SaInvoiceLimits.MaxEInvoiceBatchSelection)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                $"Select at most {SaInvoiceLimits.MaxEInvoiceBatchSelection} invoices per e-Invoice action.",
+                SaEInvoiceErrorKind.Validation);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Refuses the whole action when the caller lacks the permission for any selected document, so a
+    /// missing right is reported as one clear answer instead of a grid full of skipped rows.
+    /// </summary>
+    private async Task<SaEInvoiceResult?> RefuseIfUnauthorizedAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        string permission,
+        CancellationToken cancellationToken)
+    {
+        foreach (var key in keys)
+        {
+            var gate = await AuthorizeAsync(key, permission, cancellationToken);
+            if (gate.Error is not null && gate.Error.ErrorKind == SaEInvoiceErrorKind.Authorization)
+            {
+                return gate.Error;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// True when a refusal means "this document was never a candidate" rather than "the operation was
+    /// tried and failed". Only these rows are reported as skipped in a batch result.
+    /// </summary>
+    private static bool IsIneligibleResult(SaEInvoiceResult result) =>
+        !result.Succeeded
+        && result.ErrorKind is SaEInvoiceErrorKind.StateRule
+            or SaEInvoiceErrorKind.NotFound
+            or SaEInvoiceErrorKind.Validation
+            or SaEInvoiceErrorKind.NotConfigured;
+
+    private static SaEInvoiceBatchItemResult ToBatchItem(BatchRowOutcome row) =>        new()
+        {
+            DocumentType = row.Key.DocumentType,
+            DocumentNo = row.Key.DocumentNo,
+            Succeeded = row.Result.Succeeded,
+            Skipped = row.Skipped,
+            Status = row.Result.Status,
+            Outcome = row.Result.Outcome,
+            Uuid = row.Result.Uuid,
+            SubmissionId = row.Result.SubmissionId,
+            ErrorMessage = row.Result.Succeeded ? null : row.Result.ErrorMessage,
+            RecoveryRequired = row.Result.RecoveryRequired
+        };
+
+    private static SaEInvoiceStatusView ToStatusView(
+        SaEInvoiceDocumentKey key,
+        EInvoiceDocumentState state,
+        IReadOnlyList<SaEInvoiceLogRow>? history = null) =>
+        new()
         {
             DocumentType = key.DocumentType,
             DocumentNo = key.DocumentNo,
@@ -654,9 +981,8 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             ValidOn = state.ValidOn,
             CancelledOn = state.CancelOn,
             Error = state.Error,
-            History = history
+            History = history ?? []
         };
-    }
 
     // ─────────────────────────────── TIN tools (read-only) ───────────────────────────────
 
@@ -769,129 +1095,251 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
     // ─────────────────────────────── Submit core ───────────────────────────────
 
+    /// <summary>
+    /// Single-document Submit/Retry. It is deliberately a batch of one so the detail panel and the list
+    /// page share the exact same engine: lifecycle matrix, POSTED gate, SUBMITTING claim and audit.
+    /// </summary>
     private async Task<SaEInvoiceResult> SubmitCoreAsync(
         SaEInvoiceDocumentKey key,
         string action,
         CancellationToken cancellationToken)
     {
-        var gate = await AuthorizeAsync(key, PermissionCodes.Submit, cancellationToken);
-        if (gate.Error is not null)
+        var run = await SubmitBatchAsync([key], action, cancellationToken);
+        if (run.Refusal is not null)
         {
-            return gate.Error;
+            return run.Refusal;
         }
 
-        var scope = gate.Scope!;
+        return run.Rows.Count > 0 && run.Rows[0].Result is not null
+            ? run.Rows[0].Result!
+            : NotFound(key);
+    }
+
+    /// <summary>
+    /// The submit engine for one or many documents.
+    /// <para>
+    /// Phase 1 validates every document and claims <c>SUBMITTING</c> in one commit; phase 2 calls
+    /// MyInvois with <b>no</b> database transaction open; phase 3 persists each outcome. Ineligible
+    /// documents are skipped and reported, and the eligible ones still run.
+    /// </para>
+    /// </summary>
+    private async Task<SubmitBatchRun> SubmitBatchAsync(
+        IReadOnlyList<SaEInvoiceDocumentKey> keys,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        var rows = keys.Select(x => new BatchRowOutcome { Key = x }).ToList();
         var correlationId = Guid.NewGuid();
 
+        // ── Phase 0: authorize. A missing SUBMIT permission refuses the whole action; any other per-key
+        // problem (unknown type, not enabled yet) is that row's own result. ──
+        TenantScope? scope = null;
+        foreach (var row in rows)
+        {
+            var gate = await AuthorizeAsync(row.Key, PermissionCodes.Submit, cancellationToken);
+            if (gate.Error is not null)
+            {
+                if (gate.Error.ErrorKind == SaEInvoiceErrorKind.Authorization)
+                {
+                    return new SubmitBatchRun { Refusal = gate.Error, Rows = rows };
+                }
+
+                row.Skipped = true;
+                row.Result = gate.Error;
+                continue;
+            }
+
+            scope ??= gate.Scope;
+        }
+
+        var pending = rows.Where(x => x.Result is null).ToList();
+        if (pending.Count == 0)
+        {
+            return new SubmitBatchRun { Rows = rows };
+        }
+
+        var claims = new List<BatchClaim>(pending.Count);
+        var requestTime = DateTime.UtcNow;
+
         // ── Phase 1: validate, claim SUBMITTING, persist. NO HTTP here. ──
-        EInvoiceDocumentState state;
-        int attemptNo;
-        DateTime requestTime;
         await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken))
         {
-            var loaded = await LoadStateAsync(db, scope, key, tracking: true, cancellationToken);
-            if (loaded is null)
+            foreach (var row in pending)
             {
-                return NotFound(key);
+                var key = row.Key;
+                var loaded = await LoadStateAsync(db, scope!, key, tracking: true, cancellationToken);
+                if (loaded is null)
+                {
+                    row.Skipped = true;
+                    row.Result = NotFound(key);
+                    continue;
+                }
+
+                var status = EInvoiceStatuses.Normalize(loaded.Status);
+
+                // A sales invoice may only be sent once it is POSTED: the LHDN payload must describe a
+                // finalised document. The UI already gates this, but the service re-checks so another UI,
+                // a job or an API caller cannot bypass it. Placed BEFORE the SUBMITTING claim, so a refusal
+                // never reaches MyInvois and never locks the document.
+                if (!IsSourceDocumentPosted(loaded))
+                {
+                    row.Skipped = true;
+                    row.Result = SaEInvoiceResult.Fail(key,
+                        $"Invoice {loaded.DocumentNo} must be POSTED before it can be sent to MyInvois.",
+                        SaEInvoiceErrorKind.StateRule,
+                        status: status);
+                    continue;
+                }
+
+                // Pre-submit gate (locked).
+                switch (status)
+                {
+                    case EInvoiceStatuses.Submitting when !IsStuck(loaded):
+                        row.Skipped = true;
+                        row.Result = SaEInvoiceResult.Fail(key,
+                            "A submission is already in progress for this document.",
+                            status: status);
+                        continue;
+                    case EInvoiceStatuses.Submitting:
+                        row.Skipped = true;
+                        row.Result = SaEInvoiceResult.Fail(key,
+                            "The previous submission is stuck. Run Recover to reconcile it with MyInvois before submitting again.",
+                            recoveryRequired: true,
+                            status: status);
+                        continue;
+                    case EInvoiceStatuses.Submitted:
+                    case EInvoiceStatuses.Valid:
+                        row.Skipped = true;
+                        row.Result = SaEInvoiceResult.Fail(key,
+                            "This document has already been submitted to MyInvois.",
+                            status: status);
+                        continue;
+                    case EInvoiceStatuses.Failed when loaded.Outcome == EInvoiceOutcomes.Unknown:
+                        row.Skipped = true;
+                        row.Result = SaEInvoiceResult.Fail(key,
+                            "The previous submission outcome is unknown. Run Recover before submitting again.",
+                            recoveryRequired: true,
+                            status: status);
+                        continue;
+                }
+
+                ApplyCompanyCredentials(scope!, loaded.Supplier);
+
+                var build = await BuildSourceAsync(db, loaded, scope!, cancellationToken);
+                if (!build.Report.IsValid || build.Source is null)
+                {
+                    await AppendLogAsync(db, loaded, EInvoiceActions.Validate,
+                        status: status,
+                        attemptNo: await NextAttemptAsync(db, loaded, cancellationToken),
+                        correlationId: correlationId,
+                        requestTime: DateTime.UtcNow,
+                        responseTime: DateTime.UtcNow,
+                        durationMs: 0,
+                        errorCode: "ERP_VALIDATION",
+                        errorMessage: build.Report.Summary(4000),
+                        userId: scope!.UserId,
+                        cancellationToken: cancellationToken);
+
+                    // Persist the short error now, as the single-document path always did: this row is
+                    // skipped, not claimed, so nothing later in phase 1 would flush it.
+                    loaded.Error = Truncate(build.Report.Summary(), 500);
+                    ApplyState(loaded);
+                    row.Skipped = true;
+                    row.Result = SaEInvoiceResult.FailValidation(key, build.Report.Summary(), build.Report.Errors);
+                    try
+                    {
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    catch (DbUpdateConcurrencyException)
+                    {
+                        row.Skipped = false;
+                        row.Result = ConcurrencyFailure(key);
+                    }
+
+                    continue;
+                }
+
+                var mapped = _mapper.Map(build.Source, loaded.Supplier!, loaded.Supplier!.DocumentVersion ?? _secrets.getDocumentVersion());
+                if (!mapped.IsValid)
+                {
+                    await AppendLogAsync(db, loaded, EInvoiceActions.Validate,
+                        status: status,
+                        attemptNo: await NextAttemptAsync(db, loaded, cancellationToken),
+                        correlationId: correlationId,
+                        requestTime: DateTime.UtcNow,
+                        responseTime: DateTime.UtcNow,
+                        durationMs: 0,
+                        errorCode: "ERP_VALIDATION",
+                        errorMessage: mapped.Report.Summary(4000),
+                        userId: scope!.UserId,
+                        cancellationToken: cancellationToken);
+
+                    loaded.Error = Truncate(mapped.Report.Summary(), 500);
+                    ApplyState(loaded);
+                    row.Skipped = true;
+                    row.Result = SaEInvoiceResult.FailValidation(key, mapped.Report.Summary(), mapped.Report.Errors);
+                    try
+                    {
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    catch (DbUpdateConcurrencyException)
+                    {
+                        row.Skipped = false;
+                        row.Result = ConcurrencyFailure(key);
+                    }
+
+                    continue;
+                }
+
+                loaded.Mapped = mapped;
+                loaded.Source = build.Source;
+
+                // A CN/DN always records the origin invoice's MyInvois UUID, so the audit trail can answer
+                // "which invoice does this note belong to?" long after the UUID is no longer on the source row.
+                loaded.OriUuid = build.Source.OriginUuid ?? loaded.OriUuid;
+
+                // Freeze the exact buyer identity being submitted BEFORE the status transition, so the one
+                // SaveChangesAsync below commits both together: SUBMITTING never exists without the values
+                // that were signed, and a rollback leaves the document live for a clean rebuild.
+                ApplyBuyerFreeze(loaded, build.ResolvedBuyer);
+
+                var attemptNo = await NextAttemptAsync(db, loaded, cancellationToken);
+                loaded.Status = EInvoiceStatuses.Submitting;
+                loaded.Outcome = null;
+                loaded.Error = null;
+                loaded.SentOn = requestTime;
+                ApplyState(loaded);
+
+                // No audit row here: one row per attempt is written in phase 3 with the outcome. A crash in
+                // between leaves the persisted SUBMITTING status (and its ModifiedDate) as the evidence, which
+                // is what Recover keys off.
+                claims.Add(new BatchClaim
+                {
+                    Row = row,
+                    State = loaded,
+                    AttemptNo = attemptNo,
+                    RequestTime = requestTime
+                });
             }
 
-            state = loaded;
-            var status = EInvoiceStatuses.Normalize(state.Status);
-
-            // Pre-submit gate (locked).
-            switch (status)
+            if (claims.Count > 0)
             {
-                case EInvoiceStatuses.Submitting when !IsStuck(state):
-                    return SaEInvoiceResult.Fail(key, "A submission is already in progress for this document.");
-                case EInvoiceStatuses.Submitting:
-                    return SaEInvoiceResult.Fail(key,
-                        "The previous submission is stuck. Run Recover to reconcile it with MyInvois before submitting again.",
-                        recoveryRequired: true);
-                case EInvoiceStatuses.Submitted:
-                case EInvoiceStatuses.Valid:
-                    return SaEInvoiceResult.Fail(key,
-                        "This document has already been submitted to MyInvois.");
-                case EInvoiceStatuses.Failed when state.Outcome == EInvoiceOutcomes.Unknown:
-                    return SaEInvoiceResult.Fail(key,
-                        "The previous submission outcome is unknown. Run Recover before submitting again.",
-                        recoveryRequired: true);
-            }
+                try
+                {
+                    // Commits the SUBMITTING claims (and their RowVersion checks) before MyInvois is called.
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Do NOT retry the transition blindly; no MyInvois call has happened yet.
+                    foreach (var claim in claims)
+                    {
+                        claim.Row.Skipped = false;
+                        claim.Row.Result = ConcurrencyFailure(claim.Row.Key);
+                    }
 
-            ApplyCompanyCredentials(scope, state.Supplier);
-
-            var build = await BuildSourceAsync(db, state, scope, cancellationToken);
-            if (!build.Report.IsValid || build.Source is null)
-            {
-                await AppendLogAsync(db, state, EInvoiceActions.Validate,
-                    status: status,
-                    attemptNo: await NextAttemptAsync(db, state, cancellationToken),
-                    correlationId: correlationId,
-                    requestTime: DateTime.UtcNow,
-                    responseTime: DateTime.UtcNow,
-                    durationMs: 0,
-                    errorCode: "ERP_VALIDATION",
-                    errorMessage: build.Report.Summary(4000),
-                    userId: scope.UserId,
-                    cancellationToken: cancellationToken);
-
-                // Persist the short error so the UI shows why the last attempt failed.
-                state.Error = Truncate(build.Report.Summary(), 500);
-                ApplyState(state);
-                await db.SaveChangesAsync(cancellationToken);
-
-                return SaEInvoiceResult.FailValidation(key, build.Report.Summary(), build.Report.Errors);
-            }
-
-            var mapped = _mapper.Map(build.Source, state.Supplier!, state.Supplier!.DocumentVersion ?? _secrets.getDocumentVersion());
-            if (!mapped.IsValid)
-            {
-                await AppendLogAsync(db, state, EInvoiceActions.Validate,
-                    status: status,
-                    attemptNo: await NextAttemptAsync(db, state, cancellationToken),
-                    correlationId: correlationId,
-                    requestTime: DateTime.UtcNow,
-                    responseTime: DateTime.UtcNow,
-                    durationMs: 0,
-                    errorCode: "ERP_VALIDATION",
-                    errorMessage: mapped.Report.Summary(4000),
-                    userId: scope.UserId,
-                    cancellationToken: cancellationToken);
-
-                state.Error = Truncate(mapped.Report.Summary(), 500);
-                ApplyState(state);
-                await db.SaveChangesAsync(cancellationToken);
-
-                return SaEInvoiceResult.FailValidation(key, mapped.Report.Summary(), mapped.Report.Errors);
-            }
-
-            state.Mapped = mapped;
-            state.Source = build.Source;
-
-            // A CN/DN always records the origin invoice's MyInvois UUID, so the audit trail can answer
-            // "which invoice does this note belong to?" long after the UUID is no longer on the source row.
-            state.OriUuid = build.Source.OriginUuid ?? state.OriUuid;
-
-            attemptNo = await NextAttemptAsync(db, state, cancellationToken);
-            requestTime = DateTime.UtcNow;
-
-            state.Status = EInvoiceStatuses.Submitting;
-            state.Outcome = null;
-            state.Error = null;
-            state.SentOn = requestTime;
-            ApplyState(state);
-
-            // No audit row here: one row per attempt is written in phase 3 with the outcome. A crash in
-            // between leaves the persisted SUBMITTING status (and its ModifiedDate) as the evidence, which
-            // is what Recover keys off.
-            try
-            {
-                // Commits the SUBMITTING claim (and its RowVersion check) before MyInvois is called.
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                // Do NOT retry the transition blindly; no MyInvois call has happened yet.
-                return ConcurrencyFailure(key);
+                    return new SubmitBatchRun { Rows = rows };
+                }
             }
         }
 
@@ -899,38 +1347,79 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         // The signing step writes its scratch file into EInv_JsonPath before the library creates the
         // folder, so make sure it exists first (fresh installs have no App_Data folder yet).
         EnsureJsonPathDirectory();
-        var stopwatch = Stopwatch.StartNew();
-        GeneralResult<SuccessSubmit> submitResult;
-        // The document family decides which generator the library runs: invoices (01/11) go through
-        // the frozen GenerateInvoice path, credit/debit notes (02/03/12/13) through GenerateCreditNote.
-        var mappedDocumentTypeCode = EInvoiceDocumentTypeMap.GetDocumentTypeCode(state.Mapped!.Header.docType);
-        var isNote = EInvoiceDocumentTypeMap.IsCreditOrDebitNote(mappedDocumentTypeCode);
-        try
-        {
-            submitResult = isNote
-                ? await _helper.SubmitCreditDebitNotes([state.Mapped!.Header])
-                : await _helper.SubmitInvoices([state.Mapped!.Header]);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "e-Invoice submission threw for {Document}", key);
-            submitResult = new GeneralResult<SuccessSubmit>
+
+        // The library reads the supplier identity (OnBehalfTin / DocumentVersion) from a shared store, and
+        // the document family picks the generator, so a group is only ever built from rows that share both.
+        // In one company/branch scope this is a single call; the grouping is what stops a mixed selection
+        // from being signed or mapped with the wrong profile.
+        var groups = claims
+            .GroupBy(x => new
             {
-                IsSuccess = false,
-                error = ex.Message
-            };
+                Note = EInvoiceDocumentTypeMap.IsCreditOrDebitNote(
+                    EInvoiceDocumentTypeMap.GetDocumentTypeCode(x.State.Mapped!.Header.docType)),
+                Tin = x.State.Supplier?.TinNo ?? string.Empty,
+                OnBehalf = x.State.Supplier?.OnBehalfTin ?? string.Empty,
+                Version = x.State.Supplier?.DocumentVersion ?? string.Empty
+            })
+            .ToList();
+
+        foreach (var group in groups)
+        {
+            var groupClaims = group.ToList();
+            ApplyCompanyCredentials(scope!, groupClaims[0].State.Supplier);
+
+            var stopwatch = Stopwatch.StartNew();
+            GeneralResult<SuccessSubmit>? submitResult = null;
+            Exception? transportFailure = null;
+            try
+            {
+                var headers = groupClaims.Select(x => x.State.Mapped!.Header).ToList();
+                submitResult = group.Key.Note
+                    ? await _helper.SubmitCreditDebitNotes(headers)
+                    : await _helper.SubmitInvoices(headers);
+            }
+            catch (Exception ex)
+            {
+                // The call produced no readable answer: every document in this group may or may not have
+                // reached MyInvois, so each one has to be reconciled with Recover.
+                _logger.LogError(ex, "e-Invoice submission threw for {Count} document(s)", groupClaims.Count);
+                transportFailure = ex;
+            }
+            stopwatch.Stop();
+
+            var durationMs = stopwatch.ElapsedMilliseconds;
+            var classified = transportFailure is null
+                ? ClassifySubmitResults(submitResult!, groupClaims.Select(x => x.Row.Key.DocumentNo).ToList())
+                : null;
+
+            foreach (var claim in groupClaims)
+            {
+                claim.DurationMs = durationMs;
+                claim.Classification = classified is null
+                    ? new SubmitClassification
+                    {
+                        Status = EInvoiceStatuses.Failed,
+                        Outcome = EInvoiceOutcomes.Unknown,
+                        Error = transportFailure!.Message
+                    }
+                    : classified[claim.Row.Key.DocumentNo];
+            }
         }
 
-        stopwatch.Stop();
-        var classification = ClassifySubmitResult(submitResult);
-
-        // ── Phase 3: persist the outcome. ──
-        await using (var db = await _dbFactory.CreateDbContextAsync(cancellationToken))
+        // ── Phase 3: persist the outcome, one commit per document, so a conflict on one row cannot lose
+        // the outcome of the others. ──
+        foreach (var claim in claims)
         {
-            var loaded = await LoadStateAsync(db, scope, key, tracking: true, cancellationToken);
+            var key = claim.Row.Key;
+            var classification = claim.Classification;
+
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var loaded = await LoadStateAsync(db, scope!, key, tracking: true, cancellationToken);
             if (loaded is null)
             {
-                return NotFound(key);
+                claim.Row.Skipped = true;
+                claim.Row.Result = NotFound(key);
+                continue;
             }
 
             loaded.Status = classification.Status;
@@ -945,21 +1434,21 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
             if (classification.Status == EInvoiceStatuses.Submitted)
             {
-                loaded.SentOn ??= requestTime;
+                loaded.SentOn ??= claim.RequestTime;
             }
 
             ApplyState(loaded);
 
             await AppendLogAsync(db, loaded, action,
                 status: classification.Status,
-                attemptNo: attemptNo,
+                attemptNo: claim.AttemptNo,
                 correlationId: correlationId,
-                requestTime: requestTime,
+                requestTime: claim.RequestTime,
                 responseTime: DateTime.UtcNow,
-                durationMs: stopwatch.ElapsedMilliseconds,
+                durationMs: claim.DurationMs,
                 errorCode: classification.ErrorCode,
                 errorMessage: JoinError(classification.ErrorCode, classification.Error),
-                userId: scope.UserId,
+                userId: scope!.UserId,
                 cancellationToken: cancellationToken);
 
             try
@@ -968,10 +1457,33 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             }
             catch (DbUpdateConcurrencyException)
             {
-                return ConcurrencyFailure(key);
+                claim.Row.Skipped = false;
+                claim.Row.Result = ConcurrencyFailure(key);
+                continue;
             }
 
-            return new SaEInvoiceResult
+            // ── Submission registry (dbo.EInvDocSubmission) ──
+            // Written AFTER the business commit, on its OWN DbContext, and it never throws (plan D-8),
+            // so a history failure can never fail the e-Invoice action and a rolled-back action can never
+            // leave a phantom history row. Only ACCEPTED documents are recorded (plan R3 / Model A).
+            if (classification.Status == EInvoiceStatuses.Submitted && classification.SubmissionId is not null)
+            {
+                await EInvoiceSubmissionWriter.RecordSubmitAsync(
+                    _dbFactory,
+                    scope!,
+                    key,
+                    submissionId: classification.SubmissionId,
+                    uuid: classification.Uuid,
+                    internalId: classification.InternalId,
+                    documentCount: classification.DocumentCount,
+                    overallStatus: classification.OverallStatus,
+                    submittedOnUtc: claim.RequestTime,
+                    logger: _logger,
+                    cancellationToken: cancellationToken);
+            }
+
+            claim.Row.Skipped = false;
+            claim.Row.Result = new SaEInvoiceResult
             {
                 Succeeded = classification.Status == EInvoiceStatuses.Submitted,
                 ErrorKind = classification.Status == EInvoiceStatuses.Submitted
@@ -987,11 +1499,13 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 Outcome = classification.Outcome,
                 Uuid = loaded.Uuid,
                 SubmissionId = loaded.SubmitId,
-                AttemptNo = attemptNo,
+                AttemptNo = claim.AttemptNo,
                 CorrelationId = correlationId,
                 RecoveryRequired = classification.Outcome == EInvoiceOutcomes.Unknown
             };
         }
+
+        return new SubmitBatchRun { Rows = rows };
     }
 
     // ─────────────────────────────── Reconciliation helpers ───────────────────────────────
@@ -1060,6 +1574,111 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
     // ─────────────────────────────── Submit result classification (locked) ───────────────────────────────
 
+    /// <summary>
+    /// Maps one MyInvois submission response onto each document it carried.
+    /// <para>
+    /// A document that appears in neither <c>acceptedDocuments</c> nor <c>rejectedDocuments</c> while the
+    /// response DID carry per-document lists is unresolved: it becomes <c>FAILED</c> + <c>Unknown</c> so the
+    /// operator must Recover. It is never treated as a success.
+    /// </para>
+    /// <para>
+    /// When the response carries no per-document lists at all, the whole call failed the same way for every
+    /// document, so the locked single-document classification decides for all of them. That keeps generation
+    /// failures (<c>errorCode 100</c>), duplicate submissions and transport failures on their existing rules.
+    /// </para>
+    /// </summary>
+    private static Dictionary<string, SubmitClassification> ClassifySubmitResults(
+        GeneralResult<SuccessSubmit> result,
+        IReadOnlyList<string> documentNumbers)
+    {
+        var map = new Dictionary<string, SubmitClassification>(StringComparer.OrdinalIgnoreCase);
+
+        // Values that describe the SUBMISSION rather than one document. The submission registry stores
+        // them once per submission, so they are applied to every row this submission produced.
+        Dictionary<string, SubmitClassification> Finish(Dictionary<string, SubmitClassification> classified)
+        {
+            // The submission-level status is only known to be SUBMITTED when EVERY document in the
+            // submission was accepted. A mixed batch has no single value, so it stays null for a later
+            // Refresh/Recover to fill from the API.
+            var allAccepted = classified.Values.All(v => v.Status == EInvoiceStatuses.Submitted);
+            foreach (var entry in classified.Values)
+            {
+                entry.DocumentCount = documentNumbers.Count;
+                entry.OverallStatus = allAccepted ? EInvoiceStatuses.Submitted : null;
+            }
+
+            return classified;
+        }
+
+        var accepted = result.result?.acceptedDocuments?
+            .Where(x => x is not null && !string.IsNullOrWhiteSpace(x.invoiceCodeNumber))
+            .GroupBy(x => x.invoiceCodeNumber, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var rejected = result.result?.rejectedDocuments?
+            .Where(x => x is not null && !string.IsNullOrWhiteSpace(x.invoiceCodeNumber))
+            .GroupBy(x => x.invoiceCodeNumber, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        // The locked single-document classifier only treats accepted documents as a success when the call
+        // itself succeeded, so mirror that here.
+        if (!result.IsSuccess)
+        {
+            accepted = null;
+        }
+
+        if (accepted is not { Count: > 0 } && rejected is not { Count: > 0 })
+        {
+            var global = ClassifySubmitResult(result);
+            foreach (var documentNo in documentNumbers)
+            {
+                map[documentNo] = global;
+            }
+
+            return Finish(map);
+        }
+
+        foreach (var documentNo in documentNumbers)
+        {
+            if (accepted is not null && accepted.TryGetValue(documentNo, out var acceptedDoc))
+            {
+                map[documentNo] = new SubmitClassification
+                {
+                    Status = EInvoiceStatuses.Submitted,
+                    Uuid = acceptedDoc.uuid,
+                    InternalId = acceptedDoc.invoiceCodeNumber,
+                    SubmissionId = result.result!.submissionUID
+                };
+                continue;
+            }
+
+            if (rejected is not null && rejected.TryGetValue(documentNo, out var rejectedDoc))
+            {
+                var message = rejectedDoc.error?.details is { Count: > 0 }
+                    ? rejectedDoc.error.details[0].message
+                    : rejectedDoc.error?.message ?? rejectedDoc.error?.code ?? "The document was rejected by MyInvois.";
+                map[documentNo] = new SubmitClassification
+                {
+                    Status = EInvoiceStatuses.Rejected,
+                    ErrorCode = rejectedDoc.error?.code,
+                    Error = message,
+                    SubmissionId = result.result?.submissionUID
+                };
+                continue;
+            }
+
+            // The response carried per-document lists but never mentioned this document. Its outcome is
+            // unresolved, so block another submit until Recover has reconciled it.
+            map[documentNo] = new SubmitClassification
+            {
+                Status = EInvoiceStatuses.Failed,
+                Outcome = EInvoiceOutcomes.Unknown,
+                Error = "MyInvois did not report an outcome for this document. Run Recover before submitting again."
+            };
+        }
+
+        return Finish(map);
+    }
+
     private static SubmitClassification ClassifySubmitResult(GeneralResult<SuccessSubmit> result)
     {
         var accepted = result.result?.acceptedDocuments;
@@ -1069,6 +1688,7 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             {
                 Status = EInvoiceStatuses.Submitted,
                 Uuid = accepted[0].uuid,
+                InternalId = accepted[0].invoiceCodeNumber,
                 SubmissionId = result.result!.submissionUID
             };
         }
@@ -1328,7 +1948,7 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             CompanyCode = companyCode,
             Enabled = company?.EInvEnabled ?? false,
             CompanyName = company?.LegalName is { Length: > 0 } legal ? legal : company?.CompanyName,
-            TinNo = company?.TaxNo,
+            TinNo = company?.EInvOnBehalfTin,
             RegistrationNo = company?.RegistrationNo,
             RegType = company?.EInvRegType,
             SstNo = company?.EInvSstNo,
@@ -1338,9 +1958,11 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             Addr2 = company?.Address2,
             Addr3 = company?.Address3,
             City = company?.City,
-            State = company?.State,
+            // The dedicated LHDN codes win when set; otherwise the free-text company state/country is
+            // translated by LhdnCodeLookup at map time (which fails closed on an unknown value).
+            State = string.IsNullOrWhiteSpace(company?.EInvStateCode) ? company?.State : company.EInvStateCode,
             PostalCode = company?.PostCode,
-            Country = company?.Country,
+            Country = string.IsNullOrWhiteSpace(company?.EInvCountryCode) ? company?.Country : company.EInvCountryCode,
             Phone = company?.Phone,
             Email = company?.Email,
             DocumentVersion = company?.EInvDocumentVersion,
@@ -1369,6 +1991,13 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         public EInvoiceSourceDocument? Source { get; init; }
         public EInvoiceValidationReport Report { get; init; } = EInvoiceValidationReport.Valid;
+
+        /// <summary>
+        /// Set for an invoice whose buyer identity was taken live from the customer master (that is, not
+        /// yet frozen). The submit claim freezes these values onto the document in the same commit as the
+        /// <c>SUBMITTING</c> transition.
+        /// </summary>
+        public BuyerIdentity? ResolvedBuyer { get; init; }
     }
 
     private async Task<EInvoiceValidationReport> ValidateSourceAsync(
@@ -1389,16 +2018,38 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var taxPercents = await db.SaTaxGroups.AsNoTracking()
+        var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == state.CompanyCode)
             .ToListAsync(cancellationToken);
         var taxLookup = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in taxPercents)
+        var taxTypeLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in taxGroups)
         {
             taxLookup[group.TaxGrCode] = group.Percentage;
+            if (!string.IsNullOrWhiteSpace(group.TaxType))
+            {
+                taxTypeLookup[group.TaxGrCode] = group.TaxType.Trim();
+            }
+        }
+
+        // ERP UOM code -> LHDN UNECE code. Line documents keep the ERP UOM (StdUom) for reporting and
+        // inventory; only the e-Invoice payload is translated.
+        var uomMasters = await db.MsUoms.AsNoTracking()
+            .Where(x => x.CompanyCode == state.CompanyCode)
+            .ToListAsync(cancellationToken);
+        var uneceLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var uom in uomMasters)
+        {
+            if (!string.IsNullOrWhiteSpace(uom.UneceUom))
+            {
+                uneceLookup[uom.UomCode] = uom.UneceUom.Trim();
+            }
         }
 
         EInvoiceSourceDocument source;
+        // Set only for an invoice whose buyer identity was read live from the customer master: the
+        // SUBMITTING claim uses it to freeze exactly what is being signed. Null once frozen, and for CN/DN.
+        BuyerIdentity? buyerIdentity = null;
 
         switch (state.Entity)
         {
@@ -1411,17 +2062,58 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                         Line = x.Line,
                         ItemCode = x.ICode,
                         ItemDesc = x.IDesc,
-                        Uom = x.StdUom,
+                        Uom = ResolveUneceUom(uneceLookup, x.StdUom, state.DocumentNo),
                         Qty = x.Qty,
                         UnitPrice = x.UnitPrice,
                         GrossAmount = x.Amount,
                         AmountExclTax = x.NetAmount,
                         TaxAmount = x.TaxAmt,
-                        TaxType = x.TaxGrCode,
+                        TaxType = ResolveTaxType(taxTypeLookup, x.TaxGrCode, state.DocumentNo),
                         TaxPercent = ResolveTaxPercent(taxLookup, x.TaxGrCode),
                         ClassificationCode = x.Classification
                     })
                     .ToList();
+
+                // Buyer e-Invoice identity: live from the customer master while the document has not been
+                // sent, frozen on the document columns once a submission has claimed SUBMITTING. One read,
+                // so the payload and the frozen snapshot can never disagree.
+                BuyerIdentity? resolvedBuyer = null;
+                var frozenBuyer = EInvoiceStatuses.IsBuyerIdentityFrozen(state.Status, state.Outcome);
+                BuyerIdentity buyer;
+                if (frozenBuyer)
+                {
+                    buyer = new BuyerIdentity(
+                        invoice.BuyerTin,
+                        invoice.BuyerBrn,
+                        invoice.BuyerRegType,
+                        invoice.InvEmail,
+                        invoice.GstregNo);
+                }
+                else
+                {
+                    resolvedBuyer = await LoadBuyerIdentityAsync(db, invoice.CompanyCode, invoice.CustCode, cancellationToken);
+                    if (resolvedBuyer is null)
+                    {
+                        errors["Buyer.Customer"] =
+                            $"Customer '{invoice.CustCode}' was not found, so its e-Invoice identity cannot be read.";
+                        buyer = new BuyerIdentity(null, null, null, null, null);
+                    }
+                    else
+                    {
+                        buyer = resolvedBuyer;
+                    }
+                }
+
+                // The readiness gate runs on the live master too: a legacy/free-text registration type has
+                // to be corrected on the customer, because the four canonical types are what LHDN accepts.
+                if (!frozenBuyer
+                    && !string.IsNullOrWhiteSpace(buyer.RegType)
+                    && !EInvoiceRegistrationTypes.IsValid(buyer.RegType))
+                {
+                    errors["Buyer.RegType"] =
+                        $"Customer '{invoice.CustCode}' registration type '{buyer.RegType}' is not one of " +
+                        "BRN, NRIC, PASSPORT or ARMY. Correct it on the customer profile.";
+                }
 
                 source = new EInvoiceSourceDocument
                 {
@@ -1434,10 +2126,10 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     TaxAmount = invoice.Taxes,
                     AmountIncTax = invoice.TotAmnt,
                     CustomerName = invoice.InvName ?? invoice.CustName,
-                    CustomerTin = invoice.BuyerTin,
-                    CustomerRegNo = invoice.BuyerBrn,
-                    CustomerRegType = invoice.BuyerRegType,
-                    CustomerSstNo = invoice.GstregNo,
+                    CustomerTin = buyer.Tin,
+                    CustomerRegNo = buyer.RegNo,
+                    CustomerRegType = buyer.RegType,
+                    CustomerSstNo = buyer.SstNo,
                     CustomerAddr1 = invoice.InvAddress1,
                     CustomerAddr2 = invoice.InvAddress2,
                     CustomerAddr3 = invoice.InvAddress3,
@@ -1447,9 +2139,10 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     CustomerPostalCode = invoice.InvPostalCode,
                     CustomerCountry = invoice.InvCountry,
                     CustomerPhone = invoice.InvTel,
-                    CustomerEmail = invoice.InvEmail,
+                    CustomerEmail = buyer.Email,
                     Lines = lines
                 };
+                buyerIdentity = resolvedBuyer;
                 break;
             }
 
@@ -1488,13 +2181,13 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                         Line = x.Line,
                         ItemCode = x.ICode,
                         ItemDesc = x.IDesc,
-                        Uom = x.StdUom,
+                        Uom = ResolveUneceUom(uneceLookup, x.StdUom, cdn.DocNo),
                         Qty = x.Qty,
                         UnitPrice = x.UnitPrice,
                         GrossAmount = x.Amount,
                         AmountExclTax = x.NetAmount,
                         TaxAmount = x.TaxAmt,
-                        TaxType = x.TaxGroup,
+                        TaxType = ResolveTaxType(taxTypeLookup, x.TaxGroup, cdn.DocNo),
                         TaxPercent = ResolveTaxPercent(taxLookup, x.TaxGroup),
                         ClassificationCode = x.Classification
                     })
@@ -1555,9 +2248,65 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         return new SourceBuildResult
         {
             Source = source,
+            ResolvedBuyer = buyerIdentity,
             Report = errors.Count == 0 ? EInvoiceValidationReport.Valid : EInvoiceValidationReport.From(errors)
         };
     }
+
+    /// <summary>
+    /// One read of the customer master for the e-Invoice buyer identity. Both the payload and (at the
+    /// SUBMITTING claim) the frozen snapshot come from this single result.
+    /// </summary>
+    private static async Task<BuyerIdentity?> LoadBuyerIdentityAsync(
+        AppDbContext db,
+        string companyCode,
+        string custCode,
+        CancellationToken cancellationToken)
+    {
+        var customer = await db.SaCusts.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CompanyCode == companyCode && x.CustCode == custCode, cancellationToken);
+        if (customer is null)
+        {
+            return null;
+        }
+
+        return new BuyerIdentity(
+            customer.TinNo,
+            customer.CustBrn,
+            EInvoiceRegistrationTypes.Normalize(customer.RegType) ?? customer.RegType,
+            string.IsNullOrWhiteSpace(customer.InvEmail) ? customer.Email : customer.InvEmail,
+            customer.GstregNo);
+    }
+
+    /// <summary>
+    /// Writes the live customer identity onto the tracked document so the commit that claims
+    /// <c>SUBMITTING</c> also records what is about to be sent. No-op for CN/DN and for a document whose
+    /// identity is already frozen.
+    /// </summary>
+    private static void ApplyBuyerFreeze(EInvoiceDocumentState state, BuyerIdentity? buyer)
+    {
+        if (buyer is null || state.Entity is not SaInvoice invoice)
+        {
+            return;
+        }
+
+        invoice.BuyerTin = Truncate(buyer.Tin, 20);
+        invoice.BuyerBrn = Truncate(buyer.RegNo, 50);
+        invoice.BuyerRegType = Truncate(buyer.RegType, 20);
+        invoice.InvEmail = Truncate(buyer.Email, 100);
+        invoice.GstregNo = Truncate(buyer.SstNo, 50);
+    }
+
+    /// <summary>
+    /// The buyer identity as one immutable snapshot. Frozen columns and the customer master both
+    /// resolve to this shape, so the payload is built from exactly one source per attempt.
+    /// </summary>
+    private sealed record BuyerIdentity(
+        string? Tin,
+        string? RegNo,
+        string? RegType,
+        string? Email,
+        string? SstNo);
 
     private static double? ResolveTaxPercent(IReadOnlyDictionary<string, decimal> lookup, string? taxGroupCode)
     {
@@ -1567,6 +2316,68 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         }
 
         return lookup.TryGetValue(taxGroupCode, out var percent) ? (double)percent : 0d;
+    }
+
+    /// <summary>
+    /// ERP UOM code (<c>MsUOM.UOMCode</c>) mapped to the LHDN UNECE code the payload must carry.
+    /// Blank input falls back silently; a non-blank code that cannot be resolved (no UOM master row, or
+    /// the master's UNECE_UOM is blank) falls back to <see cref="LhdnDefaults.UneceUom"/> and logs a
+    /// warning — the default keeps the payload valid, the warning keeps the master-data gap visible.
+    /// Never fails the submission for this alone.
+    /// </summary>
+    private string ResolveUneceUom(
+        IReadOnlyDictionary<string, string> lookup,
+        string? uomCode,
+        string? documentNo)
+    {
+        if (string.IsNullOrWhiteSpace(uomCode))
+        {
+            return LhdnDefaults.UneceUom;
+        }
+
+        var erpUom = uomCode.Trim();
+        if (lookup.TryGetValue(erpUom, out var unece) && !string.IsNullOrWhiteSpace(unece))
+        {
+            return unece;
+        }
+
+        _logger.LogWarning(
+            "e-Invoice UOM fallback for document {DocumentNo}: ERP UOM '{Uom}' has no UNECE code on the UOM master. Using {Default}.",
+            documentNo,
+            erpUom,
+            LhdnDefaults.UneceUom);
+        return LhdnDefaults.UneceUom;
+    }
+
+    /// <summary>
+    /// ERP tax group code (<c>SaTaxGroup.TaxGrCode</c>) mapped to the LHDN tax type carried by the
+    /// payload. Blank input falls back silently; a non-blank code that cannot be resolved (no tax group
+    /// row, or the row's TaxType is blank) falls back to <see cref="LhdnDefaults.TaxType"/> and logs a
+    /// warning — the default keeps the payload valid, the warning keeps the master-data gap visible.
+    /// Never fails the submission for this alone.
+    /// </summary>
+    private string ResolveTaxType(
+        IReadOnlyDictionary<string, string> lookup,
+        string? taxGroupCode,
+        string? documentNo)
+    {
+        if (string.IsNullOrWhiteSpace(taxGroupCode))
+        {
+            return LhdnDefaults.TaxType;
+        }
+
+        var erpTaxGroup = taxGroupCode.Trim();
+        if (lookup.TryGetValue(erpTaxGroup, out var taxType) && !string.IsNullOrWhiteSpace(taxType))
+        {
+            return taxType;
+        }
+
+        _logger.LogWarning(
+            "e-Invoice tax type fallback for document {DocumentNo}: tax group '{TaxGroup}' has no LHDN tax type. Using {Default}.",
+            documentNo,
+            erpTaxGroup,
+            LhdnDefaults.TaxType);
+        return LhdnDefaults.TaxType;
     }
 
     // ─────────────────────────────── Audit / attempts / authorization ───────────────────────────────
@@ -1695,6 +2506,15 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
     // ─────────────────────────────── Small helpers ───────────────────────────────
 
+    /// <summary>
+    /// True when the loaded source document may be submitted. A sales invoice must be POSTED; a
+    /// credit/debit note keeps its existing rules (its origin invoice is validated separately), so
+    /// this only constrains the invoice family.
+    /// </summary>
+    private static bool IsSourceDocumentPosted(EInvoiceDocumentState state) =>
+        state.Entity is not SaInvoice invoice
+        || string.Equals(invoice.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase);
+
     private bool IsStuck(EInvoiceDocumentState state)
     {
         if (_options.SubmittingStuckMinutes <= 0)
@@ -1822,6 +2642,53 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         public string? Error { get; init; }
         public string? Uuid { get; init; }
         public string? SubmissionId { get; init; }
+
+        /// <summary>
+        /// MyInvois' own code number for an ACCEPTED document - the submission registry's
+        /// <c>internalId</c>. Null for anything that was not accepted, because nothing else is recorded.
+        /// </summary>
+        public string? InternalId { get; init; }
+
+        /// <summary>Documents this submission carried - the registry's <c>DocumentCount</c>.</summary>
+        public int? DocumentCount { get; set; }
+
+        /// <summary>
+        /// Submission-level <c>overallStatus</c> for the registry. Only set when <b>every</b> document in
+        /// the submission was accepted: a mixed batch has no single submission-level value, so this stays
+        /// null and a later Refresh/Recover fills it in from the API.
+        /// </summary>
+        public string? OverallStatus { get; set; }
+    }
+
+    /// <summary>One selected document inside a batch run, carrying its full result.</summary>
+    private sealed class BatchRowOutcome
+    {
+        public SaEInvoiceDocumentKey Key { get; init; } = new();
+
+        /// <summary>True when the row was never attempted because it was ineligible.</summary>
+        public bool Skipped { get; set; }
+
+        /// <summary>Null until the row has been judged.</summary>
+        public SaEInvoiceResult? Result { get; set; }
+    }
+
+    /// <summary>A document that passed validation and holds a committed <c>SUBMITTING</c> claim.</summary>
+    private sealed class BatchClaim
+    {
+        public BatchRowOutcome Row { get; init; } = null!;
+        public EInvoiceDocumentState State { get; init; } = null!;
+        public int AttemptNo { get; init; }
+        public DateTime RequestTime { get; init; }
+        public long DurationMs { get; set; }
+        public SubmitClassification Classification { get; set; } = new();
+    }
+
+    private sealed class SubmitBatchRun
+    {
+        /// <summary>Set when the whole action was refused before any work, so no row result exists.</summary>
+        public SaEInvoiceResult? Refusal { get; init; }
+
+        public List<BatchRowOutcome> Rows { get; init; } = [];
     }
 
     private sealed class SearchOutcome

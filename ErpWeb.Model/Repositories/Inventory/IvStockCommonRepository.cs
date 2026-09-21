@@ -49,6 +49,13 @@ public interface IIvStockCommonRepository
     Task<IReadOnlyList<IvClassification>> ListClassificationsAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// LHDN UNECE unit-of-measure codes (global <c>MsLHDNUOM</c> table, no company scope) ordered by
+    /// code. Blank codes are excluded so the picker never offers an unusable option.
+    /// </summary>
+    Task<IReadOnlyList<MsLhdnUom>> ListLhdnUomsAsync(
+        CancellationToken cancellationToken = default);
+
     Task<(IReadOnlyList<IvOnHandBalanceRow> Rows, int TotalCount)> SearchOnHandPagedAsync(
         string companyCode,
         string branchCode,
@@ -395,6 +402,17 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.IvClassifications
             .AsNoTracking()
+            .OrderBy(x => x.Code)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<MsLhdnUom>> ListLhdnUomsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.MsLhdnUoms
+            .AsNoTracking()
+            .Where(x => x.Code != null && x.Code != string.Empty)
             .OrderBy(x => x.Code)
             .ToListAsync(cancellationToken);
     }

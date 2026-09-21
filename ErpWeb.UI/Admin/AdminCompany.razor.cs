@@ -1,3 +1,4 @@
+using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Sales;
@@ -353,6 +354,16 @@ public partial class AdminCompany : PageBase
             SalesPriceMethod = data.SalesPriceMethod,
             FiscalYearStartMonth = data.FiscalYearStartMonth,
             IsActive = data.IsActive,
+            // LHDN e-Invoice supplier profile (master data; credentials are never part of this DTO).
+            EInvEnabled = data.EInvEnabled,
+            EInvMsicCode = data.EInvMsicCode,
+            EInvBizDescription = data.EInvBizDescription,
+            EInvSstNo = data.EInvSstNo,
+            EInvRegType = data.EInvRegType,
+            EInvStateCode = data.EInvStateCode,
+            EInvCountryCode = data.EInvCountryCode,
+            EInvOnBehalfTin = data.EInvOnBehalfTin,
+            EInvDocumentVersion = data.EInvDocumentVersion,
             CreatedDate = data.CreatedDate,
             CreatedBy = data.CreatedBy,
             ModifiedDate = data.ModifiedDate,
@@ -371,4 +382,8 @@ public partial class AdminCompany : PageBase
     ];
 
     protected sealed record PriceMethodOption(string Value, string Name);
+
+    /// <summary>LHDN registration identity types accepted by the supplier party.</summary>
+    protected static IReadOnlyList<EInvoiceRegistrationTypeOption> EInvRegistrationTypes { get; } =
+        EInvoiceRegistrationTypes.Options;
 }
