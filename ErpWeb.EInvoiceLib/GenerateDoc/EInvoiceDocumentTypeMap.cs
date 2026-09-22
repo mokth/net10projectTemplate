@@ -24,9 +24,9 @@ namespace ErpWeb.EInvoiceLib.GenerateDoc
         public const string SelfBilledRefundNote = "14";
 
         public const string InvoiceNamespace = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2";
-        public const string CreditNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2";
-        public const string DebitNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:DebitNote-2";
-        public const string RefundNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:RefundNote-2";
+        public const string CreditNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2";
+        public const string DebitNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2";
+        public const string RefundNoteNamespace = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2";
 
         /// <summary>
         /// LHDN document type code for the ERP document type.
@@ -81,20 +81,21 @@ namespace ErpWeb.EInvoiceLib.GenerateDoc
         /// </summary>
         public static string GetSignatureId(string documentTypeCode)
         {
-            switch (documentTypeCode)
-            {
-                case CreditNote:
-                case SelfBilledCreditNote:
-                    return "urn:oasis:names:specification:ubl:signature:CreditNote";
-                case DebitNote:
-                case SelfBilledDebitNote:
-                    return "urn:oasis:names:specification:ubl:signature:DebitNote";
-                case RefundNote:
-                case SelfBilledRefundNote:
-                    return "urn:oasis:names:specification:ubl:signature:RefundNote";
-                default:
-                    return "urn:oasis:names:specification:ubl:signature:Invoice";
-            }
+            return "urn:oasis:names:specification:ubl:signature:Invoice";
+            //switch (documentTypeCode)
+            //{
+            //    case CreditNote:
+            //    case SelfBilledCreditNote:
+            //        return "urn:oasis:names:specification:ubl:signature:CreditNote";
+            //    case DebitNote:
+            //    case SelfBilledDebitNote:
+            //        return "urn:oasis:names:specification:ubl:signature:DebitNote";
+            //    case RefundNote:
+            //    case SelfBilledRefundNote:
+            //        return "urn:oasis:names:specification:ubl:signature:RefundNote";
+            //    default:
+            //        return "urn:oasis:names:specification:ubl:signature:Invoice";
+            //}
         }
 
         /// <summary>
