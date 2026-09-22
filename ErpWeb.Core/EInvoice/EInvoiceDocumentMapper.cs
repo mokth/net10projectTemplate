@@ -93,7 +93,7 @@ public sealed class EInvoiceDocumentMapper
             DocumentNo = document.DocumentNo,
             RefDocumentNo = document.RefDocumentNo,
             OriginInvoiceUUID = document.OriginUuid,
-            IssueDate = document.DocumentDate,
+            IssueDate = document.DocumentDate.AddMinutes(-15),
             InvoicePeriodStartDate= document.DocumentDate.ToString("yyyy-MM-dd"),
             InvoicePeriodEndDate = document.DocumentDate.ToString("yyyy-MM-dd"),
             docType = MapDocumentType(document.DocumentType),

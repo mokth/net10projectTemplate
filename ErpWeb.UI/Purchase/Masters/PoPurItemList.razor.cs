@@ -26,7 +26,8 @@ public partial class PoPurItemList : PoRefListPageBase<PoPurItemListRow, PoPurIt
         new() { Caption = "Currency", FieldName = nameof(PoPurItemListRow.Currency), DataType = "string", VisibleIndex = 6, Width = "90px" },
         new() { Caption = "Unit Price", FieldName = nameof(PoPurItemListRow.UnitPrice), DataType = "decimal", VisibleIndex = 7, Width = "110px" },
         new() { Caption = "MOQ", FieldName = nameof(PoPurItemListRow.Moq), DataType = "decimal", VisibleIndex = 8, Width = "90px" },
-        new() { Caption = "Status", FieldName = nameof(PoPurItemListRow.Status), DataType = "string", VisibleIndex = 9, Width = "90px" }
+        new() { Caption = "Status", FieldName = nameof(PoPurItemListRow.Status), DataType = "string", VisibleIndex = 9, Width = "90px" },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected override Task<IvMasterOperationResult<IReadOnlyList<PoPurItemListRow>>> LoadRowsAsync() =>

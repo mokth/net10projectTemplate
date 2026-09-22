@@ -60,7 +60,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.CustTypeCode,
                 Desc = x.CustTypeDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -353,7 +357,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.CustGroupCode,
                 Desc = x.CustGroupDesc,
                 CustPriceCode = x.CustPriceCode,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -600,7 +608,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.AreaCode,
                 Desc = x.AreaDesc,
                 Latitude = x.Latitude,
-                Longitude = x.Longitude
+                Longitude = x.Longitude,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -810,7 +822,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.CountryCode,
                 Name = x.CountryName,
                 Latitude = x.Latitude,
-                Longitude = x.Longitude
+                Longitude = x.Longitude,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -882,6 +898,14 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 IvMasterErrorCode.Validation, "Validation failed.", errors);
         }
 
+        var writeScope = _tenant.TryWriteScope();
+        if (writeScope is null)
+        {
+            return FailVm<SaCountryEditVm>(IvMasterErrorCode.InvalidScope, "Invalid company, branch, or location context.");
+        }
+
+        var now = _dates.Now;
+        var user = Truncate(writeScope.UserId, 20);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
         try
@@ -902,7 +926,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                     CountryCode = code,
                     CountryName = name,
                     Latitude = model.Latitude,
-                    Longitude = model.Longitude
+                    Longitude = model.Longitude,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                    ModifiedDate = now,
+                    ModifiedBy = user
                 };
                 db.SaCountries.Add(entity);
                 await db.SaveChangesAsync(cancellationToken);
@@ -926,6 +954,8 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
             tracked.CountryName = name;
             tracked.Latitude = model.Latitude;
             tracked.Longitude = model.Longitude;
+            tracked.ModifiedDate = now;
+            tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
             return IvMasterOperationResult<SaCountryEditVm>.Ok(MapCountry(tracked));
         }
@@ -996,7 +1026,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
             {
                 Code = x.CurrCode,
                 Desc = x.CurrDesc,
-                IsActive = x.IsActive != false
+                IsActive = x.IsActive != false,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -1254,7 +1288,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Code = x.PayCode,
                 Desc = x.PayDesc,
                 Days = x.Days,
-                IsActive = x.IsActive != false
+                IsActive = x.IsActive != false,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -1536,7 +1574,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 Tel = x.Tel,
                 Email = x.Email,
                 CommissionRate = x.CommissionRate,
-                IsActive = x.IsActive != false
+                IsActive = x.IsActive != false,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -1922,7 +1964,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 TaxType = x.TaxType,
                 CompanyCode = x.CompanyCode,
                 BranchCode = x.BranchCode,
-                LocationCode = x.LocationCode
+                LocationCode = x.LocationCode,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -2177,7 +2223,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 GroupLevel = x.GroupLevel,
                 Discount = x.Discount,
                 GroupStatus = x.GroupStatus,
-                MemberCount = x.Members.Count
+                MemberCount = x.Members.Count,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             })
             .ToListAsync(cancellationToken);
 
@@ -2572,7 +2622,11 @@ public sealed partial class SaSalesRefService : ISaSalesRefService
                 StartDate = x.StartDate.Date,
                 EndDate = x.EndDate.Date,
                 HomeCurPerUnit = x.HomeCurPerUnit,
-                Status = x.Status
+                Status = x.Status,
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 

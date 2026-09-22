@@ -592,7 +592,7 @@
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                             <Template>
                                 @* Phase 4: an operator without PRICE_OVERRIDE sees the resolved price read-only. *@
                                 <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@(CanEditDocument && CanOverridePrice)" />
@@ -600,7 +600,7 @@
                         </DxFormLayoutItem>
                         @if (!string.IsNullOrWhiteSpace(_priceHint))
                         {
-                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="" ColSpanMd="8">
                                 <Template>
                                     <p class="sdoc-field-hint">Price source: @_priceHint</p>
                                 </Template>
@@ -608,7 +608,7 @@
                         }
                         @if (IsPriceOverridden())
                         {
-                            <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
                                 <Template>
                                     <DxTextBox @bind-Text="@Popup.OverrideReason"
                                                maxlength="100"

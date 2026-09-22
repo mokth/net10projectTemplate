@@ -7,3 +7,28 @@
 .iv-page ::deep .dxbl-grid {
     border: 0;
 }
+
+/* ── Mobile compact row: LHDN detail link ────────────────────────────────────
+   The link is a sibling of the compact card button (an <a> inside a <button> is
+   invalid HTML). The whole block is display:none above 767px, so no media query
+   is needed here. */
+
+.iv-list-compact__row {
+    display: grid;
+    gap: 6px;
+}
+
+.iv-list-compact__lhdn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: start;
+    padding: 7px 11px;
+    border: 1px solid color-mix(in srgb, var(--danger, #b42318) 28%, #d7dde5);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--danger, #b42318) 8%, #fff);
+    color: var(--danger, #b42318);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-decoration: none;
+}

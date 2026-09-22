@@ -4,9 +4,21 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Model.Repositories.Sales;
 
+/// <summary>
+/// Paging and filter arguments for the sales-invoice list.
+///
+/// <para>
+/// <paramref name="IrbmStatus"/> filters on the e-Invoice lifecycle status (<c>IRBMStatus</c>) and is
+/// compared with plain equality: the column is collated <c>SQL_Latin1_General_CP1_CI_AS</c>
+/// (case-insensitive, verified against the live ERPWeb database on 2026-09-22), so a legacy
+/// title-case value such as <c>Submitted</c> matches the uppercase <c>EInvoiceStatuses</c> constant
+/// without wrapping the column in a function. <c>NULL</c> means "no e-Invoice filter".
+/// </para>
+/// </summary>
 public sealed record SaInvoiceSearchArgs(
     string? SearchText,
     string? Status,
+    string? IrbmStatus,
     DateTime? DateFrom,
     DateTime? DateTo,
     string? SortField,
@@ -122,6 +134,15 @@ WHERE CompanyCode = {company}
         {
             var status = args.Status.Trim();
             query = query.Where(x => x.Status == status);
+        }
+
+        if (!string.IsNullOrWhiteSpace(args.IrbmStatus))
+        {
+            // Plain equality on purpose - the column's collation (SQL_Latin1_General_CP1_CI_AS) already
+            // makes the comparison case-insensitive, so legacy title-case values such as "Submitted"
+            // match. Wrapping the column in UPPER() would make the index unusable for no benefit.
+            var irbmStatus = args.IrbmStatus.Trim();
+            query = query.Where(x => x.IrbmStatus == irbmStatus);
         }
 
         if (args.DateFrom is DateTime from)

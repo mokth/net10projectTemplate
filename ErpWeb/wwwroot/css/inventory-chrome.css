@@ -323,6 +323,24 @@
     color: #a02020;
 }
 
+/* Stop button for the refresh-all progress strip (E-STATUS with nothing selected). It inherits the
+   .iv-toast--wait colour so it reads as part of the strip rather than as a second control. */
+.iv-einv-progress__stop {
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    border-radius: 999px;
+    padding: 2px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.iv-einv-progress__stop:hover {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
 .iv-detail-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

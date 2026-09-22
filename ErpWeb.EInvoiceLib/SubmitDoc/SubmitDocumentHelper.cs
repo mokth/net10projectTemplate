@@ -169,6 +169,8 @@ namespace ErpWeb.EInvoiceLib.SubmitDoc
                     NullValueHandling = NullValueHandling.Ignore
                 };
                 var json = JsonConvert.SerializeObject(submit, settings);
+                // Parity with SubmitInvoices: keep the submission envelope on disk as well.
+                wrieSubJsonFile(submit.documents[0].codeNumber, json);
 
                 result = await _serviceApi.SubmitDocument(submit);
 
@@ -393,7 +395,13 @@ namespace ErpWeb.EInvoiceLib.SubmitDoc
             return docs;
         }
 
-        void wrieJsonFile(DocumentHeader submitDoc, string contentIndented)
+        /// <summary>
+        /// Diagnostic dump of the signed document JSON.
+        /// <paramref name="suffix"/> keeps invoice and note dumps apart, so a credit/debit note can never
+        /// overwrite an invoice that happens to carry the same document number. The default keeps every
+        /// existing invoice filename byte-identical.
+        /// </summary>
+        void wrieJsonFile(DocumentHeader submitDoc, string contentIndented, string suffix = "inv")
         {
             try
             {
@@ -402,7 +410,7 @@ namespace ErpWeb.EInvoiceLib.SubmitDoc
                 {
                     Directory.CreateDirectory(jpath);
                 }
-                string jfilename = Path.Combine(jpath, submitDoc.DocumentNo + "_inv_json.json");
+                string jfilename = Path.Combine(jpath, submitDoc.DocumentNo + "_" + suffix + "_json.json");
                 File.WriteAllText(jfilename, contentIndented);
             }
             catch (Exception ex)
@@ -457,6 +465,17 @@ namespace ErpWeb.EInvoiceLib.SubmitDoc
                 }
                 //string content = hlp.SerializeJson(inv);
                 string content = HashUtility.SerializeJson(inv);
+
+                // Parity with generateInvoices: dump the signed JSON next to the invoice dumps so a note
+                // submission is as auditable as an invoice submission. The suffix keeps the two apart.
+                var jsonFileSuffix = submitDoc.docType switch
+                {
+                    EInvoiceDocumentType.debitnote or EInvoiceDocumentType.sb_debitnote => "dn",
+                    EInvoiceDocumentType.creditnote or EInvoiceDocumentType.sb_creditnote => "cn",
+                    _ => "inv"
+                };
+                wrieJsonFile(submitDoc, HashUtility.SerializeJsonIndented(inv), jsonFileSuffix);
+
                 doc.codeNumber = submitDoc.DocumentNo;
                 doc.format = "JSON";
                 string contentb64 = HashUtility.StringToBase64(content);

@@ -145,7 +145,9 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 x.Remarks,
                 LineCount = x.Details.Count,
                 x.CreatedDate,
-                x.CreatedBy
+                x.CreatedBy,
+                x.ModifiedDate,
+                x.ModifiedBy
             })
             .ToListAsync(cancellationToken);
 
@@ -173,7 +175,9 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 LineCount = x.LineCount,
                 TotalAmount = decimal.Round(totals.GetValueOrDefault(x.Id), 2),
                 CreatedDate = x.CreatedDate,
-                CreatedBy = x.CreatedBy
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList(),
             TotalCount = total
         });

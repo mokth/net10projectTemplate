@@ -85,11 +85,19 @@ public class SaCustServiceTests : IAsyncLifetime
 
         db.IvMsCodes.AddRange(
             new IvMsCode { Code = "SEL", Name = "Selangor", CodeType = IvMsCodeTypes.State },
-            new IvMsCode { Code = "SR", Name = "Standard Rated", CodeType = IvMsCodeTypes.Tax },
+            // Decoy: IvMsCode type TAX is the LHDN tax-TYPE list, NOT the sales tax master. The tax-group
+            // lookup reads SaTaxGroup, so this row must never surface in the list (or in a save check).
+            new IvMsCode { Code = "XX", Name = "Wrong master decoy", CodeType = IvMsCodeTypes.Tax },
             new IvMsCode { Code = "NET30", Name = "Net 30 days", CodeType = IvMsCodeTypes.PayCode },
             new IvMsCode { Code = "COD", Name = "Cash on delivery", CodeType = IvMsCodeTypes.PayCode },
             new IvMsCode { Code = "ELEC", Name = "Electronics", CodeType = IvMsCodeTypes.Industry },
             new IvMsCode { Code = "OEM", Name = "OEM", CodeType = IvMsCodeTypes.Channel });
+
+        // The customer tax group comes from the SALES tax master (SaTaxGroup), company-scoped. OTHER has a
+        // row of its own so the company-isolation assertions are meaningful.
+        db.SaTaxGroups.AddRange(
+            new SaTaxGroup { CompanyCode = "DEMO", TaxGrCode = "SR", TaxGrDesc = "Standard Rated", Percentage = 6m },
+            new SaTaxGroup { CompanyCode = "OTHER", TaxGrCode = "OS", TaxGrDesc = "Other Sales", Percentage = 5m });
 
         db.SaCusts.AddRange(
             new SaCust
@@ -309,6 +317,45 @@ public class SaCustServiceTests : IAsyncLifetime
         var rows = await lookups.ListDisGroupsForAssignmentAsync();
         var gold = Assert.Single(rows, x => x.Code == "GOLD");
         Assert.Equal(5m, gold.Rate);
+    }
+
+    // Phase 1 (4a) - the tax-group lookup must read the SALES tax master SaTaxGroup, never
+    // IvMsCode type TAX. This is the origin of the "customer tax group does not appear on the invoice"
+    // defect: a code from the wrong master can never resolve against the document-side SaTaxGroup list.
+    [Fact]
+    public async Task TaxGroupLookup_ReadsSaTaxGroup_NotIvMsCodeTax()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var lookups = CreateLookups();
+
+        var rows = await lookups.ListTaxGroupsForAssignmentAsync();
+
+        var sr = Assert.Single(rows, x => x.Code == "SR");
+        Assert.Equal("Standard Rated", sr.Desc);
+        Assert.DoesNotContain(rows, x => x.Code == "XX");
+        var expected = await db.SaTaxGroups.CountAsync(x => x.CompanyCode == "DEMO");
+        Assert.Equal(expected, rows.Count);
+    }
+
+    // Phase 1 (4b) - the lookup and the save gate are both company-scoped: another company's tax group
+    // must neither be listed nor accepted for this caller.
+    [Fact]
+    public async Task TaxGroupLookup_IsCompanyScoped()
+    {
+        var demo = CreateLookups();
+        var other = new SaCustLookupService(
+            _factory, InventoryTenantTestHelper.CreateTenantContext(company: "OTHER"));
+
+        var demoRows = await demo.ListTaxGroupsForAssignmentAsync();
+        var otherRows = await other.ListTaxGroupsForAssignmentAsync();
+
+        Assert.Contains(demoRows, x => x.Code == "SR");
+        Assert.DoesNotContain(demoRows, x => x.Code == "OS");
+        Assert.Contains(otherRows, x => x.Code == "OS");
+        Assert.DoesNotContain(otherRows, x => x.Code == "SR");
+
+        Assert.True(await demo.ValidateTaxGroupAssignmentAsync("SR", null));
+        Assert.False(await demo.ValidateTaxGroupAssignmentAsync("OS", null));
     }
 
     [Fact]

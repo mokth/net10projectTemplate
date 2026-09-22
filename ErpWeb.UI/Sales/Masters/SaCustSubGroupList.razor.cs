@@ -34,7 +34,8 @@ public partial class SaCustSubGroupList : SaRefListPageBase<SaCustSubGroupListRo
             FieldName = nameof(SaCustSubGroupListRow.Desc),
             DataType = "string",
             VisibleIndex = 2
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 3)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

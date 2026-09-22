@@ -63,7 +63,11 @@ public sealed partial class SaSalesRefService
                 Discount1 = x.Discount1,
                 DiscountType1 = x.DiscountType1,
                 EffectPrice = x.EffectPrice,
-                RowVersion = x.RowVersion ?? System.Array.Empty<byte>()
+                RowVersion = x.RowVersion ?? System.Array.Empty<byte>(),
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             })
             .ToListAsync(cancellationToken);
 

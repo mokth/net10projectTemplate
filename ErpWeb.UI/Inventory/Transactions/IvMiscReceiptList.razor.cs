@@ -87,9 +87,8 @@ public partial class IvMiscReceiptList : PageBase, IDisposable
         new() { Caption = "Remarks", FieldName = nameof(IvMiscReceiptListRow.Remarks), VisibleIndex = 6 },
         new() { Caption = "Lines", FieldName = nameof(IvMiscReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7 },
         new() { Caption = "Total", FieldName = nameof(IvMiscReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 8 },
-        new() { Caption = "Created", FieldName = nameof(IvMiscReceiptListRow.CreatedDate), DataType = "date", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "140px", VisibleIndex = 9 },
-        new() { Caption = "Created by", FieldName = nameof(IvMiscReceiptListRow.CreatedBy), Visible = false, VisibleIndex = 10 },
-        new() { Caption = "Vendor code", FieldName = nameof(IvMiscReceiptListRow.VendCode), Visible = false, VisibleIndex = 11 }
+        new() { Caption = "Vendor code", FieldName = nameof(IvMiscReceiptListRow.VendCode), Visible = false, VisibleIndex = 9 },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

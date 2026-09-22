@@ -218,7 +218,11 @@ namespace ErpWeb.EInvoiceLib.Model.Document
     {
         public string name { get; set; }
         public string status { get; set; }
-        //public DocErrorDetail error { get; set; }
-        public string error { get; set; }
+
+        // MyInvois returns this as an object (propertyName/propertyPath/errorCode/error/errorMs/
+        // innerError), not a string. Declaring it as a string made Newtonsoft's reader throw
+        // "Unexpected character encountered while parsing value: {" the moment a step actually
+        // failed - i.e. for every INVALID document, which is exactly when the detail is needed.
+        public DocErrorDetail error { get; set; }
     }
 }

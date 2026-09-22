@@ -1,6 +1,7 @@
 @page "/sales/credit-notes"
 @page "/sales/debit-notes"
 @inherits PageBase
+@using ErpWeb.UI.Components.Common
 
 <PageTitle>@PageTitle</PageTitle>
 
@@ -18,6 +19,15 @@
             <div class="iv-toast iv-toast--err" role="alert">
                 <span>@ErrorMessage</span>
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(EInvoiceProgress))
+        {
+            @* Refresh-all progress. The Stop button is the only way out of a long run, because the
+               blocking-work guard holds navigation while it is open. *@
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>@EInvoiceProgress</span>
+                <button type="button" class="iv-einv-progress__stop" @onclick="StopEInvoiceRefresh">Stop</button>
             </div>
         }
 
@@ -85,6 +95,7 @@
                                       allowSelect="true"
                                       OnGridInstance="@OnGridInstance"
                                       OnSelectionsEventHandle="@OnSelectionsEvent"
+                                      OnSelectedColumnHandle="@onSelectColHandle"
                                       OnButtonEventHandle="@OnButtonClick"
                                       OnActionEventHandle="@OnActionClick" />
                 </div>
@@ -98,17 +109,29 @@
                     {
                         @foreach (var row in CompactRows)
                         {
-                            <button type="button"
-                                    class="iv-list-compact__item"
-                                    @onclick="() => NavigateView(row.DocNo)">
-                                <span class="iv-list-compact__code">@row.DocNo</span>
-                                <span class="iv-list-compact__desc">
-                                    @row.CustCode · @row.DocDate.ToString("dd/MM/yyyy")
-                                </span>
-                                <div class="iv-list-compact__meta">
-                                    <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
-                                </div>
-                            </button>
+                            @* The LHDN link is a SIBLING of the card button, never nested inside it: an
+                               <a> inside a <button> is invalid HTML and swallows the tap target. *@
+                            <div class="iv-list-compact__row">
+                                <button type="button"
+                                        class="iv-list-compact__item"
+                                        @onclick="() => NavigateView(row.DocNo)">
+                                    <span class="iv-list-compact__code">@row.DocNo</span>
+                                    <span class="iv-list-compact__desc">
+                                        @row.CustCode · @row.DocDate.ToString("dd/MM/yyyy")
+                                    </span>
+                                    <div class="iv-list-compact__meta">
+                                        <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                                    </div>
+                                </button>
+
+                                @if (EInvoiceDetailLink.Resolve(row.IrbmStatus, row.IrbmUuid, CanAccessEInvoiceTin).Url is { } detailUrl)
+                                {
+                                    <a class="iv-list-compact__lhdn" href="@detailUrl">
+                                        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                        Why is this invalid?
+                                    </a>
+                                }
+                            </div>
                         }
                     }
                 </div>
@@ -163,6 +186,16 @@
              @bind-Visible="@ConfirmVisible">
         <Content>
             <p class="iv-confirm__copy">@ConfirmMessage</p>
+            @if (IsCancelAction)
+            {
+                <div class="iv-einv-reason">
+                    <div class="iv-einv-reason__label">Cancellation reason (required, max 300 characters)</div>
+                    <DxTextBox @bind-Text="@EInvoiceCancelReason"
+                               MaxLength="300"
+                               NullText="e.g. Wrong buyer details"
+                               CssClass="w-100" />
+                </div>
+            }
             <div class="iv-popup-footer">
                 <div class="iv-popup-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -172,7 +205,50 @@
                     <DxButton RenderStyle="@ConfirmButtonStyle"
                               Text="@ConfirmButtonText"
                               Click="@ConfirmActionAsync"
-                              Enabled="@(!IsSubmitting)" />
+                              Enabled="@CanConfirmAction" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@EInvoiceResultsTitle"
+             CloseOnOutsideClick="false"
+             Width="680px"
+             CssClass="common-popup"
+             @bind-Visible="@EInvoiceResultsVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <div class="iv-einv-results">
+                    <table class="iv-einv-results__table">
+                        <thead>
+                            <tr>
+                                <th>Note</th>
+                                <th>Result</th>
+                                <th>Status</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in EInvoiceResults)
+                            {
+                                <tr>
+                                    <td>@item.DocumentNo</td>
+                                    <td>
+                                        <span class="iv-einv-chip @EInvoiceResultClass(item)">@EInvoiceResultOutcome(item)</span>
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(item.Status) ? "-" : item.Status)</td>
+                                    <td>@item.ErrorMessage</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@DismissEInvoiceResults" />
                 </div>
             </div>
         </Content>

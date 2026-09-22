@@ -52,8 +52,16 @@ public class PoSupplierServiceTests : IAsyncLifetime
         db.SaCountries.Add(new SaCountry { CountryCode = "MY", CountryName = "Malaysia" });
         db.IvMsCodes.AddRange(
             new IvMsCode { Code = "SEL", Name = "Selangor", CodeType = IvMsCodeTypes.State },
-            new IvMsCode { Code = "SR", Name = "Standard Rated", CodeType = IvMsCodeTypes.Tax },
+            // Decoy: IvMsCode type TAX is the LHDN tax-type list, not the sales tax master.
+            new IvMsCode { Code = "XX", Name = "Wrong master decoy", CodeType = IvMsCodeTypes.Tax },
             new IvMsCode { Code = "NET30", Name = "Net 30 days", CodeType = IvMsCodeTypes.PayCode });
+        db.SaTaxGroups.Add(new SaTaxGroup
+        {
+            CompanyCode = "DEMO",
+            TaxGrCode = "SR",
+            TaxGrDesc = "Standard Rated",
+            Percentage = 6m
+        });
         db.PoBuyingTerms.Add(new PoBuyingTerm
         {
             CompanyCode = "DEMO",
@@ -418,6 +426,23 @@ public class PoSupplierServiceTests : IAsyncLifetime
         };
 
     private static byte[] Rv(byte marker) => [marker, 0, 0, 0, 0, 0, 0, 0];
+
+    // Phase 1 (4a mirror) - the supplier tax-group lookup must read SaTaxGroup, not IvMsCode(TAX).
+    [Fact]
+    public async Task TaxGroupLookup_ReadsSaTaxGroup_NotIvMsCodeTax()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var lookups = new PoSupplierLookupService(
+            _factory, InventoryTenantTestHelper.CreateTenantContext());
+
+        var rows = await lookups.ListTaxGroupsForAssignmentAsync();
+
+        var sr = Assert.Single(rows, x => x.Code == "SR");
+        Assert.Equal("Standard Rated", sr.Desc);
+        Assert.DoesNotContain(rows, x => x.Code == "XX");
+        var expected = await db.SaTaxGroups.CountAsync(x => x.CompanyCode == "DEMO");
+        Assert.Equal(expected, rows.Count);
+    }
 
     private PoSupplierService CreateSut(
         bool canAccess = true,

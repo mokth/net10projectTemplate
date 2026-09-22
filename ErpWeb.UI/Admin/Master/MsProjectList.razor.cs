@@ -109,7 +109,8 @@ public partial class MsProjectList : MsRefListPageBase<MsProjectListRow>
             DataType = "decimal",
             VisibleIndex = 8,
             Width = "110px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 9)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

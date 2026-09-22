@@ -81,22 +81,7 @@ public partial class AdminPermission : PageBase
             DataType = "string",
             VisibleIndex = 6
         },
-        new()
-        {
-            Caption = "Created By",
-            FieldName = nameof(Permission.CreatedBy),
-            DataType = "string",
-            VisibleIndex = 7,
-            Width = "120px"
-        },
-        new()
-        {
-            Caption = "Update By",
-            FieldName = nameof(Permission.ModifiedBy),
-            DataType = "string",
-            VisibleIndex = 8,
-            Width = "120px"
-        }
+        ..AuditColumns.For(startVisibleIndex: 7)
     ];
 
     public List<ButtonInfo> Buttons { get; set; } =

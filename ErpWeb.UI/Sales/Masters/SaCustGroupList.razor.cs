@@ -47,7 +47,8 @@ public partial class SaCustGroupList : SaRefListPageBase<SaCustGroupListRow>
             DataType = "string",
             VisibleIndex = 3,
             Width = "140px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 4)
     ];
 
     protected override async Task OnPageInitializedAsync()

@@ -531,12 +531,12 @@
                                         CssClass="w-100 required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Qty" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Qty" ColSpanMd="6">
                         <Template>
                             <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Pack" ColSpanMd="6">
                         <Template>
                             <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
                         </Template>

@@ -87,7 +87,8 @@ public partial class SaDoList : PageBase, IDisposable
         new() { Caption = "Lines", FieldName = nameof(SaDoListRow.LineCount), Width = "80px", VisibleIndex = 6 },
         new() { Caption = "Gross (excl. tax)", FieldName = nameof(SaDoListRow.GrossExTax), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 7 },
         new() { Caption = "Tax", FieldName = nameof(SaDoListRow.Tax), DataType = "decimal", DisplayFormat = "n2", Width = "100px", VisibleIndex = 8 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaDoListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 9 }
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaDoListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 9 },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

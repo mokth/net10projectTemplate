@@ -49,7 +49,8 @@ public partial class SaAreaList : SaCodeRefListPageBase<SaAreaListRow>
             DataType = "string",
             VisibleIndex = 4,
             Width = "110px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

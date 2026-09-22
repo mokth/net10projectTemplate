@@ -1,5 +1,6 @@
 @page "/sales/invoices"
 @inherits PageBase
+@using ErpWeb.UI.Components.Common
 
 <PageTitle>Sales Invoice</PageTitle>
 
@@ -17,6 +18,15 @@
             <div class="iv-toast iv-toast--err" role="alert">
                 <span>@ErrorMessage</span>
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(EInvoiceProgress))
+        {
+            @* Refresh-all progress. The Stop button is the only way out of a long run, because the
+               blocking-work guard holds navigation while it is open. *@
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>@EInvoiceProgress</span>
+                <button type="button" class="iv-einv-progress__stop" @onclick="StopEInvoiceRefresh">Stop</button>
             </div>
         }
 
@@ -98,18 +108,30 @@
                     {
                         @foreach (var row in CompactRows)
                         {
-                            <button type="button"
-                                    class="iv-list-compact__item"
-                                    @onclick="() => NavigateView(row.InvNo)">
-                                <span class="iv-list-compact__code">@row.InvNo</span>
-                                <span class="iv-list-compact__desc">
-                                    @row.CustCode · @row.InvDate.ToString("dd/MM/yyyy")
-                                </span>
-                                <div class="iv-list-compact__meta">
-                                    <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
-                                    <span class="iv-chip">@row.TotAmnt.ToString("n2")</span>
-                                </div>
-                            </button>
+                            @* The LHDN link is a SIBLING of the card button, never nested inside it: an
+                               <a> inside a <button> is invalid HTML and swallows the tap target. *@
+                            <div class="iv-list-compact__row">
+                                <button type="button"
+                                        class="iv-list-compact__item"
+                                        @onclick="() => NavigateView(row.InvNo)">
+                                    <span class="iv-list-compact__code">@row.InvNo</span>
+                                    <span class="iv-list-compact__desc">
+                                        @row.CustCode · @row.InvDate.ToString("dd/MM/yyyy")
+                                    </span>
+                                    <div class="iv-list-compact__meta">
+                                        <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                                        <span class="iv-chip">@row.TotAmnt.ToString("n2")</span>
+                                    </div>
+                                </button>
+
+                                @if (EInvoiceDetailLink.Resolve(row.IrbmStatus, row.IrbmUuid, CanAccessEInvoiceTin).Url is { } detailUrl)
+                                {
+                                    <a class="iv-list-compact__lhdn" href="@detailUrl">
+                                        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                        Why is this invalid?
+                                    </a>
+                                }
+                            </div>
                         }
                     }
                 </div>

@@ -101,7 +101,8 @@ public partial class IvStockMasterList : PageBase, IDisposable
         new() { Caption = "Buy UOM", FieldName = nameof(IvStockMasterListRow.PurUom), Visible = false, VisibleIndex = 14 },
         new() { Caption = "Sell GL", FieldName = nameof(IvStockMasterListRow.SellingGlCode), Visible = false, VisibleIndex = 15 },
         new() { Caption = "Buy GL", FieldName = nameof(IvStockMasterListRow.PurchaseGlCode), Visible = false, VisibleIndex = 16 },
-        new() { Caption = "Classification", FieldName = nameof(IvStockMasterListRow.Classification), Visible = false, VisibleIndex = 17 }
+        new() { Caption = "Classification", FieldName = nameof(IvStockMasterListRow.Classification), Visible = false, VisibleIndex = 17 },
+        ..AuditColumns.For(startVisibleIndex: 18)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

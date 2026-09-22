@@ -304,18 +304,24 @@ public sealed class SaCdnService : ISaCdnService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var (rows, total) = await _cdns.SearchPagedAsync(db, context.CompanyCode!, context.BranchCode!,
-            new SaCdnSearchArgs(
-                docType,
-                query.SearchText,
-                query.Status,
-                query.DateFrom,
-                query.DateTo,
-                query.SortField,
-                query.SortDescending,
-                query.Skip,
-                query.Take),
+        var (rows, total) = await _cdns.SearchPagedAsync(
+            db, context.CompanyCode!, context.BranchCode!,
+            SaCdnQueryMapper.ToSearchArgs(query, query.Skip, query.Take),
             cancellationToken);
+
+        // The repository query does not Include(Details) — it must not, the list needs only the header —
+        // so the line count has to be loaded separately, exactly the way the invoice list does it.
+        var docNos = rows.Select(x => x.DocNo).ToList();
+        var lineCounts = docNos.Count == 0
+            ? []
+            : await db.SaCdnDetails.AsNoTracking()
+                .Where(d => d.CompanyCode == context.CompanyCode
+                    && d.BranchCode == context.BranchCode
+                    && docNos.Contains(d.DocNo))
+                .GroupBy(d => d.DocNo)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(cancellationToken);
+        var countByDoc = lineCounts.ToDictionary(x => x.Key, x => x.Count, StringComparer.OrdinalIgnoreCase);
 
         var listRows = rows.Select(x => new SaCdnListRow
         {
@@ -327,10 +333,15 @@ public sealed class SaCdnService : ISaCdnService
             CustName = x.CustName,
             InvNo = x.InvNo,
             TotAmnt = x.TotAmnt,
-            LineCount = x.Details?.Count ?? 0,
+            LineCount = countByDoc.GetValueOrDefault(x.DocNo),
             CreatedDate = x.CreatedDate,
             CreatedBy = x.CreatedBy,
-            RowVersion = x.RowVersion
+            ModifiedDate = x.ModifiedDate,
+            ModifiedBy = x.ModifiedBy,
+            RowVersion = x.RowVersion,
+            IrbmStatus = x.IrbmStatus,
+            IrbmOutcome = x.IrbmOutcome,
+            IrbmUuid = x.IrbmUuid
         }).ToList();
 
         return SaCdnOperationResult.OkList(new SaCdnListPage { Rows = listRows, TotalCount = total });

@@ -34,6 +34,10 @@ public sealed class PoSupplierListRow
     public string? GlCode { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoSupplierListPage

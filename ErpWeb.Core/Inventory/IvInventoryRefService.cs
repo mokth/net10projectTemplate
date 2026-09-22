@@ -51,7 +51,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 WarehouseType = x.WarehouseType,
                 WarehouseRemark = x.WarehouseRemark,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -301,7 +305,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 Code = x.LocCode,
                 Desc = x.LocDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -689,7 +697,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 Code = x.IStatus,
                 Desc = x.StatusDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -914,7 +926,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 Desc = x.UomDesc,
                 UneceUom = x.UneceUom,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -1165,7 +1181,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 TypeName = x.TypeName,
                 KeepStock = x.KeepStock,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 
@@ -1393,7 +1413,11 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                 Code = x.IClassCode,
                 Desc = x.IDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? []
+                RowVersion = x.RowVersion ?? [],
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList());
     }
 

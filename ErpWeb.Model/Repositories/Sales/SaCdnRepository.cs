@@ -4,10 +4,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Model.Repositories.Sales;
 
+/// <summary>
+/// Repository search arguments.
+/// <para>
+/// <paramref name="IrbmStatus"/> filters on the e-Invoice lifecycle status (<c>IRBMStatus</c>) and is
+/// the single definition shared by the grid filter and the e-Invoice refresh-all candidate query, so
+/// "what the grid shows" and "what gets refreshed" cannot disagree.
+/// </para>
+/// </summary>
 public sealed record SaCdnSearchArgs(
     string Type,
     string? SearchText,
     string? Status,
+    string? IrbmStatus,
     DateTime? DateFrom,
     DateTime? DateTo,
     string? SortField,
@@ -156,6 +165,14 @@ WHERE CompanyCode = {company}
         {
             var status = args.Status.Trim();
             query = query.Where(x => x.Status == status);
+        }
+
+        if (!string.IsNullOrWhiteSpace(args.IrbmStatus))
+        {
+            // Plain equality on purpose: the column and the database are both
+            // SQL_Latin1_General_CP1_CI_AS, so a function would only cost the index.
+            var irbmStatus = args.IrbmStatus.Trim();
+            query = query.Where(x => x.IrbmStatus == irbmStatus);
         }
 
         if (args.DateFrom is not null)

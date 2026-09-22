@@ -232,14 +232,22 @@ public sealed partial class SaSalesRefService
                 CustPriceCode = x.CustPriceCode,
                 CustPriceDesc = x.CustPriceDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? System.Array.Empty<byte>()
+                RowVersion = x.RowVersion ?? System.Array.Empty<byte>(),
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToListAsync(cancellationToken)
             : await query.Select(x => new IvCustPriceGroupListRow
             {
                 CustPriceCode = x.CustPriceCode,
                 CustPriceDesc = x.CustPriceDesc,
                 IsActive = x.IsActive,
-                RowVersion = x.RowVersion ?? System.Array.Empty<byte>()
+                RowVersion = x.RowVersion ?? System.Array.Empty<byte>(),
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToListAsync(cancellationToken);
 
         // Line counts in one round trip (avoid an N+1 over the list).
@@ -256,7 +264,11 @@ public sealed partial class SaSalesRefService
                 CustPriceDesc = r.CustPriceDesc,
                 IsActive = r.IsActive,
                 RowVersion = r.RowVersion,
-                LineCount = counts.TryGetValue(r.CustPriceCode, out var c) ? c : 0
+                LineCount = counts.TryGetValue(r.CustPriceCode, out var c) ? c : 0,
+                CreatedDate = r.CreatedDate,
+                CreatedBy = r.CreatedBy,
+                ModifiedDate = r.ModifiedDate,
+                ModifiedBy = r.ModifiedBy
             })
             .ToList();
 
@@ -853,7 +865,11 @@ public sealed partial class SaSalesRefService
                 UnitPrice = canViewPrice ? (decimal?)x.UnitPrice : null,
                 Currency = x.Currency,
                 Status = x.Status,
-                RowVersion = x.RowVersion ?? System.Array.Empty<byte>()
+                RowVersion = x.RowVersion ?? System.Array.Empty<byte>(),
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             })
             .ToListAsync(cancellationToken);
 

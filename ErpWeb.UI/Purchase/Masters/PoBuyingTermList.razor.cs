@@ -20,7 +20,8 @@ public partial class PoBuyingTermList : PoRefListPageBase<PoBuyingTermListRow, P
     [
         new() { Caption = "Code", FieldName = nameof(PoBuyingTermListRow.Code), DataType = "string", SortIndex = 0, SortOrder = GridColumnSortOrder.Ascending, VisibleIndex = 1, Width = "120px" },
         new() { Caption = "Description", FieldName = nameof(PoBuyingTermListRow.Description), DataType = "string", VisibleIndex = 2 },
-        new() { Caption = "Active", FieldName = nameof(PoBuyingTermListRow.IsActive), DataType = "bool", VisibleIndex = 3, Width = "80px" }
+        new() { Caption = "Active", FieldName = nameof(PoBuyingTermListRow.IsActive), DataType = "bool", VisibleIndex = 3, Width = "80px" },
+        ..AuditColumns.For(startVisibleIndex: 4)
     ];
 
     protected override Task<IvMasterOperationResult<IReadOnlyList<PoBuyingTermListRow>>> LoadRowsAsync() =>

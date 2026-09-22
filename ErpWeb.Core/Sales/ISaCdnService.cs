@@ -186,6 +186,14 @@ public sealed class SaCdnListQuery
     public string Type { get; set; } = string.Empty;
     public string? SearchText { get; set; }
     public string? Status { get; set; }
+
+    /// <summary>
+    /// e-Invoice lifecycle filter on <c>IRBMStatus</c>, e.g. <c>EInvoiceStatuses.Submitted</c>. Null
+    /// means "any". This is the single definition shared by the grid filter and the refresh-all
+    /// candidate query, so "what the grid shows" and "what gets refreshed" can never disagree.
+    /// </summary>
+    public string? IrbmStatus { get; set; }
+
     public DateTime? DateFrom { get; set; }
     public DateTime? DateTo { get; set; }
     public string? SortField { get; set; }
@@ -207,6 +215,18 @@ public sealed class SaCdnListRow
     public int LineCount { get; init; }
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
+
+    /// <summary>MyInvois lifecycle status (<c>IRBMStatus</c>) so the list can show and gate E-Invoice actions.</summary>
+    public string? IrbmStatus { get; init; }
+
+    /// <summary>Discriminates a FAILED <see cref="IrbmStatus"/> into confirmed failure vs unknown.</summary>
+    public string? IrbmOutcome { get; init; }
+
+    /// <summary>MyInvois document UUID once MyInvois has accepted the note.</summary>
+    public string? IrbmUuid { get; init; }
+
     /// <summary>Required for optimistic concurrency in batch operations.</summary>
     public byte[] RowVersion { get; init; } = [];
 }

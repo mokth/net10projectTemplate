@@ -117,7 +117,8 @@ public partial class PoCdnList : PageBase, IDisposable
         new() { Caption = "Supplier doc", FieldName = nameof(PoCdnListRow.SupplierDocNo), Width = "130px", VisibleIndex = 7 },
         new() { Caption = "Reason", FieldName = nameof(PoCdnListRow.ReasonCode), Width = "150px", VisibleIndex = 8 },
         new() { Caption = "Total (incl. tax)", FieldName = nameof(PoCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 9 },
-        new() { Caption = "Lines", FieldName = nameof(PoCdnListRow.LineCount), Width = "80px", VisibleIndex = 10 }
+        new() { Caption = "Lines", FieldName = nameof(PoCdnListRow.LineCount), Width = "80px", VisibleIndex = 10 },
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

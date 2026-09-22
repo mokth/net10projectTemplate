@@ -42,7 +42,8 @@ public partial class SaCustTypeList : SaRefListPageBase<SaCustTypeListRow>
             DataType = "bool",
             VisibleIndex = 3,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 4)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

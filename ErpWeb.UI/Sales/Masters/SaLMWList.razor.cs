@@ -93,7 +93,8 @@ public partial class SaLMWList : SaRefListPageBase<SaLMWListRow>
             FieldName = nameof(SaLMWListRow.Name),
             DataType = "string",
             VisibleIndex = 8
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 9)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

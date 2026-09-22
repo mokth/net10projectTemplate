@@ -247,6 +247,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     LineCount = lineCounts.GetValueOrDefault(x.DocNo),
                     CreatedDate = x.CreatedDate,
                     CreatedBy = x.CreatedBy,
+                    ModifiedDate = x.ModifiedDate,
+                    ModifiedBy = x.ModifiedBy,
                     RowVersion = x.RowVersion,
                     CanEdit = canEdit && isNew,
                     CanDelete = canDelete && isNew,

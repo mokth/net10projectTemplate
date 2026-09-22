@@ -9,11 +9,14 @@ using ErpWeb.EInvoiceLib.Model.Document;
 using ErpWeb.EInvoiceLib.Model.InputData;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Repositories.Sales;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using CdnStatuses = ErpWeb.Core.Sales.SaCdnStatuses;
 
 namespace ErpWeb.Core.EInvoice;
 
@@ -41,8 +44,13 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     /// </summary>
     private const int MaxCancelReasonLength = 300;
 
+    /// <summary>Why a candidate that cannot be addressed at MyInvois is reported as skipped.</summary>
+    private const string MissingUuidReason = "Missing IRBMUUID";
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly ITenantScopeContext _tenant;
+    private readonly ISaInvoiceRepository _invoices;
+    private readonly ISaCdnRepository _cdns;
     private readonly IAccessRightService _accessRights;
     private readonly IClientSecretStore _secrets;
     private readonly ISubmitDocumentHelper _helper;
@@ -55,6 +63,8 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     public SaEInvoiceService(
         IDbContextFactory<AppDbContext> dbFactory,
         ITenantScopeContext tenant,
+        ISaInvoiceRepository invoices,
+        ISaCdnRepository cdns,
         IAccessRightService accessRights,
         IClientSecretStore secrets,
         ISubmitDocumentHelper helper,
@@ -66,6 +76,8 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
+        _invoices = invoices;
+        _cdns = cdns;
         _accessRights = accessRights;
         _secrets = secrets;
         _helper = helper;
@@ -456,6 +468,22 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 loaded.Error = Truncate(errorMessage, 500);
             }
 
+            // Submission-id recovery - the ONE exception to "the registry key always comes from the ERP
+            // document". A document MyInvois accepted can still have no IRBMSubmitID locally (the history
+            // write failed, or the submission came from outside ErpWeb). Without a key the registry write
+            // below skips and the row stays missing forever. The API's own submissionUid is adopted only
+            // when there is NO ERP value to disagree with, and documentType/documentNo/companyID stay
+            // ERP-derived - so a mismatched payload can at worst create a wrongly-keyed row, never
+            // overwrite a correctly-keyed one.
+            var submissionIdRecovered = false;
+            if (string.IsNullOrWhiteSpace(loaded.SubmitId)
+                && detail is { IsSuccess: true }
+                && !string.IsNullOrWhiteSpace(detail.result?.submissionUid))
+            {
+                loaded.SubmitId = detail.result!.submissionUid!.Trim();
+                submissionIdRecovered = true;
+            }
+
             // The tracked entity is what SaveChangesAsync persists; the state wrapper is only a view.
             ApplyState(loaded);
 
@@ -482,7 +510,9 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
             // Submission registry: refresh in place (plan 3.7). A non-successful detail response carries
             // no payload, so only a successful one is passed - and a null field never erases history.
-            await EInvoiceSubmissionWriter.ApplyStatusAsync(
+            // The returned outcome is the authoritative "was the row written" signal: this Refresh can
+            // report success while the write was skipped (no submission id) or failed.
+            var historyWrite = await EInvoiceSubmissionWriter.ApplyStatusAsync(
                 _dbFactory,
                 scope,
                 key,
@@ -507,7 +537,9 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 Uuid = loaded.Uuid,
                 SubmissionId = loaded.SubmitId,
                 AttemptNo = attemptNo,
-                CorrelationId = correlationId
+                CorrelationId = correlationId,
+                HistoryWrite = MapHistoryWrite(historyWrite),
+                SubmissionIdRecovered = submissionIdRecovered
             };
         }
     }
@@ -802,6 +834,343 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         return SaEInvoiceBatchResult.From(rows.Select(ToBatchItem).ToList());
     }
 
+    /// <summary>
+    /// Refresh every <c>SUBMITTED</c> invoice the grid is showing — the no-selection counterpart of the
+    /// list page's E-STATUS button. Read-only: nothing is submitted, cancelled, recovered or retried.
+    /// See the interface for the full contract (single filter definition, pre-flight cap, chunked
+    /// delegation, cancellation between chunks).
+    /// </summary>
+    public async Task<SaEInvoiceBatchResult> RefreshSubmittedAsync(
+        SaInvoiceListQuery? scope,
+        IProgress<SaEInvoiceRefreshProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var branchScope = _tenant.TryBranchScope();
+        if (branchScope is null)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                "Invalid company or branch context.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        // This entry point is invoice-only, so the menu code is fixed rather than derived per key the way
+        // AuthorizeAsync does it. Gated once, before any query or MyInvois call.
+        if (!await _accessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Submit, cancellationToken))
+        {
+            return SaEInvoiceBatchResult.Failed("Not authorized.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        var load = await LoadRefreshCandidatesAsync(branchScope, scope, cancellationToken);
+        if (load.Refused is not null)
+        {
+            return load.Refused;
+        }
+
+        return await RunRefreshAllAsync(
+            EInvoiceDocumentTypes.Invoice, load.Candidates, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Refresh every <c>SUBMITTED</c> credit or debit note the grid is showing — the CN/DN counterpart of
+    /// the invoice overload. Read-only: nothing is submitted, cancelled, recovered or retried.
+    ///
+    /// <para>
+    /// The family comes from the scope's <c>Type</c>: it selects the document family AND the menu the
+    /// caller must hold, so a credit-note run can never touch a debit note. An unknown or blank type is
+    /// refused as validation, never thrown.
+    /// </para>
+    /// </summary>
+    public async Task<SaEInvoiceBatchResult> RefreshSubmittedAsync(
+        SaCdnListQuery? scope,
+        IProgress<SaEInvoiceRefreshProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        // The ERP family token (SaCdn.Type) is the same CN / DN token this façade already uses everywhere
+        // else, so the check reuses it rather than the twice-declared SaCdnTypes helper.
+        var docType = (scope?.Type ?? string.Empty).Trim().ToUpperInvariant();
+        if (docType != EInvoiceDocumentTypes.CreditNote && docType != EInvoiceDocumentTypes.DebitNote)
+        {
+            return SaEInvoiceBatchResult.Failed("Type must be CN or DN.", SaEInvoiceErrorKind.Validation);
+        }
+
+        var branchScope = _tenant.TryBranchScope();
+        if (branchScope is null)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                "Invalid company or branch context.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        var isCreditNote = docType == EInvoiceDocumentTypes.CreditNote;
+        var documentType = isCreditNote ? EInvoiceDocumentTypes.CreditNote : EInvoiceDocumentTypes.DebitNote;
+        var menuCode = isCreditNote ? MenuCodes.SalesCreditNote : MenuCodes.SalesDebitNote;
+
+        // Gated once, on the family's OWN menu, before any query or MyInvois call.
+        if (!await _accessRights.CanAsync(menuCode, PermissionCodes.Submit, cancellationToken))
+        {
+            return SaEInvoiceBatchResult.Failed("Not authorized.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        var load = await LoadCdnRefreshCandidatesAsync(branchScope, scope!, docType, cancellationToken);
+        if (load.Refused is not null)
+        {
+            return load.Refused;
+        }
+
+        return await RunRefreshAllAsync(documentType, load.Candidates, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// The ONE chunked refresh-all driver, shared by the invoice and the credit/debit-note paths.
+    ///
+    /// <para>
+    /// Blank-<c>IRBMUUID</c> candidates become <c>Skipped</c> items and never reach MyInvois. Eligible
+    /// keys are handed to the public <see cref="RefreshManyAsync"/> in chunks, so the interactive cap,
+    /// the per-chunk authorization check and the per-document semantics stay exactly where they are.
+    /// Cancellation is honoured between chunks only, and an exception that escapes a chunk converts
+    /// everything still outstanding into <c>Failed</c> items instead of discarding completed work.
+    /// </para>
+    /// </summary>
+    private async Task<SaEInvoiceBatchResult> RunRefreshAllAsync(
+        string documentType,
+        IReadOnlyList<RefreshCandidate> candidates,
+        IProgress<SaEInvoiceRefreshProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count == 0)
+        {
+            return SaEInvoiceBatchResult.From([]);
+        }
+
+        // Reported before the first chunk so the UI has a denominator while MyInvois is still untouched.
+        progress?.Report(new SaEInvoiceRefreshProgress { Done = 0, Total = candidates.Count });
+
+        var items = new List<SaEInvoiceBatchItemResult>(candidates.Count);
+        var keys = new List<SaEInvoiceDocumentKey>(candidates.Count);
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.IrbmUuid))
+            {
+                // Nothing to address at MyInvois. Reported as skipped rather than escalated: the operator
+                // asked for a status refresh, so Recover stays a deliberate, separate action.
+                items.Add(new SaEInvoiceBatchItemResult
+                {
+                    DocumentType = documentType,
+                    DocumentNo = candidate.DocumentNo,
+                    Skipped = true,
+                    Status = EInvoiceStatuses.Normalize(candidate.IrbmStatus),
+                    ErrorMessage = MissingUuidReason
+                });
+                continue;
+            }
+
+            keys.Add(new SaEInvoiceDocumentKey
+            {
+                DocumentType = documentType,
+                DocumentNo = candidate.DocumentNo
+            });
+        }
+
+        // Skipped rows already carry a result, so they count as done from the start.
+        var done = items.Count;
+        for (var start = 0; start < keys.Count; start += SaEInvoiceLimits.MaxBatchSelection)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                // Stop starting new chunks, but keep everything already produced: a Stop must never hide
+                // work that has actually been done.
+                break;
+            }
+
+            var take = Math.Min(SaEInvoiceLimits.MaxBatchSelection, keys.Count - start);
+            var chunk = keys.GetRange(start, take);
+
+            // The shipped batch primitive, verbatim, so the interactive cap, the per-chunk authorization
+            // check and the per-document Refresh semantics stay exactly where they are.
+            SaEInvoiceBatchResult chunkResult;
+            try
+            {
+                chunkResult = await RefreshManyAsync(chunk, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // A guard, not a policy change: an exception that escapes the batch primitive must not
+                // reach the page (it would discard the work already done), so everything still
+                // outstanding is reported as Failed instead.
+                _logger.LogError(ex, "e-Invoice refresh-all chunk threw for {DocumentType}", documentType);
+                var thrown = string.IsNullOrWhiteSpace(ex.Message)
+                    ? "The refresh failed before it finished."
+                    : ex.Message;
+                for (var i = start; i < keys.Count; i++)
+                {
+                    items.Add(FailedBatchItem(keys[i], thrown));
+                }
+
+                break;
+            }
+
+            if (chunkResult.Refused)
+            {
+                // A whole-chunk refusal (authorization revoked mid-run) must not silently drop the rest.
+                var reason = chunkResult.ErrorMessage ?? "The action was refused.";
+                for (var i = start; i < keys.Count; i++)
+                {
+                    items.Add(FailedBatchItem(keys[i], reason));
+                }
+
+                break;
+            }
+
+            items.AddRange(chunkResult.Items);
+            done += chunk.Count;
+            progress?.Report(new SaEInvoiceRefreshProgress { Done = done, Total = candidates.Count });
+        }
+
+        return SaEInvoiceBatchResult.From(items);
+    }
+
+    /// <summary>
+    /// Enumerates the refresh-all candidates through the SAME repository search the grid uses, with only
+    /// two things set here: the e-Invoice status is pinned to <c>SUBMITTED</c>, and the paging is ours.
+    /// Everything else — search text, document status, date range, sort — is the caller's, untouched.
+    ///
+    /// <para>
+    /// Returns a refusal instead of throwing when more than
+    /// <see cref="SaInvoiceLimits.MaxEInvoiceRefreshAllRun"/> invoices match. The decision comes from the
+    /// first page's total, so an over-cap run costs one query and zero MyInvois calls.
+    /// </para>
+    /// </summary>
+    private async Task<RefreshCandidateLoad> LoadRefreshCandidatesAsync(
+        TenantScope branchScope,
+        SaInvoiceListQuery? scope,
+        CancellationToken cancellationToken)
+    {
+        var query = new SaInvoiceListQuery
+        {
+            // The operator's filters, passed through verbatim: this is the grid's definition, not ours.
+            SearchText = scope?.SearchText,
+            Status = scope?.Status,
+            DateFrom = scope?.DateFrom,
+            DateTo = scope?.DateTo,
+
+            // Only what DEFINES the action rather than filters it.
+            IrbmStatus = EInvoiceStatuses.Submitted,
+            SortField = nameof(SaInvoice.InvNo),
+            SortDescending = false,
+            Skip = 0,
+            Take = Math.Min(SaEInvoiceLimits.MaxRefreshAllRun, SaInvoiceRepository.MaxPageSize)
+        };
+
+        var candidates = new List<RefreshCandidate>();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        while (true)
+        {
+            query.Skip = candidates.Count;
+            var (page, total) = await _invoices.SearchPagedAsync(
+                db,
+                branchScope.CompanyCode,
+                branchScope.BranchCode ?? string.Empty,
+                SaInvoiceQueryMapper.ToSearchArgs(query, query.Skip, query.Take),
+                cancellationToken);
+
+            if (total > SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                return new RefreshCandidateLoad(
+                    [],
+                    SaEInvoiceBatchResult.Failed(
+                        $"This would refresh {total} invoices. Narrow the filter to "
+                        + $"{SaEInvoiceLimits.MaxRefreshAllRun} or fewer, then try again.",
+                        SaEInvoiceErrorKind.Validation));
+            }
+
+            candidates.AddRange(page.Select(x => new RefreshCandidate(x.InvNo, x.IrbmStatus, x.IrbmUuid)));
+
+            // Stop on a short page, on the total, or on the cap — whichever comes first.
+            if (page.Count == 0
+                || candidates.Count >= total
+                || candidates.Count >= SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                break;
+            }
+        }
+
+        return new RefreshCandidateLoad(candidates, null);
+    }
+
+    /// <summary>
+    /// The CN/DN twin of <see cref="LoadRefreshCandidatesAsync"/>: enumerates the refresh-all candidates
+    /// through the SAME repository search the credit/debit-note grid uses, with only two things set here —
+    /// the family (<c>CN</c> or <c>DN</c>) and the e-Invoice status pinned to <c>SUBMITTED</c>. Everything
+    /// else, including the search text, document status and date range, is the caller's, untouched.
+    ///
+    /// <para>
+    /// Returns a refusal instead of throwing when more than <see cref="SaEInvoiceLimits.MaxRefreshAllRun"/>
+    /// notes match. The decision comes from the first page's total, so an over-cap run costs one query and
+    /// zero MyInvois calls.
+    /// </para>
+    /// </summary>
+    private async Task<RefreshCandidateLoad> LoadCdnRefreshCandidatesAsync(
+        TenantScope branchScope,
+        SaCdnListQuery scope,
+        string docType,
+        CancellationToken cancellationToken)
+    {
+        var query = new SaCdnListQuery
+        {
+            // The family IS part of the scope here: the grid only ever shows one of the two.
+            Type = docType,
+
+            // The operator's filters, passed through verbatim: this is the grid's definition, not ours.
+            SearchText = scope.SearchText,
+            Status = scope.Status,
+            DateFrom = scope.DateFrom,
+            DateTo = scope.DateTo,
+
+            // Only what DEFINES the action rather than filters it.
+            IrbmStatus = EInvoiceStatuses.Submitted,
+            SortField = nameof(SaCdn.DocNo),
+            SortDescending = false,
+            Skip = 0,
+            Take = Math.Min(SaEInvoiceLimits.MaxRefreshAllRun, SaCdnRepository.MaxPageSize)
+        };
+
+        var candidates = new List<RefreshCandidate>();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        while (true)
+        {
+            query.Skip = candidates.Count;
+            var (page, total) = await _cdns.SearchPagedAsync(
+                db,
+                branchScope.CompanyCode,
+                branchScope.BranchCode ?? string.Empty,
+                SaCdnQueryMapper.ToSearchArgs(query, query.Skip, query.Take),
+                cancellationToken);
+
+            if (total > SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                var family = docType == EInvoiceDocumentTypes.CreditNote ? "credit notes" : "debit notes";
+                return new RefreshCandidateLoad(
+                    [],
+                    SaEInvoiceBatchResult.Failed(
+                        $"This would refresh {total} {family}. Narrow the filter to "
+                        + $"{SaEInvoiceLimits.MaxRefreshAllRun} or fewer, then try again.",
+                        SaEInvoiceErrorKind.Validation));
+            }
+
+            candidates.AddRange(page.Select(x => new RefreshCandidate(x.DocNo, x.IrbmStatus, x.IrbmUuid)));
+
+            // Stop on a short page, on the total, or on the cap — whichever comes first.
+            if (page.Count == 0
+                || candidates.Count >= total
+                || candidates.Count >= SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                break;
+            }
+        }
+
+        return new RefreshCandidateLoad(candidates, null);
+    }
+
     public async Task<SaEInvoiceBatchResult> CancelManyAsync(
         IReadOnlyList<SaEInvoiceDocumentKey> keys,
         string reason,
@@ -885,6 +1254,284 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         return views;
     }
 
+    public async Task<SaEInvoicePortalLink?> GetPortalLinkAsync(
+        string uuid,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(uuid))
+        {
+            return null;
+        }
+
+        // Company-scoped: a UUID belonging to another company must never resolve to a link here.
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return null;
+        }
+
+        var wanted = uuid.Trim();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // A re-submission adds a row for the same document (plan R5), so the current row is the
+        // highest ID - the same rule the history writer reads it back with.
+        var row = await db.EInvDocSubmissions
+            .AsNoTracking()
+            .Where(x => x.CompanyId == scope.CompanyCode && x.Uuid == wanted)
+            .OrderByDescending(x => x.Id)
+            .Select(x => new { x.Uuid, x.LongId, x.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null
+            ? null
+            : SaEInvoicePortalLink.Create(row.Uuid, row.LongId, row.Status, _secrets.getPortalUrl());
+    }
+
+    public async Task<SaEInvoiceSubmissionRepairResult> RepairSubmissionAsync(
+        string uuid,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(uuid))
+        {
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "This document has no MyInvois UUID to check the e-Invoice history against.");
+        }
+
+        var companyScope = _tenant.TryCompanyScope();
+        if (companyScope is null)
+        {
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "Invalid company context, so the e-Invoice history was not checked.");
+        }
+
+        var wanted = uuid.Trim();
+
+        ResolvedSubmissionKey resolved;
+        try
+        {
+            resolved = await ResolveKeyByUuidAsync(companyScope, wanted, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "e-Invoice history repair could not resolve UUID {Uuid}", wanted);
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "The e-Invoice history could not be checked (see the log).");
+        }
+
+        if (resolved.Key is null)
+        {
+            // Not an error: the uuid may belong to another company, or to a document this deployment
+            // does not own. The portal link keeps its own behaviour and message.
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "This MyInvois UUID is not linked to any ERP document, so there is no e-Invoice history to repair.");
+        }
+
+        var key = resolved.Key;
+
+        if (EInvoiceDocumentTypes.IsSelfBilled(key.DocumentType))
+        {
+            // AuthorizeAsync refuses self-billed documents outright and LoadStateAsync has no case for
+            // them: the payload still has to come from the Purchase self-bill documents.
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "Self-billed e-Invoice (LHDN 11/12/13) history cannot be repaired yet: the Purchase "
+                + "self-bill payload mapping has not been wired.");
+        }
+
+        // The registry is company-scoped, but the document is branch-owned and the ERP write-back below
+        // resolves it by (CompanyCode, BranchCode, InvNo). A row naming a DIFFERENT branch is therefore
+        // reported, never written: a silent cross-branch write would be worse than an explicit refusal.
+        // A blank BranchCode carries no claim - every legacy row is blank - so it passes through.
+        if (!string.IsNullOrWhiteSpace(resolved.BranchCode)
+            && !string.IsNullOrWhiteSpace(companyScope.BranchCode)
+            && !string.Equals(resolved.BranchCode, companyScope.BranchCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                $"This e-Invoice belongs to branch {resolved.BranchCode}. Sign in to that branch to repair its history.");
+        }
+
+        // Checked here (as well as inside RefreshAsync) so a missing right is reported as "not repaired"
+        // instead of surfacing as a failed refresh on a click whose real job is opening the portal.
+        var gate = await AuthorizeAsync(key, PermissionCodes.Submit, cancellationToken);
+        if (gate.Error is not null)
+        {
+            return SaEInvoiceSubmissionRepairResult.NotApplicable(
+                "You do not have e-Invoice SUBMIT rights for this document, so its history was not repaired.");
+        }
+
+        SaEInvoiceResult result;
+        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            // Bounds the persistence work only: the MyInvois HTTP call inside RefreshAsync does not
+            // observe a token (see EInvoiceOptions.RepairPersistenceTimeoutSeconds).
+            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.RepairPersistenceTimeoutSeconds)));
+            try
+            {
+                // The single delegation. One repair, one MyInvois read.
+                result = await RefreshAsync(key, timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return RepairFailed(key, resolved, "The e-Invoice history repair timed out before it finished.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "e-Invoice history repair threw for {Document}", key);
+                return RepairFailed(key, resolved, "The e-Invoice history could not be repaired (see the log).");
+            }
+        }
+
+        return new SaEInvoiceSubmissionRepairResult
+        {
+            Attempted = true,
+            Succeeded = result.Succeeded,
+            Message = DescribeRepair(result),
+            DocumentType = key.DocumentType,
+            DocumentNo = key.DocumentNo,
+            Status = result.Status,
+            SubmissionId = result.SubmissionId,
+            SubmissionIdRecovered = result.SubmissionIdRecovered,
+            HistoryWrite = result.HistoryWrite,
+            ErrorKind = result.ErrorKind
+        };
+    }
+
+    private static SaEInvoiceSubmissionRepairResult RepairFailed(
+        SaEInvoiceDocumentKey key,
+        ResolvedSubmissionKey resolved,
+        string message) =>
+        new()
+        {
+            Attempted = true,
+            Succeeded = false,
+            Message = message,
+            DocumentType = key.DocumentType,
+            DocumentNo = key.DocumentNo,
+            HistoryWrite = EInvoiceHistoryWriteResult.NotAttempted,
+            ErrorKind = SaEInvoiceErrorKind.Unexpected
+        };
+
+    /// <summary>
+    /// Maps the writer's internal outcome onto the public contract enum, so the persistence
+    /// implementation stays internal to this assembly.
+    /// </summary>
+    private static EInvoiceHistoryWriteResult MapHistoryWrite(EInvoiceHistoryWrite write) => write switch
+    {
+        EInvoiceHistoryWrite.Inserted => EInvoiceHistoryWriteResult.Inserted,
+        EInvoiceHistoryWrite.Updated => EInvoiceHistoryWriteResult.Updated,
+        EInvoiceHistoryWrite.Skipped => EInvoiceHistoryWriteResult.Skipped,
+        EInvoiceHistoryWrite.Failed => EInvoiceHistoryWriteResult.Failed,
+        _ => EInvoiceHistoryWriteResult.NotAttempted
+    };
+
+    /// <summary>One sentence for the operator, built from both halves of the repair.</summary>
+    private static string DescribeRepair(SaEInvoiceResult result)
+    {
+        var parts = new List<string>
+        {
+            result.Succeeded
+                ? "e-Invoice status refreshed from MyInvois."
+                : result.ErrorMessage ?? "MyInvois returned no usable status."
+        };
+
+        parts.Add(result.HistoryWrite switch
+        {
+            EInvoiceHistoryWriteResult.Inserted => "The missing history row was created.",
+            EInvoiceHistoryWriteResult.Updated => "The history row was refreshed.",
+            EInvoiceHistoryWriteResult.Skipped => "No history row was written (the document has no submission id).",
+            EInvoiceHistoryWriteResult.Failed => "The history row could not be written (see the log).",
+            _ => "No history row was written."
+        });
+
+        if (result.SubmissionIdRecovered)
+        {
+            parts.Add("The submission id was recovered from MyInvois.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.Status))
+        {
+            parts.Add("Status: " + result.Status + ".");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>The ERP document a MyInvois UUID belongs to.</summary>
+    private sealed record ResolvedSubmissionKey(string? DocumentType, string? DocumentNo, string? BranchCode)
+    {
+        public SaEInvoiceDocumentKey? Key =>
+            string.IsNullOrWhiteSpace(DocumentType) || string.IsNullOrWhiteSpace(DocumentNo)
+                ? null
+                : new SaEInvoiceDocumentKey
+                {
+                    DocumentType = DocumentType!.Trim(),
+                    DocumentNo = DocumentNo!.Trim()
+                };
+    }
+
+    /// <summary>
+    /// Finds the ERP document a MyInvois UUID belongs to, company-wide.
+    ///
+    /// <para>
+    /// The registry is consulted first: a row that exists is the direct answer, and the current row is
+    /// the <b>highest ID</b> — the same rule <see cref="GetPortalLinkAsync"/> reads it with. The document
+    /// tables are the fallback, so a UUID whose registry row was never written still resolves. Invoices
+    /// and credit/debit notes are matched on both <c>IRBMUUID</c> and <c>IRBMORIUUID</c>, because a
+    /// re-submission moves the superseded uuid onto the "ori" column.
+    /// </para>
+    ///
+    /// <para>
+    /// Projections are anonymous and mapped in memory on purpose: EF Core cannot translate a named type's
+    /// constructor inside a LINQ-to-Entities projection.
+    /// </para>
+    /// </summary>
+    private async Task<ResolvedSubmissionKey> ResolveKeyByUuidAsync(
+        TenantScope companyScope,
+        string uuid,
+        CancellationToken cancellationToken)
+    {
+        var company = companyScope.CompanyCode;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        var row = await db.EInvDocSubmissions
+            .AsNoTracking()
+            .Where(x => x.CompanyId == company && x.Uuid == uuid)
+            .OrderByDescending(x => x.Id)
+            .Select(x => new { x.DocumentType, x.DocumentNo, x.BranchCode })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (row is not null
+            && !string.IsNullOrWhiteSpace(row.DocumentType)
+            && !string.IsNullOrWhiteSpace(row.DocumentNo))
+        {
+            return new ResolvedSubmissionKey(row.DocumentType, row.DocumentNo, row.BranchCode);
+        }
+
+        var invoice = await db.SaInvoices
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == company && (x.IrbmUuid == uuid || x.IrbmOriUuid == uuid))
+            .OrderByDescending(x => x.ModifiedDate)
+            .Select(x => new { x.InvNo, x.BranchCode })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (invoice is not null && !string.IsNullOrWhiteSpace(invoice.InvNo))
+        {
+            return new ResolvedSubmissionKey(
+                EInvoiceDocumentTypes.Invoice, invoice.InvNo, invoice.BranchCode);
+        }
+
+        var cdn = await db.SaCdns
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == company && (x.IrbmUuid == uuid || x.IrbmOriUuid == uuid))
+            .OrderByDescending(x => x.ModifiedDate)
+            .Select(x => new { x.Type, x.DocNo, x.BranchCode })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (cdn is not null && !string.IsNullOrWhiteSpace(cdn.DocNo))
+        {
+            // SaCdn.Type already holds the ERP family token (CN / DN).
+            return new ResolvedSubmissionKey(cdn.Type, cdn.DocNo, cdn.BranchCode);
+        }
+
+        return new ResolvedSubmissionKey(null, null, null);
+    }
+
     /// <summary>
     /// Trims, drops blanks and deduplicates case-insensitively while preserving the caller's order.
     /// The batch cap is applied AFTER this, so selecting the same invoice twice counts once.
@@ -905,13 +1552,13 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         if (keys.Count == 0)
         {
-            return SaEInvoiceBatchResult.Failed("Select at least one invoice.", SaEInvoiceErrorKind.Validation);
+            return SaEInvoiceBatchResult.Failed("Select at least one document.", SaEInvoiceErrorKind.Validation);
         }
 
-        if (keys.Count > SaInvoiceLimits.MaxEInvoiceBatchSelection)
+        if (keys.Count > SaEInvoiceLimits.MaxBatchSelection)
         {
             return SaEInvoiceBatchResult.Failed(
-                $"Select at most {SaInvoiceLimits.MaxEInvoiceBatchSelection} invoices per e-Invoice action.",
+                $"Select at most {SaEInvoiceLimits.MaxBatchSelection} documents per e-Invoice action.",
                 SaEInvoiceErrorKind.Validation);
         }
 
@@ -963,6 +1610,17 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             ErrorMessage = row.Result.Succeeded ? null : row.Result.ErrorMessage,
             RecoveryRequired = row.Result.RecoveryRequired
         };
+
+    /// <summary>
+    /// A candidate that was never attempted because the whole chunk was refused. Reported as failed, not
+    /// skipped, so a mid-run refusal cannot be mistaken for "this document was not a candidate".
+    /// </summary>
+    private static SaEInvoiceBatchItemResult FailedBatchItem(SaEInvoiceDocumentKey key, string reason) => new()
+    {
+        DocumentType = key.DocumentType,
+        DocumentNo = key.DocumentNo,
+        ErrorMessage = reason
+    };
 
     private static SaEInvoiceStatusView ToStatusView(
         SaEInvoiceDocumentKey key,
@@ -1093,6 +1751,108 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         return (scope, null);
     }
 
+    public async Task<SaEInvoiceDetailResult> GetDocumentDetailAsync(
+        string uuid,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(uuid))
+        {
+            return SaEInvoiceDetailResult.Fail(
+                "A MyInvois document UUID is required.",
+                SaEInvoiceErrorKind.Validation);
+        }
+
+        // Same company scope + credentials the TIN tools use: this is a company-scoped MyInvois read,
+        // not a branch-owned ERP document operation.
+        var scope = await AuthorizeTinToolsAsync(cancellationToken);
+        if (scope.Error is not null)
+        {
+            return SaEInvoiceDetailResult.Fail(scope.Error, SaEInvoiceErrorKind.Authorization);
+        }
+
+        GeneralResult<DocumentValidatation> result;
+        try
+        {
+            // The helper takes no CancellationToken (see EInvoiceOptions.RepairPersistenceTimeoutSeconds),
+            // so the token cannot abort the HTTP call itself - only the work around it.
+            result = await _helper.GetDocumentDetail(uuid.Trim());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Get Document Details failed for {Uuid}", uuid);
+            return SaEInvoiceDetailResult.Fail(
+                "MyInvois could not be reached to read this document's detail.",
+                SaEInvoiceErrorKind.MyInvois);
+        }
+
+        if (result is not { IsSuccess: true } || result.result is null)
+        {
+            return ClassifyDetailFailure(result);
+        }
+
+        // Read-only by construction: no ApplyStatusAsync, no AppendLogAsync, no SaveChangesAsync.
+        // Looking at why a document failed must never change its e-Invoice state.
+        return SaEInvoiceDetailResult.Ok(SaEInvoiceDetailMapper.Map(result.result));
+    }
+
+    /// <summary>
+    /// Turns a failed Get Document Details response into an operator-facing message.
+    ///
+    /// <para>
+    /// The substring matching is unavoidable and is a direct consequence of leaving
+    /// <c>ErpWeb.EInvoiceLib</c> untouched: <c>E_InvoiceRepository.getDocumentDetail</c> flattens the
+    /// response to <c>code + " " + details[0].message</c> (or just <c>code</c> when there are no
+    /// details) and never populates <c>GeneralResult.errorCode</c>. This method is the single place to
+    /// change if that is ever fixed.
+    /// </para>
+    /// </summary>
+    private static SaEInvoiceDetailResult ClassifyDetailFailure(GeneralResult<DocumentValidatation> result)
+    {
+        var message = result.error;
+        var errorCode = result.errorCode;
+
+        if (Mentions(message, errorCode, "notfound") || Mentions(message, errorCode, "not found"))
+        {
+            // MyInvois returns not-found when the caller is the receiver of a document that is still
+            // Submitted/Invalid, and for a UUID this deployment does not own.
+            return SaEInvoiceDetailResult.Fail(
+                "MyInvois has no detail for this document UUID. It may belong to another taxpayer, "
+                + "or the submission may not have been accepted.",
+                SaEInvoiceErrorKind.NotFound,
+                errorCode);
+        }
+
+        if (Mentions(message, errorCode, "toomanyrequests")
+            || Mentions(message, errorCode, "too many requests")
+            || IsBareCode(message, "429")
+            || IsBareCode(errorCode, "429"))
+        {
+            return SaEInvoiceDetailResult.Fail(
+                "MyInvois is throttling requests. Wait a moment, then open LHDN detail again.",
+                SaEInvoiceErrorKind.MyInvois,
+                errorCode);
+        }
+
+        return SaEInvoiceDetailResult.Fail(
+            string.IsNullOrWhiteSpace(message)
+                ? "MyInvois could not return this document's detail."
+                : message,
+            SaEInvoiceErrorKind.MyInvois,
+            errorCode);
+    }
+
+    private static bool Mentions(string? message, string? errorCode, string needle) =>
+        (message?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+        || (errorCode?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    /// <summary>
+    /// True when the value is exactly this code. Deliberately not a substring test: the collapsed
+    /// message can contain unrelated digits (amounts, document numbers), so "contains 429" would
+    /// misclassify a genuine failure as throttling.
+    /// </summary>
+    private static bool IsBareCode(string? value, string code) =>
+        string.Equals(value?.Trim(), code, StringComparison.OrdinalIgnoreCase);
+
     // ─────────────────────────────── Submit core ───────────────────────────────
 
     /// <summary>
@@ -1177,15 +1937,15 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
                 var status = EInvoiceStatuses.Normalize(loaded.Status);
 
-                // A sales invoice may only be sent once it is POSTED: the LHDN payload must describe a
-                // finalised document. The UI already gates this, but the service re-checks so another UI,
-                // a job or an API caller cannot bypass it. Placed BEFORE the SUBMITTING claim, so a refusal
-                // never reaches MyInvois and never locks the document.
+                // A sales invoice AND a credit/debit note may only be sent once it is POSTED: the LHDN
+                // payload must describe a finalised document. The UI already gates this, but the service
+                // re-checks so another UI, a job or an API caller cannot bypass it. Placed BEFORE the
+                // SUBMITTING claim, so a refusal never reaches MyInvois and never locks the document.
                 if (!IsSourceDocumentPosted(loaded))
                 {
                     row.Skipped = true;
                     row.Result = SaEInvoiceResult.Fail(key,
-                        $"Invoice {loaded.DocumentNo} must be POSTED before it can be sent to MyInvois.",
+                        $"{DocumentTypeLabel(key.DocumentType)} {loaded.DocumentNo} must be POSTED before it can be sent to MyInvois.",
                         SaEInvoiceErrorKind.StateRule,
                         status: status);
                     continue;
@@ -2074,11 +2834,14 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     })
                     .ToList();
 
-                // Buyer e-Invoice identity: live from the customer master while the document has not been
-                // sent, frozen on the document columns once a submission has claimed SUBMITTING. One read,
-                // so the payload and the frozen snapshot can never disagree.
+                // Buyer block. The ADDRESS and CONTACT always come from the customer master (D-1), so
+                // correcting the profile is enough to repair an INVALID submission. The IDENTITY keeps its
+                // live-vs-frozen rule: a frozen status is never actually submitted (it is blocked outright
+                // or is Recover-only), so the frozen columns stay a pure audit record of what was sent.
+                // ONE read of the master feeds both the identity and the address block.
                 BuyerIdentity? resolvedBuyer = null;
                 var frozenBuyer = EInvoiceStatuses.IsBuyerIdentityFrozen(state.Status, state.Outcome);
+                var profile = await LoadBuyerProfileAsync(db, invoice.CompanyCode, invoice.CustCode, cancellationToken);
                 BuyerIdentity buyer;
                 if (frozenBuyer)
                 {
@@ -2089,19 +2852,16 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                         invoice.InvEmail,
                         invoice.GstregNo);
                 }
+                else if (profile is null)
+                {
+                    errors["Buyer.Customer"] =
+                        $"Customer '{invoice.CustCode}' was not found, so its e-Invoice identity cannot be read.";
+                    buyer = new BuyerIdentity(null, null, null, null, null);
+                }
                 else
                 {
-                    resolvedBuyer = await LoadBuyerIdentityAsync(db, invoice.CompanyCode, invoice.CustCode, cancellationToken);
-                    if (resolvedBuyer is null)
-                    {
-                        errors["Buyer.Customer"] =
-                            $"Customer '{invoice.CustCode}' was not found, so its e-Invoice identity cannot be read.";
-                        buyer = new BuyerIdentity(null, null, null, null, null);
-                    }
-                    else
-                    {
-                        buyer = resolvedBuyer;
-                    }
+                    resolvedBuyer = ToBuyerIdentity(profile);
+                    buyer = resolvedBuyer;
                 }
 
                 // The readiness gate runs on the live master too: a legacy/free-text registration type has
@@ -2125,21 +2885,21 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     AmountExclTax = invoice.GrossAmnt,
                     TaxAmount = invoice.Taxes,
                     AmountIncTax = invoice.TotAmnt,
-                    CustomerName = invoice.InvName ?? invoice.CustName,
+                    CustomerName = profile?.Name,
                     CustomerTin = buyer.Tin,
                     CustomerRegNo = buyer.RegNo,
                     CustomerRegType = buyer.RegType,
                     CustomerSstNo = buyer.SstNo,
-                    CustomerAddr1 = invoice.InvAddress1,
-                    CustomerAddr2 = invoice.InvAddress2,
-                    CustomerAddr3 = invoice.InvAddress3,
-                    CustomerAddr4 = invoice.InvAddress4,
-                    CustomerCity = invoice.InvCity,
-                    CustomerState = invoice.InvState,
-                    CustomerPostalCode = invoice.InvPostalCode,
-                    CustomerCountry = invoice.InvCountry,
-                    CustomerPhone = invoice.InvTel,
-                    CustomerEmail = buyer.Email,
+                    CustomerAddr1 = profile?.Address1,
+                    CustomerAddr2 = profile?.Address2,
+                    CustomerAddr3 = profile?.Address3,
+                    CustomerAddr4 = profile?.Address4,
+                    CustomerCity = profile?.City,
+                    CustomerState = profile?.State,
+                    CustomerPostalCode = profile?.PostalCode,
+                    CustomerCountry = profile?.Country,
+                    CustomerPhone = profile?.Phone,
+                    CustomerEmail = profile?.Email,
                     Lines = lines
                 };
                 buyerIdentity = resolvedBuyer;
@@ -2193,6 +2953,21 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     })
                     .ToList();
 
+                // The note's buyer ADDRESS and CONTACT come from the customer master (D-1); its IDENTITY is
+                // the origin invoice's submitted values (D-2) because a note has to match the invoice it
+                // references at MyInvois. D-2a: a legacy origin that reached VALID with blank Buyer*
+                // columns would otherwise send a null buyer, so the master is used instead.
+                var profile = await LoadBuyerProfileAsync(db, cdn.CompanyCode, cdn.CustCode, cancellationToken);
+                var originIdentity = origin is null
+                    ? null
+                    : new BuyerIdentity(
+                        origin.BuyerTin,
+                        origin.BuyerBrn,
+                        origin.BuyerRegType,
+                        origin.InvEmail,
+                        origin.GstregNo);
+                var noteIdentity = ResolveNoteIdentity(originIdentity, profile);
+
                 source = new EInvoiceSourceDocument
                 {
                     DocumentType = documentType,
@@ -2205,21 +2980,21 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                     AmountExclTax = cdn.GrossAmnt,
                     TaxAmount = cdn.Taxes,
                     AmountIncTax = cdn.TotAmnt,
-                    CustomerName = cdn.CustName,
-                    CustomerTin = origin?.BuyerTin,
-                    CustomerRegNo = origin?.BuyerBrn,
-                    CustomerRegType = origin?.BuyerRegType,
-                    CustomerSstNo = origin?.GstregNo,
-                    CustomerAddr1 = cdn.InvAddress1,
-                    CustomerAddr2 = cdn.InvAddress2,
-                    CustomerAddr3 = cdn.InvAddress3,
-                    CustomerAddr4 = cdn.InvAddress4,
-                    CustomerCity = cdn.City,
-                    CustomerState = cdn.State,
-                    CustomerPostalCode = cdn.PostalCode,
-                    CustomerCountry = cdn.Country,
-                    CustomerPhone = cdn.Tel,
-                    CustomerEmail = origin?.InvEmail,
+                    CustomerName = profile?.Name ?? cdn.CustName,
+                    CustomerTin = noteIdentity?.Tin,
+                    CustomerRegNo = noteIdentity?.RegNo,
+                    CustomerRegType = noteIdentity?.RegType,
+                    CustomerSstNo = noteIdentity?.SstNo,
+                    CustomerAddr1 = profile?.Address1,
+                    CustomerAddr2 = profile?.Address2,
+                    CustomerAddr3 = profile?.Address3,
+                    CustomerAddr4 = profile?.Address4,
+                    CustomerCity = profile?.City,
+                    CustomerState = profile?.State,
+                    CustomerPostalCode = profile?.PostalCode,
+                    CustomerCountry = profile?.Country,
+                    CustomerPhone = profile?.Phone,
+                    CustomerEmail = profile?.Email,
                     Lines = lines
                 };
                 break;
@@ -2257,7 +3032,11 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     /// One read of the customer master for the e-Invoice buyer identity. Both the payload and (at the
     /// SUBMITTING claim) the frozen snapshot come from this single result.
     /// </summary>
-    private static async Task<BuyerIdentity?> LoadBuyerIdentityAsync(
+    /// <summary>
+    /// The resolved e-Invoice buyer block for a document's customer, or null when the master row is gone.
+    /// Both the identity and the billing address of a submitted document come from this one read.
+    /// </summary>
+    private static async Task<SaCustBuyerProfile?> LoadBuyerProfileAsync(
         AppDbContext db,
         string companyCode,
         string custCode,
@@ -2265,18 +3044,41 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         var customer = await db.SaCusts.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyCode == companyCode && x.CustCode == custCode, cancellationToken);
-        if (customer is null)
-        {
-            return null;
-        }
 
-        return new BuyerIdentity(
-            customer.TinNo,
-            customer.CustBrn,
-            EInvoiceRegistrationTypes.Normalize(customer.RegType) ?? customer.RegType,
-            string.IsNullOrWhiteSpace(customer.InvEmail) ? customer.Email : customer.InvEmail,
-            customer.GstregNo);
+        return customer is null ? null : SaCustBuyerProfileResolver.Resolve(customer);
     }
+
+    /// <summary>
+    /// The identity half of a resolved buyer block, normalised to the four canonical LHDN registration
+    /// types — the same shape the frozen columns hold, so a live read and a frozen read cannot diverge.
+    /// </summary>
+    private static BuyerIdentity ToBuyerIdentity(SaCustBuyerProfile profile) => new(
+        profile.Tin,
+        profile.RegNo,
+        EInvoiceRegistrationTypes.Normalize(profile.RegType) ?? profile.RegType,
+        profile.Email,
+        profile.SstNo);
+
+    /// <summary>
+    /// The buyer identity a credit/debit note should carry. D-2: the origin invoice's submitted values,
+    /// because the note must match the invoice it references. D-2a: fall back to the customer master when
+    /// the origin carries no frozen identity — a legacy invoice that reached VALID before the frozen
+    /// columns were populated — so the note is not refused with an unexplained missing buyer.
+    /// </summary>
+    private static BuyerIdentity? ResolveNoteIdentity(
+        BuyerIdentity? fromOrigin,
+        SaCustBuyerProfile? fromMaster) =>
+        fromOrigin is not null && !IsBlankIdentity(fromOrigin)
+            ? fromOrigin
+            : fromMaster is null ? null : ToBuyerIdentity(fromMaster);
+
+    /// <summary>True when a frozen identity holds nothing usable.</summary>
+    private static bool IsBlankIdentity(BuyerIdentity identity) =>
+        string.IsNullOrWhiteSpace(identity.Tin)
+        && string.IsNullOrWhiteSpace(identity.RegNo)
+        && string.IsNullOrWhiteSpace(identity.RegType)
+        && string.IsNullOrWhiteSpace(identity.Email)
+        && string.IsNullOrWhiteSpace(identity.SstNo);
 
     /// <summary>
     /// Writes the live customer identity onto the tracked document so the commit that claims
@@ -2310,9 +3112,14 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
     private static double? ResolveTaxPercent(IReadOnlyDictionary<string, decimal> lookup, string? taxGroupCode)
     {
+        // A blank tax group means "this line carries no tax", so the percentage is 0 - the counterpart of
+        // ResolveTaxType substituting the LHDN default (06, "Not Applicable") for the same input. Returning
+        // null here made EInvoiceValidator refuse the line with "Tax percentage cannot be negative", so an
+        // empty item tax still blocked the whole submission. An unknown (non-blank) code already resolved
+        // to 0, so this only removes the blank-code special case.
         if (string.IsNullOrWhiteSpace(taxGroupCode))
         {
-            return null;
+            return 0d;
         }
 
         return lookup.TryGetValue(taxGroupCode, out var percent) ? (double)percent : 0d;
@@ -2507,13 +3314,27 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     // ─────────────────────────────── Small helpers ───────────────────────────────
 
     /// <summary>
-    /// True when the loaded source document may be submitted. A sales invoice must be POSTED; a
-    /// credit/debit note keeps its existing rules (its origin invoice is validated separately), so
-    /// this only constrains the invoice family.
+    /// True when the loaded source document may be submitted: the LHDN payload must describe a
+    /// finalised document, so a sales invoice AND a credit/debit note must both be POSTED. The UI gates
+    /// this too, but the service re-checks so a job or an API caller cannot bypass it.
     /// </summary>
-    private static bool IsSourceDocumentPosted(EInvoiceDocumentState state) =>
-        state.Entity is not SaInvoice invoice
-        || string.Equals(invoice.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase);
+    private static bool IsSourceDocumentPosted(EInvoiceDocumentState state) => state.Entity switch
+    {
+        SaInvoice invoice =>
+            string.Equals(invoice.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase),
+        SaCdn cdn =>
+            string.Equals(cdn.Status, CdnStatuses.Posted, StringComparison.OrdinalIgnoreCase),
+        // Anything else (the not-yet-wired self-billed families) keeps its permissive default.
+        _ => true
+    };
+
+    /// <summary>The operator-facing noun for an e-Invoice document type, for refusal messages.</summary>
+    private static string DocumentTypeLabel(string? documentType) => documentType switch
+    {
+        EInvoiceDocumentTypes.CreditNote => "Credit note",
+        EInvoiceDocumentTypes.DebitNote => "Debit note",
+        _ => "Invoice"
+    };
 
     private bool IsStuck(EInvoiceDocumentState state)
     {
@@ -2671,6 +3492,14 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         /// <summary>Null until the row has been judged.</summary>
         public SaEInvoiceResult? Result { get; set; }
     }
+
+    /// <summary>One refresh-all candidate: enough to build a key and to explain a skip.</summary>
+    private sealed record RefreshCandidate(string DocumentNo, string? IrbmStatus, string? IrbmUuid);
+
+    /// <summary>Candidate-load outcome: either the candidates, or the refusal that replaced them.</summary>
+    private sealed record RefreshCandidateLoad(
+        IReadOnlyList<RefreshCandidate> Candidates,
+        SaEInvoiceBatchResult? Refused);
 
     /// <summary>A document that passed validation and holds a committed <c>SUBMITTING</c> claim.</summary>
     private sealed class BatchClaim

@@ -86,8 +86,7 @@ public partial class IvStockReturnList : PageBase, IDisposable
         new() { Caption = "Remarks", FieldName = nameof(IvStockReturnListRow.Remarks), VisibleIndex = 5 },
         new() { Caption = "Lines", FieldName = nameof(IvStockReturnListRow.LineCount), Width = "80px", VisibleIndex = 6 },
         new() { Caption = "Total", FieldName = nameof(IvStockReturnListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 7 },
-        new() { Caption = "Created", FieldName = nameof(IvStockReturnListRow.CreatedDate), DataType = "date", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "140px", VisibleIndex = 8 },
-        new() { Caption = "Created by", FieldName = nameof(IvStockReturnListRow.CreatedBy), Visible = false, VisibleIndex = 9 }
+        ..AuditColumns.For(startVisibleIndex: 8)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

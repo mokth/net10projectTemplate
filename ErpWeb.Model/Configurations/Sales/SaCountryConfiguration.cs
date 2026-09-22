@@ -15,5 +15,11 @@ public class SaCountryConfiguration : IEntityTypeConfiguration<SaCountry>
         builder.Property(e => e.CountryName).HasMaxLength(100);
         builder.Property(e => e.Latitude).HasColumnType("decimal(9,6)");
         builder.Property(e => e.Longitude).HasColumnType("decimal(9,6)");
+
+        // Audit columns follow the legacy naming shared by the rest of the sales masters.
+        builder.Property(e => e.CreatedDate).HasColumnName("Created");
+        builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(20);
+        builder.Property(e => e.ModifiedDate).HasColumnName("Updated");
+        builder.Property(e => e.ModifiedBy).HasColumnName("UpdatedUID").HasMaxLength(20);
     }
 }

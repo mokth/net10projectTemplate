@@ -1,0 +1,320 @@
+@page "/sales/einvoice/detail/{Uuid}"
+
+@inherits Components.Pages.PageBase
+
+@* Read-only MyInvois Get Document Details view. Everything goes through ISaEInvoiceService; nothing
+   on this page calls IE_InvoiceRepository / ISubmitDocumentHelper, and nothing here mutates ERP data.
+   Deliberately a click-through only: MyInvois directs that Get Document Details be used solely to read
+   invalid-document error details, so the page never polls and never auto-refreshes. *@
+
+<PageTitle>e-Invoice LHDN Detail</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCode">
+    <div class="iv-page">
+        @if (StatusMessage is not null)
+        {
+            <div class="iv-toast @(StatusIsError ? "iv-toast--err" : "iv-toast--ok")" role="alert">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-file-circle-exclamation"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · LHDN e-Invoice</p>
+                <h1 class="iv-title">LHDN Document Detail</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Read-only</span>
+                    <span class="iv-chip">Get Document Details</span>
+                    @if (Detail is not null)
+                    {
+                        <span class="eid-chip eid-chip--@StatusCss">@Detail.Status</span>
+                    }
+                    @if (Detail?.ValidationStatus is not null)
+                    {
+                        <span class="iv-chip">Validation: @Detail.ValidationStatus</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Validation issues</span>
+                <strong>@((Detail?.IssueCount ?? 0).ToString("N0"))</strong>
+            </div>
+        </header>
+
+        @if (IsBusy)
+        {
+            <section class="iv-card" aria-busy="true">
+                <div class="iv-skeleton">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            </section>
+        }
+        else if (Detail is not null)
+        {
+            <section class="iv-card">
+                <h2 class="iv-card__title">LHDN validation result</h2>
+
+                @if (!string.IsNullOrWhiteSpace(Detail.DocumentStatusReason))
+                {
+                    <p class="iv-field__label">@Detail.DocumentStatusReason</p>
+                }
+
+                @if (!Detail.HasIssues)
+                {
+                    @* Normal for SUBMITTED / VALID: validationResults is null or carries no error.
+                       Never render a synthetic error row here. *@
+                    <p class="eid-empty" role="status">No validation errors were returned by MyInvois.</p>
+                }
+                else
+                {
+                    @foreach (var step in Detail.Steps)
+                    {
+                        <div class="eid-step">
+                            <div class="eid-step__head">
+                                <span class="eid-step__name">@(step.Name ?? "Validation step")</span>
+                                @if (!string.IsNullOrWhiteSpace(step.Status))
+                                {
+                                    <span class="eid-chip eid-chip--@StepStatusCss(step.Status)">@step.Status</span>
+                                }
+                                <span class="eid-step__count">
+                                    @step.IssueCount @(step.IssueCount == 1 ? "issue" : "issues")
+                                </span>
+                            </div>
+
+                            @if (step.Issues.Count == 0)
+                            {
+                                <p class="eid-empty">No issues in this step.</p>
+                            }
+                            else
+                            {
+                                <table class="eid-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Property</th>
+                                            <th scope="col">Code</th>
+                                            <th scope="col">Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var issue in step.Issues)
+                                        {
+                                            <tr>
+                                                <td class="eid-table__prop">
+                                                    @if (!string.IsNullOrWhiteSpace(issue.PropertyName))
+                                                    {
+                                                        <span class="eid-prop">@issue.PropertyName</span>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(issue.PropertyPath))
+                                                    {
+                                                        <code class="eid-mono">@issue.PropertyPath</code>
+                                                    }
+                                                    @if (string.IsNullOrWhiteSpace(issue.PropertyName)
+                                                         && string.IsNullOrWhiteSpace(issue.PropertyPath))
+                                                    {
+                                                        <span class="eid-empty">—</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (!string.IsNullOrWhiteSpace(issue.ErrorCode))
+                                                    {
+                                                        <span class="eid-code">@issue.ErrorCode</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="eid-empty">—</span>
+                                                    }
+                                                </td>
+                                                <td class="eid-table__msg">
+                                                    @if (!string.IsNullOrWhiteSpace(issue.Error))
+                                                    {
+                                                        <p class="eid-msg">@issue.Error</p>
+                                                    }
+
+                                                    @* ErrorMs is the Malay translation of Error, never
+                                                       milliseconds. Kept available but collapsed so the
+                                                       English message stays the primary reading. *@
+                                                    @if (!string.IsNullOrWhiteSpace(issue.ErrorMs))
+                                                    {
+                                                        <details class="eid-ms">
+                                                            <summary>Bahasa Melayu</summary>
+                                                            <p>@issue.ErrorMs</p>
+                                                        </details>
+                                                    }
+
+                                                    @if (!string.IsNullOrWhiteSpace(issue.MetaData))
+                                                    {
+                                                        <p class="eid-meta">@issue.MetaData</p>
+                                                    }
+
+                                                    @* The actionable cause usually lives here: a failing
+                                                       step can carry only a summary while the per-field
+                                                       issue is nested. *@
+                                                    @if (issue.InnerErrors.Count > 0)
+                                                    {
+                                                        <ul class="eid-inner">
+                                                            @foreach (var inner in issue.InnerErrors)
+                                                            {
+                                                                <li>
+                                                                    @if (!string.IsNullOrWhiteSpace(inner.PropertyPath))
+                                                                    {
+                                                                        <code class="eid-mono">@inner.PropertyPath</code>
+                                                                    }
+                                                                    @if (!string.IsNullOrWhiteSpace(inner.ErrorCode))
+                                                                    {
+                                                                        <span class="eid-code">@inner.ErrorCode</span>
+                                                                    }
+                                                                    @if (!string.IsNullOrWhiteSpace(inner.Error))
+                                                                    {
+                                                                        <span class="eid-inner__msg">@inner.Error</span>
+                                                                    }
+                                                                    @if (!string.IsNullOrWhiteSpace(inner.ErrorMs))
+                                                                    {
+                                                                        <details class="eid-ms">
+                                                                            <summary>Bahasa Melayu</summary>
+                                                                            <p>@inner.ErrorMs</p>
+                                                                        </details>
+                                                                    }
+                                                                </li>
+                                                            }
+                                                        </ul>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        </div>
+                    }
+                }
+            </section>
+
+            <section class="iv-card">
+                <h2 class="iv-card__title">Document</h2>
+                <div class="iv-detail-grid">
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">MyInvois UUID</span>
+                        <span class="iv-detail-row__value"><code class="eid-mono">@Detail.Uuid</code></span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Submission UID</span>
+                        <span class="iv-detail-row__value">
+                            @if (!string.IsNullOrWhiteSpace(Detail.SubmissionUid))
+                            {
+                                <code class="eid-mono">@Detail.SubmissionUid</code>
+                            }
+                            else
+                            {
+                                <span class="eid-empty">—</span>
+                            }
+                        </span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Long ID</span>
+                        <span class="iv-detail-row__value">
+                            @if (!string.IsNullOrWhiteSpace(Detail.LongId))
+                            {
+                                <code class="eid-mono">@Detail.LongId</code>
+                            }
+                            else
+                            {
+                                @* MyInvois returns longId only for valid documents, so this being
+                                   blank is expected for an INVALID document. *@
+                                <span class="eid-empty">Not provided (only valid documents have a long id)</span>
+                            }
+                        </span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Internal ID</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.InternalId)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Document type</span>
+                        <span class="iv-detail-row__value">
+                            @OrDash(Detail.TypeName) @(string.IsNullOrWhiteSpace(Detail.TypeVersionName) ? string.Empty : $"({Detail.TypeVersionName})")
+                        </span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">MyInvois status</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.MyInvoisStatus)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Issuer</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.IssuerName) (@OrDash(Detail.IssuerTin))</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Receiver</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.ReceiverName) (@OrDash(Detail.ReceiverId))</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Issued (UTC)</span>
+                        <span class="iv-detail-row__value">@Format(Detail.DateTimeIssued)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Received (UTC)</span>
+                        <span class="iv-detail-row__value">@Format(Detail.DateTimeReceived)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Validated (UTC)</span>
+                        <span class="iv-detail-row__value">@Format(Detail.DateTimeValidated)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Cancelled (UTC)</span>
+                        <span class="iv-detail-row__value">@Format(Detail.CancelDateTime)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Rejection requested (UTC)</span>
+                        <span class="iv-detail-row__value">@Format(Detail.RejectRequestDateTime)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Total excluding tax</span>
+                        <span class="iv-detail-row__value">@Format(Detail.TotalExcludingTax)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Total discount</span>
+                        <span class="iv-detail-row__value">@Format(Detail.TotalDiscount)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Total net amount</span>
+                        <span class="iv-detail-row__value">@Format(Detail.TotalNetAmount)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Total payable</span>
+                        <span class="iv-detail-row__value">@Format(Detail.TotalPayableAmount)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Status reason</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.DocumentStatusReason)</span>
+                    </div>
+                    <div class="iv-detail-row">
+                        <span class="iv-detail-row__label">Created by</span>
+                        <span class="iv-detail-row__value">@OrDash(Detail.CreatedByUserId)</span>
+                    </div>
+                </div>
+            </section>
+
+            <div class="eid-actions">
+                @* Explicit operator action only - no timer, no auto re-read. See the throttling note in
+                   ISaEInvoiceService.GetDocumentDetailAsync. *@
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Reload from LHDN"
+                          IconCssClass="fa-solid fa-arrows-rotate"
+                          Click="@OnReloadAsync"
+                          Enabled="@(!IsBusy)" />
+            </div>
+        }
+        else if (StatusMessage is null)
+        {
+            <section class="iv-card">
+                <p class="eid-empty" role="status">Nothing to display.</p>
+            </section>
+        }
+    </div>
+</MenuAuthorize>

@@ -51,7 +51,8 @@ public partial class SaPaymentTermList : SaCodeRefListPageBase<SaPaymentTermList
             DataType = "bool",
             VisibleIndex = 4,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

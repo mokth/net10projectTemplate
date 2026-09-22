@@ -135,7 +135,8 @@ public partial class SaDisGroupItemList : SaRefListPageBase<SaDisGroupItemListRo
             DataType = "string",
             VisibleIndex = 12,
             Width = "110px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 13)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

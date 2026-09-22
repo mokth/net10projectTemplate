@@ -1,4 +1,6 @@
 using ErpWeb.Core.EInvoice;
+using ErpWeb.EInvoiceLib.GenerateDoc;
+using ErpWeb.EInvoiceLib.Model.InputData;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
@@ -237,6 +239,83 @@ public class SaEInvoiceLhdnCodeResolutionTests
         Assert.Null(mapped.Header.Customer.PhoneNo);
     }
 
+    // ───────────── Blank item tax must not block the e-Invoice submission ─────────────
+
+    /// <summary>
+    /// A blank line tax type must not refuse the submission. The residual hard rule that used to do so
+    /// was removed because <c>SaEInvoiceService.ResolveTaxType</c> - and again
+    /// <c>EInvoiceDocumentMapper</c> - already substitute the LHDN default (06). All three blank forms are
+    /// covered, because the resolver tests <c>IsNullOrWhiteSpace</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Validator_accepts_every_blank_form_of_line_tax(string? taxType)
+    {
+        var report = new EInvoiceValidator().Validate(
+            SourceWithCodes(uom: "C62", taxType: taxType, customerPhone: "0398765432"), Supplier());
+
+        Assert.True(report.IsValid, report.Summary());
+        Assert.DoesNotContain("Line1.TaxType", report.Errors.Keys);
+    }
+
+    /// <summary>
+    /// Removing the tax rule must not weaken line validation generally: a blank classification still
+    /// refuses the document, and it does so under its own key.
+    /// </summary>
+    [Fact]
+    public void Validator_still_requires_classification_when_the_tax_is_blank()
+    {
+        var report = new EInvoiceValidator().Validate(
+            SourceWithCodes(uom: "C62", taxType: null, classification: null), Supplier());
+        Assert.False(report.IsValid);
+        Assert.True(report.Errors.ContainsKey("Line1.Classification"), report.Summary());
+        Assert.DoesNotContain("Line1.TaxType", report.Errors.Keys);
+    }
+
+    [Fact]
+    public async Task Invoice_with_a_blank_line_tax_group_submits_with_tax_type_06()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        var invoice = await host.SeedInvoiceAsync();
+        // Blank ONLY the tax: the classification has to stay valid, because that rule is untouched.
+        await BlankInvoiceLineTaxAsync(host, invoice.InvNo);
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        var header = Assert.Single(host.Helper.Submitted);
+        Assert.Equal(LhdnDefaults.TaxType, Assert.Single(header.documentDetails).TaxType);
+        Assert.Equal(LhdnDefaults.TaxType, GeneratedLineTaxCode(header));
+
+        // The document-level subtotal comes from the library's OWN zero-tax branch, which also writes 06,
+        // so both halves of the document agree on the code.
+        var headerSubtotal = Assert.Single(
+            Assert.Single(GenerateDocHelper.getHeaderTaxTotal(header)).TaxSubtotal);
+        var headerIds = Assert.Single(headerSubtotal.TaxCategory).ID;
+        Assert.Equal(LhdnDefaults.TaxType, Assert.Single(headerIds)._);
+    }
+
+    [Fact]
+    public async Task Credit_note_with_a_blank_line_tax_group_submits_with_tax_type_06()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        var cdn = await host.SeedCreditNoteAsync();
+        await BlankCdnLineTaxAsync(host, cdn.DocNo);
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.CdnKey());
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        var header = Assert.Single(host.Helper.Submitted);
+        Assert.Equal(LhdnDefaults.TaxType, Assert.Single(header.documentDetails).TaxType);
+        Assert.Equal(LhdnDefaults.TaxType, GeneratedLineTaxCode(header));
+    }
+
     // ─────────────────────────────── Helpers ───────────────────────────────
 
     private static async Task SeedUomAsync(EInvoiceTestHost host, string uomCode, string? uneceUom)
@@ -268,10 +347,57 @@ public class SaEInvoiceLhdnCodeResolutionTests
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Blanks ONLY the line's tax on a seeded invoice, keeping the document self-consistent (the header
+    /// tax and total move with it) so nothing but the tax rule is under test.
+    /// </summary>
+    private static async Task BlankInvoiceLineTaxAsync(EInvoiceTestHost host, string invNo)
+    {
+        await using var db = await host.Factory.CreateDbContextAsync();
+        var invoice = await db.SaInvoices
+            .Include(x => x.Details)
+            .FirstAsync(x => x.CompanyCode == EInvoiceTestHost.Company && x.InvNo == invNo);
+        var line = Assert.Single(invoice.Details);
+        line.TaxGrCode = null;
+        line.TaxAmt = 0m;
+        invoice.Taxes = 0m;
+        invoice.TotAmnt = invoice.GrossAmnt;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The credit-note counterpart of <see cref="BlankInvoiceLineTaxAsync"/>.</summary>
+    private static async Task BlankCdnLineTaxAsync(EInvoiceTestHost host, string docNo)
+    {
+        await using var db = await host.Factory.CreateDbContextAsync();
+        var cdn = await db.SaCdns
+            .Include(x => x.Details)
+            .FirstAsync(x => x.CompanyCode == EInvoiceTestHost.Company && x.DocNo == docNo);
+        var line = Assert.Single(cdn.Details);
+        line.TaxGroup = null;
+        line.TaxAmt = 0m;
+        cdn.Taxes = 0m;
+        cdn.TotAmnt = cdn.GrossAmnt;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The tax code the library's OWN generator puts on the wire - <c>TaxCategory/ID</c> on the generated
+    /// invoice line. Asserting this, rather than only the ERP-side <c>TaxType</c>, is what proves the
+    /// payload cannot carry an empty tax code.
+    /// </summary>
+    private static string? GeneratedLineTaxCode(DocumentHeader header)
+    {
+        var line = Assert.Single(GenerateDocHelper.getInvoiceLine(header));
+        var subtotal = Assert.Single(Assert.Single(line.TaxTotal).TaxSubtotal);
+        var ids = Assert.Single(subtotal.TaxCategory).ID;
+        return Assert.Single(ids)._;
+    }
+
     private static EInvoiceSourceDocument SourceWithCodes(
         string? uom,
         string? taxType,
-        string? customerPhone = null) => new()
+        string? customerPhone = null,
+        string? classification = "022") => new()
     {
         DocumentType = EInvoiceDocumentTypes.Invoice,
         DocumentNo = "INV-1",
@@ -305,7 +431,7 @@ public class SaEInvoiceLhdnCodeResolutionTests
                 TaxAmount = 8m,
                 TaxType = taxType,
                 TaxPercent = 8d,
-                ClassificationCode = "022"
+                ClassificationCode = classification
             }
         ]
     };

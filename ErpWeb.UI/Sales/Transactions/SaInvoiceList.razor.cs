@@ -6,9 +6,11 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Repositories.Sales;
+using ErpWeb.UI.Components.Common;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 using Timer = System.Timers.Timer;
 
 namespace ErpWeb.UI.Sales.Transactions;
@@ -18,11 +20,15 @@ public partial class SaInvoiceList : PageBase, IDisposable
     [Inject] private ISaInvoiceService Invoices { get; set; } = default!;
     [Inject] private ISaEInvoiceService EInvoices { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
+    [Inject] private IJSRuntime JsRuntime { get; set; } = default!;
 
     private DxGrid? _grid;
     private Timer? _searchDebounce;
     private int _searchVersion;
     private readonly List<SaInvoiceListRow> _selectedRows = [];
+
+    /// <summary>Token for the running refresh-all run, so Stop can interrupt it between chunks.</summary>
+    private CancellationTokenSource? _einvCts;
 
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
@@ -42,6 +48,13 @@ public partial class SaInvoiceList : PageBase, IDisposable
     protected bool CanCancelEInv;
 
     /// <summary>
+    /// ACCESS on the read-only LHDN inquiry menu, which is also what gates
+    /// <c>ISaEInvoiceService.GetDocumentDetailAsync</c>. Checked here so the row action is never
+    /// offered to an operator the service would refuse.
+    /// </summary>
+    protected bool CanAccessEInvoiceTin;
+
+    /// <summary>
     /// True while a batch e-Invoice action is running. The three e-Invoice toolbar buttons and the
     /// confirm action are disabled so a double click cannot fire two batches.
     /// </summary>
@@ -49,6 +62,12 @@ public partial class SaInvoiceList : PageBase, IDisposable
 
     /// <summary>Shared reason for a batch cancellation; required and limited to 300 characters by MyInvois.</summary>
     protected string EInvoiceCancelReason = string.Empty;
+
+    /// <summary>
+    /// Progress of the running refresh-all run, e.g. "Refreshing e-Invoice status… 12 of 43 completed".
+    /// Null when no run is active, which is also what hides the progress strip.
+    /// </summary>
+    protected string? EInvoiceProgress;
 
     protected bool EInvoiceResultsVisible;
     protected string EInvoiceResultsTitle = string.Empty;
@@ -119,9 +138,12 @@ public partial class SaInvoiceList : PageBase, IDisposable
         new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 6 },
         new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 7 },
         new() { Caption="E-UUID"   , FieldName=nameof(SaInvoiceListRow.IrbmUuid)     ,DataType="link",VisibleIndex=8},
-        new()  { Caption="E-Status"     , FieldName=nameof(SaInvoiceListRow.IrbmStatus)        ,DataType="string",VisibleIndex=8 },
+        // VisibleIndex 9, not 8: two columns may not share an index, and the UUID link needs a
+        // deterministic position for its click target.
+        new()  { Caption="E-Status"     , FieldName=nameof(SaInvoiceListRow.IrbmStatus)        ,DataType="string",VisibleIndex=9 },
 
-        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 10 }
+        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 10 },
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -137,6 +159,7 @@ public partial class SaInvoiceList : PageBase, IDisposable
         CanRollback = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Rollback);
         CanSubmitEInv = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Submit);
         CanCancelEInv = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Cancel);
+        CanAccessEInvoiceTin = await AccessRights.CanAccessAsync(MenuCodes.SalesEInvoiceTin);
         Buttons =
         [
             new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
@@ -144,13 +167,14 @@ public partial class SaInvoiceList : PageBase, IDisposable
             new() { Text = "ROLLBACK", IConClass = "fas fa-rotate-left", Style = "warning", Enabled = CanRollback },
             new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete },
             new() { Text = "SUBMIT", IConClass = "fas fa-paper-plane", Style = "primary", Enabled = CanSubmitEInv, ToolTip = "Submit the selected invoices to MyInvois" },
-            new() { Text = "E-STATUS", IConClass = "fas fa-arrows-rotate", Style = "primary", Enabled = CanSubmitEInv, ToolTip = "Refresh the MyInvois status of the selected invoices" },
+            new() { Text = "E-STATUS", IConClass = "fas fa-arrows-rotate", Style = "primary", Enabled = CanSubmitEInv, ToolTip = "Refresh the MyInvois status of the selected invoices; with nothing selected, every submitted invoice in this branch" },
             new() { Text = "CANCEL", IConClass = "fas fa-ban", Style = "danger", Enabled = CanCancelEInv, ToolTip = "Cancel the selected e-Invoices at MyInvois" }
         ];
         ActionButtons =
         [
             new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View invoice" },
-            new() { Text = "EDIT", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit invoice", Enabled = CanEdit }
+            new() { Text = "EDIT", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit invoice", Enabled = CanEdit },
+            new() { Text = "LHDN", IConClass = "fa-solid fa-triangle-exclamation", Style = "primary", ToolTip = "View the LHDN validation detail (INVALID documents only)", Enabled = CanAccessEInvoiceTin }
         ];
         SyncDataSourceFilters();
         await RefreshCompactPreviewAsync();
@@ -219,6 +243,20 @@ public partial class SaInvoiceList : PageBase, IDisposable
             }
 
             Navigation.NavigateTo($"/sales/invoices/edit/{info.SelectedRow.InvNo}");
+        }
+        else if (mode == "LHDN")
+        {
+            // The gate lives in EInvoiceDetailLink: INVALID-only, because MyInvois directs that Get
+            // Document Details be used for invalid-document error details only.
+            var (url, error) = EInvoiceDetailLink.Resolve(
+                info.SelectedRow.IrbmStatus, info.SelectedRow.IrbmUuid, CanAccessEInvoiceTin);
+            if (url is null)
+            {
+                ErrorMessage = error;
+                return Task.CompletedTask;
+            }
+
+            Navigation.NavigateTo(url);
         }
 
         return Task.CompletedTask;
@@ -354,18 +392,69 @@ public partial class SaInvoiceList : PageBase, IDisposable
     {
         _searchDebounce?.Stop();
         _searchDebounce?.Dispose();
+
+        // A refresh-all run must not outlive the component: Cancel makes the service stop at the next
+        // chunk boundary instead of continuing to call MyInvois for an unrendered page.
+        _einvCts?.Cancel();
+        _einvCts?.Dispose();
     }
 
+    /// <summary>
+    /// Click on the grid's E-UUID cell. The shared rules live in
+    /// <see cref="EInvoicePortalLinkOpener"/>, so the CN/DN and self-billed list screens reuse them
+    /// verbatim instead of repeating the logic.
+    ///
+    /// <para>
+    /// An <b>INVALID</b> document opens the LHDN detail page
+    /// (<see cref="EInvoicePortalLinkOpener.HandleUuidClickAsync"/>) instead of the portal: MyInvois only
+    /// returns the failure reason through Get Document Details, and an INVALID document has no long id to
+    /// build a portal link from. Every other status opens the LHDN portal and, behind it, repairs the
+    /// e-Invoice submission history: the document is re-read from MyInvois and its
+    /// <c>dbo.EInvDocSubmission</c> row is created when it was never written, or refreshed when LHDN has
+    /// moved on.
+    /// </para>
+    /// </summary>
     protected async Task onSelectColHandle(SelectedColumnInfo info)
     {
-
-        if (info != null)
+        if (!EInvoicePortalLinkOpener.IsUuidColumn(info))
         {
-            if (info.Fieldname == nameof(SaInvoiceListRow.IrbmUuid))
-            {
-                string uuid = info.Value;
+            return;
+        }
 
-            }
+        // The grid sets Context to the row item, so the status is available without another round trip.
+        var row = info.Context as SaInvoiceListRow;
+
+        var outcome = await EInvoicePortalLinkOpener.HandleUuidClickAsync(
+            EInvoices, JsRuntime, info, row?.IrbmStatus, CanAccessEInvoiceTin);
+
+        if (outcome.NavigateUrl is not null)
+        {
+            Navigation.NavigateTo(outcome.NavigateUrl);
+            return;
+        }
+
+        if (outcome.Message is not null)
+        {
+            ErrorMessage = outcome.Message;
+            return;
+        }
+
+        var result = outcome.Portal!;
+        if (result.Opened)
+        {
+            ErrorMessage = null;
+            StatusMessage = result.Message;
+        }
+        else
+        {
+            ErrorMessage = result.Message;
+        }
+
+        // The repair commits through its own DbContext, so this page's rows are stale once it writes:
+        // reload so E-Inv / E-Status show what it just recorded.
+        if (result.StateChanged)
+        {
+            await ReloadGridAsync();
         }
     }
 
@@ -452,6 +541,15 @@ public partial class SaInvoiceList : PageBase, IDisposable
         var rows = DistinctSelectedRows();
         if (rows.Count == 0)
         {
+            // Nothing selected + E-STATUS is the "refresh everything I can see" mode (the legacy
+            // GetEStatus behaviour). SUBMIT and CANCEL stay selection-only: they are write actions and
+            // must never run over the whole list.
+            if (action == EInvStatusAction)
+            {
+                await BeginRefreshAllAsync();
+                return;
+            }
+
             StatusMessage = "No Record Selected!";
             return;
         }
@@ -565,6 +663,87 @@ public partial class SaInvoiceList : PageBase, IDisposable
             SetEInvoiceButtonsEnabled(true);
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    /// <summary>
+    /// The no-selection E-STATUS mode: refresh every <c>SUBMITTED</c> invoice the grid is currently
+    /// showing. The scope is the grid's OWN query (<see cref="DataSource"/>.<c>CurrentQuery</c>), so
+    /// what gets refreshed is exactly what the operator can see; the service decides the run cap before
+    /// it makes any MyInvois call.
+    ///
+    /// <para>
+    /// Unlike <see cref="ExecuteEInvoiceBatchAsync"/> there is no confirmation popup: a refresh is
+    /// read-only, so the only thing worth showing is progress and a way out of a long run.
+    /// </para>
+    /// </summary>
+    private async Task BeginRefreshAllAsync()
+    {
+        using var blocking = BeginBlockingWork("Please wait. The e-Invoice status refresh is still running.");
+        IsSubmitting = true;
+        IsEInvoiceBusy = true;
+        SetEInvoiceButtonsEnabled(false);
+        ErrorMessage = null;
+        StatusMessage = null;
+        EInvoiceProgress = null;
+        _einvCts?.Dispose();
+        _einvCts = new CancellationTokenSource();
+        try
+        {
+            var progress = new Progress<SaEInvoiceRefreshProgress>(p =>
+            {
+                EInvoiceProgress = $"Refreshing e-Invoice status… {p.Done} of {p.Total} completed";
+                _ = InvokeAsync(StateHasChanged);
+            });
+
+            var result = await EInvoices.RefreshSubmittedAsync(DataSource.CurrentQuery, progress, _einvCts.Token);
+
+            if (result.Refused)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            if (result.Items.Count == 0)
+            {
+                StatusMessage = "No submitted invoice found...";
+                return;
+            }
+
+            EInvoiceResults = result.Items.ToList();
+            EInvoiceResultsTitle = "MyInvois status refresh";
+            EInvoiceResultsVisible = true;
+            StatusMessage = $"{EInvoiceResultsTitle}: {result.SucceededCount} succeeded, "
+                            + $"{result.FailedCount} failed, {result.SkippedCount} skipped.";
+
+            await ReloadGridAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            EInvoiceProgress = null;
+            IsEInvoiceBusy = false;
+            IsSubmitting = false;
+            SetEInvoiceButtonsEnabled(true);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// Stops a refresh-all run at the next chunk boundary. The in-flight chunk finishes and every result
+    /// already produced is kept, so a Stop never discards work that has actually been done.
+    /// </summary>
+    protected void StopEInvoiceRefresh()
+    {
+        if (_einvCts is null || _einvCts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _einvCts.Cancel();
+        EInvoiceProgress = "Stopping…";
     }
 
     /// <summary>

@@ -25,6 +25,13 @@
     <ProjectReference Include="..\ErpWeb.Core\ErpWeb.Core.csproj" />
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
+    <!--
+      ErpWeb.UI is referenced ONLY so the shared page helpers (EInvoicePortalLinkOpener) can be tested.
+      It is a plain net10.0 Razor class library, so this adds no runtime dependency to the suite. Note
+      that a green suite still does NOT prove a .razor page renders: keep building ErpWeb.slnx after
+      touching ErpWeb.UI.
+    -->
+    <ProjectReference Include="..\ErpWeb.UI\ErpWeb.UI.csproj" />
   </ItemGroup>
 
 </Project>

@@ -82,7 +82,8 @@ public partial class AdSmNumList : AdSmNumListPageBase<AdSmNumListRow, string>
             FieldName = nameof(AdSmNumListRow.NumDes),
             DataType = "string",
             VisibleIndex = 5
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 6)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

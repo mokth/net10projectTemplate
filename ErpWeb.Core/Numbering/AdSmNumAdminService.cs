@@ -900,7 +900,11 @@ WHERE CompanyCode = {company} AND BranchCode = {branch} AND NumCd = {numCd} AND 
         Prefix = x.Prefix,
         TotLength = x.TotLength,
         Seq = x.Seq,
-        NumDes = x.NumDes
+        NumDes = x.NumDes,
+        CreatedDate = x.Created,
+        CreatedBy = x.UserID,
+        ModifiedDate = x.Updated,
+        ModifiedBy = x.UpdatedUID
     };
 
     private static AdSmNumEditVm MapContinuousEdit(AdSmNum x) => new()
@@ -925,7 +929,11 @@ WHERE CompanyCode = {company} AND BranchCode = {branch} AND NumCd = {numCd} AND 
         NumberingDelimeter = x.NumberingDelimeter,
         NumberingFormat = x.NumberingFormat,
         NumDes = x.NumDes,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.Created,
+        CreatedBy = x.UserID,
+        ModifiedDate = x.Updated,
+        ModifiedBy = null
     };
 
     private static AdSmNumDateEditVm MapPeriodEdit(AdSmNumDate x) => new()

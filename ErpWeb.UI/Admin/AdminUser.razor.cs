@@ -38,7 +38,7 @@ public partial class AdminUser : PageBase
     [
         new()
         {
-            Caption = "User ID",
+            Caption = "Login ID",
             FieldName = nameof(UserLogin.id),
             DataType = "string",
             SortIndex = 0,
@@ -95,37 +95,35 @@ public partial class AdminUser : PageBase
         },
         new()
         {
-            Caption = "Created By",
-            FieldName = nameof(UserLogin.UserID),
-            DataType = "string",
-            VisibleIndex = 8,
-            Width = "100px"
-        },
-        new()
-        {
-            Caption = "Created On",
+            Caption = AuditColumns.CreatedCaption,
             FieldName = nameof(UserLogin.Created),
             DataType = "datetime",
-            VisibleIndex = 9,
-            Visible = false,
-            Width = "100px"
+            VisibleIndex = 8,
+            Width = "140px"
         },
         new()
         {
-            Caption = "Update By",
-            FieldName = nameof(UserLogin.UpdatedUID),
+            Caption = AuditColumns.CreatedByCaption,
+            FieldName = nameof(UserLogin.UserID),
             DataType = "string",
-            VisibleIndex = 10,
-            Width = "100px"
+            VisibleIndex = 9,
+            Width = "110px"
         },
         new()
         {
-            Caption = "Update On",
+            Caption = AuditColumns.ModifiedCaption,
             FieldName = nameof(UserLogin.Updated),
             DataType = "datetime",
+            VisibleIndex = 10,
+            Width = "140px"
+        },
+        new()
+        {
+            Caption = AuditColumns.ModifiedByCaption,
+            FieldName = nameof(UserLogin.UpdatedUID),
+            DataType = "string",
             VisibleIndex = 11,
-            Visible = false,
-            Width = "100px"
+            Width = "110px"
         }
     ];
 

@@ -99,7 +99,8 @@ public partial class SaCustPriceGroupList : SaRefListPageBase<IvCustPriceGroupLi
             DataType = "boolean",
             VisibleIndex = 4,
             Width = "90px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
     protected override async Task OnPageInitializedAsync()

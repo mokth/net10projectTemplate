@@ -62,7 +62,8 @@ public partial class SaShippingLeadTimeList : SaRefListPageBase<SaShippingLeadTi
             DataType = "bool",
             VisibleIndex = 5,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 6)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

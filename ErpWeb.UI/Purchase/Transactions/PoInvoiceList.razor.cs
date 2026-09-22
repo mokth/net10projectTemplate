@@ -83,7 +83,8 @@ public partial class PoInvoiceList : PageBase, IDisposable
         new() { Caption = "Name", FieldName = nameof(PoInvoiceListRow.VendorName), VisibleIndex = 6 },
         new() { Caption = "Inv Ref", FieldName = nameof(PoInvoiceListRow.InvNo), Width = "130px", VisibleIndex = 7 },
         new() { Caption = "Total", FieldName = nameof(PoInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 8 },
-        new() { Caption = "Lines", FieldName = nameof(PoInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 9 }
+        new() { Caption = "Lines", FieldName = nameof(PoInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 9 },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

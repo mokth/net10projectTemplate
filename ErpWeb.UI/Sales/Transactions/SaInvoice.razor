@@ -275,13 +275,13 @@
                                         <DxTextBox @bind-Text="@InvFax" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="TIN or BRN" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="TIN" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@BuyerTin" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                         @FieldError("BuyerTin")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="BRN" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="Reg. no." ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@BuyerBrn" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                     </Template>
@@ -605,17 +605,17 @@
                                         Enabled="@CanEditDocument" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Qty" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
                         <Template>
                             <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Pack" ColSpanMd="4">
                         <Template>
                             <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                         <Template>
                             @* Phase 4: an operator without PRICE_OVERRIDE sees the resolved price read-only. *@
                             <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@(CanEditDocument && CanOverridePrice)" />
@@ -623,7 +623,7 @@
                     </DxFormLayoutItem>
                     @if (IsPriceOverridden())
                     {
-                        <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
                             <Template>
                                 <DxTextBox @bind-Text="@Popup.OverrideReason"
                                            maxlength="100"

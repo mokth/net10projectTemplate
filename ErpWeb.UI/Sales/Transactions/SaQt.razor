@@ -672,7 +672,7 @@
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                             <Template>
                                 @* Plan Phase 4: the price is editable only with PRICE_OVERRIDE. Locked rather than
                                    hidden, so an operator without the right still SEES the resolved price. *@
@@ -681,7 +681,7 @@
                         </DxFormLayoutItem>
                         @if (!string.IsNullOrWhiteSpace(_priceHint))
                         {
-                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="" ColSpanMd="8">
                                 <Template>
                                     <p class="sdoc-field-hint">Price source: @_priceHint</p>
                                 </Template>
@@ -689,7 +689,7 @@
                         }
                         @if (IsPriceOverridden())
                         {
-                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="" ColSpanMd="12" BeginRow="true">
                                 <Template>
                                     <p class="sdoc-field-hint">
                                         Overriding the resolved price of @((Popup.OriginalUnitPrice ?? Popup.UnitPrice).ToString("n4")) — a reason is required.

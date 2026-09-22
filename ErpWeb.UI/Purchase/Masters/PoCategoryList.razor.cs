@@ -20,7 +20,8 @@ public partial class PoCategoryList : PoRefListPageBase<PoCategoryListRow, PoCat
     [
         new() { Caption = "Code", FieldName = nameof(PoCategoryListRow.Code), DataType = "string", SortIndex = 0, SortOrder = GridColumnSortOrder.Ascending, VisibleIndex = 1, Width = "120px" },
         new() { Caption = "Description", FieldName = nameof(PoCategoryListRow.Description), DataType = "string", VisibleIndex = 2 },
-        new() { Caption = "Active", FieldName = nameof(PoCategoryListRow.IsActive), DataType = "bool", VisibleIndex = 3, Width = "80px" }
+        new() { Caption = "Active", FieldName = nameof(PoCategoryListRow.IsActive), DataType = "bool", VisibleIndex = 3, Width = "80px" },
+        ..AuditColumns.For(startVisibleIndex: 4)
     ];
 
     protected override Task<IvMasterOperationResult<IReadOnlyList<PoCategoryListRow>>> LoadRowsAsync() =>

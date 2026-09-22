@@ -173,6 +173,14 @@ public sealed class SaInvoiceListQuery
 {
     public string? SearchText { get; set; }
     public string? Status { get; set; }
+
+    /// <summary>
+    /// e-Invoice lifecycle filter on <c>IRBMStatus</c>, e.g. <c>EInvoiceStatuses.Submitted</c>. Null
+    /// means "any". This is the single definition shared by the grid filter and the refresh-all
+    /// candidate query, so "what the grid shows" and "what gets refreshed" can never disagree.
+    /// </summary>
+    public string? IrbmStatus { get; set; }
+
     public DateTime? DateFrom { get; set; }
     public DateTime? DateTo { get; set; }
     public string? SortField { get; set; }
@@ -199,6 +207,8 @@ public sealed class SaInvoiceListRow
     public bool ShipmentComplete { get; init; }
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
 
     /// <summary>MyInvois lifecycle status (<c>IRBMStatus</c>) so the list can show and gate E-Invoice actions.</summary>

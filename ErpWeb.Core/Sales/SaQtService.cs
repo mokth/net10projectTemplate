@@ -436,6 +436,8 @@ public sealed class SaQtService : ISaQtService
                 SalesRep = row.SalesRep,
                 CreatedBy = row.CreatedBy,
                 CreatedDate = row.CreatedDate,
+                ModifiedBy = row.ModifiedBy,
+                ModifiedDate = row.ModifiedDate,
                 RowVersion = row.RowVersion ?? [],
                 ConvertedSoNo = soNo,
                 IsExpired = isExpired,

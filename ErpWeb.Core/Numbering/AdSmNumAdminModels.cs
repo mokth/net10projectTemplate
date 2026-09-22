@@ -7,6 +7,10 @@ public sealed class AdSmNumListRow
     public short TotLength { get; init; }
     public long Seq { get; init; }
     public string? NumDes { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class AdSmNumEditVm
@@ -34,6 +38,10 @@ public sealed class AdSmNumDateListRow
     public string? NumberingFormat { get; init; }
     public string? NumDes { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class AdSmNumDateEditVm

@@ -87,8 +87,7 @@ public partial class IvGoodsReceiptList : PageBase, IDisposable
         new() { Caption = "Remarks", FieldName = nameof(IvGoodsReceiptListRow.Remarks), VisibleIndex = 6 },
         new() { Caption = "Lines", FieldName = nameof(IvGoodsReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7 },
         new() { Caption = "Total", FieldName = nameof(IvGoodsReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 8 },
-        new() { Caption = "Created", FieldName = nameof(IvGoodsReceiptListRow.CreatedDate), DataType = "date", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "140px", VisibleIndex = 9 },
-        new() { Caption = "Created by", FieldName = nameof(IvGoodsReceiptListRow.CreatedBy), Visible = false, VisibleIndex = 10 }
+        ..AuditColumns.For(startVisibleIndex: 9)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

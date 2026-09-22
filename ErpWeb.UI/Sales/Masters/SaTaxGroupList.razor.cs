@@ -80,7 +80,8 @@ public partial class SaTaxGroupList : SaCodeRefListPageBase<SaTaxGroupListRow>
             DataType = "string",
             VisibleIndex = 7,
             Width = "100px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 8)
     ];
 
     protected override async Task OnPageInitializedAsync()

@@ -78,7 +78,8 @@ public partial class PoPrList : PageBase, IDisposable
         new() { Caption = "Total", FieldName = nameof(PoPrListRow.Total), Width = "110px", VisibleIndex = 9, DisplayFormat = "n2" },
         new() { Caption = "Lines", FieldName = nameof(PoPrListRow.LineCount), Width = "80px", VisibleIndex = 10 },
         new() { Caption = "PO No.", FieldName = nameof(PoPrListRow.PoNo), Width = "120px", VisibleIndex = 11 },
-        new() { Caption = "Remarks", FieldName = nameof(PoPrListRow.Remarks), VisibleIndex = 12 }
+        new() { Caption = "Remarks", FieldName = nameof(PoPrListRow.Remarks), VisibleIndex = 12 },
+        ..AuditColumns.For(startVisibleIndex: 13)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

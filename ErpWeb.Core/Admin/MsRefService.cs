@@ -992,7 +992,11 @@ public sealed class MsRefService : IMsRefService
         ManagerEmpId = x.ManagerEmpId,
         GlCode = x.GlCode,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static MsDeptEditVm MapDeptEdit(MsDept x) => new()
@@ -1016,7 +1020,11 @@ public sealed class MsRefService : IMsRefService
         EndDate = x.EndDate,
         Status = x.Status,
         BudgetAmnt = x.BudgetAmnt,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static MsProjectEditVm MapProjectEdit(MsProject x) => new()

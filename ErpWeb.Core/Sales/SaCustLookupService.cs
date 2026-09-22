@@ -161,8 +161,29 @@ public sealed class SaCustLookupService : ISaCustLookupService
     public Task<IReadOnlyList<IvCodeLookupRow>> ListStatesForAssignmentAsync(CancellationToken cancellationToken = default) =>
         ListMsCodesAsync(IvMsCodeTypes.State, cancellationToken);
 
-    public Task<IReadOnlyList<IvCodeLookupRow>> ListTaxGroupsForAssignmentAsync(CancellationToken cancellationToken = default) =>
-        ListMsCodesAsync(IvMsCodeTypes.Tax, cancellationToken);
+    /// <summary>
+    /// The customer's tax group is the SALES tax master, <c>SaTaxGroup.TaxGrCode</c> - NOT
+    /// <c>IvMsCode</c> type <c>TAX</c> (that code type is the LHDN tax-type list, a different concept).
+    /// This list is also the save gate's source (<see cref="ValidateTaxGroupAssignmentAsync"/>), so it
+    /// must stay pointed at <c>SaTaxGroup</c>; otherwise the customer stores a code the document entry
+    /// screens (which read <c>SaTaxGroup</c>) cannot resolve, and their tax-group combo renders blank.
+    /// </summary>
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListTaxGroupsForAssignmentAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.SaTaxGroups
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode)
+            .OrderBy(x => x.TaxGrCode)
+            .Select(x => new IvCodeLookupRow { Code = x.TaxGrCode, Desc = x.TaxGrDesc ?? x.TaxGrCode })
+            .ToListAsync(cancellationToken);
+    }
 
     public Task<IReadOnlyList<IvCodeLookupRow>> ListPayCodesForAssignmentAsync(CancellationToken cancellationToken = default) =>
         ListMsCodesAsync(IvMsCodeTypes.PayCode, cancellationToken);

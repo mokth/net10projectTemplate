@@ -51,9 +51,24 @@ BEGIN
         CountryName  nvarchar(100) NULL,
         Latitude     decimal(9,6)  NULL,
         Longitude    decimal(9,6)  NULL,
+        [Created]    datetime2     NULL,
+        [UserID]     nvarchar(20)  NULL,
+        [Updated]    datetime2     NULL,
+        [UpdatedUID] nvarchar(20)  NULL,
         CONSTRAINT PK_SaCountry PRIMARY KEY (CountryCode)
     );
 END
+GO
+
+/* Existing databases predate the audit quadruple - alter-sacountry-audit.sql adds it. */
+IF COL_LENGTH(N'dbo.SaCountry', N'Created') IS NULL
+    ALTER TABLE dbo.SaCountry ADD [Created] datetime2 NULL;
+IF COL_LENGTH(N'dbo.SaCountry', N'UserID') IS NULL
+    ALTER TABLE dbo.SaCountry ADD [UserID] nvarchar(20) NULL;
+IF COL_LENGTH(N'dbo.SaCountry', N'Updated') IS NULL
+    ALTER TABLE dbo.SaCountry ADD [Updated] datetime2 NULL;
+IF COL_LENGTH(N'dbo.SaCountry', N'UpdatedUID') IS NULL
+    ALTER TABLE dbo.SaCountry ADD [UpdatedUID] nvarchar(20) NULL;
 GO
 
 IF OBJECT_ID(N'dbo.SaCurrency', N'U') IS NULL

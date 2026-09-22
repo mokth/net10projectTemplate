@@ -103,7 +103,8 @@ public partial class SaSalesRepList : SaCodeRefListPageBase<SaSalesRepListRow>
             DataType = "bool",
             VisibleIndex = 6,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 7)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

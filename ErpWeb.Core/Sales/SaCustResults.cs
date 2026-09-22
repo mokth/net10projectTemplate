@@ -37,6 +37,10 @@ public sealed class SaCustListRow
     public decimal? CreditLimit { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCustListPage

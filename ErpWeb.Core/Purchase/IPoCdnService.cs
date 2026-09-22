@@ -256,6 +256,8 @@ public sealed class PoCdnListRow
     public int LineCount { get; init; }
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 
     /// <summary>Required for optimistic concurrency in batch operations.</summary>
     public byte[] RowVersion { get; init; } = [];

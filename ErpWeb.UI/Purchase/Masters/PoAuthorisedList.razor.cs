@@ -22,7 +22,8 @@ public partial class PoAuthorisedList : PoRefListPageBase<PoAuthorisedListRow, P
         new() { Caption = "Name", FieldName = nameof(PoAuthorisedListRow.Name), DataType = "string", VisibleIndex = 2 },
         new() { Caption = "Email", FieldName = nameof(PoAuthorisedListRow.Email), DataType = "string", VisibleIndex = 3, Width = "180px" },
         new() { Caption = "Mobile", FieldName = nameof(PoAuthorisedListRow.MobileNo), DataType = "string", VisibleIndex = 4, Width = "120px" },
-        new() { Caption = "Active", FieldName = nameof(PoAuthorisedListRow.IsActive), DataType = "bool", VisibleIndex = 5, Width = "80px" }
+        new() { Caption = "Active", FieldName = nameof(PoAuthorisedListRow.IsActive), DataType = "bool", VisibleIndex = 5, Width = "80px" },
+        ..AuditColumns.For(startVisibleIndex: 6)
     ];
 
     protected override Task<IvMasterOperationResult<IReadOnlyList<PoAuthorisedListRow>>> LoadRowsAsync() =>

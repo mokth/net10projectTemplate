@@ -79,7 +79,11 @@ public sealed class EInvoiceSourceLine
 
     public decimal TaxAmount { get; init; }
 
-    /// <summary>LHDN tax type code (= the ERP tax group code).</summary>
+    /// <summary>
+    /// LHDN tax type resolved from the ERP tax group (<c>SaTaxGroup.TaxType</c>). Falls back to
+    /// <see cref="LhdnDefaults.TaxType"/> when the line has no tax group, names one that does not exist,
+    /// or names one whose own tax type is blank - so a payload line always carries a code.
+    /// </summary>
     public string? TaxType { get; init; }
 
     public double? TaxPercent { get; init; }

@@ -87,11 +87,10 @@ public sealed class EInvoiceValidator
         Require(errors, "Buyer.City", document.CustomerCity, "Customer city is required.");
         Require(errors, "Buyer.PostalCode", document.CustomerPostalCode, "Customer postal code is required.");
         Require(errors, "Buyer.Phone", document.CustomerPhone, "Customer phone number is required.");
-        // Unlike the registration type, the buyer telephone is a snapshot frozen onto the document, so
-        // fixing the customer profile alone does not repair an already-posted invoice.
+        // The buyer block is read live from the customer master on every submit, so correcting the profile
+        // is all that is needed - there is no "re-open and re-save the document" step any more.
         RequireE164(errors, "Buyer.Phone", document.CustomerPhone, "Customer telephone",
-            "Correct it on the customer profile, then re-open and re-save this document so the billing " +
-            "address is refreshed.");
+            "Correct it on the customer profile, then submit again.");
 
         if (LhdnCodeLookup.TryRegistrationType(document.CustomerRegType) is null)
         {
@@ -162,10 +161,11 @@ public sealed class EInvoiceValidator
                 errors[key + ".Uom"] = $"Unit of measure is required (item {line.ItemCode ?? line.Line.ToString()}).";
             }
 
-            if (string.IsNullOrWhiteSpace(line.TaxType))
-            {
-                errors[key + ".TaxType"] = $"Tax type is required (item {line.ItemCode ?? line.Line.ToString()}).";
-            }
+            // A blank line tax type is deliberately NOT an error. It is resolved to the LHDN default
+            // (06, "Not Applicable") by SaEInvoiceService.ResolveTaxType - for a blank code, an unknown
+            // tax group, or a tax group whose TaxType is blank - and again by EInvoiceDocumentMapper, so
+            // the payload always carries a code. Refusing it here aborted the whole submission before the
+            // payload was generated, which blocked any document whose item tax was left empty.
 
             if (line.TaxPercent is null or < 0)
             {

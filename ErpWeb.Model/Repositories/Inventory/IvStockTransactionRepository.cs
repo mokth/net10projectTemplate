@@ -146,7 +146,9 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
                 x.VendName,
                 LineCount = x.Details.Count,
                 x.CreatedDate,
-                x.CreatedBy
+                x.CreatedBy,
+                x.ModifiedDate,
+                x.ModifiedBy
             })
             .ToListAsync(cancellationToken);
 
@@ -179,7 +181,9 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
             LineCount = x.LineCount,
             TotalAmount = amountByBatchId.GetValueOrDefault(x.Id),
             CreatedDate = x.CreatedDate,
-            CreatedBy = x.CreatedBy
+            CreatedBy = x.CreatedBy,
+            ModifiedDate = x.ModifiedDate,
+            ModifiedBy = x.ModifiedBy
         }).ToList();
 
         return (rows, total);

@@ -516,10 +516,17 @@ All four hooks live in `ErpWeb.Core/EInvoice/SaEInvoiceService.cs` and call
 | Refresh | `ApplyStatusAsync` (detail payload) | Updates in place |
 | Recover | `ApplyStatusAsync` (summary payload) | Upserts — establishes the row when a submit never recorded one |
 | Cancel (successful only) | `ApplyStatusAsync` (`cancelOnUtc`) | `status = CANCELLED` + `cancelDateTime` |
+| Repair (`RepairSubmissionAsync`, from the E-UUID click) | delegates to **Refresh** → `ApplyStatusAsync` | Inserts the row when it was never written, otherwise updates in place |
 
 The key used by the update hooks is built from the **ERP document** (its `IRBMSubmitID`), never from a
 value inside the API payload, so a stale or mismatched response cannot write into another submission's
 row.
+
+**One deliberate exception** — see [Repair on the E-UUID click](#repair-on-the-e-uuid-click) below.
+When the ERP document has **no** `IRBMSubmitID` at all there is nothing to disagree with, so the API's
+own `submissionUid` is adopted (and written back onto the document). `documentType`, `documentNo` and
+`companyID` always remain ERP-derived, so the worst case for a bad payload is a wrongly-keyed new row,
+never an overwritten correct one.
 
 ## Status and timestamps
 
@@ -578,3 +585,184 @@ status vocabulary; this document is secondary.**
 | `MPosERP.Business/Repository/Sales/EinvDocSubmissionReposiory.cs` | Business-layer variant |
 | `MPosERP.Data/Models/Sales/EinvDocSubmission.cs` | Business-layer entity |
 | `SQLDatabase_Changes/SQLAlterTable.txt` | Table alteration + trigger SQL |
+
+---
+
+# Repair on the E-UUID click (ErpWeb, 2026-09-21)
+
+Clicking the **E-UUID** cell on the sales invoice list opens the LHDN MyInvois portal tab **and**
+repairs this table. The repair exists for two real failures seen in production:
+
+1. **The row was never written.** The submission succeeded at MyInvois but the local document kept no
+   `IRBMSubmitID`, so the history write had no key and silently skipped.
+2. **The row has drifted.** LHDN has moved the document on (typically `SUBMITTED` → `VALID`, or a
+   cancellation) and the local row still holds the old state.
+
+## The call chain
+
+```
+SaInvoiceList.onSelectColHandle
+  └─ EInvoicePortalLinkOpener.OpenAndRepairAsync
+       ├─ ISaEInvoiceService.GetPortalLinkAsync(uuid)      → opens the portal tab
+       └─ ISaEInvoiceService.RepairSubmissionAsync(uuid)   → repairs the history
+            └─ RefreshAsync(key)      (delegated once, never duplicated)
+                 ├─ GetDocumentDetail(uuid)
+                 ├─ submission-id recovery when the document has none
+                 ├─ ERP write-back  (SaInvoice/SaCdn IRBM*)
+                 └─ EInvoiceSubmissionWriter.ApplyStatusAsync  → insert or update this row
+```
+
+The repair is **UUID-addressed** because a UUID is all the grid cell has. It resolves the document
+itself: the registry is read first (`Uuid` match, current row = highest `ID`, the same rule
+`GetPortalLinkAsync` uses), then `SaInvoice`/`SaCdn` are matched on `IRBMUUID` **or** `IRBMORIUUID` — the
+second one matters because a re-submission moves the superseded UUID onto the "ori" column.
+
+It **delegates to `RefreshAsync`** rather than reimplementing it. `RefreshAsync` already performs the
+whole sequence above, so there is exactly one MyInvois synchronisation path, one place where the status
+map is applied, and one `Refresh` audit row.
+
+## The re-entry invariant (do not remove)
+
+> **At most ONE repair and at most ONE portal-link retry per click.**
+
+The normal path resolves the link, opens the tab, and only then repairs — so the click stays instant and
+a repair failure can never block the portal. When the link cannot be built at all (missing row, or a
+document that is not viewable yet) the repair runs first and the link is retried **once**, because that
+is exactly the state the repair fixes. The retry re-resolves the link; it never repairs again. Pinned by
+`EInvoicePortalLinkOpenerTests.The_repair_runs_at_most_once_when_the_link_stays_unresolvable`.
+
+## Refusals (nothing is written)
+
+| Condition | Behaviour |
+|---|---|
+| The UUID is not linked to any ERP document in this company | reported, no MyInvois call |
+| The caller lacks `SUBMIT` on the owning menu | reported, no MyInvois call |
+| The row names a **different branch** | reported, nothing written — the ERP write-back resolves the document by `(CompanyCode, BranchCode, InvNo)`, so a cross-branch write is not attempted |
+| The document is self-billed (`SBI`/`SBC`/`SBD`) | reported as not enabled — the Purchase self-bill payload is not wired |
+| Neither the ERP document nor the API supplies a submission id | reported, no row |
+
+All of these come back as `SaEInvoiceSubmissionRepairResult.NotApplicable`/`Skipped` rather than an
+error: opening the portal is the click's primary job, so a repair that could not run must not turn the
+click red. A **legacy row with a blank `BranchCode`** carries no branch claim and is repaired normally.
+
+## Which signal says "the row was repaired"
+
+`SaEInvoiceResult.Succeeded` mirrors `RefreshAsync` — "a recognised MyInvois status was applied". It is
+**not** the same as "the row was written". `HistoryWrite` (`EInvoiceHistoryWriteResult`:
+`NotAttempted` / `Inserted` / `Updated` / `Skipped` / `Failed`) is the authoritative signal, and
+`Skipped` vs `Failed` are kept distinct because they mean different things to an operator ("there is no
+submission id to record" vs "the write itself failed").
+
+`EInvoicePortalLinkOpener` sets `StateChanged` — "reload your grid" — when the refresh applied a status
+**or** the row was inserted/updated, because the grid's E-Inv / E-Status columns come from the document,
+not from this table.
+
+## What a `Refresh` audit row means
+
+A row in `SaEInvoiceLog` with `Action = 'Refresh'` means **"a synchronisation was requested, and this is
+what MyInvois answered"**. It does **not** mean "LHDN data changed". Every E-UUID click writes one, so
+an operator clicking the same UUID five times produces five identical rows. That is deliberate
+traceability of who asked and when; suppressing an unchanged row is a possible future refinement, not a
+current behaviour.
+
+## Limitations worth knowing
+
+- **This is not a mirror.** The writer copies non-null values only, so a field that was *cleared* at
+  MyInvois is not cleared locally, and `status` only moves for values `SaEInvoiceStatusMap` recognises.
+  "Update" means fill/overwrite, never erase.
+- **A duplicate row is possible and intentional.** If the API supplies a `submissionUid` that differs
+  from the row already stored for the same document, a **new** row is inserted (the re-submission rule)
+  and the current row stays "the highest `ID`".
+- **The click timeout does not cover the HTTP call.**
+  `EInvoiceOptions.RepairPersistenceTimeoutSeconds` bounds only the persistence work, because
+  `ISubmitDocumentHelper.GetDocumentDetail(string)` takes no cancellation token. Adding one is logged
+  tech debt.
+- **`documentID` is still never written** — `SaInvoice` has no identity key to put there.
+
+# Sales Credit / Debit Note list parity (ErpWeb, 2026-09-22)
+
+Plan of record: `plans/plan-saCdnEInvoiceParity.prompt.md`.
+
+The batch e-Invoice surface that shipped on `SaInvoiceList` now exists on the CN/DN list
+(`SaCdnList`, routes `/sales/credit-notes` and `/sales/debit-notes`) as well. **No new MyInvois code was
+written** — `SaEInvoiceService` was already document-type agnostic, so this feature is a UI plus a query
+plumbing change.
+
+## What CN/DN already had (do not "re-add" it)
+
+- `SaEInvoiceService.AuthorizeAsync` maps `CN -> MenuCodes.SalesCreditNote`, `DN -> MenuCodes.SalesDebitNote`.
+- `LoadStateAsync` has a `CreditNote`/`DebitNote` case loading `db.SaCdns` and enforcing `cdn.Type`.
+- `ResolveKeyByUuidAsync` already falls back to `db.SaCdns` on `IrbmUuid` **or** `IrbmOriUuid`, so the
+  E-UUID history repair is type-agnostic.
+- `SaCdn` carries the whole e-Invoice column set (`IRBMStatus`, `IRBMOutcome`, `IRBMUUID`, `IRBMORIUUID`,
+  `IRBMSubmitID`, `IRBMSentOn`, `IRBMValidOn`, `IRBMError`, `IRNMCancelOn`).
+- `SaCdnService` already refuses edit/delete while the e-Invoice status is locked.
+- The CN/DN **entry** page already hosted `<SaEInvoicePanel>`.
+
+## What was added
+
+- **List columns**: `E-Inv` (`IrbmStatus`), `E-UUID` (`IrbmUuid`, link) and `E-Status` (`IrbmStatus`).
+  `E-Inv` and `E-Status` deliberately render the **same** value — that is what the invoice list has
+  always done; the only difference is the explicit `DataType = "string"` on the latter. There is no
+  separate "submission exists" property.
+- **Toolbar**: `SUBMIT` / `E-STATUS` / `CANCEL`, gated on the page's own menu (`SA_CN` / `SA_DN`) plus
+  `PermissionCodes.Submit` / `Cancel`.
+- **E-UUID click** → `EInvoicePortalLinkOpener.OpenAndRepairAsync`, so the CN/DN list shares the invoice
+  list's one-repair/one-link-retry invariant.
+- **Confirmation** with a mandatory, 300-character-limited cancellation reason, a per-row results popup,
+  a progress strip with a Stop button, and the `IsEInvoiceBusy` re-entry guard.
+- **`ISaEInvoiceService.RefreshSubmittedAsync(SaCdnListQuery, ...)`** — the CN/DN twin of the invoice
+  no-selection E-STATUS mode. The family comes from `scope.Type`, which selects both the document family
+  **and** the authorizing menu: a CN run can never touch a DN row.
+- **`SaCdnQueryMapper`** — the ONE `SaCdnListQuery -> SaCdnSearchArgs` translation, mirroring
+  `SaInvoiceQueryMapper`, so "what the grid shows" and "what gets refreshed" cannot drift apart. The grid
+  and the refresh-all both go through it.
+- **`SaEInvoiceLimits`** (`ErpWeb.Core.EInvoice`) now owns the two caps; `SaInvoiceLimits.MaxEInvoice*`
+  forwards to it and a test pins the equality, so the two families cannot silently diverge.
+
+## The shared refresh-all driver
+
+`RunRefreshAllAsync(documentType, candidates, progress, ct)` serves BOTH families. Its contracts:
+
+- Cap is pre-flight: an over-cap run costs one query and **zero** MyInvois calls.
+- Blank `IRBMUUID` → `Skipped` with reason `Missing IRBMUUID`, never sent; never escalated to `Recover`.
+- Chunks of `SaEInvoiceLimits.MaxBatchSelection` handed to the public `RefreshManyAsync`, so the
+  interactive cap, per-chunk authorization and per-document semantics are unchanged.
+- Cancellation is honoured **between** chunks only, and the partial aggregate is returned.
+- **Failure semantics** (added with this work): one document failing never stops its chunk or a later
+  chunk; a refused chunk converts the current chunk **and every remaining key** into `Failed` items; an
+  exception that escapes the batch primitive is caught once per chunk and converted the same way instead
+  of reaching the page and discarding completed work. That guard is the only intentional behaviour change
+  to the invoice path, and the invoice refresh-all tests were kept unedited to prove it.
+
+## Permissions
+
+`SUBMIT` / `CANCEL` are now part of the `SA_CN` / `SA_DN` grant set in both
+`scripts/init-menu-access.sql` (fresh databases) and the new, idempotent
+`scripts/init-sales-cdn-einvoice-permissions.sql` (existing databases).
+
+**Measured on dev `ERPWeb` (2026-09-22):** the four `MenuPermission` rows were ALREADY present and
+active, so the new script is a verified clean no-op there (applied twice, 0 rows inserted, exit 0). The
+fresh-database path is what was genuinely missing.
+
+`MenuPermission` only makes the permission *available*: a role still needs a `dbo.RoleMenuPermission` row
+with `IsAllowed = 1` (that table has no `IsActive`) before a user can submit. That grant is deliberately
+manual — see the deployment runbook in the plan.
+
+## Live data facts measured (dev `ERPWeb`, 2026-09-22)
+
+- `dbo.SaCDN` holds **0 rows**, so the refresh-all has no candidate volume to exercise manually yet.
+- `SaCDN.IRBMStatus` and the database are both `SQL_Latin1_General_CP1_CI_AS`, so the candidate predicate
+  is **plain equality** and no function wraps the column (the index stays usable).
+
+## Also fixed while here
+
+`SaCdnService.SearchAsync` reported `LineCount = x.Details?.Count ?? 0`, but the repository query never
+`Include`s `Details`, so the grid's "Lines" column was **always 0**. It now runs the same explicit grouped
+count the invoice list uses, pinned by a regression test.
+
+## Not covered
+
+Self-billed (`SBI`/`SBC`/`SBD`) payload mapping, a `Recover` button on either list (the invoice list has
+none either), and the same treatment for the Purchase CN/DN lists.
+

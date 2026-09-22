@@ -75,7 +75,8 @@ public partial class SaSoList : PageBase, IDisposable
         new() { Caption = "Customer", FieldName = nameof(SaSoListRow.CustCode), Width = "120px", VisibleIndex = 7 },
         new() { Caption = "Name", FieldName = nameof(SaSoListRow.CustName), VisibleIndex = 8 },
         new() { Caption = "Customer PO", FieldName = nameof(SaSoListRow.CustPo), Width = "160px", VisibleIndex = 9 },
-        new() { Caption = "Lines", FieldName = nameof(SaSoListRow.LineCount), Width = "80px", VisibleIndex = 10 }
+        new() { Caption = "Lines", FieldName = nameof(SaSoListRow.LineCount), Width = "80px", VisibleIndex = 10 },
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

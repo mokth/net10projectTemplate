@@ -6,6 +6,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Repositories.Sales;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -74,6 +75,14 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
 
     /// <summary>Every menu code that <see cref="IAccessRightService"/> was asked about, in order.</summary>
     public List<(string Menu, string Permission)> PermissionChecks { get; } = [];
+
+    /// <summary>
+    /// Optional hook that runs on every authorization check. A test uses it to make the permission layer
+    /// THROW, which is the realistic way an exception escapes the batch primitive: the per-document
+    /// MyInvois calls already catch their own failures, so the refresh-all guard can only be pinned from
+    /// outside that catch.
+    /// </summary>
+    public Action? OnPermissionCheck { get; set; }
 
     /// <summary>
     /// Permissions this host must refuse, regardless of <c>authorized</c>. Lets a test withhold one
@@ -157,6 +166,7 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             .ReturnsAsync((string menu, string permission, CancellationToken _) =>
             {
                 host.PermissionChecks.Add((menu, permission));
+                host.OnPermissionCheck?.Invoke();
                 return authorized && !host.DeniedPermissions.Contains(permission);
             });
 
@@ -199,6 +209,8 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         return new SaEInvoiceService(
             Factory,
             new TenantScopeContext(_currentUser.Object),
+            new SaInvoiceRepository(),
+            new SaCdnRepository(),
             _accessRights.Object,
             Secrets,
             Helper,
@@ -275,7 +287,8 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         bool validLines = true,
         string? buyerTin = "C9876543210",
         string? companyCode = null,
-        decimal? totAmnt = null)
+        decimal? totAmnt = null,
+        string? branchCode = null)
     {
         var code = companyCode ?? _company;
         await using var db = await Factory.CreateDbContextAsync();
@@ -303,15 +316,113 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         customer.Email = "ap@buyer.test";
         customer.GstregNo = "A01-2345-67890123";
 
+        // The e-Invoice payload resolves the whole buyer block from the master (D-1), so the master
+        // must carry the billing address and phone the seeded document used to supply from its own
+        // snapshot. AppInvoice = true selects the main address over the Inv* overrides.
+        customer.AppInvoice = true;
+        customer.Address1 = "2 Jalan Buyer";
+        customer.City = "Petaling Jaya";
+        customer.State = "Selangor";
+        customer.PostalCode = "47300";
+        customer.Country = "Malaysia";
+        customer.Tel = "0398765432";
+
+        var invoice = BuildInvoice(
+            code,
+            branchCode ?? Branch,
+            invNo ?? InvNo,
+            status ?? "POSTED",
+            irbmStatus,
+            irbmOutcome,
+            irbmUuid,
+            irbmSubmitId,
+            irbmValidOn,
+            irbmSentOn,
+            modifiedDate,
+            validLines,
+            buyerTin,
+            totAmnt);
+
+        db.SaInvoices.Add(invoice);
+        await db.SaveChangesAsync();
+        return invoice;
+    }
+
+    /// <summary>
+    /// Seeds many <c>SUBMITTED</c> invoices in ONE context and one save.
+    ///
+    /// <para>
+    /// <see cref="SeedInvoiceAsync"/> pays a context, a customer lookup and a save per row, which is fine
+    /// for the three-or-four-row batch tests but far too slow to build the candidate counts the
+    /// refresh-all contracts need (100+). The row shape comes from the same <see cref="BuildInvoice"/>
+    /// factory, so a bulk seed cannot drift from a single one.
+    /// </para>
+    /// </summary>
+    /// <param name="uuid">Per-index MyInvois UUID; null yields <c>UUID-{invNo}</c>.</param>
+    public async Task SeedSubmittedInvoicesAsync(
+        int count,
+        Func<int, string> invNo,
+        Func<int, string?>? uuid = null,
+        string? companyCode = null,
+        string? branchCode = null)
+    {
+        var code = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        for (var i = 1; i <= count; i++)
+        {
+            var no = invNo(i);
+            db.SaInvoices.Add(BuildInvoice(
+                code,
+                branch,
+                no,
+                "POSTED",
+                EInvoiceStatuses.Submitted,
+                irbmOutcome: null,
+                irbmUuid: uuid?.Invoke(i) ?? $"UUID-{no}",
+                irbmSubmitId: null,
+                irbmValidOn: null,
+                irbmSentOn: null,
+                modifiedDate: null,
+                validLines: true,
+                buyerTin: "C9876543210",
+                totAmnt: null));
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The ONE definition of the seeded-invoice row shape, shared by <see cref="SeedInvoiceAsync"/> and
+    /// <see cref="SeedSubmittedInvoicesAsync"/>. A header plus its single valid line, buyer identity
+    /// included, so the row passes the ERP pre-submit validation if a test ever submits it.
+    /// </summary>
+    private static SaInvoice BuildInvoice(
+        string companyCode,
+        string branchCode,
+        string invNo,
+        string status,
+        string? irbmStatus,
+        string? irbmOutcome,
+        string? irbmUuid,
+        string? irbmSubmitId,
+        DateTime? irbmValidOn,
+        DateTime? irbmSentOn,
+        DateTime? modifiedDate,
+        bool validLines,
+        string? buyerTin,
+        decimal? totAmnt)
+    {
         var invoice = new SaInvoice
         {
-            CompanyCode = code,
-            BranchCode = Branch,
-            InvNo = invNo ?? InvNo,
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            InvNo = invNo,
             CustCode = "CUST01",
             InvDate = DateTime.UtcNow.Date,
-            Status = status ?? "POSTED",
-            DoNo = invNo ?? InvNo,
+            Status = status,
+            DoNo = invNo,
             Currency = "MYR",
             CurrRate = 1m,
             GrossAmnt = 100m,
@@ -341,9 +452,9 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
 
         invoice.Details.Add(new SaInvoiceDetail
         {
-            CompanyCode = code,
-            BranchCode = Branch,
-            InvNo = invoice.InvNo,
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            InvNo = invNo,
             Line = 1,
             ICode = "ITM01",
             IDesc = "Consulting",
@@ -358,8 +469,6 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             Classification = validLines ? "022" : null
         });
 
-        db.SaInvoices.Add(invoice);
-        await db.SaveChangesAsync();
         return invoice;
     }
 
@@ -370,7 +479,10 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         string? originInvNo = null,
         string originIrbmStatus = EInvoiceStatuses.Valid,
         string? originUuid = "UUID-INV-1001",
-        string? companyCode = null)
+        string? companyCode = null,
+        string? irbmStatus = null,
+        string? irbmUuid = null,
+        string status = "POSTED")
     {
         var code = companyCode ?? _company;
         var invNo = originInvNo ?? InvNo;
@@ -389,17 +501,91 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         }
 
         await using var db = await Factory.CreateDbContextAsync();
+        var cdn = BuildCreditNote(
+            code,
+            Branch,
+            docNo ?? CdnNo,
+            type ?? "CN",
+            invNo,
+            irbmStatus,
+            irbmUuid,
+            status);
+
+        db.SaCdns.Add(cdn);
+        await db.SaveChangesAsync();
+        return cdn;
+    }
+
+    /// <summary>
+    /// Seeds many <c>SUBMITTED</c> credit or debit notes in ONE context and one save.
+    ///
+    /// <para>
+    /// Mirrors <see cref="SeedSubmittedInvoicesAsync"/> for the CN/DN refresh-all contracts: the per-row
+    /// <see cref="SeedCreditNoteAsync"/> pays a context, an origin-invoice lookup and a save per row,
+    /// which is far too slow for the 100/200-row candidate counts. The refresh-all candidate query reads
+    /// only the header, so no origin invoice is seeded here — the row shape comes from the same
+    /// <see cref="BuildCreditNote"/> factory the single-row seeder uses, so the two cannot drift.
+    /// </para>
+    /// </summary>
+    /// <param name="uuid">Per-index MyInvois UUID; null yields <c>UUID-{docNo}</c>.</param>
+    public async Task SeedSubmittedCreditNotesAsync(
+        int count,
+        Func<int, string> docNo,
+        string type = "CN",
+        Func<int, string?>? uuid = null,
+        string? companyCode = null,
+        string? branchCode = null)
+    {
+        var code = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        for (var i = 1; i <= count; i++)
+        {
+            var no = docNo(i);
+            db.SaCdns.Add(BuildCreditNote(
+                code,
+                branch,
+                no,
+                type,
+                string.Empty,
+                EInvoiceStatuses.Submitted,
+                uuid?.Invoke(i) ?? $"UUID-{no}"));
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The ONE definition of the seeded credit/debit-note row shape, shared by
+    /// <see cref="SeedCreditNoteAsync"/> and <see cref="SeedSubmittedCreditNotesAsync"/>.
+    /// </summary>
+    private static SaCdn BuildCreditNote(
+        string companyCode,
+        string branchCode,
+        string docNo,
+        string type,
+        string originInvNo,
+        string? irbmStatus,
+        string? irbmUuid,
+        string status = "POSTED")
+    {
         var cdn = new SaCdn
         {
-            CompanyCode = code,
-            BranchCode = Branch,
-            DocNo = docNo ?? CdnNo,
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            DocNo = docNo,
             DocDate = DateTime.UtcNow.Date,
-            Status = "POSTED",
-            Type = type ?? "CN",
+            Status = status,
+            Type = type,
             CustCode = "CUST01",
             CustName = "Buyer Sdn Bhd",
-            InvNo = invNo,
+            // Production parity: SaCdnService writes InvNo only for a CREDIT note
+            // (SaCdnService.cs ~L563 / ~L680 / ~L772), so a debit note never carries an origin
+            // invoice number and must be seeded the same way or the tests would hide that gap.
+            InvNo = string.Equals(type, SaCdnTypes.DebitNote, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : originInvNo,
             InvAddress1 = "2 Jalan Buyer",
             City = "Petaling Jaya",
             State = "Selangor",
@@ -411,15 +597,17 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             GrossAmnt = 50m,
             Taxes = 4m,
             TotAmnt = 54m,
+            IrbmStatus = irbmStatus,
+            IrbmUuid = irbmUuid,
             ModifiedDate = DateTime.UtcNow,
             CreatedDate = DateTime.UtcNow
         };
 
         cdn.Details.Add(new SaCdnDetail
         {
-            CompanyCode = code,
-            BranchCode = Branch,
-            DocNo = cdn.DocNo,
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            DocNo = docNo,
             Line = 1,
             ICode = "ITM01",
             IDesc = "Consulting",
@@ -433,8 +621,6 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
             Classification = "022"
         });
 
-        db.SaCdns.Add(cdn);
-        await db.SaveChangesAsync();
         return cdn;
     }
 
@@ -462,6 +648,24 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         await using var db = await Factory.CreateDbContextAsync();
         var invoice = await db.SaInvoices.FirstAsync(x => x.CompanyCode == company && x.InvNo == invNo);
         change(invoice);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Mutates the customer master backing the seeded document. The e-Invoice payload resolves the whole
+    /// buyer block from this row, so a test corrects the profile by writing here - the same action an
+    /// operator takes when a submission was rejected for a bad TIN, address or telephone.
+    /// </summary>
+    public async Task UpdateCustomerAsync(
+        Action<SaCust> change,
+        string? custCode = null,
+        string? companyCode = null)
+    {
+        var company = companyCode ?? _company;
+        var code = custCode ?? "CUST01";
+        await using var db = await Factory.CreateDbContextAsync();
+        var customer = await db.SaCusts.FirstAsync(x => x.CompanyCode == company && x.CustCode == code);
+        change(customer);
         await db.SaveChangesAsync();
     }
 

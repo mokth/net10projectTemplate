@@ -877,7 +877,11 @@ public sealed class PoMasterRefService : IPoMasterRefService
         Name = x.BuyerName,
         Desc = x.BuyerDesc,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoBuyerEditVm MapBuyer(PoBuyer x) => new()
@@ -898,7 +902,11 @@ public sealed class PoMasterRefService : IPoMasterRefService
         Code = x.BuyingTerm,
         Description = x.Description,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoBuyingTermEditVm MapBuyingTerm(PoBuyingTerm x) => new()
@@ -918,7 +926,11 @@ public sealed class PoMasterRefService : IPoMasterRefService
         Code = x.Category,
         Description = x.Description,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoCategoryEditVm MapCategory(PoCategory x) => new()
@@ -940,7 +952,11 @@ public sealed class PoMasterRefService : IPoMasterRefService
         Email = x.Email,
         MobileNo = x.MobileNo,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoAuthorisedEditVm MapAuthorised(PoAuthorised x) => new()
@@ -969,7 +985,11 @@ public sealed class PoMasterRefService : IPoMasterRefService
         UnitPrice = x.UnitPrice,
         Moq = x.Moq,
         Status = x.Status,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoPurItemEditVm MapPurItem(PoPurItem x) => new()

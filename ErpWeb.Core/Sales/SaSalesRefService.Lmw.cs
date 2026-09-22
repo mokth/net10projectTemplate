@@ -378,7 +378,11 @@ public sealed partial class SaSalesRefService
         IC = x.IC,
         Position = x.Position,
         CustName = x.CustName,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaLMWEditVm MapLmw(SaLMW x) => new()

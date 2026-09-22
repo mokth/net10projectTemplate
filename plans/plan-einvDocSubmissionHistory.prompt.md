@@ -57,7 +57,7 @@ suite could run at all.
 | Legacy NULL/duplicate rows need a D-12 decision | **Row count = 0**, no NULL `companyID` | D-12 needs no action: plain (unfiltered) unique index, no backfill |
 | `status` was assumed writable-as-needed | `status` is **NOT NULL with no default** | The writer always supplies it, including a floor value when a row is first created by Recover |
 
-**Deliberate deviations (D-18 … D-23)**
+**Deliberate deviations (D-18 … D-24)**
 
 | # | Deviation | Why |
 |---|---|---|
@@ -67,6 +67,7 @@ suite could run at all.
 | **D-21** | The writer takes `IDbContextFactory` **and an `ILogger`** | The factory is what gives real failure isolation (D-8); the logger is where the warning must be emitted, since the writer is the only place that sees the exception and the key |
 | **D-22** | `EInvoiceTestHost.SeedCompanyAsync` seeds `EInvOnBehalfTin` | Pre-existing WIP (`Company.EInvOnBehalfTin` + `scripts/alter-einvoice-outcome-company-profile.sql`) made THAT column the supplier TIN the service validates, but the fixture was never updated — so **every** e-Invoice submit failed validation before reaching MyInvois. Added as an optional parameter defaulting to `"C1234567890"` (the value the WIP's own `CompanyServiceBootstrapTests` uses); pass `null` to exercise the refusal |
 | **D-23** | `ApplyStatusAsync` keyed on the **ERP document's** `IRBMSubmitID`, passed in by the caller | As the plan's §3.5 required. The writer never locates a row from a value inside the API payload |
+| **D-24** | Added a **repair** path: `ISaEInvoiceService.RepairSubmissionAsync(uuid)` resolves the owning document from a MyInvois UUID and delegates **once** to `RefreshAsync`; and `RefreshAsync` may adopt the API's own `submissionUid` when the ERP document has **none** | Reported from the field: a document MyInvois accepted can keep no `IRBMSubmitID` locally, so the history write had no key and skipped silently — and a missing row is exactly the failure this feature exists to end. **Narrow exception to §3.5 / D-23**: it runs only when there is no ERP value to disagree with, and `documentType`/`documentNo`/`companyID` stay ERP-derived, so a bad payload can at worst create a wrongly-keyed new row, never overwrite a correct one. Requires `SUBMIT`, never throws, and writes nothing for an unlinked UUID, a foreign branch or self-billed. Full detail: `plans/plan-einvDocSubmissionRepair.prompt.md`; behaviour documented in `docs/einvoice-history.md` §Repair on the E-UUID click |
 
 **Verification evidence**
 

@@ -905,7 +905,11 @@ public sealed class SaCustService : ISaCustService
         Currency = x.Currency,
         CreditLimit = x.CreditLimit,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaCustEditVm MapEditVm(SaCust x)

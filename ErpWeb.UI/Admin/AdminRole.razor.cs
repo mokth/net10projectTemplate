@@ -55,40 +55,7 @@ public partial class AdminRole : PageBase
             VisibleIndex = 3,
             Width = "80px"
         },
-        new()
-        {
-            Caption = "Created By",
-            FieldName = nameof(Role.CreatedBy),
-            DataType = "string",
-            VisibleIndex = 4,
-            Width = "100px"
-        },
-        new()
-        {
-            Caption = "Created On",
-            FieldName = nameof(Role.CreatedDate),
-            DataType = "datetime",
-            VisibleIndex = 5,
-            Visible = false,
-            Width = "120px"
-        },
-        new()
-        {
-            Caption = "Update By",
-            FieldName = nameof(Role.ModifiedBy),
-            DataType = "string",
-            VisibleIndex = 6,
-            Width = "100px"
-        },
-        new()
-        {
-            Caption = "Update On",
-            FieldName = nameof(Role.ModifiedDate),
-            DataType = "datetime",
-            VisibleIndex = 7,
-            Visible = false,
-            Width = "120px"
-        }
+        ..AuditColumns.For(startVisibleIndex: 4)
     ];
 
     public List<ButtonInfo> Buttons { get; set; } =

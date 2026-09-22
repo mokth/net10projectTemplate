@@ -102,7 +102,8 @@ public partial class SaCustList : PageBase, IDisposable
         new() { Caption = "Source", FieldName = nameof(SaCustListRow.CustSource), Width = "90px", VisibleIndex = 6 },
         new() { Caption = "City", FieldName = nameof(SaCustListRow.City), Width = "110px", VisibleIndex = 7 },
         new() { Caption = "Tel", FieldName = nameof(SaCustListRow.Tel), Width = "120px", VisibleIndex = 8 },
-        new() { Caption = "Active", FieldName = nameof(SaCustListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 9 }
+        new() { Caption = "Active", FieldName = nameof(SaCustListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 9 },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

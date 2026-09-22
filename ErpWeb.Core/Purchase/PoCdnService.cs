@@ -428,6 +428,8 @@ public sealed class PoCdnService : IPoCdnService
                 LineCount = lineCounts.TryGetValue(x.DocNo, out var c) ? c : 0,
                 CreatedDate = x.CreatedDate,
                 CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy,
                 RowVersion = x.RowVersion
             }).ToList()
         });

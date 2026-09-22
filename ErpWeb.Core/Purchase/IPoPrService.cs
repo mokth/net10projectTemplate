@@ -95,6 +95,8 @@ public sealed class PoPrListRow
     public string? Currency { get; init; }
     public string? CreatedBy { get; init; }
     public DateTime? CreatedDate { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
     public bool CanEdit { get; init; }
     public bool CanDelete { get; init; }

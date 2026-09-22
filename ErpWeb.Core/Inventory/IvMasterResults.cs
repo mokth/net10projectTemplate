@@ -110,6 +110,10 @@ public sealed class IvStockMasterListRow
     public decimal? SellingPrice { get; init; }
     public decimal? PurchasePrice { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class IvStockMasterListPage

@@ -82,7 +82,8 @@ public partial class PoSuppList : PageBase, IDisposable
         new() { Caption = "Area", FieldName = nameof(PoSupplierListRow.AreaCode), Width = "90px", VisibleIndex = 5 },
         new() { Caption = "City", FieldName = nameof(PoSupplierListRow.City), Width = "110px", VisibleIndex = 6 },
         new() { Caption = "Tel", FieldName = nameof(PoSupplierListRow.Tel), Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Active", FieldName = nameof(PoSupplierListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 8 }
+        new() { Caption = "Active", FieldName = nameof(PoSupplierListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 8 },
+        ..AuditColumns.For(startVisibleIndex: 9)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

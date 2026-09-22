@@ -99,7 +99,8 @@ public partial class SaDisGroupList : SaKeyedRefListPageBase<SaDisGroupListRow, 
             DataType = "number",
             VisibleIndex = 6,
             Width = "90px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 7)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

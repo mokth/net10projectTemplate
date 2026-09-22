@@ -59,6 +59,10 @@ public sealed class IvCustPriceGroupListRow
     public int LineCount { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 
     /// <summary>Grid key and bulk-delete token.</summary>
     public string Key => CustPriceCode;
@@ -145,6 +149,10 @@ public sealed class SaItemCustListRow
     public string? Currency { get; init; }
     public string? Status { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 
     /// <summary>Natural key in the "-"-free encoded form used by the bulk-delete token.</summary>
     public string Key => $"{CustCode};{ICode};{SellingUOM};{MOQ}";
@@ -191,6 +199,10 @@ public sealed class SaDisGroupItemListRow
     public string? DiscountType1 { get; init; }
     public string? EffectPrice { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 
     /// <summary>Grid key and bulk-delete token (surrogate identity).</summary>
     public string Key => Id.ToString(System.Globalization.CultureInfo.InvariantCulture);

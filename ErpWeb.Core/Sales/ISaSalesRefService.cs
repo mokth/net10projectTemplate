@@ -241,6 +241,10 @@ public sealed class SaCustTypeListRow
     public string? Desc { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCustTypeEditVm
@@ -260,6 +264,10 @@ public sealed class SaCustGroupListRow
     public string? CustPriceCode { get; init; }
 
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCustGroupEditVm
@@ -283,6 +291,10 @@ public sealed class SaAreaListRow
     public string? Desc { get; init; }
     public string? Latitude { get; init; }
     public string? Longitude { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaAreaEditVm
@@ -299,6 +311,10 @@ public sealed class SaCountryListRow
     public string? Name { get; init; }
     public decimal? Latitude { get; init; }
     public decimal? Longitude { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCountryEditVm
@@ -314,6 +330,10 @@ public sealed class SaCurrencyListRow
     public string Code { get; init; } = string.Empty;
     public string? Desc { get; init; }
     public bool IsActive { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCurrencyEditVm
@@ -332,6 +352,10 @@ public sealed class SaDisGroupListRow
     public string? GroupStatus { get; init; }
     public int MemberCount { get; init; }
     public string RowKey => $"{GroupName}|{PayCode}";
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaDisGroupMemberVm
@@ -361,6 +385,10 @@ public sealed class SaCurrRateListRow
     public double HomeCurPerUnit { get; init; }
     public bool Status { get; init; }
     public string RowKey => $"{CurrCode}|{StartDate:yyyyMMdd}|{EndDate:yyyyMMdd}";
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCurrRateEditVm
@@ -378,6 +406,10 @@ public sealed class SaPaymentTermListRow
     public string? Desc { get; init; }
     public int? Days { get; init; }
     public bool IsActive { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaPaymentTermEditVm
@@ -396,6 +428,10 @@ public sealed class SaSalesRepListRow
     public string? Email { get; init; }
     public decimal? CommissionRate { get; init; }
     public bool IsActive { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaSalesRepEditVm
@@ -448,6 +484,10 @@ public sealed class SaTaxGroupListRow
     public string CompanyCode { get; init; } = string.Empty;
     public string? BranchCode { get; init; }
     public string? LocationCode { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaTaxGroupEditVm
@@ -475,6 +515,10 @@ public sealed class SaCustSubGroupListRow
     public string Code { get; init; } = string.Empty;
     public string? Desc { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCustSubGroupEditVm
@@ -490,6 +534,10 @@ public sealed class SaShipViaListRow
     public string? Desc { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaShipViaEditVm
@@ -506,6 +554,10 @@ public sealed class SaSOTypeListRow
     public string? Desc { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaSOTypeEditVm
@@ -522,6 +574,10 @@ public sealed class SaCommentListRow
     public string? Comment { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaCommentEditVm
@@ -540,6 +596,10 @@ public sealed class SaShippingLeadTimeListRow
     public string? Type { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaShippingLeadTimeEditVm
@@ -571,6 +631,10 @@ public sealed class SaLMWListRow
     public string? Position { get; init; }
     public string? CustName { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class SaLMWEditVm

@@ -90,7 +90,7 @@ public partial class PoOrderList : PageBase, IDisposable
         new() { Caption = "Status", FieldName = nameof(PoOrderListRow.Status), Width = "110px", VisibleIndex = 8 },
         new() { Caption = "ETA", FieldName = nameof(PoOrderListRow.EtaDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 9 },
         new() { Caption = "Currency", FieldName = nameof(PoOrderListRow.CurCode), Width = "90px", VisibleIndex = 10 },
-        new() { Caption = "Created", FieldName = nameof(PoOrderListRow.CreatedDate), DataType = "date", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "150px", VisibleIndex = 11 }
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

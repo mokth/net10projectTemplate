@@ -76,7 +76,8 @@ public partial class SaQtList : PageBase, IDisposable
         new() { Caption = "Customer RFQ / Ref", FieldName = nameof(SaQtListRow.CustPo), Width = "150px", VisibleIndex = 9 },
         new() { Caption = "Lines", FieldName = nameof(SaQtListRow.LineCount), Width = "70px", VisibleIndex = 10 },
         new() { Caption = "Total", FieldName = nameof(SaQtListRow.TotAmnt), DataType = "number", DisplayFormat = "n2", Width = "110px", VisibleIndex = 11 },
-        new() { Caption = "Sales Order", FieldName = nameof(SaQtListRow.ConvertedSoNo), Width = "130px", VisibleIndex = 12 }
+        new() { Caption = "Sales Order", FieldName = nameof(SaQtListRow.ConvertedSoNo), Width = "130px", VisibleIndex = 12 },
+        ..AuditColumns.For(startVisibleIndex: 13)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

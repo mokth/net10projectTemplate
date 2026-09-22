@@ -118,6 +118,8 @@ public partial class SaItemCustList : SaRefListPageBase<SaItemCustListRow>
             Width = "90px"
         });
 
+        columns.AddRange(AuditColumns.For(startVisibleIndex: 10));
+
         return columns;
     }
 

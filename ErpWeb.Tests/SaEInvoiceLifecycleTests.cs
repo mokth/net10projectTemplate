@@ -274,14 +274,14 @@ public class SaEInvoiceLifecycleTests
     }
 
     [Fact]
-    public async Task A_non_E164_buyer_telephone_is_refused_and_points_at_the_document_snapshot()
+    public async Task A_non_E164_buyer_telephone_is_refused_and_points_at_the_customer_profile()
     {
         await using var host = EInvoiceTestHost.Create();
         await host.SeedCompanyAsync();
         await host.SeedInvoiceAsync();
-        // The billing telephone is a snapshot frozen onto the document, so repairing the customer profile
-        // alone would not fix this invoice - the message has to say so.
-        await host.UpdateInvoiceAsync(EInvoiceTestHost.InvNo, x => x.InvTel = "A-phone");
+        // The buyer block is read live from the customer master on every submit, so the MASTER is what has
+        // to be corrected. There is no "re-open and re-save the document" step to point at any more.
+        await host.UpdateCustomerAsync(x => x.Tel = "A-phone");
         var service = host.CreateService();
 
         var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
@@ -289,8 +289,26 @@ public class SaEInvoiceLifecycleTests
         Assert.False(result.Succeeded);
         Assert.Equal(SaEInvoiceErrorKind.Validation, result.ErrorKind);
         Assert.Contains("Buyer.Phone", result.ValidationErrors.Keys);
-        Assert.Contains("re-save", result.ValidationErrors["Buyer.Phone"], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("customer profile", result.ValidationErrors["Buyer.Phone"], StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("re-save", result.ValidationErrors["Buyer.Phone"], StringComparison.OrdinalIgnoreCase);
         Assert.Empty(host.Helper.Calls);
+    }
+
+    [Fact]
+    public async Task A_stale_document_telephone_snapshot_no_longer_reaches_the_payload()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        await host.SeedInvoiceAsync();
+        // D-1: the document snapshot is print/business data only. A stale telephone on the invoice must not
+        // decide what is submitted - the customer master does.
+        await host.UpdateInvoiceAsync(EInvoiceTestHost.InvNo, x => x.InvTel = "A-phone");
+        var service = host.CreateService();
+
+        var result = await service.SubmitAsync(EInvoiceTestHost.InvoiceKey());
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal("+60398765432", Assert.Single(host.Helper.Submitted).Customer.PhoneNo);
     }
 
     [Fact]

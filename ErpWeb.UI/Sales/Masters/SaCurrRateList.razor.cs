@@ -59,7 +59,8 @@ public partial class SaCurrRateList : SaKeyedRefListPageBase<SaCurrRateListRow, 
             DataType = "bool",
             VisibleIndex = 5,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 6)
     ];
 
     protected override async Task OnPageInitializedAsync()

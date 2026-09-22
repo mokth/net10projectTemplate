@@ -56,6 +56,10 @@ public sealed class PoBuyerListRow
     public string? Desc { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoBuyerEditVm
@@ -77,6 +81,10 @@ public sealed class PoBuyingTermListRow
     public string? Description { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoBuyingTermEditVm
@@ -97,6 +105,10 @@ public sealed class PoCategoryListRow
     public string? Description { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoCategoryEditVm
@@ -119,6 +131,10 @@ public sealed class PoAuthorisedListRow
     public string? MobileNo { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoAuthorisedEditVm
@@ -148,6 +164,10 @@ public sealed class PoPurItemListRow
     public decimal Moq { get; init; }
     public string? Status { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class PoPurItemEditVm

@@ -140,6 +140,8 @@ public sealed class SaQtListRow
     public string? SalesRep { get; init; }
     public string? CreatedBy { get; init; }
     public DateTime? CreatedDate { get; init; }
+    public string? ModifiedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
     public byte[] RowVersion { get; init; } = [];
 
     /// <summary>The Sales Order created from this revision, when it has been converted.</summary>

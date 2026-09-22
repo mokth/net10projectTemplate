@@ -342,15 +342,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             db,
             context.CompanyCode!,
             context.BranchCode!,
-            new SaInvoiceSearchArgs(
-                SearchText: string.IsNullOrWhiteSpace(query.SearchText) ? null : query.SearchText.Trim(),
-                Status: string.IsNullOrWhiteSpace(query.Status) ? null : query.Status.Trim(),
-                DateFrom: query.DateFrom,
-                DateTo: query.DateTo,
-                SortField: query.SortField,
-                SortDescending: query.SortDescending,
-                Skip: query.Skip,
-                Take: query.Take),
+            SaInvoiceQueryMapper.ToSearchArgs(query, query.Skip, query.Take),
             cancellationToken);
 
         var names = await LoadCustNamesAsync(db, context.CompanyCode!, rows.Select(x => x.CustCode).ToList(), cancellationToken);
@@ -380,6 +372,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 LineCount = countByInv.GetValueOrDefault(x.InvNo),
                 CreatedDate = x.CreatedDate,
                 CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy,
                 RowVersion = x.RowVersion,
                 IrbmStatus = x.IrbmStatus,
                 IrbmOutcome = x.IrbmOutcome,
@@ -3011,7 +3005,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
         invoice.IndustryCode = TruncateOptional(customer.IndustryCode, 20);
         invoice.ChannelCode = TruncateOptional(customer.ChannelCode, 20);
         // Canonical when recognised; a legacy value already on the customer is kept as-is so the
-        // snapshot still mirrors the live read (SaEInvoiceService.LoadBuyerIdentityAsync uses the same rule).
+        // snapshot still mirrors the live read (SaEInvoiceService.ToBuyerIdentity uses the same rule).
         invoice.BuyerRegType = TruncateOptional(EInvoiceRegistrationTypes.Normalize(customer.RegType) ?? customer.RegType, 20);
         invoice.GstregNo = TruncateOptional(customer.GstregNo, 50);
 

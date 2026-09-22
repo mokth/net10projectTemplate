@@ -1027,7 +1027,11 @@ public sealed partial class SaSalesRefService
     {
         Code = x.CustSubGroupCode,
         Desc = x.CustSubGroupDesc,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaShipViaListRow MapShipViaRow(SaShipVia x) => new()
@@ -1035,7 +1039,11 @@ public sealed partial class SaSalesRefService
         Code = x.ShipViaCode,
         Desc = x.ShipViaDesc,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaSOTypeListRow MapSoTypeRow(SaSOType x) => new()
@@ -1043,7 +1051,11 @@ public sealed partial class SaSalesRefService
         Code = x.SOTypeCode,
         Desc = x.SOTypeDesc,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaCommentListRow MapCommentRow(SaComment x) => new()
@@ -1051,7 +1063,11 @@ public sealed partial class SaSalesRefService
         Code = x.CommID,
         Comment = x.Comment,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static SaShippingLeadTimeListRow MapShippingLeadTimeRow(SaShippingLeadTime x) => new()
@@ -1061,7 +1077,11 @@ public sealed partial class SaSalesRefService
         Days = x.Days,
         Type = x.Type,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     // ===================== Validation / normalisation =====================

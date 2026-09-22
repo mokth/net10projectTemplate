@@ -1390,6 +1390,106 @@ public class SaCdnServiceTests : IAsyncLifetime
         }
     }
 
+    // ─────────────── E-Invoice list surface: state projection, filter and line count ───────────────
+
+    [Fact]
+    public async Task SearchAsync_projects_the_e_invoice_state_and_filters_on_it()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCdns.Add(NewNote("CN-EINV-0001", CdnStatuses.Posted,
+                irbmStatus: EInvoiceStatuses.Submitted, irbmUuid: "UUID-CN-0001"));
+            db.SaCdns.Add(NewNote("CN-EINV-0002", CdnStatuses.Posted,
+                irbmStatus: EInvoiceStatuses.Valid, irbmUuid: "UUID-CN-0002"));
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+
+        // Unfiltered: both rows carry their state, so the grid's E-Inv / E-UUID / E-Status columns render.
+        var all = await sut.SearchAsync(new SaCdnListQuery { Type = CdnTypes.CreditNote });
+        Assert.True(all.Succeeded, all.ErrorMessage);
+        Assert.Equal(2, all.ListPage!.TotalCount);
+        var submitted = all.ListPage.Rows.Single(x => x.DocNo == "CN-EINV-0001");
+        Assert.Equal(EInvoiceStatuses.Submitted, submitted.IrbmStatus);
+        Assert.Equal("UUID-CN-0001", submitted.IrbmUuid);
+
+        // IrbmStatus is the refresh-all's candidate predicate, so it must filter in the repository and not
+        // be applied in memory by the page (contract C2).
+        var filtered = await sut.SearchAsync(new SaCdnListQuery
+        {
+            Type = CdnTypes.CreditNote,
+            IrbmStatus = EInvoiceStatuses.Submitted
+        });
+        Assert.True(filtered.Succeeded, filtered.ErrorMessage);
+        Assert.Equal("CN-EINV-0001", Assert.Single(filtered.ListPage!.Rows).DocNo);
+    }
+
+    [Fact]
+    public async Task SearchAsync_reports_the_real_line_count()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var note = NewNote("CN-LINES-0001", CdnStatuses.Posted);
+            note.Details.Add(NewDetail("CN-LINES-0001", 1));
+            note.Details.Add(NewDetail("CN-LINES-0001", 2));
+            db.SaCdns.Add(note);
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.SearchAsync(new SaCdnListQuery { Type = CdnTypes.CreditNote });
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+
+        // Regression: the repository query never Includes Details, so the count used to be reported as 0.
+        Assert.Equal(2, Assert.Single(result.ListPage!.Rows).LineCount);
+    }
+
+    private static SaCdn NewNote(
+        string docNo,
+        string status,
+        string? irbmStatus = null,
+        string? irbmUuid = null,
+        string? irbmOutcome = null) => new()
+    {
+        CompanyCode = "DEMO",
+        BranchCode = "HQ",
+        DocNo = docNo,
+        DocDate = FixedToday,
+        Status = status,
+        Type = CdnTypes.CreditNote,
+        CustCode = "CUST01",
+        CustName = "Buyer Sdn Bhd",
+        Currency = "MYR",
+        CurrRate = 1m,
+        GrossAmnt = 50m,
+        Taxes = 4m,
+        TotAmnt = 54m,
+        IrbmStatus = irbmStatus,
+        IrbmUuid = irbmUuid,
+        IrbmOutcome = irbmOutcome,
+        CreatedDate = FixedToday,
+        RowVersion = [1, 0, 0, 0, 0, 0, 0, 0]
+    };
+
+    private static SaCdnDetail NewDetail(string docNo, short line) => new()
+    {
+        CompanyCode = "DEMO",
+        BranchCode = "HQ",
+        DocNo = docNo,
+        Line = line,
+        ICode = "ITM01",
+        IDesc = "Consulting",
+        StdUom = "UNIT",
+        Qty = 1m,
+        UnitPrice = 25m,
+        Amount = 25m,
+        NetAmount = 25m,
+        TaxGroup = "SR-8",
+        TaxAmt = 2m
+    };
+
     private SaCdnService CreateSut(Mock<IAccessRightService>? access = null)
     {
         access ??= AlwaysAllowed();

@@ -1983,6 +1983,8 @@ public sealed class PoOrderService : IPoOrderService
 			LineCount = header.Details.Count,
 			CreatedBy = header.CreatedBy,
 			CreatedDate = header.CreatedDate,
+			ModifiedDate = header.ModifiedDate,
+			ModifiedBy = header.ModifiedBy,
 			RowVersion = (header.RowVersion ?? Array.Empty<byte>()),
 			CanEdit = (canEdit && flag3),
 			CanDelete = canDelete2,

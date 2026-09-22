@@ -492,6 +492,25 @@ public partial class SaInvoice : PageBase, IDisposable
 
     private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
+    /// <summary>
+    /// The customer lookup is ACTIVE-only, so a document whose customer has since been deactivated can
+    /// no longer be resolved by the combo. A <c>DxComboBox</c> renders blank over a non-empty column and
+    /// raises <c>ValueChanged(null)</c> for an unresolved value - which the page must not mistake for the
+    /// operator clearing the customer. Keep the document's own customer selectable (the same
+    /// "append the current value when absent" pattern used by <c>SaCustEntry</c>).
+    /// </summary>
+    private void EnsureCustomerOption(string? custCode)
+    {
+        var code = (custCode ?? string.Empty).Trim();
+        if (code.Length == 0 ||
+            Customers.Any(x => string.Equals(x.CustCode, code, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        Customers.Add(new SaInvoiceCustomerLookupRow { CustCode = code, CustName = CustName ?? code });
+    }
+
     private void ApplyDocument(SaInvoiceDocument doc)
     {
         InvNo = doc.InvNo;
@@ -548,6 +567,8 @@ public partial class SaInvoice : PageBase, IDisposable
         {
             RefreshPackFromItem(line);
         }
+
+        EnsureCustomerOption(CustCode);
     }
 
     private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
@@ -616,6 +637,16 @@ public partial class SaInvoice : PageBase, IDisposable
         var next = NormCustCode(value);
         next = string.IsNullOrEmpty(next) ? null : next;
         if (string.Equals(CustCode, next, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // A loaded document must never be destroyed by a phantom blank: when the combo cannot resolve the
+        // document's customer it raises ValueChanged(null) with no operator action, and the legacy
+        // "clearing the customer wipes the document" path would silently blank the address/Tel/Fax block
+        // on screen (the row keeps the values, but the next save would persist the blanks). Only a NEW
+        // document keeps the silent wipe; a saved document is left untouched.
+        if (next is null && !IsNewMode)
         {
             return;
         }
@@ -690,7 +721,11 @@ public partial class SaInvoice : PageBase, IDisposable
         CurrRate = d.CurrRate;
         CurrRateValid = d.CurrRateValid;
         PayCode = d.PayCode;
-        TaxGrCode = d.TaxGrCode;
+        // A taxable customer must always end up with a usable header tax group: when the customer has no
+        // tax group configured, fall back to the first record of the (TaxGrCode-ordered) dropdown.
+        TaxGrCode = string.IsNullOrWhiteSpace(d.TaxGrCode)
+            ? TaxGroups.FirstOrDefault()?.TaxGrCode
+            : d.TaxGrCode;
         SalesmanCode = d.SalesmanCode;
         _taxable = d.Taxable;
         _discountMethod = d.DiscountMethod;
@@ -846,7 +881,9 @@ public partial class SaInvoice : PageBase, IDisposable
         _editingLine = null;
         Popup = new SaInvoiceLineVm
         {
-            FrWarehouse = Warehouses.FirstOrDefault()?.WarehouseCode,
+            // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
+            // first active warehouse as the fallback (applied in OnPopupItemChangedAsync).
+            FrWarehouse = null,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
         PopupDiscountIsAmount = false;
@@ -1144,10 +1181,9 @@ public partial class SaInvoice : PageBase, IDisposable
             Popup.TaxGrCode = item.TaxGroup;
         }
 
-        if (string.IsNullOrWhiteSpace(Popup.FrWarehouse))
-        {
-            Popup.FrWarehouse = item.DefWarehouse ?? Warehouses.FirstOrDefault()?.WarehouseCode;
-        }
+        // The item's own default warehouse always wins on an item change; the first active warehouse is
+        // only a fallback, so a stock-controlled line without a DefWarehouse can still be saved.
+        Popup.FrWarehouse = item.DefWarehouse ?? Warehouses.FirstOrDefault()?.WarehouseCode;
 
         // A new item means new discount rules.
         _autoDiscountSlots = null;

@@ -787,7 +787,11 @@ public sealed class IvStockMasterService : IIvStockMasterService
             IsActive = x.IsActive,
             SellingPrice = x.SellingPrice,
             PurchasePrice = x.PurchasePrice,
-            RowVersion = x.RowVersion ?? []
+            RowVersion = x.RowVersion ?? [],
+            CreatedDate = x.CreatedDate,
+            CreatedBy = x.CreatedBy,
+            ModifiedDate = x.ModifiedDate,
+            ModifiedBy = x.ModifiedBy
         };
 
     private static IvStockMasterEditVm MapEditVm(IvStockMaster x) =>

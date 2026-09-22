@@ -21,7 +21,8 @@ public partial class PoBuyerList : PoRefListPageBase<PoBuyerListRow, PoBuyerEdit
         new() { Caption = "Code", FieldName = nameof(PoBuyerListRow.Code), DataType = "string", SortIndex = 0, SortOrder = GridColumnSortOrder.Ascending, VisibleIndex = 1, Width = "100px" },
         new() { Caption = "Name", FieldName = nameof(PoBuyerListRow.Name), DataType = "string", VisibleIndex = 2 },
         new() { Caption = "Description", FieldName = nameof(PoBuyerListRow.Desc), DataType = "string", VisibleIndex = 3 },
-        new() { Caption = "Active", FieldName = nameof(PoBuyerListRow.IsActive), DataType = "bool", VisibleIndex = 4, Width = "80px" }
+        new() { Caption = "Active", FieldName = nameof(PoBuyerListRow.IsActive), DataType = "bool", VisibleIndex = 4, Width = "80px" },
+        ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
     protected override Task<IvMasterOperationResult<IReadOnlyList<PoBuyerListRow>>> LoadRowsAsync() =>

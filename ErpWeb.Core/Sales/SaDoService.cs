@@ -360,6 +360,8 @@ public sealed class SaDoService : ISaDoService
                     ShipmentComplete = false, // computed in GetAsync per document
                     CreatedDate = x.CreatedDate,
                     CreatedBy = x.CreatedBy,
+                    ModifiedDate = x.ModifiedDate,
+                    ModifiedBy = x.ModifiedBy,
                     RowVersion = x.RowVersion ?? []
                 };
             }).ToList()

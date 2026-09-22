@@ -854,7 +854,11 @@ public sealed class PoSupplierService : IPoSupplierService
         BuyingTerm = x.BuyingTerm,
         GlCode = x.GlCode,
         IsActive = x.IsActive,
-        RowVersion = x.RowVersion ?? []
+        RowVersion = x.RowVersion ?? [],
+        CreatedDate = x.CreatedDate,
+        CreatedBy = x.CreatedBy,
+        ModifiedDate = x.ModifiedDate,
+        ModifiedBy = x.ModifiedBy
     };
 
     private static PoSupplierEditVm MapEditVm(PoSupplier x) => new()

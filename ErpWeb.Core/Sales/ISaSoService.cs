@@ -142,6 +142,8 @@ public sealed class SaSoListRow
     public DateTime? ClosedDate { get; init; }
     public string? CreatedBy { get; init; }
     public DateTime? CreatedDate { get; init; }
+    public string? ModifiedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
     public byte[] RowVersion { get; init; } = [];
 
     /// <summary>UX hint only — service revalidates at mutate time.</summary>

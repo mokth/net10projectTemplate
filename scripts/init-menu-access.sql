@@ -326,10 +326,14 @@ WHERE m.MenuCode = N'SA_SO'
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 
+/* SUBMIT / CANCEL are included so a FRESH database matches a migrated one: the CN/DN e-Invoice actions
+   (list toolbar + the entry page's SaEInvoicePanel) are gated on them, and
+   scripts/init-sales-cdn-einvoice-permissions.sql adds them to existing databases. A role still needs a
+   RoleMenuPermission grant before a user can submit - see that script's header. */
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
-INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK')
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'SUBMIT', N'CANCEL')
 WHERE m.MenuCode IN (N'SA_CN', N'SA_DN')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp

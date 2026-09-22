@@ -422,6 +422,8 @@ public sealed class SaSoService : ISaSoService
                     ClosedDate = x.ClosedDate,
                     CreatedDate = x.CreatedDate,
                     CreatedBy = x.CreatedBy,
+                    ModifiedDate = x.ModifiedDate,
+                    ModifiedBy = x.ModifiedBy,
                     RowVersion = x.RowVersion ?? [],
                     CanRevise = canMutate,
                     CanDelete = canMutate,

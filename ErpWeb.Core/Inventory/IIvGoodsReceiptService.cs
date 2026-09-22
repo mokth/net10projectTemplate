@@ -58,6 +58,8 @@ public sealed class IvGoodsReceiptListRow
     public decimal TotalAmount { get; init; }
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class IvGoodsReceiptListPage

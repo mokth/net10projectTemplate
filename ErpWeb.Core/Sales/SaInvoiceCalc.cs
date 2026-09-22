@@ -1,3 +1,5 @@
+using ErpWeb.Core.EInvoice;
+
 namespace ErpWeb.Core.Sales;
 
 public static class SaInvoiceStatuses
@@ -14,8 +16,24 @@ public static class SaInvoiceLimits
     /// Hard cap on how many invoices one interactive batch e-Invoice action (Submit / E-Status /
     /// Cancel) may carry. Keeps the request inside the MyInvois rate limits and the grid responsive;
     /// it is applied AFTER case-insensitive deduplication.
+    /// <para>
+    /// Forwards to <see cref="SaEInvoiceLimits.MaxBatchSelection"/>: the number is a property of the
+    /// MyInvois integration, not of the invoice family. This name is kept for the invoice call sites;
+    /// a test pins the equality so the two can never drift apart.
+    /// </para>
     /// </summary>
-    public const int MaxEInvoiceBatchSelection = 10;
+    public const int MaxEInvoiceBatchSelection = SaEInvoiceLimits.MaxBatchSelection;
+
+    /// <summary>
+    /// Hard cap on one "refresh every submitted invoice" run (the E-STATUS button with nothing
+    /// selected). Each document costs its own MyInvois round trip, so the run is bounded and the
+    /// operator narrows the filter instead. Enforced BEFORE the first MyInvois call: an over-cap run
+    /// makes zero calls.
+    /// <para>
+    /// Forwards to <see cref="SaEInvoiceLimits.MaxRefreshAllRun"/>; see the note above.
+    /// </para>
+    /// </summary>
+    public const int MaxEInvoiceRefreshAllRun = SaEInvoiceLimits.MaxRefreshAllRun;
 }
 
 public static class SaInvoiceCalc

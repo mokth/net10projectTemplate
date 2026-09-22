@@ -53,7 +53,8 @@ public partial class IvLocationList : IvRefListPageBase<IvLocationListRow>
             DataType = "bool",
             VisibleIndex = 4,
             Width = "80px"
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
     protected override async Task OnPageInitializedAsync()

@@ -319,6 +319,8 @@ public sealed class PoPrService : IPoPrService
                     Currency = stats?.Currency,
                     CreatedBy = x.CreatedBy,
                     CreatedDate = x.CreatedDate,
+                    ModifiedDate = x.ModifiedDate,
+                    ModifiedBy = x.ModifiedBy,
                     RowVersion = x.RowVersion ?? [],
                     CanEdit = canEdit && editable,
                     CanDelete = canDelete && editable && !hasAnyPo,

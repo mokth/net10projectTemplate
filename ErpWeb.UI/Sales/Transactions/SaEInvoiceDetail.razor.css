@@ -1,0 +1,196 @@
+/* e-Invoice LHDN document detail. The iv-* chrome is global; these are the page-local additions.
+   There is deliberately no shared .iv-table / .iv-mono in inventory-chrome.css, so the table and
+   monospace treatment are defined here (same shape as .tin-table / .einvoice__mono). */
+
+.eid-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.eid-empty {
+    margin: 10px 0 0;
+    color: var(--iv-muted, #667085);
+    font-size: 0.88rem;
+}
+
+/* ── Step blocks ─────────────────────────────────────────────────────────── */
+
+.eid-step {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--iv-line, #d7dde5);
+}
+
+.eid-step__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.eid-step__name {
+    font-weight: 600;
+    color: var(--iv-ink, #101828);
+    font-size: 0.92rem;
+}
+
+.eid-step__count {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--iv-muted, #667085);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Chips. Mirrors the e-Invoice status vocabulary. ─────────────────────── */
+
+.eid-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+}
+
+.eid-chip--ok {
+    background: #eaf7ef;
+    border-color: #a8d5b9;
+    color: #17663a;
+}
+
+.eid-chip--err {
+    background: color-mix(in srgb, var(--danger, #b42318) 10%, #fff);
+    border-color: color-mix(in srgb, var(--danger, #b42318) 28%, #d7dde5);
+    color: var(--danger, #b42318);
+}
+
+.eid-chip--pending {
+    background: #fff5e6;
+    border-color: #f0c48a;
+    color: #8a5300;
+}
+
+.eid-chip--muted {
+    background: color-mix(in srgb, var(--iv-muted, #667085) 12%, #fff);
+    border-color: var(--iv-line, #d7dde5);
+    color: var(--iv-muted, #667085);
+}
+
+.eid-chip--new {
+    background: color-mix(in srgb, var(--iv-muted, #667085) 10%, #fff);
+    border-color: var(--iv-line, #d7dde5);
+    color: var(--iv-muted, #667085);
+}
+
+/* ── Validation issue table ──────────────────────────────────────────────── */
+
+.eid-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.eid-table th,
+.eid-table td {
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--iv-line, #d7dde5);
+}
+
+.eid-table th {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--iv-muted, #667085);
+    white-space: nowrap;
+}
+
+.eid-table__prop {
+    width: 34%;
+    word-break: break-word;
+}
+
+.eid-table__msg {
+    word-break: break-word;
+}
+
+.eid-prop {
+    display: block;
+    font-weight: 600;
+    color: var(--iv-ink, #101828);
+    margin-bottom: 2px;
+}
+
+.eid-mono {
+    display: block;
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.75rem;
+    color: var(--iv-muted, #667085);
+    word-break: break-all;
+}
+
+.eid-code {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--iv-muted, #667085) 14%, #fff);
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.eid-msg {
+    margin: 0;
+    color: var(--iv-ink, #101828);
+}
+
+/* ErrorMs is the Malay translation, offered but never the primary reading. */
+.eid-ms {
+    margin-top: 6px;
+    font-size: 0.78rem;
+}
+
+.eid-ms summary {
+    cursor: pointer;
+    color: var(--iv-muted, #667085);
+}
+
+.eid-ms p {
+    margin: 4px 0 0;
+    color: var(--iv-muted, #667085);
+}
+
+.eid-meta {
+    margin: 6px 0 0;
+    font-size: 0.75rem;
+    color: var(--iv-muted, #667085);
+}
+
+/* ── Nested inner errors — usually the actionable cause ──────────────────── */
+
+.eid-inner {
+    margin: 8px 0 0;
+    padding-left: 14px;
+    border-left: 2px solid var(--iv-line, #d7dde5);
+    list-style: none;
+}
+
+.eid-inner li {
+    margin-bottom: 8px;
+}
+
+.eid-inner li:last-child {
+    margin-bottom: 0;
+}
+
+.eid-inner__msg {
+    display: block;
+    margin-top: 2px;
+    color: var(--iv-ink, #101828);
+}

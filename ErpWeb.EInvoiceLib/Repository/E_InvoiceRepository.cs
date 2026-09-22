@@ -1702,7 +1702,7 @@ namespace ErpWeb.EInvoiceLib.Repository
                 }
                 catch (HttpRequestException ex)
                 {
-                    _logger.LogError(ex.Message, ex);
+                    _logger.LogError(ex, "Failed to read the MyInvois document detail response for {Uuid}.", uuid);
                     throw new HttpRequestException(ex.Message, ex);
                 }
 
@@ -1742,13 +1742,17 @@ namespace ErpWeb.EInvoiceLib.Repository
             }
             catch (HttpRequestException ex)
             {
-                _logger.LogError(ex.Message, ex);
+                // The exception goes in the exception slot and the message is a constant template: passing
+                // ex.Message as the template made any message containing '{' (every Newtonsoft payload error)
+                // blow up inside this catch, replacing the real failure with a FormatException from
+                // CompositeFormat.Parse and skipping the two lines below it.
+                _logger.LogError(ex, "Failed to get the MyInvois document detail for {Uuid}.", uuid);
                 result.IsSuccess = false;
                 result.error = ex.Message;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex.Message, ex);
+                _logger.LogError(ex, "Failed to get the MyInvois document detail for {Uuid}.", uuid);
                 result.IsSuccess = false;
                 result.error = ex.Message;
             }

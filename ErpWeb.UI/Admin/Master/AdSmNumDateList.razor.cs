@@ -123,7 +123,8 @@ public partial class AdSmNumDateList : AdSmNumListPageBase<AdSmNumDateListRow, A
             FieldName = nameof(AdSmNumDateListRow.NumDes),
             DataType = "string",
             VisibleIndex = 9
-        }
+        },
+        ..AuditColumns.For(startVisibleIndex: 10)
     ];
 
     protected override async Task OnPageInitializedAsync() => await ReloadListAsync();

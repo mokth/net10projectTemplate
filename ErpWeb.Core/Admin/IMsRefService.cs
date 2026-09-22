@@ -13,6 +13,10 @@ public sealed class MsDeptListRow
     public string? GlCode { get; init; }
     public bool IsActive { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class MsDeptEditVm
@@ -43,6 +47,10 @@ public sealed class MsProjectListRow
     public decimal? BudgetAmnt { get; init; }
     public bool IsActive => !string.Equals(Status, MsProjectStatus.Closed, StringComparison.OrdinalIgnoreCase);
     public byte[] RowVersion { get; init; } = [];
+    public DateTime? CreatedDate { get; init; }
+    public string? CreatedBy { get; init; }
+    public DateTime? ModifiedDate { get; init; }
+    public string? ModifiedBy { get; init; }
 }
 
 public sealed class MsProjectEditVm

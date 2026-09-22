@@ -156,7 +156,9 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
                 LineCount = x.LineCount,
                 TotalAmount = decimal.Round(x.TotalAmount, 2),
                 CreatedDate = x.CreatedDate,
-                CreatedBy = x.CreatedBy
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
             }).ToList(),
             TotalCount = total
         });
