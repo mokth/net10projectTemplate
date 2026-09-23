@@ -91,6 +91,15 @@ public static class MenuCodes
     public const string PurchaseCreditNote = "PO_CN";
     public const string PurchaseDebitNote = "PO_DN";
     public const string PurchaseCreditNoteReservations = "PO_CN_RESERVATIONS";
+
+    /// <summary>Self-billed purchase invoice (LHDN 11).</summary>
+    public const string PurchaseSbInvoice = "PO_SB_INVOICE";
+
+    /// <summary>Self-billed purchase credit note (LHDN 12).</summary>
+    public const string PurchaseSbCreditNote = "PO_SB_CN";
+
+    /// <summary>Self-billed purchase debit note (LHDN 13).</summary>
+    public const string PurchaseSbDebitNote = "PO_SB_DN";
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

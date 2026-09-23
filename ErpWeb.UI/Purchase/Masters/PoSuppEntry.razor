@@ -64,6 +64,7 @@
                             @Detail("Supplier name", Model.SuppName)
                             @Detail("Short name", Model.SuppShortName)
                             @Detail("COM REG NO", Model.SupplierBrn)
+                            @Detail("TIN", Model.TinNo)
                             @Detail("Group", Model.CategoryCode)
                             @Detail("Area", Model.AreaCode)
                             @Detail("Reg type", Model.RegType)
@@ -310,6 +311,12 @@
                                     <DxTextBox @bind-Text="@Model.SupplierBrn" maxlength="50" />
                                 </div>
                                 <div class="iv-field">
+                                    <label class="iv-field__label">TIN</label>
+                                    <DxTextBox @bind-Text="@Model.TinNo" maxlength="20" />
+                                    @FieldError("TinNo")
+                                    <p class="po-supp-hint">LHDN Tax Identification Number. Required to submit a self-billed e-Invoice for this supplier; leave blank otherwise.</p>
+                                </div>
+                                <div class="iv-field">
                                     <label class="iv-field__label">Group</label>
                                     <DxTextBox @bind-Text="@Model.CategoryCode" maxlength="20" />
                                 </div>
@@ -356,6 +363,7 @@
                                 <div class="iv-field">
                                     <label class="iv-field__label">MSIC code</label>
                                     <DxTextBox @bind-Text="@Model.MiscCode" maxlength="20" />
+                                    <p class="po-supp-hint">5-digit MSIC code. Used as the supplier classification on a self-billed e-Invoice for this supplier.</p>
                                 </div>
                             </div>
                         </div>
@@ -407,11 +415,13 @@
                                         <label class="iv-field__label">State</label>
                                         <IvCodeComboBox Data="@States" @bind-Value="@Model.State" NullText="Select state" />
                                         @FieldError("State")
+                                        <p class="po-supp-hint">Used for the e-Invoice, so it must be a recognised Malaysian state.</p>
                                     </div>
                                     <div class="iv-field">
                                         <label class="iv-field__label">Country</label>
                                         <IvCodeComboBox Data="@Countries" @bind-Value="@Model.Country" NullText="Select country" />
                                         @FieldError("Country")
+                                        <p class="po-supp-hint">Used for the e-Invoice, so it must be a recognised country.</p>
                                     </div>
                                     <div class="iv-field">
                                         <label class="iv-field__label">Fax</label>
@@ -727,7 +737,8 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Business description</label>
-                                    <DxMemo @bind-Text="@Model.BizDesc" Rows="5" maxlength="500" NullText="Business description" />
+                                    <DxMemo @bind-Text="@Model.BizDesc" Rows="5" maxlength="200" NullText="Business description" />
+                                    <p class="po-supp-hint">Max 200 characters. Used as the supplier's business description on a self-billed e-Invoice.</p>
                                 </div>
                             </div>
                         </DxTabPage>

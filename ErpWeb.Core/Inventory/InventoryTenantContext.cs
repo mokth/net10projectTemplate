@@ -231,4 +231,28 @@ internal static class InventoryLeftoverSite
     {
         entity.BranchCode = writeScope.BranchCode!;
     }
+
+    // Self-billed e-Invoice documents (SBI / SBC / SBD). Branch and location are leftover stamps only;
+    // the company comes from the write scope and is never inferred.
+    public static void Apply(PoSbInvoice entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(PoSbInvoiceDetail entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+    }
+
+    public static void Apply(PoSbCdn entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(PoSbCdnDetail entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+    }
 }

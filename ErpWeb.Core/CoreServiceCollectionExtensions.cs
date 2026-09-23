@@ -185,6 +185,11 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IPoCdnService, PoCdnService>();
 
+        // Self-billed e-Invoice documents (SBI / SBC / SBD) — slim purchase documents whose only job is
+        // to carry a valid MyInvois payload. See plans/plan-poSelfBilledEInvoice.prompt.md.
+        services.AddScoped<IPoSbInvoiceService, PoSbInvoiceService>();
+        services.AddScoped<IPoSbCdnService, PoSbCdnService>();
+
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();

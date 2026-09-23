@@ -232,6 +232,84 @@ public class PoSupplierServiceTests : IAsyncLifetime
         Assert.Equal("TRIM01", result.Data!.SuppCode);
     }
 
+    // TIN (POSupplier.TINNo). The e-Invoice supplier TIN for a self-billed document is read from this
+    // column by PoSupplierPartyProfileResolver. Optional by design: a blank TIN must never block an
+    // ordinary supplier save, because the self-billed submit-time validator is the gate.
+    [Fact]
+    public async Task TinNo_RoundTrips_OnCreateAndEdit()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("TIN01");
+        model.TinNo = "C1234567890";
+        Assert.True((await sut.SaveAsync(model, true)).Succeeded);
+
+        var created = (await sut.GetAsync("TIN01")).Data!;
+        Assert.Equal("C1234567890", created.TinNo);
+
+        // SQLite has no rowversion, so AppDbContext forces the column to ValueGenerated.Never and a
+        // service-inserted row comes back with an EMPTY concurrency token, which the edit path refuses
+        // (the same reason the fixture's seed rows carry an explicit RowVersion). Stamp one so the
+        // UPDATE leg is actually exercised.
+        await StampRowVersionAsync("TIN01", 90);
+
+        var toEdit = (await sut.GetAsync("TIN01")).Data!;
+        toEdit.TinNo = "C9876543210";
+        var edit = await sut.SaveAsync(toEdit, isNew: false);
+        Assert.True(edit.Succeeded, edit.Message);
+
+        var edited = (await sut.GetAsync("TIN01")).Data!;
+        Assert.Equal("C9876543210", edited.TinNo);
+    }
+
+    private async Task StampRowVersionAsync(string suppCode, byte marker)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.PoSuppliers.SingleAsync(x =>
+            x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == suppCode);
+        row.RowVersion = Rv(marker);
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task TinNo_Blank_IsAllowed()
+    {
+        var sut = CreateSut();
+
+        var nullTin = ValidNewModel("NOTIN1");
+        nullTin.TinNo = null;
+        Assert.True((await sut.SaveAsync(nullTin, true)).Succeeded);
+
+        var emptyTin = ValidNewModel("NOTIN2");
+        emptyTin.TinNo = string.Empty;
+        Assert.True((await sut.SaveAsync(emptyTin, true)).Succeeded);
+
+        var whitespaceTin = ValidNewModel("NOTIN3");
+        whitespaceTin.TinNo = "   ";
+        Assert.True((await sut.SaveAsync(whitespaceTin, true)).Succeeded);
+
+        // Blank is normalised to NULL, exactly like the other optional header text fields.
+        Assert.Null((await sut.GetAsync("NOTIN1")).Data!.TinNo);
+        Assert.Null((await sut.GetAsync("NOTIN2")).Data!.TinNo);
+        Assert.Null((await sut.GetAsync("NOTIN3")).Data!.TinNo);
+    }
+
+    [Fact]
+    public async Task TinNo_Over20Chars_Rejected()
+    {
+        var sut = CreateSut();
+
+        // 20 is the nvarchar(20) column capacity, not an LHDN TIN-format rule.
+        var ok = ValidNewModel("TIN20");
+        ok.TinNo = new string('C', 20);
+        Assert.True((await sut.SaveAsync(ok, true)).Succeeded);
+
+        var bad = ValidNewModel("TIN21");
+        bad.TinNo = new string('C', 21);
+        var fail = await sut.SaveAsync(bad, true);
+        Assert.False(fail.Succeeded);
+        Assert.True(fail.ValidationErrors.ContainsKey("TinNo"));
+    }
+
     [Fact]
     public async Task DuplicateCode_ReturnsDuplicateKey()
     {

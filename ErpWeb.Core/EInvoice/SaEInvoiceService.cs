@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.EInvoiceLib.GenerateDoc;
@@ -10,6 +11,7 @@ using ErpWeb.EInvoiceLib.Model.InputData;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Sales;
 using Microsoft.EntityFrameworkCore;
@@ -919,6 +921,202 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     }
 
     /// <summary>
+    /// Refresh every <c>SUBMITTED</c> self-billed document (LHDN 11 / 12 / 13) the grid is showing — the
+    /// SBI / SBC / SBD counterpart of the invoice and CN/DN overloads. Read-only: nothing is submitted,
+    /// cancelled, recovered or retried.
+    ///
+    /// <para>
+    /// The family is passed in (see the interface for why it is not derived from the scope) and selects
+    /// the source table, the authorizing menu and the document-type token handed to the shared driver, so
+    /// a credit-note run can never touch a debit note.
+    /// </para>
+    /// </summary>
+    public async Task<SaEInvoiceBatchResult> RefreshSubmittedAsync(
+        string documentType,
+        PoSbQuery? scope,
+        IProgress<SaEInvoiceRefreshProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var family = ResolveSbRefreshFamily(documentType);
+        if (family is null)
+        {
+            return SaEInvoiceBatchResult.Failed(
+                "Type must be SBI, SBC or SBD.", SaEInvoiceErrorKind.Validation);
+        }
+
+        var branchScope = _tenant.TryBranchScope();
+        if (branchScope is null || string.IsNullOrWhiteSpace(branchScope.BranchCode))
+        {
+            // The self-billed list services refuse a blank branch too, so the candidate query would
+            // silently see nothing. Refuse with the same message rather than returning an empty run.
+            return SaEInvoiceBatchResult.Failed(
+                "Invalid company or branch context.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        // Gated once, on the family's OWN menu, before any query or MyInvois call. Submit — not Access:
+        // reading the list already requires Access, and an operator trusted to submit from it must be
+        // able to refresh it. Requiring Access here would lock out a Submit-only role.
+        if (!await _accessRights.CanAsync(family.Value.MenuCode, PermissionCodes.Submit, cancellationToken))
+        {
+            return SaEInvoiceBatchResult.Failed("Not authorized.", SaEInvoiceErrorKind.Authorization);
+        }
+
+        var load = await LoadSbRefreshCandidatesAsync(
+            branchScope, scope, family.Value.DocumentType, cancellationToken);
+        if (load.Refused is not null)
+        {
+            return load.Refused;
+        }
+
+        return await RunRefreshAllAsync(
+            family.Value.DocumentType, load.Candidates, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// The ONE place a self-billed e-Invoice family is mapped to its source table, its authorizing menu
+    /// and its document-type token. Returns null for anything that is not a self-billed family.
+    /// </summary>
+    private static (string DocumentType, string MenuCode)? ResolveSbRefreshFamily(string? documentType) =>
+        (documentType ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            EInvoiceDocumentTypes.SelfBilledInvoice =>
+                (EInvoiceDocumentTypes.SelfBilledInvoice, MenuCodes.PurchaseSbInvoice),
+            EInvoiceDocumentTypes.SelfBilledCreditNote =>
+                (EInvoiceDocumentTypes.SelfBilledCreditNote, MenuCodes.PurchaseSbCreditNote),
+            EInvoiceDocumentTypes.SelfBilledDebitNote =>
+                (EInvoiceDocumentTypes.SelfBilledDebitNote, MenuCodes.PurchaseSbDebitNote),
+            _ => null
+        };
+
+    /// <summary>Plural family name for the over-cap refusal message.</summary>
+    private static string DescribeSbFamily(string documentType) => documentType switch
+    {
+        EInvoiceDocumentTypes.SelfBilledCreditNote => "self-billed credit notes",
+        EInvoiceDocumentTypes.SelfBilledDebitNote => "self-billed debit notes",
+        _ => "self-billed invoices"
+    };
+
+    /// <summary>
+    /// The self-billed twin of <see cref="LoadRefreshCandidatesAsync"/> /
+    /// <see cref="LoadCdnRefreshCandidatesAsync"/>: enumerates the refresh-all candidates through the SAME
+    /// filter definition the self-billed lists use (<see cref="PoSbQueryApplier"/>), with only the
+    /// e-Invoice status pinned to <c>SUBMITTED</c>. Everything else — search text, ERP status, vendor and
+    /// date range — is the caller's, passed through verbatim.
+    ///
+    /// <para>
+    /// Returns a refusal instead of throwing when more than <see cref="SaEInvoiceLimits.MaxRefreshAllRun"/>
+    /// documents match. The decision comes from the first page's total, so an over-cap run costs one query
+    /// and zero MyInvois calls.
+    /// </para>
+    /// </summary>
+    private async Task<RefreshCandidateLoad> LoadSbRefreshCandidatesAsync(
+        TenantScope branchScope,
+        PoSbQuery? scope,
+        string documentType,
+        CancellationToken cancellationToken)
+    {
+        var query = new PoSbQuery
+        {
+            // The operator's filters, passed through verbatim: this is the grid's definition, not ours.
+            SearchText = scope?.SearchText,
+            Status = scope?.Status,
+            VendorCode = scope?.VendorCode,
+            DateFrom = scope?.DateFrom,
+            DateTo = scope?.DateTo,
+
+            // Only what DEFINES the action rather than filters it.
+            IrbmStatus = EInvoiceStatuses.Submitted,
+            SortField = nameof(PoSbInvoice.DocNo),
+            SortDescending = false,
+            Skip = 0,
+            Take = Math.Min(SaEInvoiceLimits.MaxRefreshAllRun, PoSbLimits.MaxPageSize)
+        };
+
+        var candidates = new List<RefreshCandidate>();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        while (true)
+        {
+            query.Skip = candidates.Count;
+            var (page, total) = await SearchSbRefreshPageAsync(
+                db, branchScope, documentType, query, cancellationToken);
+
+            if (total > SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                return new RefreshCandidateLoad(
+                    [],
+                    SaEInvoiceBatchResult.Failed(
+                        $"This would refresh {total} {DescribeSbFamily(documentType)}. Narrow the filter "
+                        + $"to {SaEInvoiceLimits.MaxRefreshAllRun} or fewer, then try again.",
+                        SaEInvoiceErrorKind.Validation));
+            }
+
+            candidates.AddRange(page);
+
+            // Stop on a short page, on the total, or on the cap — whichever comes first.
+            if (page.Count == 0
+                || candidates.Count >= total
+                || candidates.Count >= SaEInvoiceLimits.MaxRefreshAllRun)
+            {
+                break;
+            }
+        }
+
+        return new RefreshCandidateLoad(candidates, null);
+    }
+
+    /// <summary>
+    /// One page of self-billed refresh-all candidates, read through
+    /// <see cref="PoSbQueryApplier"/> so the candidate set IS the grid's own query.
+    ///
+    /// <para>
+    /// The projection is an anonymous type mapped in memory: EF cannot translate a named constructor
+    /// inside a LINQ projection (the same reason the invoice and CN/DN loaders do it).
+    /// </para>
+    /// </summary>
+    private static async Task<(IReadOnlyList<RefreshCandidate> Page, int Total)> SearchSbRefreshPageAsync(
+        AppDbContext db,
+        TenantScope branchScope,
+        string documentType,
+        PoSbQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (documentType == EInvoiceDocumentTypes.SelfBilledInvoice)
+        {
+            var invoices = PoSbQueryApplier.Apply(
+                db.PoSbInvoices.AsNoTracking(), query, branchScope.CompanyCode, branchScope.BranchCode!);
+
+            var invoiceTotal = await invoices.CountAsync(cancellationToken);
+            var invoicePage = await invoices
+                .Skip(query.Skip).Take(query.Take)
+                .Select(x => new { x.DocNo, x.IrbmStatus, x.IrbmUuid })
+                .ToListAsync(cancellationToken);
+
+            return (
+                invoicePage.Select(x => new RefreshCandidate(x.DocNo, x.IrbmStatus, x.IrbmUuid)).ToList(),
+                invoiceTotal);
+        }
+
+        // The note grid's ERP token: the same CN / DN value PoSbCdn.Type stores.
+        var type = documentType == EInvoiceDocumentTypes.SelfBilledDebitNote
+            ? PoSbTypes.DebitNote
+            : PoSbTypes.CreditNote;
+
+        var notes = PoSbQueryApplier.Apply(
+            db.PoSbCdns.AsNoTracking(), query, branchScope.CompanyCode, branchScope.BranchCode!, type);
+
+        var noteTotal = await notes.CountAsync(cancellationToken);
+        var notePage = await notes
+            .Skip(query.Skip).Take(query.Take)
+            .Select(x => new { x.DocNo, x.IrbmStatus, x.IrbmUuid })
+            .ToListAsync(cancellationToken);
+
+        return (
+            notePage.Select(x => new RefreshCandidate(x.DocNo, x.IrbmStatus, x.IrbmUuid)).ToList(),
+            noteTotal);
+    }
+
+    /// <summary>
     /// The ONE chunked refresh-all driver, shared by the invoice and the credit/debit-note paths.
     ///
     /// <para>
@@ -1328,15 +1526,6 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
         var key = resolved.Key;
 
-        if (EInvoiceDocumentTypes.IsSelfBilled(key.DocumentType))
-        {
-            // AuthorizeAsync refuses self-billed documents outright and LoadStateAsync has no case for
-            // them: the payload still has to come from the Purchase self-bill documents.
-            return SaEInvoiceSubmissionRepairResult.NotApplicable(
-                "Self-billed e-Invoice (LHDN 11/12/13) history cannot be repaired yet: the Purchase "
-                + "self-bill payload mapping has not been wired.");
-        }
-
         // The registry is company-scoped, but the document is branch-owned and the ERP write-back below
         // resolves it by (CompanyCode, BranchCode, InvNo). A row naming a DIFFERENT branch is therefore
         // reported, never written: a silent cross-branch write would be worse than an explicit refusal.
@@ -1527,6 +1716,34 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         {
             // SaCdn.Type already holds the ERP family token (CN / DN).
             return new ResolvedSubmissionKey(cdn.Type, cdn.DocNo, cdn.BranchCode);
+        }
+
+        var sbInvoice = await db.PoSbInvoices
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == company && (x.IrbmUuid == uuid || x.IrbmOriUuid == uuid))
+            .OrderByDescending(x => x.ModifiedDate)
+            .Select(x => new { x.DocNo, x.BranchCode })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (sbInvoice is not null && !string.IsNullOrWhiteSpace(sbInvoice.DocNo))
+        {
+            return new ResolvedSubmissionKey(
+                EInvoiceDocumentTypes.SelfBilledInvoice, sbInvoice.DocNo, sbInvoice.BranchCode);
+        }
+
+        var sbCdn = await db.PoSbCdns
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == company && (x.IrbmUuid == uuid || x.IrbmOriUuid == uuid))
+            .OrderByDescending(x => x.ModifiedDate)
+            .Select(x => new { x.Type, x.DocNo, x.BranchCode })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (sbCdn is not null && !string.IsNullOrWhiteSpace(sbCdn.DocNo))
+        {
+            // PoSbCdn.Type already holds the ERP family token (CN / DN); map it to the self-billed token
+            // so the resolved key stays comparable with the one the self-billed list pages build.
+            var family = string.Equals(sbCdn.Type, PoSbTypes.DebitNote, StringComparison.OrdinalIgnoreCase)
+                ? EInvoiceDocumentTypes.SelfBilledDebitNote
+                : EInvoiceDocumentTypes.SelfBilledCreditNote;
+            return new ResolvedSubmissionKey(family, sbCdn.DocNo, sbCdn.BranchCode);
         }
 
         return new ResolvedSubmissionKey(null, null, null);
@@ -1937,11 +2154,12 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
 
                 var status = EInvoiceStatuses.Normalize(loaded.Status);
 
-                // A sales invoice AND a credit/debit note may only be sent once it is POSTED: the LHDN
-                // payload must describe a finalised document. The UI already gates this, but the service
-                // re-checks so another UI, a job or an API caller cannot bypass it. Placed BEFORE the
-                // SUBMITTING claim, so a refusal never reaches MyInvois and never locks the document.
-                if (!IsSourceDocumentPosted(loaded))
+                // A SALES invoice and a sales credit/debit note may only be sent once POSTED: the LHDN
+                // payload must describe a finalised document. Self-billed documents have no ERP status
+                // requirement. The UI already gates this, but the service re-checks so another UI, a job
+                // or an API caller cannot bypass it. Placed BEFORE the SUBMITTING claim, so a refusal
+                // never reaches MyInvois and never locks the document.
+                if (!IsSourceDocumentSubmittable(loaded))
                 {
                     row.Skipped = true;
                     row.Result = SaEInvoiceResult.Fail(key,
@@ -2657,11 +2875,87 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 };
             }
 
+            case EInvoiceDocumentTypes.SelfBilledInvoice:
+            {
+                var query = db.PoSbInvoices
+                    .Include(x => x.Details)
+                    .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.DocNo == key.DocumentNo);
+                var sbInvoice = tracking
+                    ? await query.FirstOrDefaultAsync(cancellationToken)
+                    : await query.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
+                if (sbInvoice is null)
+                {
+                    return null;
+                }
+
+                return new EInvoiceDocumentState
+                {
+                    Entity = sbInvoice,
+                    DocumentType = EInvoiceDocumentTypes.SelfBilledInvoice,
+                    DocumentNo = sbInvoice.DocNo,
+                    CompanyCode = sbInvoice.CompanyCode,
+                    BranchCode = sbInvoice.BranchCode,
+                    Status = sbInvoice.IrbmStatus,
+                    Outcome = sbInvoice.IrbmOutcome,
+                    SubmitId = sbInvoice.IrbmSubmitId,
+                    Uuid = sbInvoice.IrbmUuid,
+                    OriUuid = sbInvoice.IrbmOriUuid,
+                    SentOn = sbInvoice.IrbmSentOn,
+                    ValidOn = sbInvoice.IrbmValidOn,
+                    Error = sbInvoice.IrbmError,
+                    CancelOn = sbInvoice.IrnmCancelOn,
+                    ModifiedDate = sbInvoice.ModifiedDate,
+                    Supplier = supplier
+                };
+            }
+
+            case EInvoiceDocumentTypes.SelfBilledCreditNote:
+            case EInvoiceDocumentTypes.SelfBilledDebitNote:
+            {
+                var query = db.PoSbCdns
+                    .Include(x => x.Details)
+                    .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.DocNo == key.DocumentNo);
+                var sbCdn = tracking
+                    ? await query.FirstOrDefaultAsync(cancellationToken)
+                    : await query.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
+                if (sbCdn is null)
+                {
+                    return null;
+                }
+
+                // The ERP note type must match the family the caller asked for (CN vs DN).
+                var expectedType = key.DocumentType == EInvoiceDocumentTypes.SelfBilledCreditNote ? "CN" : "DN";
+                if (!string.Equals(sbCdn.Type, expectedType, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new EInvoiceDocumentState
+                {
+                    Entity = sbCdn,
+                    DocumentType = key.DocumentType,
+                    DocumentNo = sbCdn.DocNo,
+                    CompanyCode = sbCdn.CompanyCode,
+                    BranchCode = sbCdn.BranchCode,
+                    Status = sbCdn.IrbmStatus,
+                    Outcome = sbCdn.IrbmOutcome,
+                    SubmitId = sbCdn.IrbmSubmitId,
+                    Uuid = sbCdn.IrbmUuid,
+                    OriUuid = sbCdn.IrbmOriUuid,
+                    SentOn = sbCdn.IrbmSentOn,
+                    ValidOn = sbCdn.IrbmValidOn,
+                    Error = sbCdn.IrbmError,
+                    CancelOn = sbCdn.IrnmCancelOn,
+                    ModifiedDate = sbCdn.ModifiedDate,
+                    RefDocumentNo = sbCdn.OriginSbInvNo,
+                    Supplier = supplier
+                };
+            }
+
             default:
                 return null;
         }
     }
-
     /// <summary>Writes the e-Invoice state back onto the tracked entity.</summary>
     private static void ApplyState(EInvoiceDocumentState state)
     {
@@ -2691,6 +2985,32 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 cdn.IrbmError = state.Error;
                 cdn.IrnmCancelOn = state.CancelOn;
                 cdn.ModifiedDate = DateTime.UtcNow;
+                break;
+
+            case PoSbInvoice sbInvoice:
+                sbInvoice.IrbmStatus = state.Status;
+                sbInvoice.IrbmOutcome = state.Outcome;
+                sbInvoice.IrbmSubmitId = state.SubmitId;
+                sbInvoice.IrbmUuid = state.Uuid;
+                sbInvoice.IrbmOriUuid = state.OriUuid;
+                sbInvoice.IrbmSentOn = state.SentOn;
+                sbInvoice.IrbmValidOn = state.ValidOn;
+                sbInvoice.IrbmError = state.Error;
+                sbInvoice.IrnmCancelOn = state.CancelOn;
+                sbInvoice.ModifiedDate = DateTime.UtcNow;
+                break;
+
+            case PoSbCdn sbCdn:
+                sbCdn.IrbmStatus = state.Status;
+                sbCdn.IrbmOutcome = state.Outcome;
+                sbCdn.IrbmSubmitId = state.SubmitId;
+                sbCdn.IrbmUuid = state.Uuid;
+                sbCdn.IrbmOriUuid = state.OriUuid;
+                sbCdn.IrbmSentOn = state.SentOn;
+                sbCdn.IrbmValidOn = state.ValidOn;
+                sbCdn.IrbmError = state.Error;
+                sbCdn.IrnmCancelOn = state.CancelOn;
+                sbCdn.ModifiedDate = DateTime.UtcNow;
                 break;
         }
     }
@@ -2770,6 +3090,18 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         return build.Report;
     }
 
+    /// <summary>
+    /// Builds the payload source for one document. A thin dispatcher over per-family helpers.
+    /// <para>
+    /// <b>Rebuild window (do not break this).</b> The payload is built from the ERP document at exactly
+    /// two entry points: <c>ValidateAsync</c> and <c>SubmitBatchAsync</c> (Submit / Retry).
+    /// <c>RefreshAsync</c> only reads MyInvois and applies the mapped status, and <c>RecoverAsync</c>
+    /// builds a source for reconciliation and never resubmits — so nothing here may be called from
+    /// those paths. Together with the submit gate that refuses SUBMITTED/VALID, that is what guarantees a
+    /// document already accepted by MyInvois can never be rebuilt from changed master data (the vendor
+    /// block is read live from the vendor master, and there is deliberately no snapshot).
+    /// </para>
+    /// </summary>
     private async Task<SourceBuildResult> BuildSourceAsync(
         AppDbContext db,
         EInvoiceDocumentState state,
@@ -3000,6 +3332,22 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
                 break;
             }
 
+            case PoSbInvoice sbInvoice:
+            {
+                var sbContext = new SbSourceContext(
+                    db, errors, taxLookup, taxTypeLookup, uneceLookup, state.Supplier!);
+                source = await BuildSbInvoiceSourceAsync(sbContext, sbInvoice, cancellationToken);
+                break;
+            }
+
+            case PoSbCdn sbCdn:
+            {
+                var sbContext = new SbSourceContext(
+                    db, errors, taxLookup, taxTypeLookup, uneceLookup, state.Supplier!);
+                source = await BuildSbCdnSourceAsync(sbContext, sbCdn, cancellationToken);
+                break;
+            }
+
             default:
                 return new SourceBuildResult
                 {
@@ -3027,6 +3375,264 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             Report = errors.Count == 0 ? EInvoiceValidationReport.Valid : EInvoiceValidationReport.From(errors)
         };
     }
+
+    // ─────────────────────────── Self-billed (11/12/13) source builders ───────────────────────────
+
+    /// <summary>
+    /// State bag for the self-billed source builders: the open context, the error dictionary the caller
+    /// turns into the report, the three code lookups resolved once per build, and the COMPANY profile
+    /// that supplies the buyer block (a self-billed document is issued by the buyer).
+    /// </summary>
+    private sealed record SbSourceContext(
+        AppDbContext Db,
+        Dictionary<string, string> Errors,
+        IReadOnlyDictionary<string, decimal> TaxPercents,
+        IReadOnlyDictionary<string, string> TaxTypes,
+        IReadOnlyDictionary<string, string> UneceUoms,
+        EInvoiceSupplierProfile Company);
+
+    /// <summary>The raw line fields a self-billed document contributes to the payload.</summary>
+    private sealed record SbLineFields(
+        short Line,
+        string? ICode,
+        string? IDesc,
+        string? StdUom,
+        decimal Qty,
+        decimal UnitPrice,
+        decimal Amount,
+        decimal NetAmount,
+        decimal TaxAmt,
+        string? TaxGroup,
+        string? Classification);
+
+    /// <summary>
+    /// Builds the payload source for a self-billed invoice (LHDN 11).
+    /// <para>
+    /// The parties are REVERSED: a self-billed document is issued by the buyer, so the VENDOR supplies
+    /// the payload's <c>Supplier</c> block (read live from the vendor master) while OUR COMPANY supplies
+    /// the <c>Customer</c> block. An invoice never references an origin, so neither <c>RefDocumentNo</c>
+    /// nor <c>OriginUuid</c> is set.
+    /// </para>
+    /// </summary>
+    private async Task<EInvoiceSourceDocument> BuildSbInvoiceSourceAsync(
+        SbSourceContext context, PoSbInvoice invoice, CancellationToken cancellationToken)
+    {
+        var vendor = await LoadVendorPartyAsync(
+            context.Db, invoice.CompanyCode, invoice.VendorCode, context.Errors, cancellationToken);
+        var buyer = CompanyAsBuyer(context.Company);
+
+        return new EInvoiceSourceDocument
+        {
+            DocumentType = EInvoiceDocumentTypes.SelfBilledInvoice,
+            DocumentNo = invoice.DocNo,
+            DocumentDate = invoice.DocDate,
+            Currency = invoice.Currency,
+            CurrRate = invoice.CurrRate == 0m ? 1m : invoice.CurrRate,
+            AmountExclTax = invoice.GrossAmnt,
+            TaxAmount = invoice.Taxes,
+            AmountIncTax = invoice.TotAmnt,
+            SupplierParty = vendor,
+            CustomerName = buyer.Name,
+            CustomerTin = buyer.Tin,
+            CustomerRegNo = buyer.RegNo,
+            CustomerRegType = buyer.RegType,
+            CustomerSstNo = buyer.SstNo,
+            CustomerAddr1 = buyer.Address1,
+            CustomerAddr2 = buyer.Address2,
+            CustomerAddr3 = buyer.Address3,
+            CustomerAddr4 = buyer.Address4,
+            CustomerCity = buyer.City,
+            CustomerState = buyer.State,
+            CustomerPostalCode = buyer.PostalCode,
+            CustomerCountry = buyer.Country,
+            CustomerPhone = buyer.Phone,
+            CustomerEmail = buyer.Email,
+            Lines = invoice.Details
+                .OrderBy(x => x.Line)
+                .Select(x => MapSbLine(
+                    context,
+                    new SbLineFields(x.Line, x.ICode, x.IDesc, x.StdUom, x.Qty, x.UnitPrice,
+                        x.Amount, x.NetAmount, x.TaxAmt, x.TaxGroup, x.Classification),
+                    invoice.DocNo))
+                .ToList()
+        };
+    }
+
+    /// <summary>
+    /// Builds the payload source for a self-billed credit / debit note (LHDN 12 / 13).
+    /// <para>
+    /// The parties are reversed exactly as for the self-billed invoice: the VENDOR is the payload's
+    /// <c>Supplier</c> and OUR COMPANY (which issues the note) is the <c>Customer</c>.
+    /// </para>
+    /// <para>
+    /// The origin is resolved through <see cref="PoSbOriginResolver"/>, which owns every rule (same
+    /// company and branch, self-billed family, live document, VALID at MyInvois, UUID present) so the
+    /// save-time warning and this hard gate cannot drift apart.
+    /// </para>
+    /// </summary>
+    private async Task<EInvoiceSourceDocument> BuildSbCdnSourceAsync(
+        SbSourceContext context, PoSbCdn cdn, CancellationToken cancellationToken)
+    {
+        var documentType = string.Equals(cdn.Type, PoSbTypes.DebitNote, StringComparison.OrdinalIgnoreCase)
+            ? EInvoiceDocumentTypes.SelfBilledDebitNote
+            : EInvoiceDocumentTypes.SelfBilledCreditNote;
+
+        var origin = await PoSbOriginResolver.ResolveValidAsync(
+            context.Db, cdn.CompanyCode, cdn.BranchCode, cdn.OriginSbInvNo, cancellationToken);
+        if (!origin.Ok)
+        {
+            context.Errors[origin.ErrorKey] = origin.Message;
+        }
+
+        var vendor = await LoadVendorPartyAsync(
+            context.Db, cdn.CompanyCode, cdn.VendorCode, context.Errors, cancellationToken);
+        var buyer = CompanyAsBuyer(context.Company);
+
+        return new EInvoiceSourceDocument
+        {
+            DocumentType = documentType,
+            DocumentNo = cdn.DocNo,
+            DocumentDate = cdn.DocDate,
+            RefDocumentNo = cdn.OriginSbInvNo,
+            OriginUuid = origin.Origin?.IrbmUuid,
+            Currency = cdn.Currency,
+            CurrRate = cdn.CurrRate == 0m ? 1m : cdn.CurrRate,
+            AmountExclTax = cdn.GrossAmnt,
+            TaxAmount = cdn.Taxes,
+            AmountIncTax = cdn.TotAmnt,
+            SupplierParty = vendor,
+            CustomerName = buyer.Name,
+            CustomerTin = buyer.Tin,
+            CustomerRegNo = buyer.RegNo,
+            CustomerRegType = buyer.RegType,
+            CustomerSstNo = buyer.SstNo,
+            CustomerAddr1 = buyer.Address1,
+            CustomerAddr2 = buyer.Address2,
+            CustomerAddr3 = buyer.Address3,
+            CustomerAddr4 = buyer.Address4,
+            CustomerCity = buyer.City,
+            CustomerState = buyer.State,
+            CustomerPostalCode = buyer.PostalCode,
+            CustomerCountry = buyer.Country,
+            CustomerPhone = buyer.Phone,
+            CustomerEmail = buyer.Email,
+            Lines = cdn.Details
+                .OrderBy(x => x.Line)
+                .Select(x => MapSbLine(
+                    context,
+                    new SbLineFields(x.Line, x.ICode, x.IDesc, x.StdUom, x.Qty, x.UnitPrice,
+                        x.Amount, x.NetAmount, x.TaxAmt, x.TaxGroup, x.Classification),
+                    cdn.DocNo))
+                .ToList()
+        };
+    }
+
+    /// <summary>
+    /// The COMPANY's contribution to a self-billed payload: it is the payload's <c>Customer</c>, because
+    /// a self-billed document is issued by the buyer. (The mapping of the company into a SUPPLIER block
+    /// lives in <see cref="EInvoiceDocumentMapper"/> and is used by the sales families.)
+    /// </summary>
+    /// <remarks>
+    /// The state and country already carry the <c>EInvStateCode ?? State</c> precedence resolved by
+    /// <see cref="LoadSupplierAsync"/>; the mapper is what translates them to LHDN codes.
+    /// </remarks>
+    private static CompanyBuyerFields CompanyAsBuyer(EInvoiceSupplierProfile company) => new(
+        company.CompanyName,
+        company.TinNo,
+        company.RegistrationNo,
+        NormalizeRegistrationType(company.RegType),
+        company.SstNo,
+        company.Addr1,
+        company.Addr2,
+        company.Addr3,
+        company.Addr4,
+        company.City,
+        company.State,
+        company.PostalCode,
+        company.Country,
+        company.Phone,
+        company.Email);
+
+    /// <summary>The company's fields for a self-billed payload's Customer block.</summary>
+    private sealed record CompanyBuyerFields(
+        string? Name,
+        string? Tin,
+        string? RegNo,
+        string? RegType,
+        string? SstNo,
+        string? Address1,
+        string? Address2,
+        string? Address3,
+        string? Address4,
+        string? City,
+        string? State,
+        string? PostalCode,
+        string? Country,
+        string? Phone,
+        string? Email);
+
+    private EInvoiceSourceLine MapSbLine(SbSourceContext context, SbLineFields line, string? documentNo) => new()
+    {
+        Line = line.Line,
+        ItemCode = line.ICode,
+        ItemDesc = line.IDesc,
+        Uom = ResolveUneceUom(context.UneceUoms, line.StdUom, documentNo),
+        Qty = line.Qty,
+        UnitPrice = line.UnitPrice,
+        GrossAmount = line.Amount,
+        AmountExclTax = line.NetAmount,
+        TaxAmount = line.TaxAmt,
+        TaxType = ResolveTaxType(context.TaxTypes, line.TaxGroup, documentNo),
+        TaxPercent = ResolveTaxPercent(context.TaxPercents, line.TaxGroup),
+        ClassificationCode = line.Classification
+    };
+
+    /// <summary>
+    /// Reads the VENDOR master for the payload's supplier block on a self-billed document. A missing or
+    /// inactive vendor is reported with a field-keyed error rather than being guessed — an e-Invoice
+    /// cannot be issued against a supplier the ERP does not know.
+    /// </summary>
+    private static async Task<PoSupplierPartyProfile?> LoadVendorPartyAsync(
+        AppDbContext db,
+        string companyCode,
+        string? vendorCode,
+        Dictionary<string, string> errors,
+        CancellationToken cancellationToken)
+    {
+        var code = string.IsNullOrWhiteSpace(vendorCode) ? null : vendorCode.Trim();
+        if (code is null)
+        {
+            errors["Supplier.Vendor"] =
+                "The document has no vendor, so the payload's supplier block cannot be read.";
+            return null;
+        }
+
+        var vendor = await db.PoSuppliers.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CompanyCode == companyCode && x.SuppCode == code, cancellationToken);
+
+        if (vendor is null)
+        {
+            errors["Supplier.Vendor"] =
+                $"Vendor '{code}' was not found, so the payload's supplier block cannot be read.";
+            return null;
+        }
+
+        if (!vendor.IsActive)
+        {
+            errors["Supplier.Vendor"] =
+                $"Vendor '{code}' is inactive, so it cannot be used on a self-billed e-Invoice.";
+        }
+
+        return PoSupplierPartyProfileResolver.Resolve(vendor);
+    }
+
+    /// <summary>
+    /// The vendor registration type normalised to the four canonical LHDN types. The stored value is
+    /// returned unchanged when it is not one of them, so the validator refuses it with an actionable
+    /// message instead of the payload carrying a silent substitution.
+    /// </summary>
+    private static string? NormalizeRegistrationType(string? regType) =>
+        EInvoiceRegistrationTypes.Normalize(regType) ?? regType;
 
     /// <summary>
     /// One read of the customer master for the e-Invoice buyer identity. Both the payload and (at the
@@ -3280,10 +3886,11 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
         {
             EInvoiceDocumentTypes.CreditNote => MenuCodes.SalesCreditNote,
             EInvoiceDocumentTypes.DebitNote => MenuCodes.SalesDebitNote,
-            // A self-billed document belongs to the buyer, so it is authorized through Purchase.
-            EInvoiceDocumentTypes.SelfBilledCreditNote => MenuCodes.PurchaseCreditNote,
-            EInvoiceDocumentTypes.SelfBilledDebitNote => MenuCodes.PurchaseDebitNote,
-            EInvoiceDocumentTypes.SelfBilledInvoice => MenuCodes.PurchaseInvoice,
+            // A self-billed document is issued by the buyer, so it is authorized through its own
+            // Purchase self-billed menu — never through the ordinary purchase invoice/CN/DN menus.
+            EInvoiceDocumentTypes.SelfBilledCreditNote => MenuCodes.PurchaseSbCreditNote,
+            EInvoiceDocumentTypes.SelfBilledDebitNote => MenuCodes.PurchaseSbDebitNote,
+            EInvoiceDocumentTypes.SelfBilledInvoice => MenuCodes.PurchaseSbInvoice,
             _ => MenuCodes.SalesInvoice
         };
 
@@ -3295,36 +3902,25 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
             };
         }
 
-        // The LHDN document-type mapping and the generators for 11/12/13 are in place, but the payload
-        // still has to come from the Purchase self-bill documents, which are not wired yet. Say so
-        // explicitly instead of reporting a misleading "document not found".
-        if (EInvoiceDocumentTypes.IsSelfBilled(key.DocumentType))
-        {
-            return new AuthorizationGate
-            {
-                Error = SaEInvoiceResult.Fail(key,
-                    "Self-billed e-Invoice (LHDN 11/12/13) is not enabled yet: the Purchase self-bill payload mapping has not been wired.",
-                    SaEInvoiceErrorKind.NotConfigured)
-            };
-        }
-
         return new AuthorizationGate { Scope = scope };
     }
 
     // ─────────────────────────────── Small helpers ───────────────────────────────
 
     /// <summary>
-    /// True when the loaded source document may be submitted: the LHDN payload must describe a
-    /// finalised document, so a sales invoice AND a credit/debit note must both be POSTED. The UI gates
-    /// this too, but the service re-checks so a job or an API caller cannot bypass it.
+    /// True when the loaded source document may be submitted. A <b>sales</b> invoice and a sales
+    /// credit/debit note must be POSTED — the LHDN payload has to describe a finalised document. The
+    /// <b>self-billed</b> families (SBI / SBC / SBD) have no such rule: their ERP NEW/POSTED dimension is
+    /// retired, so the e-Invoice state alone decides (see <see cref="EInvoiceStatuses.IsLocked"/>).
+    /// The UI gates this too, but the service re-checks so a job or an API caller cannot bypass it.
     /// </summary>
-    private static bool IsSourceDocumentPosted(EInvoiceDocumentState state) => state.Entity switch
+    private static bool IsSourceDocumentSubmittable(EInvoiceDocumentState state) => state.Entity switch
     {
         SaInvoice invoice =>
             string.Equals(invoice.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase),
         SaCdn cdn =>
             string.Equals(cdn.Status, CdnStatuses.Posted, StringComparison.OrdinalIgnoreCase),
-        // Anything else (the not-yet-wired self-billed families) keeps its permissive default.
+        // Self-billed documents fall through: there is nothing else to require of them.
         _ => true
     };
 
@@ -3333,6 +3929,9 @@ public sealed class SaEInvoiceService : ISaEInvoiceService
     {
         EInvoiceDocumentTypes.CreditNote => "Credit note",
         EInvoiceDocumentTypes.DebitNote => "Debit note",
+        EInvoiceDocumentTypes.SelfBilledInvoice => "Self-billed invoice",
+        EInvoiceDocumentTypes.SelfBilledCreditNote => "Self-billed credit note",
+        EInvoiceDocumentTypes.SelfBilledDebitNote => "Self-billed debit note",
         _ => "Invoice"
     };
 

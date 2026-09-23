@@ -1,0 +1,254 @@
+@page "/purchase/self-billed-invoices"
+@inherits PageBase
+@using ErpWeb.UI.Components.Common
+
+<PageTitle>Self-billed Invoice</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseSbInvoice">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(EInvoiceProgress))
+        {
+            @* Refresh-all progress. The Stop button is the only way out of a long run, because the
+               blocking-work guard holds navigation while it is open. *@
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>@EInvoiceProgress</span>
+                <button type="button" class="iv-einv-progress__stop" @onclick="StopEInvoiceRefresh">Stop</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-file-invoice"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase</p>
+                <h1 class="iv-title">Self-billed Invoice</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Documents</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search doc no, vendor…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PoSbInvoiceListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(PoSbInvoiceListRow.DocNo)"
+                                      GridKey="po-sb-invoice-list"
+                                      Title="Self-billed Invoices"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick"
+                                      OnSelectedColumnHandle="@OnSelectedColumnHandle" />
+                </div>
+
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No self-billed invoices match the current filters.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
+                        {
+                            <div class="iv-list-compact__row">
+                                <button type="button"
+                                        class="iv-list-compact__item"
+                                        @onclick="() => NavigateView(row.DocNo)">
+                                    <span class="iv-list-compact__code">@row.DocNo</span>
+                                    <span class="iv-list-compact__desc">
+                                        @row.VendorCode · @row.DocDate.ToString("dd/MM/yyyy")
+                                    </span>
+                                    <div class="iv-list-compact__meta">
+                                        <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                                        <span class="iv-chip">@(string.IsNullOrWhiteSpace(row.IrbmStatus) ? "E-Inv: NEW" : $"E-Inv: {row.IrbmStatus}")</span>
+                                    </div>
+                                </button>
+
+                                @if (EInvoiceDetailLink.Resolve(row.IrbmStatus, row.IrbmUuid, CanAccessEInvoiceTin).Url is { } detailUrl)
+                                {
+                                    <a class="iv-list-compact__lhdn" href="@detailUrl">
+                                        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                        Why is this invalid?
+                                    </a>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter self-billed invoices"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatusKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom" DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo" DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Confirm"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmVisible">
+        <Content>
+            <p class="iv-confirm__copy">@ConfirmMessage</p>
+            @if (IsCancelAction)
+            {
+                <div class="iv-einv-reason">
+                    <div class="iv-einv-reason__label">Cancellation reason (required, max 300 characters)</div>
+                    <DxTextBox @bind-Text="@EInvoiceCancelReason"
+                               MaxLength="300"
+                               NullText="e.g. Wrong vendor details"
+                               CssClass="w-100" />
+                </div>
+            }
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => ConfirmVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="@ConfirmButtonStyle"
+                              Text="@ConfirmButtonText"
+                              Click="@ConfirmActionAsync"
+                              Enabled="@CanConfirmAction" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@EInvoiceResultsTitle"
+             CloseOnOutsideClick="false"
+             Width="680px"
+             CssClass="common-popup"
+             @bind-Visible="@EInvoiceResultsVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <div class="iv-einv-results">
+                    <table class="iv-einv-results__table">
+                        <thead>
+                            <tr>
+                                <th>Document</th>
+                                <th>Result</th>
+                                <th>Status</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in EInvoiceResults)
+                            {
+                                <tr>
+                                    <td>@item.DocumentNo</td>
+                                    <td>
+                                        <span class="iv-einv-chip @EInvoiceResultClass(item)">@EInvoiceResultOutcome(item)</span>
+                                    </td>
+                                    <td>@(string.IsNullOrWhiteSpace(item.Status) ? "-" : item.Status)</td>
+                                    <td>@item.ErrorMessage</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@DismissEInvoiceResults" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

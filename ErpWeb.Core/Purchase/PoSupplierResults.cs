@@ -74,6 +74,18 @@ public sealed class PoSupplierEditVm
     public string? SuppShortName { get; set; }
     public string? SuppType { get; set; }
     public string? SupplierBrn { get; set; }
+
+    /// <summary>
+    /// LHDN Tax Identification Number. Read by <c>PoSupplierPartyProfileResolver</c> as the e-Invoice
+    /// supplier TIN — for a self-billed document the VENDOR is the payload's Supplier block.
+    /// <para>
+    /// Optional here on purpose: a missing TIN must never block an ordinary supplier save. The
+    /// self-billed submit-time validator (<c>EInvoiceValidator.ValidateVendorAsSupplier</c>) is the gate,
+    /// and it reports the gap as <c>Supplier.Tin</c>.
+    /// </para>
+    /// </summary>
+    public string? TinNo { get; set; }
+
     public string? CategoryCode { get; set; }
     public string? CreditorSubGroup { get; set; }
     public string? AreaCode { get; set; }

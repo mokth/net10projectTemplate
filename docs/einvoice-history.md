@@ -766,3 +766,95 @@ count the invoice list uses, pinned by a regression test.
 Self-billed (`SBI`/`SBC`/`SBD`) payload mapping, a `Recover` button on either list (the invoice list has
 none either), and the same treatment for the Purchase CN/DN lists.
 
+# Self-billed list parity with the sales lists (ErpWeb, 2026-09-23)
+
+Plan of record: `plans/plan-poSbEInvoiceParity.prompt.md`.
+
+`PoSbInvoiceList` and `PoSbCdnList` now behave — and read — like `SaInvoiceList` / `SaCdnList` on the
+e-Invoice surface. **No new MyInvois call path was written:** the three families reuse the shipped
+`RunRefreshAllAsync` driver verbatim, so the pre-flight cap, the blank-`IRBMUUID` skip rule, the chunk
+boundary, the per-chunk refusal handling and the partial-aggregate-on-cancel semantics are the same code
+the invoice and CN/DN lists already exercise.
+
+**Sales is the reference; the self-billed lists were the deviation.** The one accepted divergence is that
+the self-billed lists have no `POST` / `ROLLBACK`: there is no ERP finalisation step, because the
+e-Invoice state *is* their lifecycle.
+
+## The gap that was closed
+
+`E-STATUS` with **nothing selected** was the missing mode. On the sales lists it refreshes every
+`SUBMITTED` row the grid is showing (legacy `GetEStatus()`); on the self-billed lists it answered
+`"No Record Selected!"`. Two smaller divergences went with it:
+
+- **`E-INV` was the wrong caption.** The sales toolbar and the ERP-wide convention is `SUBMIT`. The
+  caption is also the click handler's `case` key, so it had to be renamed in **all four** places per page
+  (button, re-entry guard, click switch, `SetEInvoiceButtonsEnabled`).
+- **The E-UUID click was hand-rolled twice** per page instead of calling the shared
+  `EInvoicePortalLinkOpener.HandleUuidClickAsync`, and the `LHDN` row action fell back to the portal for a
+  non-INVALID row where sales refuses. Both now match sales, so the "at most one repair and one link
+  retry per click" invariant has exactly one implementation.
+
+Also aligned: the submit confirm button style (`Primary`, was `Success`), the `LHDN` icon and tooltip,
+the `E-STATUS`/`SUBMIT` tooltips, the selection-retention-on-partial-failure rule, the `IsSubmitting`
+busy state during a batch, the permission check order (permission before "No Record Selected!"), and the
+refusal to open a confirm popup when no selected row is eligible.
+
+## `PoSbQueryApplier` — the ONE filter definition
+
+The sales design's load-bearing invariant is *"what the grid shows" == "what gets refreshed"*, enforced by
+one shared translation (`SaInvoiceQueryMapper` / `SaCdnQueryMapper`) feeding the repository the grid uses.
+The self-billed lists have **no repository** — `PoSbInvoiceService.SearchAsync` and
+`PoSbCdnService.SearchAsync` query `AppDbContext` directly.
+
+`ErpWeb.Core/Purchase/PoSbQueryApplier.cs` is the self-billed equivalent: two `Apply` overloads holding
+the tenant predicates, every list filter (ERP status and e-Invoice status are separate columns and stay
+separate), the free-text search and the default sort. Both `SearchAsync` methods were rewired onto it and
+the refresh-all loader uses the same two methods, so a new filter field added in one place cannot silently
+diverge. Its guard is `PoSbServiceTests` (36 green, unedited).
+
+## `RefreshSubmittedAsync` — the self-billed overload
+
+`ISaEInvoiceService` gained a third refresh-all overload beside the invoice and CN/DN ones, and
+`SaEInvoiceService` gained `LoadSbRefreshCandidatesAsync` beside `LoadCdnRefreshCandidatesAsync`. Both
+delegate to `RunRefreshAllAsync`.
+
+**Deviation from the plan, deliberate:** the family is an explicit `documentType` parameter rather than
+being derived from `scope.Type`. The self-billed invoice list's grid query carries no type — the page *is*
+the family — so deriving it would have meant treating a blank `Type` as "invoice", an implicit rule a
+future third family would silently break. `PoSbQuery.Type` stays the ERP `CN`/`DN` token it has always
+been (`CN` -> SBC, `DN` -> SBD, `SBI` -> SBI).
+
+Authorization is checked **once**, before any query, on the family's own menu
+(`PurchaseSbInvoice` / `PurchaseSbCreditNote` / `PurchaseSbDebitNote`) with `PermissionCodes.Submit`. It
+deliberately does **not** require `Access`: the list screen already requires `Access` to be read at all, so
+demanding it again would lock out a Submit-only role. That is also why the candidate query goes through
+`PoSbQueryApplier` rather than through `IPoSbInvoiceService.SearchAsync`, which checks `Access` — pinned by
+`RefreshSubmittedSb_works_for_a_submit_only_role_without_the_access_right`, which fails if the
+implementation is ever rerouted that way.
+
+A blank or unknown family is a **validation refusal**, never a throw.
+
+## Tests
+
+`ErpWeb.Tests/SaEInvoiceSbRefreshAllTests.cs` — 21 tests: family isolation across all three families
+(including SBD, which shares `PoSbCdn` with SBC), the per-family menu check, the Submit-only authorization,
+candidate set == the grid's query, status pinned to `SUBMITTED`, branch scoping, the pre-flight cap with
+zero MyInvois calls, the note-family wording in the over-cap refusal, the cap boundary via
+`StopOnFirstReport`, chunk progress boundaries, blank-UUID skip, chunk-boundary cancellation, an unknown
+type refusal, and read-only proof (nothing submitted or cancelled).
+
+`EInvoiceTestHost` gained `SeedSubmittedSbInvoicesAsync` / `SeedSubmittedSbNotesAsync` (the per-row seeders
+are far too slow for a 200-candidate set), a `BuildSbCdn` factory extracted from `SeedSbCdnAsync` so the
+single-row and bulk shapes cannot drift, and `irbmStatus` / `irbmUuid` parameters on `SeedSbCdnAsync`.
+
+## Not covered here
+
+- **A `Recover` button on any list** — the sales lists do not have one either; adding it to sales first.
+- **The Purchase CN/DN lists** (`PoCdnList`) — a different family from the self-billed notes.
+- **No browser smoke** of the new progress strip, the Stop button or the renamed toolbar was run in this
+  change; the suite does not compile `.razor`, so `dotnet build ErpWeb.UI` is the only automated proof.
+- **No live-DB check** of the self-billed refresh-all — the dev database's self-billed tables hold only
+  development rows, and the collation question is the same one already answered for the sales tables
+  (`SQL_Latin1_General_CP1_CI_AS`, so the e-Invoice status predicate is plain equality).
+
+

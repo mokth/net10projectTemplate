@@ -537,6 +537,9 @@ public sealed class PoSupplierService : IPoSupplierService
         SetIfChanged(entity, snapshot, () => entity.SuppShortName, v => entity.SuppShortName = v, NullIfWhiteSpace(model.SuppShortName));
         SetIfChanged(entity, snapshot, () => entity.SuppType, v => entity.SuppType = v, NullIfWhiteSpace(model.SuppType));
         SetIfChanged(entity, snapshot, () => entity.SupplierBrn, v => entity.SupplierBrn = v, NullIfWhiteSpace(model.SupplierBrn));
+        // LHDN TIN. Persisted here so the self-billed payload's Supplier.Tin (resolved live from this row
+        // by PoSupplierPartyProfileResolver) can finally be maintained. Never required at save.
+        SetIfChanged(entity, snapshot, () => entity.TinNo, v => entity.TinNo = v, NullIfWhiteSpace(model.TinNo));
         SetIfChanged(entity, snapshot, () => entity.CategoryCode, v => entity.CategoryCode = v, NullIfWhiteSpace(model.CategoryCode));
         SetIfChanged(entity, snapshot, () => entity.CreditorSubGroup, v => entity.CreditorSubGroup = v, NullIfWhiteSpace(model.CreditorSubGroup));
         SetIfChanged(entity, snapshot, () => entity.AreaCode, v => entity.AreaCode = v, NullIfWhiteSpace(model.AreaCode));
@@ -652,6 +655,16 @@ public sealed class PoSupplierService : IPoSupplierService
         else if (name.Length > 200)
         {
             errors["SuppName"] = "Supplier name must be at most 200 characters.";
+        }
+
+        // Capacity guard only, mirroring the nvarchar(20) POSupplier.TINNo column: without it an overlong
+        // value would surface as a SQL truncation error. It is deliberately NOT a required-field rule (a
+        // blank TIN must never block a supplier save) and NOT LHDN TIN-FORMAT validation — whether the
+        // value is a TIN MyInvois accepts is decided by MyInvois, and reported on submit as Supplier.Tin.
+        var tin = (model.TinNo ?? string.Empty).Trim();
+        if (tin.Length > 20)
+        {
+            errors["TinNo"] = "TIN must be at most 20 characters.";
         }
 
         if (string.IsNullOrWhiteSpace(model.Currency))
@@ -868,6 +881,7 @@ public sealed class PoSupplierService : IPoSupplierService
         SuppShortName = x.SuppShortName,
         SuppType = x.SuppType,
         SupplierBrn = x.SupplierBrn,
+        TinNo = x.TinNo,
         CategoryCode = x.CategoryCode,
         CreditorSubGroup = x.CreditorSubGroup,
         AreaCode = x.AreaCode,

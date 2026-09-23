@@ -5,6 +5,7 @@ using ErpWeb.EInvoiceLib.Store;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Sales;
 using Microsoft.Data.Sqlite;
@@ -731,6 +732,22 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
         DocumentNo = invNo ?? InvNo
     };
 
+    public async Task<PoSbInvoice> GetSbInvoiceAsync(string? docNo = null)
+    {
+        var no = docNo ?? SbInvoiceNo;
+        await using var db = await Factory.CreateDbContextAsync();
+        return await db.PoSbInvoices.AsNoTracking()
+            .SingleAsync(x => x.CompanyCode == _company && x.DocNo == no);
+    }
+
+    public async Task<PoSbCdn> GetSbCdnAsync(string? docNo = null)
+    {
+        var no = docNo ?? SbCdnNo;
+        await using var db = await Factory.CreateDbContextAsync();
+        return await db.PoSbCdns.AsNoTracking()
+            .SingleAsync(x => x.CompanyCode == _company && x.DocNo == no);
+    }
+
     public static SaEInvoiceDocumentKey CdnKey(string? docNo = null, string documentType = EInvoiceDocumentTypes.CreditNote) => new()
     {
         DocumentType = documentType,
@@ -742,8 +759,375 @@ internal sealed class EInvoiceTestHost : IAsyncDisposable
     {
         EInvoiceDocumentTypes.CreditNote => MenuCodes.SalesCreditNote,
         EInvoiceDocumentTypes.DebitNote => MenuCodes.SalesDebitNote,
+        // Self-billed documents are issued by the buyer, so they use their own Purchase menus.
+        EInvoiceDocumentTypes.SelfBilledInvoice => MenuCodes.PurchaseSbInvoice,
+        EInvoiceDocumentTypes.SelfBilledCreditNote => MenuCodes.PurchaseSbCreditNote,
+        EInvoiceDocumentTypes.SelfBilledDebitNote => MenuCodes.PurchaseSbDebitNote,
         _ => MenuCodes.SalesInvoice
     };
+
+    // ─────────────────── Self-billed purchase documents (LHDN 11/12/13) ───────────────────
+
+    public const string SbInvoiceNo = "SBI-1001";
+    public const string SbCdnNo = "SBC-1001";
+    public const string VendorCode = "VEND01";
+
+    public static SaEInvoiceDocumentKey SbInvoiceKey(string? docNo = null) => new()
+    {
+        DocumentType = EInvoiceDocumentTypes.SelfBilledInvoice,
+        DocumentNo = docNo ?? SbInvoiceNo
+    };
+
+    public static SaEInvoiceDocumentKey SbCdnKey(
+        string? docNo = null, string documentType = EInvoiceDocumentTypes.SelfBilledCreditNote) => new()
+    {
+        DocumentType = documentType,
+        DocumentNo = docNo ?? SbCdnNo
+    };
+
+    /// <summary>
+    /// A vendor master row complete enough to pass the self-billed supplier validation. Pass a blank
+    /// <paramref name="tin"/>, an unusable <paramref name="phone"/>, or a blank
+    /// <paramref name="msic"/>/<paramref name="bizDesc"/> to exercise the refusals: for a self-billed
+    /// document the VENDOR is the payload's Supplier block.
+    /// </summary>
+    public async Task SeedVendorAsync(
+        string? suppCode = null,
+        string? tin = "C9876543210",
+        string? phone = "0398765432",
+        string? address1 = "3 Jalan Vendor",
+        string? msic = "01234",
+        string? bizDesc = "Wholesale of building materials",
+        bool isActive = true,
+        string? companyCode = null)
+    {
+        var code = companyCode ?? _company;
+        await using var db = await Factory.CreateDbContextAsync();
+        db.PoSuppliers.Add(new PoSupplier
+        {
+            CompanyCode = code,
+            SuppCode = suppCode ?? VendorCode,
+            SuppName = "Vendor Sdn Bhd",
+            Currency = "MYR",
+            TinNo = tin,
+            RegType = "BRN",
+            SupplierBrn = "202201234567",
+            GstregNo = "A01-2345-67890123",
+            MiscCode = msic,
+            BizDesc = bizDesc,
+            Address1 = address1,
+            City = "Klang",
+            State = "Selangor",
+            StateCode = "10",
+            PostalCode = "41000",
+            Country = "Malaysia",
+            CountryCode = "MYS",
+            Tel = phone,
+            Email = "ar@vendor.test",
+            IsActive = isActive
+        });
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Rewrites the seeded vendor's name and TIN, simulating a vendor-master edit AFTER a document was
+    /// built or accepted. Used to pin that an accepted self-billed payload can never be rebuilt.
+    /// </summary>
+    public async Task UpdateVendorAsync(
+        string? name = null,
+        string? tin = null,
+        string? suppCode = null,
+        string? companyCode = null)
+    {
+        var code = companyCode ?? _company;
+        var vendorCode = suppCode ?? VendorCode;
+        await using var db = await Factory.CreateDbContextAsync();
+        var vendor = await db.PoSuppliers
+            .FirstAsync(x => x.CompanyCode == code && x.SuppCode == vendorCode);
+
+        if (name is not null)
+        {
+            vendor.SuppName = name;
+        }
+
+        if (tin is not null)
+        {
+            vendor.TinNo = tin;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>A POSTED self-billed invoice with one valid line, ready to be submitted.</summary>
+    public async Task<PoSbInvoice> SeedSbInvoiceAsync(
+        string? docNo = null,
+        string status = "POSTED",
+        string? irbmStatus = null,
+        string? irbmOutcome = null,
+        string? irbmUuid = null,
+        string? vendorCode = null,
+        bool validLines = true,
+        bool includeDetails = true,
+        string? companyCode = null,
+        string? branchCode = null)
+    {
+        var company = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+        var no = docNo ?? SbInvoiceNo;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        var invoice = BuildSbInvoice(company, branch, no, status, irbmStatus, irbmOutcome, irbmUuid,
+            vendorCode ?? VendorCode, validLines, includeDetails);
+        db.PoSbInvoices.Add(invoice);
+        await db.SaveChangesAsync();
+        return invoice;
+    }
+
+    /// <summary>
+    /// A POSTED self-billed credit / debit note plus the self-billed invoice it references. The origin is
+    /// seeded with <paramref name="originIrbmStatus"/> so the VALID-origin rule can be exercised from both
+    /// sides. Pass <paramref name="irbmStatus"/> to seed the note's own e-Invoice state (the refresh-all
+    /// candidate tests need <c>SUBMITTED</c>).
+    /// </summary>
+    public async Task<PoSbCdn> SeedSbCdnAsync(
+        string? docNo = null,
+        string type = "CN",
+        string? originSbInvNo = null,
+        string originIrbmStatus = EInvoiceStatuses.Valid,
+        string? originUuid = "UUID-SBI-1001",
+        string status = "POSTED",
+        string? companyCode = null,
+        string? branchCode = null,
+        bool validLines = true,
+        string? irbmStatus = null,
+        string? irbmUuid = null)
+    {
+        var company = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+        var originNo = originSbInvNo ?? SbInvoiceNo;
+
+        await using (var db = await Factory.CreateDbContextAsync())
+        {
+            db.PoSbInvoices.Add(BuildSbInvoice(
+                company, branch, originNo, "POSTED", originIrbmStatus, null, originUuid,
+                VendorCode, validLines: true, includeDetails: true));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = await Factory.CreateDbContextAsync())
+        {
+            var note = BuildSbCdn(
+                company,
+                branch,
+                docNo ?? (string.Equals(type, "DN", StringComparison.OrdinalIgnoreCase)
+                    ? "SBD-1001"
+                    : SbCdnNo),
+                type,
+                originNo,
+                status,
+                validLines,
+                irbmStatus,
+                irbmUuid);
+
+            db.PoSbCdns.Add(note);
+            await db.SaveChangesAsync();
+            return note;
+        }
+    }
+
+    /// <summary>
+    /// The ONE definition of the seeded self-billed credit/debit-note row shape, shared by
+    /// <see cref="SeedSbCdnAsync"/> and the bulk <see cref="SeedSubmittedSbNotesAsync"/>.
+    /// </summary>
+    private static PoSbCdn BuildSbCdn(
+        string companyCode,
+        string branchCode,
+        string docNo,
+        string type,
+        string originSbInvNo,
+        string status,
+        bool validLines,
+        string? irbmStatus = null,
+        string? irbmUuid = null)
+    {
+        var note = new PoSbCdn
+        {
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            DocNo = docNo,
+            DocDate = DateTime.UtcNow.Date,
+            Status = status,
+            Type = type,
+            VendorCode = VendorCode,
+            VendorName = "Vendor Sdn Bhd",
+            OriginSbInvNo = originSbInvNo,
+            Currency = "MYR",
+            CurrRate = 1m,
+            GrossAmnt = 50m,
+            Taxes = 0m,
+            TotAmnt = 50m,
+            IrbmStatus = irbmStatus,
+            IrbmUuid = irbmUuid,
+            CreatedDate = DateTime.UtcNow
+        };
+
+        note.Details.Add(new PoSbCdnDetail
+        {
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            DocNo = docNo,
+            Line = 1,
+            ICode = "ITM01",
+            IDesc = "Adjustment",
+            StdUom = "UNIT",
+            Qty = 1m,
+            UnitPrice = 50m,
+            Amount = 50m,
+            NetAmount = 50m,
+            TaxGroup = "SR-8",
+            TaxAmt = 0m,
+            Classification = validLines ? "022" : null
+        });
+
+        return note;
+    }
+
+    /// <summary>
+    /// Seeds many <c>SUBMITTED</c> self-billed invoices in ONE context and one save.
+    ///
+    /// <para>
+    /// Mirrors <see cref="SeedSubmittedInvoicesAsync"/> for the self-billed refresh-all contracts:
+    /// <see cref="SeedSbInvoiceAsync"/> pays a context and a save per row, far too slow for the 100/200-row
+    /// candidate counts. The row shape comes from the same <see cref="BuildSbInvoice"/> factory, so the two
+    /// cannot drift.
+    /// </para>
+    /// </summary>
+    /// <param name="uuid">Per-index MyInvois UUID; null yields <c>UUID-{docNo}</c>.</param>
+    public async Task SeedSubmittedSbInvoicesAsync(
+        int count,
+        Func<int, string> docNo,
+        Func<int, string?>? uuid = null,
+        string? companyCode = null,
+        string? branchCode = null)
+    {
+        var code = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        for (var i = 1; i <= count; i++)
+        {
+            var no = docNo(i);
+            db.PoSbInvoices.Add(BuildSbInvoice(
+                code,
+                branch,
+                no,
+                "POSTED",
+                EInvoiceStatuses.Submitted,
+                irbmOutcome: null,
+                uuid?.Invoke(i) ?? $"UUID-{no}",
+                VendorCode,
+                validLines: true,
+                includeDetails: false));
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Seeds many <c>SUBMITTED</c> self-billed credit or debit notes in ONE context and one save. The
+    /// refresh-all candidate query reads only the header and only <c>SUBMITTED</c> rows, so neither an
+    /// origin invoice nor details are seeded — but each note still carries an <c>OriginSbInvNo</c>, which is
+    /// the shape the real rows have.
+    /// </summary>
+    /// <param name="uuid">Per-index MyInvois UUID; null yields <c>UUID-{docNo}</c>.</param>
+    public async Task SeedSubmittedSbNotesAsync(
+        int count,
+        Func<int, string> docNo,
+        string type = "CN",
+        Func<int, string?>? uuid = null,
+        string? companyCode = null,
+        string? branchCode = null)
+    {
+        var code = companyCode ?? _company;
+        var branch = branchCode ?? Branch;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        for (var i = 1; i <= count; i++)
+        {
+            var no = docNo(i);
+            db.PoSbCdns.Add(BuildSbCdn(
+                code,
+                branch,
+                no,
+                type,
+                originSbInvNo: SbInvoiceNo,
+                status: "POSTED",
+                validLines: true,
+                irbmStatus: EInvoiceStatuses.Submitted,
+                irbmUuid: uuid?.Invoke(i) ?? $"UUID-{no}"));
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The ONE definition of the seeded self-billed invoice shape.</summary>
+    private static PoSbInvoice BuildSbInvoice(
+        string companyCode,
+        string branchCode,
+        string docNo,
+        string status,
+        string? irbmStatus,
+        string? irbmOutcome,
+        string? irbmUuid,
+        string vendorCode,
+        bool validLines,
+        bool includeDetails)
+    {
+        var invoice = new PoSbInvoice
+        {
+            CompanyCode = companyCode,
+            BranchCode = branchCode,
+            DocNo = docNo,
+            DocDate = DateTime.UtcNow.Date,
+            Status = status,
+            VendorCode = vendorCode,
+            VendorName = "Vendor Sdn Bhd",
+            Currency = "MYR",
+            CurrRate = 1m,
+            GrossAmnt = 100m,
+            Taxes = 0m,
+            TotAmnt = 100m,
+            IrbmStatus = irbmStatus,
+            IrbmOutcome = irbmOutcome,
+            IrbmUuid = irbmUuid,
+            CreatedDate = DateTime.UtcNow,
+            ModifiedDate = DateTime.UtcNow
+        };
+
+        if (includeDetails)
+        {
+            invoice.Details.Add(new PoSbInvoiceDetail
+            {
+                CompanyCode = companyCode,
+                BranchCode = branchCode,
+                DocNo = docNo,
+                Line = 1,
+                ICode = "ITM01",
+                IDesc = "Consulting",
+                StdUom = "UNIT",
+                Qty = 1m,
+                UnitPrice = 100m,
+                Amount = 100m,
+                NetAmount = 100m,
+                TaxGroup = "SR-8",
+                TaxAmt = 0m,
+                Classification = validLines ? "022" : null
+            });
+        }
+
+        return invoice;
+    }
 
     public ValueTask DisposeAsync()
     {

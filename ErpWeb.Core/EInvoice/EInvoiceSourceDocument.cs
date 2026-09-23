@@ -1,3 +1,5 @@
+using ErpWeb.Core.Purchase;
+
 namespace ErpWeb.Core.EInvoice;
 
 /// <summary>
@@ -37,8 +39,18 @@ public sealed class EInvoiceSourceDocument
     /// <summary>Amount including tax (ERP <c>TotAmnt</c>).</summary>
     public decimal AmountIncTax { get; init; }
 
-    // ── Buyer / customer snapshot (frozen on the document) ──
+    // ── Buyer block and, for self-billed documents, the vendor supplier block ──
 
+    /// <summary>
+    /// The payload's <c>AccountingCustomerParty</c>. Sales families: the customer master (the buyer).
+    /// Self-billed families (11/12/13): OUR COMPANY — the issuer of a self-billed document is the buyer.
+    /// </summary>
+    /// <remarks>
+    /// These names are deliberately kept as they are. For self-billed documents they hold the company
+    /// rather than a customer; that is an intentional compatibility-preserving change. Do not rename them
+    /// to a neutral party block and do not refactor the common source model or migrate the sales tests as
+    /// part of the self-billed party reversal.
+    /// </remarks>
     public string? CustomerName { get; init; }
     public string? CustomerTin { get; init; }
     public string? CustomerRegNo { get; init; }
@@ -54,6 +66,19 @@ public sealed class EInvoiceSourceDocument
     public string? CustomerCountry { get; init; }
     public string? CustomerPhone { get; init; }
     public string? CustomerEmail { get; init; }
+
+    /// <summary>
+    /// Self-billed families (LHDN 11/12/13) only: the VENDOR block that becomes the payload's
+    /// <c>AccountingSupplierParty</c>, because a self-billed document reverses the parties.
+    /// </summary>
+    /// <remarks>
+    /// Populated by the self-billed source builders from the vendor master and consumed by
+    /// <see cref="EInvoiceDocumentMapper"/>. It is an in-memory, per-build carrier — NOT persisted and NOT
+    /// a freeze; the mapper must never read the vendor master itself. Null for the sales families, whose
+    /// payload supplier is the company profile. See <c>SaEInvoiceService.BuildSourceAsync</c> for the
+    /// rebuild window and the submit gate that protects an accepted payload.
+    /// </remarks>
+    public PoSupplierPartyProfile? SupplierParty { get; init; }
 
     public IReadOnlyList<EInvoiceSourceLine> Lines { get; init; } = [];
 }

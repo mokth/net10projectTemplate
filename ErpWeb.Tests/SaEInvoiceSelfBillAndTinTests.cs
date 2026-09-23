@@ -11,10 +11,8 @@ namespace ErpWeb.Tests;
 /// TIN tools.
 ///
 /// <para>
-/// Self-billed submission is deliberately not enabled: the payload has to come from the Purchase
-/// documents, which are not wired yet. What is verified here is that the mapping is additive (11 is
-/// never emitted as 01) and that asking for a self-billed submit says so plainly instead of failing
-/// with a misleading "document not found".
+/// Self-billed submission is now wired to the Purchase self-billed documents (`PoSbInvoice` / `PoSbCdn`),
+/// so these tests pin the vocabulary and the authorization routing rather than a refusal.
 /// </para>
 /// </summary>
 public class SaEInvoiceSelfBillAndTinTests
@@ -73,18 +71,28 @@ public class SaEInvoiceSelfBillAndTinTests
     }
 
     [Fact]
-    public void The_erp_self_billed_tokens_are_recognised_but_not_wired_for_loading()
+    public void The_erp_self_billed_tokens_are_known_document_types()
     {
         Assert.True(EInvoiceDocumentTypes.IsSelfBilled(EInvoiceDocumentTypes.SelfBilledInvoice));
         Assert.True(EInvoiceDocumentTypes.IsSelfBilled(EInvoiceDocumentTypes.SelfBilledCreditNote));
         Assert.True(EInvoiceDocumentTypes.IsSelfBilled(EInvoiceDocumentTypes.SelfBilledDebitNote));
 
-        Assert.False(EInvoiceDocumentTypes.IsKnown(EInvoiceDocumentTypes.SelfBilledInvoice));
+        // The façade can load a source document for all six families.
+        Assert.True(EInvoiceDocumentTypes.IsKnown(EInvoiceDocumentTypes.SelfBilledInvoice));
+        Assert.True(EInvoiceDocumentTypes.IsKnown(EInvoiceDocumentTypes.SelfBilledCreditNote));
+        Assert.True(EInvoiceDocumentTypes.IsKnown(EInvoiceDocumentTypes.SelfBilledDebitNote));
         Assert.True(EInvoiceDocumentTypes.IsKnown(EInvoiceDocumentTypes.Invoice));
+
+        // Only the note families reference an origin — a self-billed invoice never does.
+        Assert.True(EInvoiceDocumentTypes.IsNote(EInvoiceDocumentTypes.SelfBilledCreditNote));
+        Assert.True(EInvoiceDocumentTypes.IsNote(EInvoiceDocumentTypes.SelfBilledDebitNote));
+        Assert.True(EInvoiceDocumentTypes.IsNote(EInvoiceDocumentTypes.CreditNote));
+        Assert.False(EInvoiceDocumentTypes.IsNote(EInvoiceDocumentTypes.SelfBilledInvoice));
+        Assert.False(EInvoiceDocumentTypes.IsNote(EInvoiceDocumentTypes.Invoice));
     }
 
     [Fact]
-    public async Task A_self_billed_submit_is_refused_with_a_clear_message_and_never_calls_myinvois()
+    public async Task A_self_billed_submit_for_a_missing_document_is_not_found_and_never_calls_myinvois()
     {
         await using var host = EInvoiceTestHost.Create();
         await host.SeedCompanyAsync();
@@ -93,17 +101,34 @@ public class SaEInvoiceSelfBillAndTinTests
         var result = await service.SubmitAsync(new SaEInvoiceDocumentKey
         {
             DocumentType = EInvoiceDocumentTypes.SelfBilledInvoice,
-            DocumentNo = "PI-1001"
+            DocumentNo = "SBI-1001"
         });
 
+        // No such self-billed invoice exists, so the load fails — but only after authorization, and
+        // without ever reaching MyInvois.
         Assert.False(result.Succeeded);
-        Assert.Equal(SaEInvoiceErrorKind.NotConfigured, result.ErrorKind);
-        Assert.Contains("Self-billed", result.ErrorMessage);
+        Assert.Equal(SaEInvoiceErrorKind.NotFound, result.ErrorKind);
         Assert.Empty(host.Helper.Calls);
+    }
 
-        // It is still authorized through the Purchase menu the document would belong to.
+    [Fact]
+    public async Task A_self_billed_submit_is_authorized_through_its_own_purchase_menu()
+    {
+        await using var host = EInvoiceTestHost.Create();
+        await host.SeedCompanyAsync();
+        var service = host.CreateService();
+
+        await service.SubmitAsync(new SaEInvoiceDocumentKey
+        {
+            DocumentType = EInvoiceDocumentTypes.SelfBilledCreditNote,
+            DocumentNo = "SBC-1001"
+        });
+
         Assert.Contains(host.PermissionChecks, x =>
-            x.Menu == MenuCodes.PurchaseInvoice && x.Permission == PermissionCodes.Submit);
+            x.Menu == MenuCodes.PurchaseSbCreditNote && x.Permission == PermissionCodes.Submit);
+
+        // The ordinary purchase CN menu must never be consulted for a self-billed note.
+        Assert.DoesNotContain(host.PermissionChecks, x => x.Menu == MenuCodes.PurchaseCreditNote);
     }
 
     [Fact]

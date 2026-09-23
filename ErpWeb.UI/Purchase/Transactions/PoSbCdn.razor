@@ -1,0 +1,341 @@
+@page "/purchase/self-billed-credit-notes/{Mode:regex(^(new|edit|view)$)}"
+@page "/purchase/self-billed-credit-notes/{Mode:regex(^(new|edit|view)$)}/{DocNo}"
+@page "/purchase/self-billed-debit-notes/{Mode:regex(^(new|edit|view)$)}"
+@page "/purchase/self-billed-debit-notes/{Mode:regex(^(new|edit|view)$)}/{DocNo}"
+@using ErpWeb.Core.EInvoice
+@using ErpWeb.Core.Purchase
+@using ErpWeb.UI.Components.Common
+@using ErpWeb.UI.Sales.Transactions
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCode">
+    <SaDocPage>
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="sdoc-toast sdoc-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
+
+        @if (IsLoading)
+        {
+            <div class="sdoc-loading">
+                <p class="mb-0">Loading @DocumentTypeName…</p>
+            </div>
+        }
+        else
+        {
+            <header class="sdoc-titlebar">
+                <h1 class="sdoc-titlebar__title" title="@($"{PageHeading} · {DocNoDisplay}")">@PageHeading · @DocNoDisplay</h1>
+                <span class="sdoc-titlebar__status" title="@StatusDisplay">
+                    @StatusDisplay
+                    <span class="sdoc-titlebar__status-extra">@LhdnTypeLabel · E-Inv: @EInvoiceDisplay</span>
+                </span>
+                <div class="sdoc-titlebar__kpi">
+                    <span>Total incl. tax</span>
+                    <strong>@GrandTotal.ToString("n2")</strong>
+                </div>
+            </header>
+
+            <section class="sdoc-master">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Document</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Doc no." ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                                <Template>
+                                    <DxDateEdit @bind-Date="Model.DocDate"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@IsEditable"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Vendor &amp; origin</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@Vendors"
+                                                ValueFieldName="@nameof(PoSbVendorLookupRow.SuppCode)"
+                                                TextFieldName="@nameof(PoSbVendorLookupRow.DisplayText)"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Value="@Model.VendorCode"
+                                                ValueChanged="@(async (string? v) => await OnVendorChangedAsync(v))"
+                                                Enabled="@IsEditable"
+                                                NullText="Select vendor"
+                                                CssClass="w-100 required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Name" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox Text="@(Model.VendorName ?? string.Empty)" ReadOnly="true" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Origin invoice" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@OriginOptions"
+                                                ValueFieldName="@nameof(PoSbInvoiceListRow.DocNo)"
+                                                TextFieldName="@nameof(PoSbInvoiceListRow.DocNo)"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Value="@Model.OriginSbInvNo"
+                                                ValueChanged="@(async (string? v) => await OnOriginChangedAsync(v))"
+                                                Enabled="@(IsEditable && !string.IsNullOrWhiteSpace(Model.VendorCode))"
+                                                NullText="Select a valid self-billed invoice"
+                                                CssClass="w-100 required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Terms</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@Currencies"
+                                                TextFieldName="@nameof(PoSbCodeLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(PoSbCodeLookupRow.Code)"
+                                                Value="@Model.Currency"
+                                                ValueChanged="@((string? v) => Model.Currency = v)"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@IsEditable"
+                                                NullText="Inherits from the origin"
+                                                CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Rate" ColSpanMd="12">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="Model.CurrRate" Enabled="@IsEditable" CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                                <Template>
+                                    <DxComboBox Data="@TaxGroups"
+                                                TextFieldName="@nameof(PoSbTaxGroupLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(PoSbTaxGroupLookupRow.TaxGrCode)"
+                                                @bind-Value="Model.TaxGrCode"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@IsEditable"
+                                                NullText="Default"
+                                                CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="Model.Remarks" Rows="3" Enabled="@IsEditable" CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+
+                <p class="sdoc-field-hint">
+                    The origin must be a self-billed invoice of this vendor that is already VALID at
+                    MyInvois — MyInvois requires the note to reference the invoice it adjusts, and a
+                    document that has not been accepted yet cannot be referenced.
+                </p>
+            </section>
+
+            <section class="sdoc-items">
+                <div class="sdoc-items__head">
+                    <h2 class="sdoc-items__title">Items</h2>
+                    @if (CanMutateLines)
+                    {
+                        <DxButton Text="Add line"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OnNewLineClick" />
+                    }
+                </div>
+
+                <DxGrid Data="@EditLines"
+                        KeyFieldName="@nameof(LineEdit.UiKey)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        CssClass="sdoc-line-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.ICode)" Caption="Item" Width="140px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.IDesc)" Caption="Description" Width="220px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.Qty)" Caption="Qty" Width="90px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.UnitPrice)" Caption="Price" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.StdUom)" Caption="UOM" Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.TaxGroup)" Caption="Tax" Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.NetAmount)" Caption="Net" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.TaxAmt)" Caption="Tax amt" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(LineEdit.Classification)" Caption="Class." Width="80px" />
+                        @if (CanMutateLines)
+                        {
+                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (LineEdit)context.DataItem;
+                                    }
+                                    <div class="sdoc-row-actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  Click="@(() => OnEditLine(row))"
+                                                  Enabled="@CanMutateLines"
+                                                  title="Edit line" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  Click="@(() => OnDeleteLine(row))"
+                                                  Enabled="@CanMutateLines"
+                                                  title="Delete line" />
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        }
+                    </Columns>
+                    <EmptyDataAreaTemplate>
+                        <div class="sdoc-empty">
+                            <h3>No items yet</h3>
+                            <p>@(IsEditable ? "Select a vendor and the originating invoice, then add the lines being adjusted." : "This self-billed note has no lines.")</p>
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+
+                <div class="sdoc-totals">
+                    <div><span>GROSS</span><strong>@GrossTotal.ToString("n2")</strong></div>
+                    <div><span>TAXES</span><strong>@TaxTotal.ToString("n2")</strong></div>
+                    <div><span>TOTAL</span><strong>@GrandTotal.ToString("n2")</strong></div>
+                </div>
+            </section>
+
+            <SaEInvoicePanel DocType="@EInvoiceDocumentType"
+                             DocNo="@Model.DocNo"
+                             MenuCode="@MenuCode"
+                             Enabled="@CanUseEInvoice"
+                             OnStateChanged="@OnEInvoiceStateChangedAsync" />
+
+            <footer class="sdoc-footer">
+                <p class="sdoc-footer__hint">@LineCountLabel</p>
+                <div class="sdoc-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@GoBack" />
+                    @if (IsView && CanEdit && IsEditable)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
+                    }
+                    @if (!IsView)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@SaveAsync"
+                                  Enabled="@(IsEditable && CanSave)" />
+                    }
+                </div>
+            </footer>
+        }
+
+        <DxPopup HeaderText="@PopupTitle"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="PopupVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="Popup.ICode" CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="Popup.IDesc" CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
+                            <Template>
+                                <DxSpinEdit @bind-Value="Popup.Qty" CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
+                            <Template>
+                                <DxSpinEdit @bind-Value="Popup.UnitPrice" CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Uoms"
+                                            TextFieldName="@nameof(PoSbCodeLookupRow.DisplayText)"
+                                            ValueFieldName="@nameof(PoSbCodeLookupRow.Code)"
+                                            @bind-Value="Popup.StdUom"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Tax group" ColSpanMd="6">
+                            <Template>
+                                <DxComboBox Data="@TaxGroups"
+                                            TextFieldName="@nameof(PoSbTaxGroupLookupRow.DisplayText)"
+                                            ValueFieldName="@nameof(PoSbTaxGroupLookupRow.TaxGrCode)"
+                                            @bind-Value="Popup.TaxGroup"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Classification" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="Popup.Classification" CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="6">
+                            <Template>
+                                <DxCheckBox @bind-Checked="Popup.IsInclusive" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Line remarks" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="Popup.Remarks" CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                    <p class="sdoc-popup-hint">
+                        Quantity must be greater than zero: a tax-only line cannot be submitted to MyInvois.
+                    </p>
+                </div>
+                <div class="sdoc-popup-footer">
+                    <div class="sdoc-popup-footer__actions">
+                        <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PopupVisible = false)" />
+                        <DxButton Text="Save line" RenderStyle="ButtonRenderStyle.Primary" Click="@OnPopupSave" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+    </SaDocPage>
+</MenuAuthorize>

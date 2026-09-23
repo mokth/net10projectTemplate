@@ -120,18 +120,28 @@ public static class EInvoiceDocumentTypes
     public const string CreditNote = "CN";
     public const string DebitNote = "DN";
 
-    /// <summary>Self-billed families (LHDN types 11/12/13). The Purchase payload mapping is not wired yet.</summary>
+    /// <summary>Self-billed families (LHDN types 11/12/13), issued by the buyer through Purchase.</summary>
     public const string SelfBilledInvoice = "SBI";
     public const string SelfBilledCreditNote = "SBC";
     public const string SelfBilledDebitNote = "SBD";
 
-    /// <summary>True for a family this façade can load a source document for: INV / CN / DN.</summary>
+    /// <summary>
+    /// True for a family the façade can load a source document for: INV / CN / DN for Sales and
+    /// SBI / SBC / SBD for the Purchase self-billed documents.
+    /// </summary>
     public static bool IsKnown(string? documentType) =>
-        documentType is Invoice or CreditNote or DebitNote;
+        documentType is Invoice or CreditNote or DebitNote
+            or SelfBilledInvoice or SelfBilledCreditNote or SelfBilledDebitNote;
 
     /// <summary>
-    /// True for the self-billed families (11/12/13). They are recognised so the caller gets an explicit
-    /// "not enabled yet" answer instead of a misleading "unknown document type".
+    /// True for a family that must reference an originating invoice: CN / DN and their self-billed twins.
+    /// An invoice — self-billed (11) or not — never carries a <c>BillingReference</c>.
+    /// </summary>
+    public static bool IsNote(string? documentType) =>
+        documentType is CreditNote or DebitNote or SelfBilledCreditNote or SelfBilledDebitNote;
+
+    /// <summary>
+    /// True for the self-billed families (11/12/13).
     /// </summary>
     public static bool IsSelfBilled(string? documentType) =>
         documentType is SelfBilledInvoice or SelfBilledCreditNote or SelfBilledDebitNote;

@@ -196,6 +196,60 @@ public interface ISaEInvoiceService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The <b>self-billed</b> counterpart of the invoice / credit-note overloads: refresh every
+    /// <c>SUBMITTED</c> document the self-billed list is currently showing, in one operator action (the
+    /// no-selection E-STATUS mode).
+    ///
+    /// <para>
+    /// <b>The family is explicit.</b> <paramref name="documentType"/> is one of
+    /// <see cref="EInvoiceDocumentTypes.SelfBilledInvoice"/> /
+    /// <see cref="EInvoiceDocumentTypes.SelfBilledCreditNote"/> /
+    /// <see cref="EInvoiceDocumentTypes.SelfBilledDebitNote"/>, and it selects the source table AND the
+    /// menu the caller must hold (<c>SBI</c> -&gt; <c>PurchaseSbInvoice</c>,
+    /// <c>SBC</c> -&gt; <c>PurchaseSbCreditNote</c>, <c>SBD</c> -&gt; <c>PurchaseSbDebitNote</c>). A
+    /// credit-note run can never touch a debit note, and no self-billed run can touch a sales document.
+    /// Anything else is refused as a validation failure, never thrown.
+    /// </para>
+    ///
+    /// <para>
+    /// It is passed in rather than derived from <paramref name="scope"/> deliberately: the self-billed
+    /// invoice list's grid query carries no type (the page IS the family), so deriving it there would mean
+    /// treating a blank <c>Type</c> as "invoice" — an implicit rule that a future third family would
+    /// silently break. The note list's <c>PoSbQuery.Type</c> stays the ERP <c>CN</c>/<c>DN</c> token it has
+    /// always been; it is not reused as an e-Invoice family token.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The candidate set is the grid's own query.</b> The scope is resolved through
+    /// <see cref="ErpWeb.Core.Purchase.PoSbQueryApplier"/> — the SAME filter definition the self-billed
+    /// list services use — so "what the operator sees" and "what gets refreshed" cannot drift apart. Only
+    /// the e-Invoice status (pinned to <c>SUBMITTED</c>) and the paging are set here, because those
+    /// define the action rather than filter it.
+    /// </para>
+    ///
+    /// <para>
+    /// The cap, the blank-<c>IRBMUUID</c> skip rule, the chunking, the progress reporting and the
+    /// chunk-boundary cancellation are identical to the other two overloads — all three delegate to the
+    /// same driver.
+    /// </para>
+    ///
+    /// <para>
+    /// Gated on the family's menu plus <c>Submit</c>. It deliberately does <b>not</b> require <c>Access</c>:
+    /// a submit-capable operator is a refresh-capable operator, and reading the list already requires
+    /// <c>Access</c>.
+    /// </para>
+    /// </summary>
+    /// <param name="documentType">
+    /// <c>SBI</c> / <c>SBC</c> / <c>SBD</c>. Case-insensitive; blank or unknown is a validation refusal.
+    /// </param>
+    /// <param name="progress">Completed-of-total candidates, reported once before the first chunk.</param>
+    Task<SaEInvoiceBatchResult> RefreshSubmittedAsync(
+        string documentType,
+        ErpWeb.Core.Purchase.PoSbQuery? scope,
+        IProgress<SaEInvoiceRefreshProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cancel several submitted/valid documents using one shared reason. Each document is cancelled by
     /// its own MyInvois call and committed independently, so a later failure never rolls back an
     /// earlier success.

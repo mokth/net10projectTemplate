@@ -317,21 +317,24 @@ public class SaEInvoiceSubmissionRepairTests
     }
 
     [Fact]
-    public async Task Repair_is_not_configured_for_self_billed()
+    public async Task Repair_of_a_self_billed_uuid_with_no_erp_document_never_calls_myinvois()
     {
         await using var host = EInvoiceTestHost.Create();
         await host.SeedCompanyAsync();
 
-        // The registry is the first thing the resolver reads, so a self-billed row is enough to reach the
-        // guard. The Purchase self-bill payload mapping is not wired, so there is no state to load.
+        // The registry is the first thing the resolver reads, so a self-billed row is enough to resolve
+        // the key. There is no matching ERP document here, so the refresh has no state to load — and
+        // must not ask MyInvois for a document it cannot write the answer onto.
         await SeedHistoryRowAsync(
             host, "UUID-SBI-1", "SUB-SBI-1", documentNo: "SBI-1001", documentType: EInvoiceDocumentTypes.SelfBilledInvoice);
 
         var service = host.CreateService();
         var result = await service.RepairSubmissionAsync("UUID-SBI-1");
 
-        Assert.False(result.Attempted);
-        Assert.Contains("Self-billed", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.Attempted);
+        Assert.False(result.Succeeded);
+        Assert.Equal(EInvoiceDocumentTypes.SelfBilledInvoice, result.DocumentType);
+        Assert.Equal("SBI-1001", result.DocumentNo);
         Assert.DoesNotContain(nameof(FakeSubmitDocumentHelper.GetDocumentDetail), host.Helper.Calls);
     }
 

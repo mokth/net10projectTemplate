@@ -598,6 +598,7 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
             SuppShortName = source.SuppShortName,
             SuppType = source.SuppType,
             SupplierBrn = source.SupplierBrn,
+            TinNo = source.TinNo,
             CategoryCode = source.CategoryCode,
             CreditorSubGroup = source.CreditorSubGroup,
             AreaCode = source.AreaCode,
@@ -677,6 +678,9 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
         clone.BankName = null;
         clone.AccountNo = null;
         clone.GlCode = null;
+        // A TIN is the tax identity of one specific taxpayer, so copying a supplier must never carry the
+        // source's TIN onto a different vendor.
+        clone.TinNo = null;
         clone.IsActive = false;
         return clone;
     }

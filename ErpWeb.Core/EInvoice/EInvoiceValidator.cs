@@ -1,3 +1,4 @@
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 
 namespace ErpWeb.Core.EInvoice;
@@ -23,8 +24,28 @@ public sealed class EInvoiceValidator
     {
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        ValidateSupplier(supplier, errors);
-        ValidateBuyer(document, errors);
+        // The company-level enablement gate always runs: without a company e-Invoice profile there is no
+        // submission identity at all, for either direction.
+        if (!supplier.Enabled)
+        {
+            errors["Supplier"] =
+                "LHDN e-Invoice is not enabled for this company. Enable it on the company e-Invoice profile.";
+        }
+
+        if (document.SupplierParty is { } vendor)
+        {
+            // Self-billed (LHDN 11/12/13). The issuer is the buyer, so the parties are reversed: the
+            // payload's Supplier block is the VENDOR and its Buyer block is OUR COMPANY. The error keys
+            // follow the PAYLOAD, not the master: Supplier.* = the vendor, Buyer.* = the company.
+            ValidateVendorAsSupplier(vendor, errors);
+            ValidateCompanyAsBuyer(document, errors);
+        }
+        else
+        {
+            ValidateSupplier(supplier, errors);
+            ValidateBuyer(document, errors);
+        }
+
         ValidateHeader(document, errors);
         ValidateLines(document, errors);
         ValidateNoteOrigin(document, errors);
@@ -35,11 +56,6 @@ public sealed class EInvoiceValidator
 
     private static void ValidateSupplier(EInvoiceSupplierProfile supplier, Dictionary<string, string> errors)
     {
-        if (!supplier.Enabled)
-        {
-            errors["Supplier"] = "LHDN e-Invoice is not enabled for this company. Enable it on the company e-Invoice profile.";
-        }
-
         Require(errors, "Supplier.Name", supplier.CompanyName, "Supplier company name is required.");
         Require(errors, "Supplier.Tin", supplier.TinNo, "Supplier TIN is required.");
         Require(errors, "Supplier.RegNo", supplier.RegistrationNo, "Supplier registration number is required.");
@@ -74,6 +90,115 @@ public sealed class EInvoiceValidator
         {
             errors["Supplier.Country"] =
                 $"Supplier country '{supplier.Country}' is not a recognised LHDN country code.";
+        }
+    }
+
+    /// <summary>
+    /// The self-billed SUPPLIER rule set, applied to the VENDOR master (which becomes the payload's
+    /// <c>AccountingSupplierParty</c>). Field keys stay <c>Supplier.*</c> because they name the payload
+    /// block; every message says to fix it on the vendor master.
+    /// </summary>
+    private static void ValidateVendorAsSupplier(
+        PoSupplierPartyProfile vendor, Dictionary<string, string> errors)
+    {
+        const string fix = " Fix it on the vendor master.";
+
+        Require(errors, "Supplier.Name", vendor.Name, "Vendor name is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Supplier.Tin", vendor.Tin, "Vendor TIN is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Supplier.RegNo", vendor.RegNo,
+            "Vendor registration/identity number is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Supplier.Msic", vendor.MsicCode,
+            "Vendor MSIC code is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Supplier.BizDescription", vendor.BusinessDescription,
+            "Vendor business description is required for a self-billed e-Invoice." + fix);
+
+        // Format/length only, and the code stays a STRING: an MSIC is 5 digits and may start with zero
+        // (01234 must never be parsed into 1234).
+        if (!string.IsNullOrWhiteSpace(vendor.MsicCode) && !IsFiveDigitMsic(vendor.MsicCode!))
+        {
+            errors["Supplier.Msic"] =
+                $"Vendor MSIC code '{vendor.MsicCode}' must be 5 digits." + fix;
+        }
+
+        // The column is nvarchar(200); the LHDN maximum of 300 is deliberately not adopted (that would
+        // need a schema change) so the stored value and the payload agree at 200.
+        if (vendor.BusinessDescription?.Length > 200)
+        {
+            errors["Supplier.BizDescription"] =
+                "Vendor business description cannot exceed 200 characters." + fix;
+        }
+        Require(errors, "Supplier.Addr1", vendor.Address1, "Vendor address line 1 is required." + fix);
+        Require(errors, "Supplier.City", vendor.City, "Vendor city is required." + fix);
+        Require(errors, "Supplier.PostalCode", vendor.PostalCode, "Vendor postal code is required." + fix);
+        Require(errors, "Supplier.Phone", vendor.Phone, "Vendor phone number is required." + fix);
+        RequireE164(errors, "Supplier.Phone", vendor.Phone, "Vendor telephone", fix.Trim());
+
+        if (!string.IsNullOrWhiteSpace(vendor.Name) && vendor.Name!.Length > 300)
+        {
+            errors["Supplier.Name"] = "Vendor name cannot exceed 300 characters.";
+        }
+
+        if (LhdnCodeLookup.TryRegistrationType(vendor.RegType) is null)
+        {
+            errors["Supplier.RegType"] =
+                "Vendor registration type must be one of BRN, NRIC, PASSPORT or ARMY." + fix;
+        }
+
+        if (LhdnCodeLookup.TryStateCode(vendor.State) is null)
+        {
+            errors["Supplier.State"] =
+                $"Vendor state '{vendor.State}' is not a recognised Malaysian state (or LHDN state code)." + fix;
+        }
+
+        if (LhdnCodeLookup.TryCountryCode(vendor.Country) is null)
+        {
+            errors["Supplier.Country"] =
+                $"Vendor country '{vendor.Country}' is not a recognised LHDN country code." + fix;
+        }
+    }
+
+    /// <summary>
+    /// The self-billed BUYER rule set, applied to OUR COMPANY (the issuer, which is the buyer of a
+    /// self-billed document). MSIC and business description are NOT required here — they belong to the
+    /// supplier block. The values are read from the source document, which the builder filled from the
+    /// company profile, so a row the builder failed to copy cannot be masked by a second profile read.
+    /// </summary>
+    private static void ValidateCompanyAsBuyer(
+        EInvoiceSourceDocument document, Dictionary<string, string> errors)
+    {
+        const string fix = " Fix it on the company e-Invoice profile.";
+
+        Require(errors, "Buyer.Name", document.CustomerName,
+            "The company name is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Buyer.Tin", document.CustomerTin,
+            "The company TIN is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Buyer.RegNo", document.CustomerRegNo,
+            "The company registration number is required for a self-billed e-Invoice." + fix);
+        Require(errors, "Buyer.Addr1", document.CustomerAddr1,
+            "The company address line 1 is required." + fix);
+        Require(errors, "Buyer.City", document.CustomerCity, "The company city is required." + fix);
+        Require(errors, "Buyer.PostalCode", document.CustomerPostalCode,
+            "The company postal code is required." + fix);
+        Require(errors, "Buyer.Phone", document.CustomerPhone,
+            "The company phone number is required." + fix);
+        RequireE164(errors, "Buyer.Phone", document.CustomerPhone, "Company telephone", fix.Trim());
+
+        if (LhdnCodeLookup.TryRegistrationType(document.CustomerRegType) is null)
+        {
+            errors["Buyer.RegType"] =
+                "The company registration type must be one of BRN, NRIC, PASSPORT or ARMY." + fix;
+        }
+
+        if (LhdnCodeLookup.TryStateCode(document.CustomerState) is null)
+        {
+            errors["Buyer.State"] =
+                $"The company state '{document.CustomerState}' is not a recognised Malaysian state (or LHDN state code)." + fix;
+        }
+
+        if (LhdnCodeLookup.TryCountryCode(document.CustomerCountry) is null)
+        {
+            errors["Buyer.Country"] =
+                $"The company country '{document.CustomerCountry}' is not a recognised LHDN country code." + fix;
         }
     }
 
@@ -187,7 +312,9 @@ public sealed class EInvoiceValidator
 
     private static void ValidateNoteOrigin(EInvoiceSourceDocument document, Dictionary<string, string> errors)
     {
-        if (document.DocumentType == EInvoiceDocumentTypes.Invoice)
+        // Only a credit/debit note references an origin. An invoice never does — including the
+        // self-billed invoice (LHDN 11), which is issued by the buyer and has no BillingReference.
+        if (!EInvoiceDocumentTypes.IsNote(document.DocumentType))
         {
             return;
         }
@@ -238,6 +365,29 @@ public sealed class EInvoiceValidator
         {
             errors[key] = message;
         }
+    }
+
+    /// <summary>
+    /// True when the value is exactly five digits. The MSIC is a CODE, not a number: it is compared as
+    /// text so a leading zero survives (<c>01234</c> must never become <c>1234</c>).
+    /// </summary>
+    private static bool IsFiveDigitMsic(string value)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length != 5)
+        {
+            return false;
+        }
+
+        foreach (var c in trimmed)
+        {
+            if (!char.IsAsciiDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

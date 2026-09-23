@@ -37,9 +37,21 @@ public sealed class EInvoiceDocumentMapper
     {
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var supplierRegType = LhdnCodeLookup.TryRegistrationType(supplier.RegType);
-        var supplierState = LhdnCodeLookup.TryStateCode(supplier.State);
-        var supplierCountry = LhdnCodeLookup.TryCountryCode(supplier.Country);
+        // LHDN reverses the parties for a self-billed document (11/12/13): the vendor is the payload's
+        // AccountingSupplierParty and OUR COMPANY is the buyer. The source builder puts the vendor in
+        // SupplierParty; every other family leaves it null and keeps today's direction (the company
+        // profile is the supplier and the customer master is the buyer).
+        var vendor = document.SupplierParty;
+        var isSelfBilled = vendor is not null;
+
+        var supplierRegTypeSource = vendor?.RegType ?? supplier.RegType;
+        var supplierStateSource = vendor?.State ?? supplier.State;
+        var supplierCountrySource = vendor?.Country ?? supplier.Country;
+        var vendorHint = isSelfBilled ? " Fix it on the vendor master." : string.Empty;
+
+        var supplierRegType = LhdnCodeLookup.TryRegistrationType(supplierRegTypeSource);
+        var supplierState = LhdnCodeLookup.TryStateCode(supplierStateSource);
+        var supplierCountry = LhdnCodeLookup.TryCountryCode(supplierCountrySource);
 
         var buyerRegType = LhdnCodeLookup.TryRegistrationType(document.CustomerRegType);
         var buyerState = LhdnCodeLookup.TryStateCode(document.CustomerState);
@@ -47,17 +59,20 @@ public sealed class EInvoiceDocumentMapper
 
         if (supplierRegType is null)
         {
-            errors["Supplier.RegType"] = "Supplier registration type could not be mapped to an LHDN identity type.";
+            errors["Supplier.RegType"] =
+                "Supplier registration type could not be mapped to an LHDN identity type." + vendorHint;
         }
 
         if (supplierState is null)
         {
-            errors["Supplier.State"] = $"Supplier state '{supplier.State}' could not be mapped to an LHDN state code.";
+            errors["Supplier.State"] =
+                $"Supplier state '{supplierStateSource}' could not be mapped to an LHDN state code." + vendorHint;
         }
 
         if (supplierCountry is null)
         {
-            errors["Supplier.Country"] = $"Supplier country '{supplier.Country}' could not be mapped to an LHDN country code.";
+            errors["Supplier.Country"] =
+                $"Supplier country '{supplierCountrySource}' could not be mapped to an LHDN country code." + vendorHint;
         }
 
         if (buyerRegType is null)
@@ -111,28 +126,29 @@ public sealed class EInvoiceDocumentMapper
 
             Supplier = new PartyInfo
             {
-                CompanyName = supplier.CompanyName,
-                TinNo = supplier.TinNo,
+                // Self-billed: the VENDOR (document.SupplierParty). Otherwise the company profile.
+                CompanyName = vendor?.Name ?? supplier.CompanyName,
+                TinNo = vendor?.Tin ?? supplier.TinNo,
                 RegType = supplierRegType!.Value,
-                RegNo = supplier.RegistrationNo,
-                SSTNo = supplier.SstNo,
-                IndustryClassificationCode = supplier.MsicCode,
-                BizDesciption = supplier.BusinessDescription,
-                Addr1 = supplier.Addr1,
-                Addr2 = supplier.Addr2,
-                Addr3 = supplier.Addr3,
-                Addr4 = supplier.Addr4,
-                CityName = supplier.City,
+                RegNo = vendor?.RegNo ?? supplier.RegistrationNo,
+                SSTNo = vendor?.SstNo ?? supplier.SstNo,
+                IndustryClassificationCode = vendor?.MsicCode ?? supplier.MsicCode,
+                BizDesciption = vendor?.BusinessDescription ?? supplier.BusinessDescription,
+                Addr1 = vendor?.Address1 ?? supplier.Addr1,
+                Addr2 = vendor?.Address2 ?? supplier.Addr2,
+                Addr3 = vendor?.Address3 ?? supplier.Addr3,
+                Addr4 = vendor?.Address4 ?? supplier.Addr4,
+                CityName = vendor?.City ?? supplier.City,
                 StateCode = supplierState,
                 CountryCode = supplierCountry,
-                PostalCode = supplier.PostalCode,
+                PostalCode = vendor?.PostalCode ?? supplier.PostalCode,
                 // LHDN expects E.164. Canonicalizing here — not only at master-data save time — is what
                 // rescues rows captured before the rule existed and what cleans an operator's
                 // transaction-level override. ToStored is trim-preserving, so this is formatting rather
                 // than inference: an unrecognisable value is left exactly as the user typed it, and
                 // EInvoiceValidator is the gate that refuses it with an actionable message.
-                PhoneNo = ToE164OrNull(supplier.Phone),
-                Email = supplier.Email
+                PhoneNo = ToE164OrNull(vendor?.Phone ?? supplier.Phone),
+                Email = vendor?.Email ?? supplier.Email
             },
             Customer = new PartyInfo
             {
@@ -149,8 +165,9 @@ public sealed class EInvoiceDocumentMapper
                 StateCode = buyerState,
                 CountryCode = buyerCountry,
                 PostalCode = document.CustomerPostalCode,
-                // This is the snapshot taken onto the document, not the live customer row, so a legacy value
-                // is canonicalised here rather than being rejected.
+                // The buyer block is read live from the master (customer master for sales, the company
+                // profile for a self-billed document), so a legacy value is canonicalised here rather
+                // than being rejected.
                 PhoneNo = ToE164OrNull(document.CustomerPhone),
                 Email = document.CustomerEmail
             },
