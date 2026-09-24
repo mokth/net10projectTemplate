@@ -21,6 +21,9 @@ namespace ErpWeb.Tests;
 /// SQL Server concurrency/atomicity tests for sales invoices. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesInvoice)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaInvoiceSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

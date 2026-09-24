@@ -21,6 +21,9 @@ namespace ErpWeb.Tests;
 /// SQL Server concurrency tests for the purchase invoice / 3-way match (plan v2 §6).
 /// Skipped unless ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseInvoice)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class PoInvoiceSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 12);

@@ -20,7 +20,14 @@ public partial class PoCdnList : PageBase, IDisposable
     private Timer? _searchDebounce;
     private int _searchVersion;
     private readonly List<PoCdnListRow> _selectedRows = [];
-    private string _type = "CN"; // resolved from URI
+    private string _type = "CN"; // resolved from the route
+
+    /// <summary>
+    /// The family this instance last bootstrapped for. See <see cref="OnParametersSetAsync"/>: ONE
+    /// component answers the credit-note AND the debit-note route, so the family is re-checked on every
+    /// parameter set.
+    /// </summary>
+    private string? _loadedFamily;
 
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
@@ -124,9 +131,42 @@ public partial class PoCdnList : PageBase, IDisposable
     protected List<ButtonInfo> Buttons { get; set; } = [];
     protected List<ButtonInfo> ActionButtons { get; set; } = [];
 
-    protected override async Task OnPageInitializedAsync()
+    /// <summary>
+    /// Nothing happens in the per-instance <c>OnInitializedAsync</c> hook: the bootstrap lives in
+    /// <see cref="OnParametersSetAsync"/> so that a REUSED instance can run it again.
+    /// </summary>
+    protected override Task OnPageInitializedAsync() => Task.CompletedTask;
+
+    /// <summary>
+    /// ONE component answers both the credit-note and the debit-note route and the menu navigates
+    /// client-side, so Blazor REUSES this instance when the operator switches family: <c>OnInitialized</c>
+    /// does not run again and only the route parameters are set. The family is part of this page's
+    /// identity, so a change re-bootstraps the screen — without it the title, the per-family menu rights,
+    /// the toolbar and the grid's search filter all stay on the family the operator left, and only a full
+    /// page load (which builds a new instance) corrects it.
+    /// </summary>
+    protected override async Task OnParametersSetAsync()
     {
-        ResolveType();
+        await base.OnParametersSetAsync();
+
+        var family = ResolveFamily();
+        if (string.Equals(_loadedFamily, family, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _loadedFamily = family;
+        await BootstrapAsync();
+    }
+
+    private async Task BootstrapAsync()
+    {
+        _type = ResolveFamily();
+
+        // Re-entering the loading state matters on a family switch: the previous family's rows must not
+        // stay on screen while the new bootstrap runs, and neither must its selection.
+        IsBootstrapping = true;
+        _selectedRows.Clear();
 
         DataSource = new PoCdnGridDataSource(SearchPageAsync);
         CanAdd = await AccessRights.CanAsync(MenuCode, PermissionCodes.Add);
@@ -151,10 +191,12 @@ public partial class PoCdnList : PageBase, IDisposable
         IsBootstrapping = false;
     }
 
-    private void ResolveType()
-    {
-        _type = Navigation.Uri.Contains("/debit-notes", StringComparison.OrdinalIgnoreCase) ? "DN" : "CN";
-    }
+    /// <summary>
+    /// Which family the URL names. PURE and side-effect free: it is called both BEFORE the reuse-key
+    /// comparison (to detect a reused instance) and while bootstrapping.
+    /// </summary>
+    private string ResolveFamily() =>
+        Navigation.Uri.Contains("/debit-notes", StringComparison.OrdinalIgnoreCase) ? "DN" : "CN";
 
     protected void OnGridInstance(DxGrid gridInstance) => _grid = gridInstance;
 

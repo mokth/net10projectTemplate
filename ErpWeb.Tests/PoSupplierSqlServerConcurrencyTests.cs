@@ -15,6 +15,9 @@ namespace ErpWeb.Tests;
 /// SQL Server concurrency tests for Supplier Profile. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with GlCode applied.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseMasters)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class PoSupplierSqlServerConcurrencyTests
 {
     private static string? GetSqlServerConnectionString()

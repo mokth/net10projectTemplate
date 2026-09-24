@@ -24,6 +24,8 @@ namespace ErpWeb.Tests;
 /// ValidUntil cannot convert"), revision mechanics, the conversion invariants, atomic rollback,
 /// snapshot fidelity and tenant isolation.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesQt)]
 public class SaQtServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

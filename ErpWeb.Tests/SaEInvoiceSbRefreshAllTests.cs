@@ -18,6 +18,8 @@ namespace ErpWeb.Tests;
 /// table AND the authorizing menu, and it must not require the list's ACCESS right.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceSbRefreshAllTests
 {
     /// <summary>The self-billed grid's own filter object, as <c>DataSource.CurrentQuery</c> hands it over.</summary>

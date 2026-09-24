@@ -19,6 +19,9 @@ namespace ErpWeb.Tests;
 /// ConnectionStrings:DefaultConnection points at SQL Server.
 /// SQLite cannot validate UPDLOCK/HOLDLOCK/key-range behavior.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Inventory)]
+[Trait(TestCategories.Name, TestCategories.InventoryPosting)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class IvInventoryPostingSqlServerConcurrencyTests
 {
     private static string? GetSqlServerConnectionString()

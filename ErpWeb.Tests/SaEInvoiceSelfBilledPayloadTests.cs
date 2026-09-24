@@ -17,6 +17,8 @@ namespace ErpWeb.Tests;
 /// silent swap would produce a completely wrong — but perfectly well-formed — document.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceSelfBilledPayloadTests
 {
     [Fact]

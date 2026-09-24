@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class RunningNumberServiceTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

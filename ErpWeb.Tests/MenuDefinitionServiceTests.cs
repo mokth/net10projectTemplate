@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuDefinitionServiceTests
 {
     [Fact]

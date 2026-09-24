@@ -57,6 +57,8 @@ internal sealed class FakePoCdnDocumentNumberingService : IDocumentNumberingServ
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseCdn)]
 public class PoCdnServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

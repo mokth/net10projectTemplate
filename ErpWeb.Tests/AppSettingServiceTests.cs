@@ -8,6 +8,7 @@ namespace ErpWeb.Tests;
 /// The settings service end to end against a real database: precedence, scope containment, the
 /// read-only price-method projection, gated writes, and the exactly-one-value delete rule.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
 public class AppSettingServiceTests
 {
     private const string Module = AppSettingModules.Sales;

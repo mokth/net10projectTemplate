@@ -15,6 +15,8 @@ namespace ErpWeb.Tests;
 /// assertion is the only thing that can catch the drift at build/test time.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceLimitsTests
 {
     [Fact]

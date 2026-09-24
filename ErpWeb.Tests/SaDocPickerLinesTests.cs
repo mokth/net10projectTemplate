@@ -2,6 +2,8 @@ using ErpWeb.Core.Sales;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesShared)]
 public sealed class SaDocPickerLinesTests
 {
     [Fact]

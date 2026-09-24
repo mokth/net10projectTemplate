@@ -18,6 +18,8 @@ namespace ErpWeb.Tests;
 /// most risk: VIEW_PRICE never changes what is stored (§11.1) and two discount rules must never be able
 /// to match the same item (§8.3).
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaItemFamilyServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 15);

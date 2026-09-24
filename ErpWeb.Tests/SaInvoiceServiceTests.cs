@@ -19,6 +19,8 @@ using CdnTypes = ErpWeb.Core.Sales.SaCdnTypes;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesInvoice)]
 public class SaInvoiceCalcTests
 {
     [Fact]
@@ -66,6 +68,8 @@ public class SaInvoiceCalcTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesInvoice)]
 public class SaInvoiceServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

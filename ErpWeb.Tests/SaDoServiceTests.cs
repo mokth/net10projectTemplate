@@ -58,6 +58,8 @@ internal sealed class FakeDoDocumentNumberingService : IDocumentNumberingService
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesDo)]
 public class SaDoServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

@@ -11,6 +11,7 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class AdSmNumSampleDateTests
 {
     [Theory]
@@ -32,6 +33,7 @@ public class AdSmNumSampleDateTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class AdSmNumAdminServiceTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

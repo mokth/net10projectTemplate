@@ -12,6 +12,8 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Inventory)]
+[Trait(TestCategories.Name, TestCategories.InventoryAdjustment)]
 public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 8, 26);

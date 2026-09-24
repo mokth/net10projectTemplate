@@ -175,7 +175,9 @@ public partial class PoCdn : PageBase, IDisposable
     protected override async Task OnParametersSetAsync()
     {
         await base.OnParametersSetAsync();
-        var key = $"{Mode}:{DocNo}";
+        // The family is part of this page's identity: ONE component answers BOTH the credit-note and the
+        // debit-note route, so `new` -> `new` across families must NOT look like the same page.
+        var key = $"{ResolveFamily()}:{Mode}:{DocNo}";
         if (string.Equals(_loadedKey, key, StringComparison.Ordinal))
         {
             return;
@@ -193,12 +195,16 @@ public partial class PoCdn : PageBase, IDisposable
         _cts.Dispose();
     }
 
-    private void ResolveType()
-    {
-        _type = Navigation.Uri.Contains("/debit-notes", StringComparison.OrdinalIgnoreCase)
+    private void ResolveType() => _type = ResolveFamily();
+
+    /// <summary>
+    /// The family the URL names. PURE and side-effect free: it is called both BEFORE the reuse-key
+    /// comparison (so a credit-note -> debit-note switch is detected) and while loading.
+    /// </summary>
+    private string ResolveFamily() =>
+        Navigation.Uri.Contains("/debit-notes", StringComparison.OrdinalIgnoreCase)
             ? PoCdnTypes.DebitNote
             : PoCdnTypes.CreditNote;
-    }
 
     private async Task LoadAsync()
     {

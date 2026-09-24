@@ -19,6 +19,8 @@ namespace ErpWeb.Tests;
 /// <summary>
 /// Acceptance matrix for always-on SaDocApplication ledger (SO_DO / SO_INV / DO_INV).
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesShared)]
 public class SaDocApplicationTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

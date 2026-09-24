@@ -18,6 +18,8 @@ namespace ErpWeb.Tests;
 /// N/A), R2 (company-wide attainment ignores the branch filter), R3 (CN/DN netted once, positively),
 /// R4/M4 (Won = CLOSED + CONVERTED), M5 (header totals), R5 (Source is live), R7 (company isolation).
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaSalesAnalysisServiceTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

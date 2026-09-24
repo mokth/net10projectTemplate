@@ -1,0 +1,193 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test: fast (all except SqlServer)",
+      "detail": "Whole suite minus the *SqlServerConcurrencyTests categories (~1960 tests). The day-to-day loop.",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category!=SqlServer\"",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: all (including SqlServer)",
+      "detail": "Full suite (~2036 tests). Requires ConnectionStrings__SqlServerTestConnection + ERPWEB_REQUIRE_SQLSERVER_TESTS=1 set in a SEPARATE terminal command first.",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: rerun last build (no rebuild)",
+      "detail": "Skips the build. Only safe when no source file changed since the last build.",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --no-build --filter \"Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: pick a category",
+      "detail": "Prompt for a category from TestCategories.",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=${input:category}\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales (no SqlServer)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=Sales&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Purchase (no SqlServer)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=Purchase&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Inventory (no SqlServer)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=Inventory&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Masters",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesMasters&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Quotation (QT)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesQt&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Sales Order (SO)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesSo&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Delivery Order (DO)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesDo&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Invoice",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesInvoice&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Credit/Debit Note (CN/DN)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesCdn&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Sales > Pricing engine",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SalesPricing&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Purchase > Order (PO)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=PurchaseOrder&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Purchase > Credit/Debit Note (CN/DN)",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=PurchaseCdn&Category!=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: Inventory > Stock Transfer",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=InventoryTransfer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: EInvoice",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=EInvoice\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test: SqlServer concurrency only",
+      "detail": "Requires the scratch-DB env vars to be exported in a SEPARATE terminal command first (a connection string on the dotnet test line is truncated at the first ';').",
+      "type": "shell",
+      "command": "dotnet test ErpWeb.Tests/ErpWeb.Tests.csproj --filter \"Category=SqlServer\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build: solution (catches .razor errors dotnet test cannot)",
+      "type": "shell",
+      "command": "dotnet build ErpWeb.slnx --nologo -v:q",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "category",
+      "type": "pickString",
+      "description": "Which test category should run?",
+      "default": "SalesMasters",
+      "options": [
+        "SalesMasters",
+        "SalesPricing",
+        "SalesQt",
+        "SalesSo",
+        "SalesDo",
+        "SalesInvoice",
+        "SalesCdn",
+        "SalesShared",
+        "PurchaseMasters",
+        "PurchasePr",
+        "PurchaseOrder",
+        "PurchaseInvoice",
+        "PurchaseCdn",
+        "PurchaseSelfBilled",
+        "InventoryMasters",
+        "InventoryGoodsReceipt",
+        "InventoryMiscIssue",
+        "InventoryMiscReceipt",
+        "InventoryScrap",
+        "InventoryAdjustment",
+        "InventoryStockReturn",
+        "InventoryVendorReturn",
+        "InventoryTransfer",
+        "InventoryPosting",
+        "Sales",
+        "EInvoice",
+        "Purchase",
+        "Inventory",
+        "Menus",
+        "Settings",
+        "Admin",
+        "Shared",
+        "SqlServer"
+      ]
+    }
+  ]
+}

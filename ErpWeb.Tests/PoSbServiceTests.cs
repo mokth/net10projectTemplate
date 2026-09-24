@@ -54,6 +54,8 @@ internal sealed class FakePoSbDocumentNumberingService : IDocumentNumberingServi
 /// The self-billed purchase documents (SBI / SBC / SBD): save, post, the server-side e-Invoice lock,
 /// derived header totals, and every origin rule for a note.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseSelfBilled)]
 public class PoSbServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 23);

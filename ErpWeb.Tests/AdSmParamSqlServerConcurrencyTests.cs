@@ -23,6 +23,8 @@ namespace ErpWeb.Tests;
 /// green suite cannot hide that these never ran.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class AdSmParamSqlServerConcurrencyTests : IAsyncLifetime
 {
     internal const string TestConnectionKey = "SqlServerTestConnection";

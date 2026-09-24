@@ -22,6 +22,8 @@ namespace ErpWeb.Tests;
 /// the WIRING — that the mode comes from <c>Company</c>, that only eligible sources are queried, and
 /// that stage 3 really consumes the stage 2 price when the database is involved.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesPricing)]
 public class SaLinePricingConsumerTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 15);

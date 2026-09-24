@@ -48,6 +48,8 @@ internal sealed class FakePoInvoiceDocumentNumberingService : IDocumentNumbering
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
 public class PoOrderCalcPriceToleranceTests
 {
     [Fact]
@@ -105,6 +107,8 @@ public class PoOrderCalcPriceToleranceTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseInvoice)]
 public class PoInvoiceServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 12);

@@ -15,6 +15,7 @@ namespace ErpWeb.Tests;
 /// registered provider, no provider may be orphaned, and a MISSING provider must fail loudly rather than
 /// quietly resolving to the default (I9).
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
 public class AppSettingProviderTests
 {
     private sealed class StubProvider(string module, string key) : IAppSettingValueProvider

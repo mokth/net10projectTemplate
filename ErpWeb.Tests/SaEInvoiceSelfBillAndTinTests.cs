@@ -15,6 +15,8 @@ namespace ErpWeb.Tests;
 /// so these tests pin the vocabulary and the authorization routing rather than a refusal.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceSelfBillAndTinTests
 {
     // ─────────────────────────────── Document type map ───────────────────────────────

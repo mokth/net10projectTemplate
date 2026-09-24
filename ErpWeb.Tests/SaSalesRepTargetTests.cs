@@ -14,6 +14,8 @@ namespace ErpWeb.Tests;
 /// Sales-rep monthly targets (sales-analysis Phase 1). These guard the M3 contract: the row key is
 /// company-wide (no branch), save is an upsert, and the month / year / amount validations hold.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaSalesRepTargetTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

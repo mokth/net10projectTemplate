@@ -102,6 +102,9 @@ internal sealed class FailRollbackInventoryPostingService : IIvInventoryPostingS
 /// Skipped silently unless ConnectionStrings:DefaultConnection points at SQL Server
 /// with DEMO masters and the SaCdns table is present.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesCdn)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaCdnSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

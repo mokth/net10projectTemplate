@@ -1,7 +1,13 @@
 @page "/purchase/self-billed-credit-notes"
-@page "/purchase/self-billed-debit-notes"
 @inherits PageBase
 @using ErpWeb.UI.Components.Common
+
+@*
+    ONLY the self-billed credit-note route answers here. The debit-note route lives on
+    `PoSbCdnDebitList`, on purpose: both URLs carry no route parameters, so if this one component
+    answered both routes the router would reuse the instance on the menu's client-side switch and keep
+    the family it was built for.
+*@
 
 <PageTitle>@DocumentTypeName</PageTitle>
 

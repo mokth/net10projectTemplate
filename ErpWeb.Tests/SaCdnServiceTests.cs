@@ -78,6 +78,8 @@ internal sealed class FakeCdnDocumentNumberingService : IDocumentNumberingServic
 
 // ─────────────────────────── Calc tests (pure, no DB) ───────────────────────────
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesCdn)]
 public class SaCdnCalcTests
 {
     // 1. Fingerprint is deterministic and field-sensitive
@@ -184,6 +186,8 @@ public class SaCdnCalcTests
 
 // ─────────────────────────── Service tests ───────────────────────────
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesCdn)]
 public class SaCdnServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

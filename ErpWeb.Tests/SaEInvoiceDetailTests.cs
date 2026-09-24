@@ -15,6 +15,8 @@ namespace ErpWeb.Tests;
 /// because LHDN throttles repeat requests for the same document.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceDetailTests
 {
     private const string Uuid = "UUID-INV-1001";

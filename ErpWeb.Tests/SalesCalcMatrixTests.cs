@@ -14,6 +14,8 @@ namespace ErpWeb.Tests;
 /// Header invariant asserted for every row: <c>GrossAmt + Taxes == TotAmnt</c> and <c>GrossAmt</c> is ex-tax.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesPricing)]
 public class SalesCalcMatrixTests
 {
     public sealed class CalcCase

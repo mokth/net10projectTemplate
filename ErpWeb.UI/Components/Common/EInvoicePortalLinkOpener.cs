@@ -37,7 +37,7 @@ namespace ErpWeb.UI.Components.Common;
 ///
 /// <para>
 /// All the rules live behind <see cref="ISaEInvoiceService.GetPortalLinkAsync"/> (submission lookup,
-/// company scoping and the VALID/CANCELLED rule) and
+/// company scoping and the SUBMITTED/VALID/CANCELLED rule) and
 /// <see cref="ISaEInvoiceService.RepairSubmissionAsync"/> (re-read MyInvois and create-or-update the
 /// submission history), so no page repeats them. Use <see cref="OpenAsync"/> only where the history
 /// repair is explicitly unwanted.
@@ -56,8 +56,8 @@ public static class EInvoicePortalLinkOpener
     private const string NoUuidMessage = "This document has no MyInvois UUID yet.";
 
     private const string NoLinkMessage =
-        "No LHDN link for this document. Only a VALID or CANCELLED e-Invoice with a MyInvois "
-        + "long id can be opened at the portal.";
+        "No LHDN link for this document. Only a SUBMITTED, VALID or CANCELLED e-Invoice with a "
+        + "MyInvois long id can be opened at the portal.";
 
     /// <summary>True when the grid cell that was clicked is the e-Invoice UUID column.</summary>
     public static bool IsUuidColumn(SelectedColumnInfo? info) =>

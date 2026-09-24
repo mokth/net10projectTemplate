@@ -11,6 +11,8 @@ namespace ErpWeb.Tests;
 /// heavily: "no price" must BLOCK (never 0 — the legacy defect), and JOIN vs SPLIT must not silently
 /// swap behaviour.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesPricing)]
 public class SaItemFamilyPricingContractTests
 {
     private static readonly DateTime DocDate = new(2026, 9, 15);

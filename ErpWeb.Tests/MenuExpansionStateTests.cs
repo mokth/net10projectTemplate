@@ -2,6 +2,7 @@ using ErpWeb.Core.Menus;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuExpansionStateTests
 {
     private static IReadOnlyList<MenuNavItem> SampleTree() =>

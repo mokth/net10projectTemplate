@@ -25,6 +25,9 @@ namespace ErpWeb.Tests;
 /// <c>ERPWEB_REQUIRE_SQLSERVER_TESTS=1</c> turns the silent skip into a failure, so a green
 /// <c>dotnet test</c> cannot mean "nothing ran".
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaItemFamilySqlServerConcurrencyTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 15);

@@ -7,6 +7,8 @@ namespace ErpWeb.Tests;
 /// revision rebuilds fresh <c>SaSoDetail</c> rows via <c>AddDetails</c> and would silently drop
 /// <c>WrittenOffQty</c>.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesSo)]
 public class SaSoRevisionUsageTests
 {
     private static SaSoRevisionUsage Usage(bool writtenOff) => new() { HasWrittenOffQty = writtenOff };

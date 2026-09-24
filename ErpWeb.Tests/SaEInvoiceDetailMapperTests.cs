@@ -13,6 +13,8 @@ namespace ErpWeb.Tests;
 /// <c>innerError</c> limit, and the English/Malay message split) directly.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceDetailMapperTests
 {
     private const string EnglishMessage =

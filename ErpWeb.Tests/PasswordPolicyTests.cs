@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class PasswordPolicyTests
 {
     private static IPasswordPolicy CreatePolicy(PasswordPolicyOptions? options = null)
@@ -85,6 +86,7 @@ public class PasswordPolicyTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class PasswordPolicyOptionsValidatorTests
 {
     private readonly PasswordPolicyOptionsValidator _validator = new();

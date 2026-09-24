@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public sealed class SaPaymentTermSalesRepMappingTests : IDisposable
 {
     private readonly SqliteConnection _connection;

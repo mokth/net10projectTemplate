@@ -26,6 +26,13 @@ public partial class PoSbInvoice : PageBase
     [Parameter] public string Mode { get; set; } = "new";
     [Parameter] public string? DocNo { get; set; }
 
+    /// <summary>
+    /// The (mode, document) pair this instance last loaded. See <see cref="OnParametersSetAsync"/>: the
+    /// router REUSES this instance for a change to another route the same component answers, so
+    /// view -> edit must be detected here or the page stays on the mode it was created in.
+    /// </summary>
+    private string? _loadedKey;
+
     protected bool IsLoading = true;
     protected bool IsSubmitting;
     protected bool FilterPopupVisible;
@@ -91,8 +98,39 @@ public partial class PoSbInvoice : PageBase
     protected IReadOnlyList<PoSbCodeLookupRow> Currencies => Lookups.Currencies;
     protected IReadOnlyList<PoSbCodeLookupRow> Uoms => Lookups.Uoms;
 
-    protected override async Task OnPageInitializedAsync()
+    /// <summary>
+    /// Nothing happens in the per-instance <c>OnInitializedAsync</c> hook: the load lives in
+    /// <see cref="OnParametersSetAsync"/> so that a REUSED instance can run it again.
+    /// </summary>
+    protected override Task OnPageInitializedAsync() => Task.CompletedTask;
+
+    /// <summary>
+    /// The router REUSES this component instance when the URL changes to another route this component
+    /// answers — <c>.../view/X</c> -> <c>.../edit/X</c> is the SAME component — and <c>OnInitialized</c>
+    /// does not run again, only the parameters are set. Without this guard the view-mode Edit button
+    /// changed the URL and left the page read-only; only a full page load (which builds a new instance)
+    /// showed the editable form.
+    /// </summary>
+    protected override async Task OnParametersSetAsync()
     {
+        await base.OnParametersSetAsync();
+
+        var key = $"{Mode}:{DocNo}";
+        if (string.Equals(_loadedKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _loadedKey = key;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        StatusMessage = null;
+
         CanAdd = await AccessRights.CanAsync(MenuCodes.PurchaseSbInvoice, PermissionCodes.Add);
         CanEdit = await AccessRights.CanAsync(MenuCodes.PurchaseSbInvoice, PermissionCodes.Edit);
 

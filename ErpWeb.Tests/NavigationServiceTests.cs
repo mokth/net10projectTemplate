@@ -3,6 +3,7 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class NavigationServiceTests
 {
     [Fact]

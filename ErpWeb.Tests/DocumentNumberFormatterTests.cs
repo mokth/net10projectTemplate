@@ -2,6 +2,7 @@ using ErpWeb.Core.Numbering;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class DocumentNumberFormatterTests
 {
     [Fact]

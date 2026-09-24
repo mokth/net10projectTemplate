@@ -1,6 +1,11 @@
 @page "/purchase/credit-notes"
-@page "/purchase/debit-notes"
 @inherits PageBase
+
+@*
+    ONLY the credit-note route answers here. The debit-note route lives on `PoCdnDebitList`, on purpose:
+    both URLs carry no route parameters, so if this one component answered both routes the router would
+    reuse the instance on the menu's client-side switch and keep the family it was built for.
+*@
 
 <PageTitle>@PageTitle</PageTitle>
 

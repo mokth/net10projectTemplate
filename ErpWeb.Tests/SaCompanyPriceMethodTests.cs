@@ -12,6 +12,8 @@ namespace ErpWeb.Tests;
 /// <c>SaInvoiceCalc.CalculateLine</c> derives the per-unit discount from the line's raw UnitPrice and
 /// only then divides by (1 + t).
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesPricing)]
 public class SaCompanyPriceMethodTests
 {
     private static readonly DateTime DocDate = new(2026, 9, 15);

@@ -76,6 +76,9 @@ internal sealed class CapturingLogger<T> : ILogger<T>
 /// Every row is seeded under a unique generated company code so a live database is never
 /// disturbed, and the seeded rows are removed again on disposal.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseCdn)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class PoCdnSqlServerConcurrencyTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

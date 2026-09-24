@@ -8,6 +8,7 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuSyncServiceTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

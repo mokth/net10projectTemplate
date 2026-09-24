@@ -301,12 +301,23 @@ public sealed class SaEInvoicePortalLink
     public string Url { get; init; } = string.Empty;
 
     /// <summary>
-    /// Only a <b>VALID</b> or <b>CANCELLED</b> document has a shareable page at MyInvois. The test is
-    /// case-insensitive on purpose: ErpWeb writes the uppercase <see cref="EInvoiceStatuses"/> values
-    /// while legacy rows in the table hold title-case literals such as <c>"Valid"</c>.
+    /// A <b>SUBMITTED</b>, <b>VALID</b> or <b>CANCELLED</b> document has a page at the MyInvois portal.
+    /// The test is case-insensitive on purpose: ErpWeb writes the uppercase
+    /// <see cref="EInvoiceStatuses"/> values while legacy rows in the table hold title-case literals
+    /// such as <c>"Valid"</c>.
+    ///
+    /// <para>
+    /// <b>SUBMITTED is deliberate.</b> MyInvois can leave an accepted document in that state for a
+    /// while before it validates it, and the operator still has to be able to reach it at the portal.
+    /// A viewable status is not sufficient on its own: the link also needs a non-blank <c>longId</c>
+    /// (see <see cref="Create"/>), which MyInvois only returns once the document is valid - so a
+    /// genuinely pending document still resolves to no link, and the E-UUID click reports that
+    /// instead of opening a broken page.
+    /// </para>
     /// </summary>
     public static bool IsPortalViewable(string? status) =>
-        EInvoiceStatuses.Normalize(status) is EInvoiceStatuses.Valid or EInvoiceStatuses.Cancelled;
+        EInvoiceStatuses.Normalize(status) is
+            EInvoiceStatuses.Submitted or EInvoiceStatuses.Valid or EInvoiceStatuses.Cancelled;
 
     /// <summary>
     /// Builds the link, or returns null when the document is not viewable, its MyInvois long id is

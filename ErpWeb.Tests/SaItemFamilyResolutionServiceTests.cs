@@ -18,6 +18,8 @@ namespace ErpWeb.Tests;
 /// then delegate to the pure rules. This file is what proves the wiring, the tenant scope and the
 /// legacy-type scaling that the pure contract tests cannot reach.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 15);

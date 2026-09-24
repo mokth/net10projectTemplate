@@ -21,6 +21,9 @@ namespace ErpWeb.Tests;
 /// (the name must contain "test"). Same two safety rails as
 /// <c>PoCdnSqlServerConcurrencyTests</c>: an explicit key, and a scratch-looking database name.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaLmwSqlServerConcurrencyTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

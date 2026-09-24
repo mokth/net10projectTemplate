@@ -46,6 +46,8 @@ internal sealed class FakePoOrderDocumentNumberingService : IDocumentNumberingSe
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
 public class PoOrderServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 12);

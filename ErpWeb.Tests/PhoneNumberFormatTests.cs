@@ -8,6 +8,7 @@ namespace ErpWeb.Tests;
 /// non-lossy <c>ToStored</c> contract and the idempotency of <c>Normalize</c> are the two properties the
 /// master-data and submission paths depend on, so both are asserted directly rather than implied.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class PhoneNumberFormatTests
 {
     // ─────────────────── Recognised: local formats are canonicalised ───────────────────

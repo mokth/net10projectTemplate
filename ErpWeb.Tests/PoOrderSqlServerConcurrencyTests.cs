@@ -21,6 +21,9 @@ namespace ErpWeb.Tests;
 /// SQL Server concurrency tests for Purchase Orders. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class PoOrderSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 12);

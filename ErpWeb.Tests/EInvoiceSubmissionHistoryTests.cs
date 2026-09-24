@@ -20,6 +20,7 @@ namespace ErpWeb.Tests;
 /// can never fail the e-Invoice action.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class EInvoiceSubmissionHistoryTests
 {
     private const string SubmissionKeyIndex = "UX_EInvDocSubmission_Submission";

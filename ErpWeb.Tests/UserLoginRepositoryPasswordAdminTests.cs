@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

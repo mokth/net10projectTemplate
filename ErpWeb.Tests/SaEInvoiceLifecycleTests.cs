@@ -15,6 +15,8 @@ namespace ErpWeb.Tests;
 /// refused action never reached MyInvois.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceLifecycleTests
 {
     // ─────────────────────────────── Submit ───────────────────────────────

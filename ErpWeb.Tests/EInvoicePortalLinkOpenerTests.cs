@@ -17,6 +17,7 @@ namespace ErpWeb.Tests;
 /// a code comment.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class EInvoicePortalLinkOpenerTests
 {
     private const string Uuid = "UUID-INV-1001";
@@ -431,6 +432,22 @@ public class EInvoicePortalLinkOpenerTests
 
         Assert.Null(outcome.NavigateUrl);
         Assert.NotNull(outcome.Portal);
+    }
+
+    [Fact]
+    public async Task A_submitted_document_uses_the_portal_not_the_detail_page()
+    {
+        // SUBMITTED is an accepted-but-not-yet-validated document: the portal is the right surface for
+        // it, and it must never be mistaken for the INVALID branch that navigates to the detail page.
+        var service = Service(link: Link);
+        var js = new Js();
+
+        var outcome = await EInvoicePortalLinkOpener.HandleUuidClickAsync(
+            service.Object, js.Runtime, UuidCell(), EInvoiceStatuses.Submitted, hasDetailAccess: true);
+
+        Assert.Null(outcome.NavigateUrl);
+        Assert.True(outcome.Portal!.Opened);
+        Assert.Equal(1, js.OpenCount);
     }
 
     [Fact]

@@ -18,6 +18,8 @@ namespace ErpWeb.Tests;
 /// the single-document panel, so these tests also guard that delegation.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceBatchTests
 {
     private static SaEInvoiceDocumentKey Key(string invNo) => EInvoiceTestHost.InvoiceKey(invNo);

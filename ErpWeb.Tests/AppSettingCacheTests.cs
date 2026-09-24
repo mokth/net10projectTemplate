@@ -7,6 +7,7 @@ namespace ErpWeb.Tests;
 /// pure logic, and then end to end through the service because a wrong cache key is exactly the kind of
 /// bug that only shows up as one tenant seeing another tenant's setting.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
 public class AppSettingCacheTests
 {
     private const string Module = AppSettingModules.Sales;

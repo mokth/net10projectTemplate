@@ -22,6 +22,8 @@ namespace ErpWeb.Tests;
 /// regression in the mapper or the generator is caught here rather than in a manual smoke test.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceBuyerSourcingTests
 {
     // ────────────────────────────── D-4: the POSTED gate ──────────────────────────────

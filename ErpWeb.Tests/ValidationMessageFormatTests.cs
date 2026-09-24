@@ -7,6 +7,7 @@ namespace ErpWeb.Tests;
 /// entry pages depend on: deterministic ordering, a headline that always names a cause, and the
 /// guarantee that no row-scoped message is ever collapsed or attributed to the wrong row.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class ValidationMessageFormatTests
 {
     private static Dictionary<string, string> Errors(params (string Key, string Message)[] entries) =>

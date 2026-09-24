@@ -69,7 +69,7 @@ public interface ISaEInvoiceService
     /// Deliberately <b>document-type agnostic</b>: it resolves the submission row from
     /// <c>dbo.EInvDocSubmission</c> for the caller's company, so the invoice, credit/debit note and
     /// self-billed screens all call this one method. Returns null when there is no submission row, the
-    /// row's status is not <c>VALID</c>/<c>CANCELLED</c> (see
+    /// row's status is not <c>SUBMITTED</c>/<c>VALID</c>/<c>CANCELLED</c> (see
     /// <see cref="SaEInvoicePortalLink.IsPortalViewable"/>), the long id is blank, or
     /// <c>Einvoice:EInv_portal</c> is not configured. Never calls MyInvois and writes no audit row.
     /// </para>

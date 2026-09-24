@@ -9,6 +9,7 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class AuthServiceChangePasswordTests
 {
     [Fact]
@@ -100,6 +101,7 @@ public class AuthServiceChangePasswordTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class UserAdminPasswordTests
 {
     private static UserAdminService CreateSut(

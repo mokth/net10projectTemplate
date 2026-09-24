@@ -12,6 +12,7 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class CompanyServiceBootstrapTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

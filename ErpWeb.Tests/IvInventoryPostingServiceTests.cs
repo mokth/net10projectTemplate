@@ -17,6 +17,8 @@ namespace ErpWeb.Tests;
 /// <summary>
 /// Business-logic posting/rollback tests (SQLite). Does not prove SQL Server UPDLOCK/HOLDLOCK.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Inventory)]
+[Trait(TestCategories.Name, TestCategories.InventoryPosting)]
 public class IvInventoryPostingServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 8, 26);

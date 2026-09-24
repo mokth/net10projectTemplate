@@ -20,6 +20,9 @@ namespace ErpWeb.Tests;
 /// <c>dotnet test</c> cannot mean "nothing ran".
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaEInvoiceSqlServerConcurrencyTests : IAsyncLifetime
 {
     // 5 characters on purpose: TenantScopeContext rejects a company claim longer than

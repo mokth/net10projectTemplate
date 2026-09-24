@@ -19,6 +19,9 @@ namespace ErpWeb.Tests;
 /// ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.
 /// SQLite does not prove UPDLOCK/HOLDLOCK.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesSo)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaSoLineReserveSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

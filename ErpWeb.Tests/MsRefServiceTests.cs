@@ -21,6 +21,7 @@ namespace ErpWeb.Tests;
 /// lookup bundle, and the shared legacy-orphan rule (MsRefLookupRules) that every sales and
 /// purchase save path calls.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class MsRefServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 11);

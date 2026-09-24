@@ -14,6 +14,8 @@ namespace ErpWeb.Tests;
 /// no rollback, no "re-open the invoice" step.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceBuyerIdentityTests
 {
     private const string OriginalTin = "C9876543210";

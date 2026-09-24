@@ -14,6 +14,9 @@ namespace ErpWeb.Tests;
 /// SQL Server RowVersion concurrency for Purchase Category. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with POCategory present.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseMasters)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class PoMasterRefSqlServerConcurrencyTests
 {
     private static string? GetSqlServerConnectionString()

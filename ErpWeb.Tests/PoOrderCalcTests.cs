@@ -3,6 +3,8 @@ using ErpWeb.Model.Entities.Purchase;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
 public class PoOrderCalcTests
 {
     [Fact]

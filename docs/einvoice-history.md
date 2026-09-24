@@ -631,6 +631,19 @@ document that is not viewable yet) the repair runs first and the link is retried
 is exactly the state the repair fixes. The retry re-resolves the link; it never repairs again. Pinned by
 `EInvoicePortalLinkOpenerTests.The_repair_runs_at_most_once_when_the_link_stays_unresolvable`.
 
+## Which statuses may open the portal
+
+`SaEInvoicePortalLink.IsPortalViewable` is the **one** definition, and it accepts **SUBMITTED, VALID and
+CANCELLED**. SUBMITTED is included because MyInvois can hold an accepted document in that state for a
+while before validating it, and the operator still needs to reach it at the portal.
+
+A viewable status is **not** sufficient on its own: the share URL also needs the row's `longId`, and
+MyInvois returns `longId` only once the document is valid (`ErpWeb.EInvoiceLib` `DocumentSummary.longId`
+and `DocumentValidatation.longId`). A document that is genuinely still pending therefore still resolves
+to no link, and the click reports "No LHDN link…" rather than opening a broken page. Rows written by
+`EInvoiceSubmissionWriter.RecordSubmitAsync` have no `longId` at all until a Refresh/Repair supplies
+one - which is exactly why the click repairs and then retries the resolve once.
+
 ## Refusals (nothing is written)
 
 | Condition | Behaviour |
@@ -856,5 +869,65 @@ single-row and bulk shapes cannot drift, and `irbmStatus` / `irbmUuid` parameter
 - **No live-DB check** of the self-billed refresh-all — the dev database's self-billed tables hold only
   development rows, and the collation question is the same one already answered for the sales tables
   (`SQL_Latin1_General_CP1_CI_AS`, so the e-Invoice status predicate is plain equality).
+
+# Self-billed CN/DN: pick a line from the originating invoice (ErpWeb, 2026-09-24)
+
+Plan of record: `plans/plan-poSbCdnOriginLinePicker.prompt.md`.
+
+Until now the self-billed credit / debit note entry screen (`PoSbCdn`) accepted lines only by typing them.
+The line popup now carries a **Pick from invoice** button that seeds the line from the originating
+self-billed invoice, while manual key-in and the free-text item box stay exactly as they were.
+
+**UI-only.** No `ErpWeb.Core` change, no SQL script, no migration: the picker reads the origin through the
+already-shipped `IPoSbInvoiceService.GetAsync`, and `OriginOptions` was already restricted to the same
+vendor's `VALID` invoices.
+
+## Why this stays a convenience, not a rule
+
+MyInvois requires a note to **reference** the invoice — document level, `RefDocumentNo` plus the origin
+UUID, resolved by `PoSbOriginResolver` — not to repeat its lines. So the picker deliberately does **not**:
+
+- record provenance: nothing on `PoSbLineDto` / `PoSbLineRequest` / `POSbCdnDetail` points back at an
+  invoice line;
+- enforce a ceiling: there is no remaining-quantity arithmetic, so an over-credit is not blocked here;
+- copy the whole document: one line per pick.
+
+Provenance or ceilings would need an `InvLineNo` column plus a consumption query mirroring
+`PoCdnCalc.EvaluateSourceLineQuantity` / `PoCdnService.ListSourceLineUsageAsync`; that is a separate
+decision (the plan's *Ceilings later?*).
+
+## The mapping rule
+
+`UseOriginLine` writes the popup's **input** fields and mirrors `LineEdit.FromDto` field for field,
+including both discount slots and their discount-type codes. It never copies `Amount` / `NetAmount` /
+`TaxAmt`: `OnPopupSave` recomputes them through `PoSbCalc.ComputeLineAmounts`, so the picker cannot become
+a second money authority. The single defensive default is `Qty <= 0 → 1`, because every stored invoice
+line already passed `PoSbCalc.ValidateLines` on save (qty > 0, non-blank classification, known tax group)
+and a zero-quantity note line is refused again at save time.
+
+## Cache and race rules
+
+`OriginLines` is a short-lived cache with one owner — the origin being edited:
+
+1. an origin change invalidates it (`OnOriginChangedAsync`);
+2. opening the picker always re-reads the invoice, and clears any previous error;
+3. a response is accepted only when `Model.OriginSbInvNo` still equals the number captured before the
+   await, so a late answer for the previous invoice is discarded rather than displayed;
+4. a failed load **clears the rows first**, then sets the error, so stale lines can never sit beside a
+   failure message;
+5. the popup renders exactly one state: loading, then error, then empty, then the grid.
+
+Changing the origin while lines are already on the note **keeps** those lines and shows a hint naming the
+new origin, so no work is silently destroyed. The note's `CurrRate` is deliberately untouched — the picker
+adds no inheritance beyond the existing `Currency ??=` — so a foreign-currency note keeps its own rate and
+is validated as before on save.
+
+## Not covered here
+
+- **No automated UI test** — the repo has no bUnit harness, so the picker is smoke-verified; compiling
+  `ErpWeb.UI` and the untouched `PoSbServiceTests` are the automated proof.
+- **No browser smoke run in this change** — the plan's smoke matrix is the checklist.
+- **A "this item is already on the note" hint** in the picker — duplicates are legitimate, so it was left
+  out.
 
 

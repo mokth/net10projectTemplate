@@ -15,6 +15,9 @@ namespace ErpWeb.Tests;
 /// SQL Server concurrency tests for Customer Profile. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaCustSqlServerConcurrencyTests
 {
     private static string? GetSqlServerConnectionString()

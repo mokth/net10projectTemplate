@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Admin)]
 public class UserRoleSyncServiceTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection;

@@ -16,6 +16,8 @@ namespace ErpWeb.Tests;
 /// SQL Server race tests for numbering admin vs invoice allocation.
 /// Skipped unless ConnectionStrings:DefaultConnection points at SQL Server.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Admin)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class AdSmNumAdminSqlServerConcurrencyTests
 {
     private static string? GetSqlServerConnectionString()

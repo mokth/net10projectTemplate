@@ -7,6 +7,7 @@ namespace ErpWeb.Tests;
 /// Integrity of the catalogue itself. These are the tests that stop a half-declared setting shipping:
 /// every definition must be resolvable, parseable, scoped and — for a token — enumerable.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
 public class AppSettingCatalogueTests
 {
     [Fact]

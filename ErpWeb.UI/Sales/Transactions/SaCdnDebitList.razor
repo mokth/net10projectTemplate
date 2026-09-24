@@ -1,0 +1,22 @@
+@page "/sales/debit-notes"
+@inherits PageBase
+
+@*
+    Why this thin page exists — do NOT fold this route back into `SaCdnList.razor`:
+
+    The sales credit-note and debit-note lists are the SAME screen, but they must be served by two
+    DIFFERENT page types. Neither URL carries a route parameter, so when the menu navigates client-side
+    from /sales/credit-notes to /sales/debit-notes the router resolves the same component type and
+    REUSES the existing instance — `OnInitialized` never runs again, so the title, the hero, the
+    per-family menu rights, the e-Invoice toolbar and the grid stayed on the family the operator arrived
+    on, and only a full page load (which builds a new instance) corrected it.
+
+    With two page types the router disposes the old page and creates the new one, so the screen is
+    always rebuilt for the URL that is actually showing. `SaCdnList` itself resolves the family from the
+    URL (`ResolveFamily()`), so it renders correctly when hosted here.
+
+    The same pattern is used for the purchase pair (`PoCdnDebitList`) and the self-billed pair
+    (`PoSbCdnDebitList`).
+*@
+
+<SaCdnList />

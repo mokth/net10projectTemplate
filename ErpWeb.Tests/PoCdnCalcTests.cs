@@ -12,6 +12,8 @@ namespace ErpWeb.Tests;
 /// Pure-domain tests for the PoCdn controls (plan C6, C9, C17, C24, C26, C30, C34, C37, C43,
 /// C44, C45, C46, C47). No database, no services.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseCdn)]
 public class PoCdnCalcTests
 {
     private static PoCdnDetail Line(

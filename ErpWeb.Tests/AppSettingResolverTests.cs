@@ -11,6 +11,7 @@ namespace ErpWeb.Tests;
 /// what these tests mean.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Settings)]
 public class AppSettingResolverTests
 {
     private static AppSettingDefinition TokenDef() => new(

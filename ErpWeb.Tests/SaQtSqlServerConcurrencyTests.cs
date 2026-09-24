@@ -20,6 +20,9 @@ namespace ErpWeb.Tests;
 /// SQLite cannot express UPDLOCK/HOLDLOCK or the filtered unique index UX_SaSO_QtSource, so the
 /// real "two operators convert the same revision" race can only be proven here.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesQt)]
+[Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class SaQtSqlServerConcurrencyTests
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

@@ -16,6 +16,8 @@ using Moq;
 
 namespace ErpWeb.Tests;
 
+[Trait(TestCategories.Name, TestCategories.Purchase)]
+[Trait(TestCategories.Name, TestCategories.PurchaseMasters)]
 public class PoSupplierServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 11);

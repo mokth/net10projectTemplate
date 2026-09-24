@@ -20,6 +20,8 @@ namespace ErpWeb.Tests;
 /// SQLite has no DB-generated rowversion (see <c>AppDbContext.OnModelCreating</c>), so rows are
 /// seeded with explicit tokens — the same convention as <c>SaSalesRefServiceTests</c>.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaRefMasterServiceTests : IAsyncLifetime
 {
     private static readonly DateTime FixedToday = new(2026, 9, 2);

@@ -23,6 +23,7 @@ namespace ErpWeb.Tests;
 /// resolution would, without instantiating anything, so this fails fast and names the offending
 /// service instead of waiting for someone to open the page.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Shared)]
 public class ServiceRegistrationTests
 {
     [Fact]

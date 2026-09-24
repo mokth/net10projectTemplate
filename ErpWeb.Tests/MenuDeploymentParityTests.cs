@@ -20,6 +20,7 @@ namespace ErpWeb.Tests;
 /// That failure is invisible to the compiler and to any test that only uses synthetic XML, which is
 /// exactly how the PoCdn menu entries were first shipped. It is asserted here instead.
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuDeploymentParityTests
 {
     [Fact]

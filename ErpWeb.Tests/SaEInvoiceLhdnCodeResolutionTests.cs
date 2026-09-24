@@ -17,6 +17,8 @@ namespace ErpWeb.Tests;
 /// only the payload is translated — so the invoice and credit-note paths are asserted separately.
 /// </para>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceLhdnCodeResolutionTests
 {
     private const string ErpUom = "UNIT";

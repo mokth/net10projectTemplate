@@ -27,6 +27,8 @@ namespace ErpWeb.Tests;
 /// opening the LHDN portal.</item>
 /// </list>
 /// </summary>
+[Trait(TestCategories.Name, TestCategories.Sales)]
+[Trait(TestCategories.Name, TestCategories.EInvoice)]
 public class SaEInvoiceSubmissionRepairTests
 {
     private const string Uuid = "UUID-INV-1001";
