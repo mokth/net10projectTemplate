@@ -1,115 +1,201 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Menus>
-  <Menu Code="HOME" Name="Home" Route="/home" SortOrder="1" AlwaysVisible="true" />
+  <!-- Top-level quick link: Dashboard -->
+  <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1"
+        Icon="fa-solid fa-chart-pie" AlwaysVisible="true" />
 
-  <Menu Code="INVENTORY" Name="Inventory" SortOrder="2">
-    <Menu Code="INV_MASTER" Name="Master" SortOrder="1">
-      <Menu Code="INV_ITEM_MASTER" Name="Item Master" Route="/inventory/items" SortOrder="1" />
-      <Menu Code="INV_WAREHOUSE" Name="Warehouses" Route="/inventory/warehouses" SortOrder="2" />
-      <Menu Code="INV_LOCATION" Name="Locations" Route="/inventory/locations" SortOrder="3" />
-      <Menu Code="INV_STATUS" Name="Item Status" Route="/inventory/statuses" SortOrder="4" />
-      <Menu Code="INV_UOM" Name="UOM" Route="/inventory/uoms" SortOrder="5" />
-      <Menu Code="INV_TYPE" Name="Item Type" Route="/inventory/types" SortOrder="6" />
-      <Menu Code="INV_CLASS" Name="Item Class" Route="/inventory/classes" SortOrder="7" />
+  <!-- ─── Inventory ─────────────────────────────────────────────── -->
+  <Menu Code="INVENTORY" Name="Inventory" SortOrder="2" Icon="fa-solid fa-boxes-stacked">
+    <Menu Code="INV_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
+      <Menu Code="INV_ITEM_MASTER" Name="Item Master" Route="/inventory/items" SortOrder="1"
+            Icon="fa-solid fa-cube" />
+      <Menu Code="INV_WAREHOUSE" Name="Warehouses" Route="/inventory/warehouses" SortOrder="2"
+            Icon="fa-solid fa-warehouse" />
+      <Menu Code="INV_LOCATION" Name="Locations" Route="/inventory/locations" SortOrder="3"
+            Icon="fa-solid fa-location-dot" />
+      <Menu Code="INV_STATUS" Name="Item Status" Route="/inventory/statuses" SortOrder="4"
+            Icon="fa-solid fa-toggle-on" />
+      <Menu Code="INV_UOM" Name="UOM" Route="/inventory/uoms" SortOrder="5"
+            Icon="fa-solid fa-ruler" />
+      <Menu Code="INV_TYPE" Name="Item Type" Route="/inventory/types" SortOrder="6"
+            Icon="fa-solid fa-tags" />
+      <Menu Code="INV_CLASS" Name="Item Class" Route="/inventory/classes" SortOrder="7"
+            Icon="fa-solid fa-layer-group" />
     </Menu>
-    <Menu Code="INV_TRANSACTIONS" Name="Transactions" SortOrder="2">
-      <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="1" />
-      <Menu Code="INV_GOODS_RECEIPT" Name="Goods Receipt" Route="/inventory/goods-receipts" SortOrder="2" />
-      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="3" />
-      <Menu Code="INV_STOCK_TRANSFER" Name="Stock Transfer" Route="/inventory/stock-transfer" SortOrder="4" />
-      <Menu Code="INV_SCRAP" Name="Scrap" Route="/inventory/scrap" SortOrder="5" />
-      <Menu Code="INV_STOCK_RETURN" Name="Stock Return" Route="/inventory/stock-return" SortOrder="6" />
-      <Menu Code="INV_VENDOR_RETURN" Name="Vendor Return" Route="/inventory/vendor-return" SortOrder="7" />
-      <Menu Code="INV_STOCK_ADJUSTMENT" Name="Stock Adjustment" Route="/inventory/stock-adjustment" SortOrder="8" />
-    </Menu>
-  </Menu>
-  <Menu Code="SALES" Name="Sales" SortOrder="3">
-    <Menu Code="SA_MASTER" Name="Master" SortOrder="1">
-      <Menu Code="SA_CUST" Name="Customer Profile" Route="/sales/customers" SortOrder="1" />
-      <Menu Code="SA_CUST_TYPE" Name="Customer Types" Route="/sales/customer-types" SortOrder="2" />
-      <Menu Code="SA_CUST_GROUP" Name="Customer Groups" Route="/sales/customer-groups" SortOrder="3" />
-      <Menu Code="SA_AREA" Name="Areas" Route="/sales/areas" SortOrder="4" />
-      <Menu Code="SA_COUNTRY" Name="Countries" Route="/sales/countries" SortOrder="5" />
-      <Menu Code="SA_CURRENCY" Name="Currencies" Route="/sales/currencies" SortOrder="6" />
-      <Menu Code="SA_DIS_GROUP" Name="Discount Groups" Route="/sales/discount-groups" SortOrder="7" />
-      <Menu Code="SA_CURR_RATE" Name="Currency Rates" Route="/sales/currency-rates" SortOrder="8" />
-      <Menu Code="SA_PAY_TERM" Name="Payment Terms" Route="/sales/payment-terms" SortOrder="9" />
-      <Menu Code="SA_SALES_REP" Name="Sales Reps" Route="/sales/sales-reps" SortOrder="10" />
-      <Menu Code="SA_TAX_GROUP" Name="Tax Groups" Route="/sales/tax-groups" SortOrder="11" />
-      <Menu Code="SA_CUST_SUB_GROUP" Name="Customer Sub Groups" Route="/sales/customer-sub-groups" SortOrder="12" />
-      <Menu Code="SA_SHIP_VIA" Name="Ship Via" Route="/sales/ship-vias" SortOrder="13" />
-      <Menu Code="SA_SO_TYPE" Name="SO Types" Route="/sales/so-types" SortOrder="14" />
-      <Menu Code="SA_COMMENT" Name="Comments" Route="/sales/comments" SortOrder="15" />
-      <Menu Code="SA_SHIP_LEAD_TIME" Name="Shipping Lead Time" Route="/sales/shipping-lead-time" SortOrder="16" />
-      <Menu Code="SA_LMW" Name="LMW Licences" Route="/sales/lmw" SortOrder="17" />
-      <Menu Code="SA_CUST_PRICE_GROUP" Name="Price Groups" Route="/sales/price-groups" SortOrder="18" />
-      <Menu Code="SA_ITEM_CUST" Name="Customer Items" Route="/sales/customer-items" SortOrder="19" />
-      <Menu Code="SA_DIS_GROUP_ITEM" Name="Item Discounts" Route="/sales/item-discounts" SortOrder="20" />
-      <Menu Code="SA_PRICE_INQUIRY" Name="Price Inquiry" Route="/sales/price-inquiry" SortOrder="21" />
-    </Menu>
-    <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2">
-      <Menu Code="SA_QT" Name="Sales Quotation" Route="/sales/quotations" SortOrder="0" />
-      <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="1" />
-      <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="2" />
-      <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="3" />
-      <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="4" />
-      <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="5" />
-      <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="6" />
-      <Menu Code="SA_EINVOICE_TIN" Name="e-Invoice TIN Tools" Route="/sales/einvoice/tin" SortOrder="7" />
-    </Menu>
-    <Menu Code="SA_ANALYSIS" Name="Analysis" SortOrder="3">
-      <Menu Code="SA_SALES_SUMMARY" Name="Sales Summary" Route="/sales/analysis/summary" SortOrder="1" />
-      <Menu Code="SA_SALES_ATTAINMENT" Name="Sales Rep Attainment" Route="/sales/analysis/attainment" SortOrder="2" />
-      <Menu Code="SA_QT_CONVERSION" Name="Quotation Conversion" Route="/sales/analysis/qt-conversion" SortOrder="3" />
+    <Menu Code="INV_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
+      <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="1"
+            Icon="fa-solid fa-arrow-down" />
+      <Menu Code="INV_GOODS_RECEIPT" Name="Goods Receipt" Route="/inventory/goods-receipts" SortOrder="2"
+            Icon="fa-solid fa-truck-ramp-box" />
+      <Menu Code="INV_MISC_ISSUE" Name="Miscellaneous Issue" Route="/inventory/misc-issue" SortOrder="3"
+            Icon="fa-solid fa-arrow-up" />
+      <Menu Code="INV_STOCK_TRANSFER" Name="Stock Transfer" Route="/inventory/stock-transfer" SortOrder="4"
+            Icon="fa-solid fa-right-left" />
+      <Menu Code="INV_SCRAP" Name="Scrap" Route="/inventory/scrap" SortOrder="5"
+            Icon="fa-solid fa-trash-can" />
+      <Menu Code="INV_STOCK_RETURN" Name="Stock Return" Route="/inventory/stock-return" SortOrder="6"
+            Icon="fa-solid fa-rotate-left" />
+      <Menu Code="INV_VENDOR_RETURN" Name="Vendor Return" Route="/inventory/vendor-return" SortOrder="7"
+            Icon="fa-solid fa-truck-arrow-left" />
+      <Menu Code="INV_STOCK_ADJUSTMENT" Name="Stock Adjustment" Route="/inventory/stock-adjustment" SortOrder="8"
+            Icon="fa-solid fa-sliders" />
+      <Menu Code="INV_STOCK_COUNT" Name="Stock Count" Route="/inventory/stock-count" SortOrder="9"
+            Icon="fa-solid fa-calculator" />
     </Menu>
   </Menu>
 
-  <Menu Code="PURCHASE" Name="Purchase" SortOrder="4">
-    <Menu Code="PO_MASTER" Name="Master" SortOrder="1">
-      <Menu Code="PO_SUPPLIER" Name="Supplier" Route="/purchase/suppliers" SortOrder="1" />
-      <Menu Code="PO_BUYER" Name="Buyers" Route="/purchase/buyers" SortOrder="2" />
-      <Menu Code="PO_BUYING_TERM" Name="Buying Terms" Route="/purchase/buying-terms" SortOrder="3" />
-      <Menu Code="PO_CATEGORY" Name="Categories" Route="/purchase/categories" SortOrder="4" />
-      <Menu Code="PO_AUTHORISED" Name="Authorised Persons" Route="/purchase/authorised" SortOrder="5" />
-      <Menu Code="PO_PUR_ITEM" Name="Purchase Items" Route="/purchase/items" SortOrder="6" />
+  <!-- ─── Sales ─────────────────────────────────────────────────── -->
+  <Menu Code="SALES" Name="Sales" SortOrder="3" Icon="fa-solid fa-cart-shopping">
+    <Menu Code="SA_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
+      <Menu Code="SA_CUST" Name="Customer Profile" Route="/sales/customers" SortOrder="1"
+            Icon="fa-solid fa-user-tie" />
+      <Menu Code="SA_CUST_TYPE" Name="Customer Types" Route="/sales/customer-types" SortOrder="2"
+            Icon="fa-solid fa-users-gear" />
+      <Menu Code="SA_CUST_GROUP" Name="Customer Groups" Route="/sales/customer-groups" SortOrder="3"
+            Icon="fa-solid fa-users" />
+      <Menu Code="SA_AREA" Name="Areas" Route="/sales/areas" SortOrder="4"
+            Icon="fa-solid fa-map-location-dot" />
+      <Menu Code="SA_COUNTRY" Name="Countries" Route="/sales/countries" SortOrder="5"
+            Icon="fa-solid fa-globe" />
+      <Menu Code="SA_CURRENCY" Name="Currencies" Route="/sales/currencies" SortOrder="6"
+            Icon="fa-solid fa-coins" />
+      <Menu Code="SA_DIS_GROUP" Name="Discount Groups" Route="/sales/discount-groups" SortOrder="7"
+            Icon="fa-solid fa-percent" />
+      <Menu Code="SA_CURR_RATE" Name="Currency Rates" Route="/sales/currency-rates" SortOrder="8"
+            Icon="fa-solid fa-chart-line" />
+      <Menu Code="SA_PAY_TERM" Name="Payment Terms" Route="/sales/payment-terms" SortOrder="9"
+            Icon="fa-solid fa-calendar-check" />
+      <Menu Code="SA_SALES_REP" Name="Sales Reps" Route="/sales/sales-reps" SortOrder="10"
+            Icon="fa-solid fa-id-badge" />
+      <Menu Code="SA_TAX_GROUP" Name="Tax Groups" Route="/sales/tax-groups" SortOrder="11"
+            Icon="fa-solid fa-receipt" />
+      <Menu Code="SA_CUST_SUB_GROUP" Name="Customer Sub Groups" Route="/sales/customer-sub-groups" SortOrder="12"
+            Icon="fa-solid fa-sitemap" />
+      <Menu Code="SA_SHIP_VIA" Name="Ship Via" Route="/sales/ship-vias" SortOrder="13"
+            Icon="fa-solid fa-truck-fast" />
+      <Menu Code="SA_SO_TYPE" Name="SO Types" Route="/sales/so-types" SortOrder="14"
+            Icon="fa-solid fa-file-invoice" />
+      <Menu Code="SA_COMMENT" Name="Comments" Route="/sales/comments" SortOrder="15"
+            Icon="fa-solid fa-comment" />
+      <Menu Code="SA_SHIP_LEAD_TIME" Name="Shipping Lead Time" Route="/sales/shipping-lead-time" SortOrder="16"
+            Icon="fa-solid fa-clock" />
+      <Menu Code="SA_LMW" Name="LMW Licences" Route="/sales/lmw" SortOrder="17"
+            Icon="fa-solid fa-certificate" />
+      <Menu Code="SA_CUST_PRICE_GROUP" Name="Price Groups" Route="/sales/price-groups" SortOrder="18"
+            Icon="fa-solid fa-tag" />
+      <Menu Code="SA_ITEM_CUST" Name="Customer Items" Route="/sales/customer-items" SortOrder="19"
+            Icon="fa-solid fa-box-open" />
+      <Menu Code="SA_DIS_GROUP_ITEM" Name="Item Discounts" Route="/sales/item-discounts" SortOrder="20"
+            Icon="fa-solid fa-tags" />
+      <Menu Code="SA_PRICE_INQUIRY" Name="Price Inquiry" Route="/sales/price-inquiry" SortOrder="21"
+            Icon="fa-solid fa-magnifying-glass-dollar" />
     </Menu>
-    <Menu Code="PO_TRANSACTIONS" Name="Transactions" SortOrder="2">
-      <Menu Code="PO_PR" Name="Purchase Requisition" Route="/purchase/requisitions" SortOrder="1" />
-      <Menu Code="PO_ORDER" Name="Purchase Order" Route="/purchase/orders" SortOrder="2" />
-      <Menu Code="PO_INVOICE" Name="Purchase Invoice" Route="/purchase/invoices" SortOrder="3" />
-      <Menu Code="PO_CN" Name="Credit Note" Route="/purchase/credit-notes" SortOrder="4" />
-      <Menu Code="PO_DN" Name="Debit Note" Route="/purchase/debit-notes" SortOrder="5" />
-      <Menu Code="PO_CN_RESERVATIONS" Name="CN Reservations" Route="/purchase/cn-reservations" SortOrder="6" />
-      <Menu Code="PO_SB_INVOICE" Name="Self-billed Invoice" Route="/purchase/self-billed-invoices" SortOrder="7" />
-      <Menu Code="PO_SB_CN" Name="Self-billed Credit Note" Route="/purchase/self-billed-credit-notes" SortOrder="8" />
-      <Menu Code="PO_SB_DN" Name="Self-billed Debit Note" Route="/purchase/self-billed-debit-notes" SortOrder="9" />
+    <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
+      <Menu Code="SA_QT" Name="Sales Quotation" Route="/sales/quotations" SortOrder="1"
+            Icon="fa-solid fa-file-circle-check" />
+      <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="2"
+            Icon="fa-solid fa-file-lines" />
+      <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="3"
+            Icon="fa-solid fa-file-invoice-dollar" />
+      <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="4"
+            Icon="fa-solid fa-truck" />
+      <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="5"
+            Icon="fa-solid fa-file-minus" />
+      <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="6"
+            Icon="fa-solid fa-file-plus" />
+      <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="7"
+            Icon="fa-solid fa-file-shield" />
+      <Menu Code="SA_EINVOICE_TIN" Name="e-Invoice TIN Tools" Route="/sales/einvoice/tin" SortOrder="8"
+            Icon="fa-solid fa-id-card" />
+    </Menu>
+    <Menu Code="SA_ANALYSIS" Name="Analysis" SortOrder="3" Icon="fa-solid fa-chart-line">
+      <Menu Code="SA_SALES_SUMMARY" Name="Sales Summary" Route="/sales/analysis/summary" SortOrder="1"
+            Icon="fa-solid fa-chart-bar" />
+      <Menu Code="SA_SALES_ATTAINMENT" Name="Sales Rep Attainment" Route="/sales/analysis/attainment" SortOrder="2"
+            Icon="fa-solid fa-chart-pie" />
+      <Menu Code="SA_QT_CONVERSION" Name="Quotation Conversion" Route="/sales/analysis/qt-conversion" SortOrder="3"
+            Icon="fa-solid fa-diagram-successor" />
     </Menu>
   </Menu>
 
-  <Menu Code="OPERATIONS" Name="Operations" SortOrder="5">
-    <Menu Code="OVERVIEW" Name="Overview" SortOrder="1">
-      <Menu Code="DASHBOARD" Name="Dashboard" Route="/dashboard" SortOrder="1" />
-      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="2" />
+  <!-- ─── Purchase ──────────────────────────────────────────────── -->
+  <Menu Code="PURCHASE" Name="Purchase" SortOrder="4" Icon="fa-solid fa-cart-flatbed">
+    <Menu Code="PO_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
+      <Menu Code="PO_SUPPLIER" Name="Supplier" Route="/purchase/suppliers" SortOrder="1"
+            Icon="fa-solid fa-building" />
+      <Menu Code="PO_BUYER" Name="Buyers" Route="/purchase/buyers" SortOrder="2"
+            Icon="fa-solid fa-user-check" />
+      <Menu Code="PO_BUYING_TERM" Name="Buying Terms" Route="/purchase/buying-terms" SortOrder="3"
+            Icon="fa-solid fa-file-contract" />
+      <Menu Code="PO_CATEGORY" Name="Categories" Route="/purchase/categories" SortOrder="4"
+            Icon="fa-solid fa-tag" />
+      <Menu Code="PO_AUTHORISED" Name="Authorised Persons" Route="/purchase/authorised" SortOrder="5"
+            Icon="fa-solid fa-user-shield" />
+      <Menu Code="PO_PUR_ITEM" Name="Purchase Items" Route="/purchase/items" SortOrder="6"
+            Icon="fa-solid fa-cubes" />
+    </Menu>
+    <Menu Code="PO_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
+      <Menu Code="PO_PR" Name="Purchase Requisition" Route="/purchase/requisitions" SortOrder="1"
+            Icon="fa-solid fa-file-circle-plus" />
+      <Menu Code="PO_ORDER" Name="Purchase Order" Route="/purchase/orders" SortOrder="2"
+            Icon="fa-solid fa-file-lines" />
+      <Menu Code="PO_INVOICE" Name="Purchase Invoice" Route="/purchase/invoices" SortOrder="3"
+            Icon="fa-solid fa-file-invoice-dollar" />
+      <Menu Code="PO_CN" Name="Credit Note" Route="/purchase/credit-notes" SortOrder="4"
+            Icon="fa-solid fa-file-minus" />
+      <Menu Code="PO_DN" Name="Debit Note" Route="/purchase/debit-notes" SortOrder="5"
+            Icon="fa-solid fa-file-plus" />
+      <Menu Code="PO_CN_RESERVATIONS" Name="CN Reservations" Route="/purchase/cn-reservations" SortOrder="6"
+            Icon="fa-solid fa-file-shield" />
+      <Menu Code="PO_SB_INVOICE" Name="Self-billed Invoice" Route="/purchase/self-billed-invoices" SortOrder="7"
+            Icon="fa-solid fa-file-circle-exclamation" />
+      <Menu Code="PO_SB_CN" Name="Self-billed Credit Note" Route="/purchase/self-billed-credit-notes" SortOrder="8"
+            Icon="fa-solid fa-file-circle-xmark" />
+      <Menu Code="PO_SB_DN" Name="Self-billed Debit Note" Route="/purchase/self-billed-debit-notes" SortOrder="9"
+            Icon="fa-solid fa-file-circle-question" />
     </Menu>
   </Menu>
 
-  <Menu Code="SECURITY" Name="Security" SortOrder="6">
-    <Menu Code="ADMIN" Name="Administration" SortOrder="1">
-      <Menu Code="ADMIN_DEMO" Name="Admin" Route="/admin-demo" SortOrder="1" />
-      <Menu Code="ADMIN_USERS" Name="User Accounts" Route="/adminuser" SortOrder="2" />
-      <Menu Code="ADMIN_ROLES" Name="Roles" Route="/admin/roles" SortOrder="3" />
-      <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="4" />
-      <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="5" />
-      <Menu Code="ADMIN_COMPANY" Name="Company Info" Route="/admin/company" SortOrder="6" />
-      <Menu Code="ADMIN_SETTINGS" Name="System Settings" Route="/admin/settings" SortOrder="7" />
-      <Menu Code="ADMIN_MASTER" Name="Master" SortOrder="8">
-        <Menu Code="SA_SM_NUM" Name="Continuous Numbers" Route="/sales/numbering/continuous" SortOrder="1" />
-        <Menu Code="SA_SM_NUM_DATE" Name="Period Numbers" Route="/sales/numbering/period" SortOrder="2" />
-        <Menu Code="ADMIN_DEPT" Name="Departments" Route="/admin/departments" SortOrder="3" />
-        <Menu Code="ADMIN_PROJECT" Name="Projects" Route="/admin/projects" SortOrder="4" />
+  <!-- ─── Security / Administration ─────────────────────────────── -->
+  <Menu Code="SECURITY" Name="Administration" SortOrder="5" Icon="fa-solid fa-shield-halved">
+    <Menu Code="ADMIN" Name="Administration" SortOrder="1" Icon="fa-solid fa-gears">
+      <!-- Demos kept in XML for dev/test; gated out of production navigation elsewhere -->
+      <Menu Code="ADMIN_DEMO" Name="Admin Demo" Route="/admin-demo" SortOrder="0"
+            AlwaysVisible="true" IsActive="false" Icon="fa-solid fa-flask" />
+      <Menu Code="ADMIN_USERS" Name="User Accounts" Route="/adminuser" SortOrder="1"
+            Icon="fa-solid fa-users-gear" />
+      <Menu Code="ADMIN_ROLES" Name="Roles" Route="/admin/roles" SortOrder="2"
+            Icon="fa-solid fa-user-tag" />
+      <Menu Code="ADMIN_PERMISSIONS" Name="Permissions" Route="/admin/permissions" SortOrder="3"
+            Icon="fa-solid fa-lock" />
+      <Menu Code="ADMIN_ROLE_PERMISSIONS" Name="Role Permissions" Route="/admin/role-permissions" SortOrder="4"
+            Icon="fa-solid fa-key" />
+      <Menu Code="ADMIN_COMPANY" Name="Company Info" Route="/admin/company" SortOrder="5"
+            Icon="fa-solid fa-building" />
+      <Menu Code="ADMIN_SETTINGS" Name="System Settings" Route="/admin/settings" SortOrder="6"
+            Icon="fa-solid fa-sliders" />
+      <Menu Code="ADMIN_MASTER" Name="Reference Data" SortOrder="7" Icon="fa-solid fa-database">
+        <Menu Code="SA_SM_NUM" Name="Continuous Numbers" Route="/sales/numbering/continuous" SortOrder="1"
+              Icon="fa-solid fa-arrow-down-1-9" />
+        <Menu Code="SA_SM_NUM_DATE" Name="Period Numbers" Route="/sales/numbering/period" SortOrder="2"
+              Icon="fa-solid fa-calendar-days" />
+        <Menu Code="ADMIN_DEPT" Name="Departments" Route="/admin/departments" SortOrder="3"
+              Icon="fa-solid fa-building-user" />
+        <Menu Code="ADMIN_PROJECT" Name="Projects" Route="/admin/projects" SortOrder="4"
+              Icon="fa-solid fa-folder-open" />
       </Menu>
     </Menu>
   </Menu>
 
-  <Menu Code="CHANGE_PASSWORD" Name="Change password" Route="/change-password" SortOrder="7" AlwaysVisible="true" />
+  <!-- Demos kept but hidden from production sidebar -->
+  <Menu Code="OPERATIONS" Name="Operations" SortOrder="8" IsActive="false">
+    <Menu Code="OVERVIEW" Name="Overview" SortOrder="1" IsActive="false">
+      <Menu Code="INVENTORY_DEMO" Name="Inventory Demo" Route="/inventory-demo" SortOrder="1"
+            AlwaysVisible="true" IsActive="false" Icon="fa-solid fa-flask" />
+    </Menu>
+  </Menu>
+
+  <!-- Pinned utility: rendered outside the tree in NavMenu -->
+  <Menu Code="CHANGE_PASSWORD" Name="Change Password" Route="/change-password" SortOrder="9"
+        AlwaysVisible="true" Icon="fa-solid fa-key" />
 </Menus>

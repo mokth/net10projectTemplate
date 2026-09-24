@@ -8,6 +8,7 @@ public sealed class MenuDefinitionNode
     public string? Icon { get; init; }
     public int SortOrder { get; init; }
     public bool AlwaysVisible { get; init; }
+    public bool IsActive { get; init; } = true;
     public string? ParentCode { get; init; }
     public IReadOnlyList<MenuDefinitionNode> Children { get; init; } = Array.Empty<MenuDefinitionNode>();
 

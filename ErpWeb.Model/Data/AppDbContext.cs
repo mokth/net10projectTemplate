@@ -44,6 +44,8 @@ public class AppDbContext : DbContext
     public DbSet<IvTrxBatch> IvTrxBatches => Set<IvTrxBatch>();
     public DbSet<IvTrxBatchDetail> IvTrxBatchDetails => Set<IvTrxBatchDetail>();
     public DbSet<IvTrxHistory> IvTrxHistories => Set<IvTrxHistory>();
+    public DbSet<IvStockCountHdr> IvStockCountHdrs => Set<IvStockCountHdr>();
+    public DbSet<IvStockCountLine> IvStockCountLines => Set<IvStockCountLine>();
 
     public DbSet<SaCust> SaCusts => Set<SaCust>();
     public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();

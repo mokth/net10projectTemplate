@@ -93,6 +93,15 @@ internal sealed class FailRollbackInventoryPostingService : IIvInventoryPostingS
         string expectedTrxType,
         CancellationToken cancellationToken = default) =>
         _inner.DeleteNewStockInBatchInTransactionAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
+
+    public Task<IvInventoryPostingBatchResult> PostStockAdjustmentInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken = default) =>
+        _inner.PostStockAdjustmentInTransactionAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken);
 }
 
 // ─────────────────────────── Test class ───────────────────────────

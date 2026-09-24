@@ -16,15 +16,17 @@
     --top-h: 52px;
 
     --nav-bg: #ffffff;
-    --nav-text: #4b5563;
-    --nav-muted: #6b7280;
-    --nav-hover-bg: #f3f0f8;
-    --nav-hover-text: #5e418a;
-    --nav-selected-bg: #f3f0f8;
-    --nav-selected-text: #5e418a;
-    --nav-header-bg: #5e418a;
+    --nav-text: #374151;
+    --nav-muted: #9ca3af;
+    --nav-hover-bg: #f0f4ff;
+    --nav-hover-text: #1d4ed8;
+    --nav-selected-bg: transparent;
+    --nav-selected-text: #1d4ed8;
+    --nav-selected-bar: #2f6fed;
+    --nav-header-bg: #2f6fed;
     --nav-header-text: #ffffff;
     --nav-border: #e5e7eb;
+    --nav-divider: #e5e7eb;
     --topbar-bg: #ffffff;
     --topbar-control-bg: #ffffff;
     --topbar-control-hover: #f8fafc;
@@ -50,14 +52,16 @@
 
     --nav-bg: #141b26;
     --nav-text: #c5ced9;
-    --nav-muted: #8b96a8;
-    --nav-hover-bg: #243044;
-    --nav-hover-text: #d6c7f5;
-    --nav-selected-bg: #2a3550;
-    --nav-selected-text: #e4dbff;
-    --nav-header-bg: #4a326e;
+    --nav-muted: #6b7280;
+    --nav-hover-bg: #1e293b;
+    --nav-hover-text: #93c5fd;
+    --nav-selected-bg: transparent;
+    --nav-selected-text: #93c5fd;
+    --nav-selected-bar: #2f6fed;
+    --nav-header-bg: #1e3a5f;
     --nav-header-text: #ffffff;
     --nav-border: #2d3a4f;
+    --nav-divider: #2d3a4f;
     --topbar-bg: #1a2332;
     --topbar-control-bg: #141b26;
     --topbar-control-hover: #243044;

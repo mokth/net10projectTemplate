@@ -146,6 +146,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvStockAdjustmentService, IvStockAdjustmentService>();
 
+        services.AddScoped<IIvStockCountService, IvStockCountService>();
+
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();

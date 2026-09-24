@@ -123,6 +123,9 @@ public static class TestCategories
     /// <summary>Inventory — stock adjustment.</summary>
     public const string InventoryAdjustment = "InventoryAdjustment";
 
+    /// <summary>Inventory — physical stock count (cycle count).</summary>
+    public const string InventoryStockCount = "InventoryStockCount";
+
     /// <summary>Inventory — stock return.</summary>
     public const string InventoryStockReturn = "InventoryStockReturn";
 

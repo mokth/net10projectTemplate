@@ -71,6 +71,20 @@ public interface IIvStockCommonRepository
         int balLocId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Candidate piles for a stock-count Generate. Unlike <see cref="SearchOnHandPagedAsync"/> this
+    /// applies NO quantity / active / stock-control hard filter (it is modelled on
+    /// <see cref="GetOnHandByIdAsync"/>); the scope object decides, and the query always keeps the
+    /// company/branch tenant filter. Deterministic order: ICode, WhCode, LocCode, LotNo, Id.
+    /// </summary>
+    Task<(IReadOnlyList<IvOnHandBalanceRow> Rows, int TotalCount)> ListStockCountCandidatesAsync(
+        string companyCode,
+        string branchCode,
+        IvStockCountScope scope,
+        int skip,
+        int take,
+        CancellationToken cancellationToken = default);
+
     Task<IvWarehouse?> GetActiveWarehouseAsync(
         AppDbContext db,
         string companyCode,
@@ -535,6 +549,130 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                 PurchasePrice = sm.PurchasePrice,
                 LotId = bal.LotId
             }).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<(IReadOnlyList<IvOnHandBalanceRow> Rows, int TotalCount)> ListStockCountCandidatesAsync(
+        string companyCode,
+        string branchCode,
+        IvStockCountScope scope,
+        int skip,
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        scope ??= new IvStockCountScope();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        skip = Math.Max(0, skip);
+        take = Math.Clamp(take, 1, 100_000);
+
+        var query =
+            from bal in db.IvBalLocs.AsNoTracking()
+            join sm in db.IvStockMasters.AsNoTracking()
+                on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode }
+            join lot in db.IvLots.AsNoTracking()
+                on bal.LotId equals lot.Id into lots
+            from lot in lots.DefaultIfEmpty()
+            where bal.CompanyCode == company
+                  && bal.BranchCode == branch
+                  // An uncontrolled item has no balance worth adjusting — always excluded.
+                  && sm.StockControl
+            select new { bal, sm, lot };
+
+        if (!scope.IncludeInactive)
+        {
+            query = query.Where(x => x.sm.IsActive);
+        }
+
+        if (!scope.IncludeZeroQty)
+        {
+            query = query.Where(x => x.bal.StdQty > 0m);
+        }
+
+        var statuses = scope.Statuses
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim().ToUpperInvariant())
+            .Distinct()
+            .ToList();
+        if (statuses.Count > 0)
+        {
+            query = query.Where(x => statuses.Contains(x.bal.IStatus.ToUpper()));
+        }
+        else
+        {
+            // Legacy parity: SCRAPS is out by default and only appears when the scope asks for it.
+            query = query.Where(x => x.bal.IStatus.ToUpper() != IvStockCountScope.ScrapStatus);
+        }
+
+        if (!string.IsNullOrWhiteSpace(scope.WHCode))
+        {
+            var wh = scope.WHCode.Trim();
+            query = query.Where(x => x.bal.WhCode == wh);
+        }
+
+        if (!string.IsNullOrWhiteSpace(scope.LocCode))
+        {
+            var loc = scope.LocCode.Trim();
+            query = query.Where(x => x.bal.LocCode == loc);
+        }
+
+        if (!string.IsNullOrWhiteSpace(scope.IClassCode))
+        {
+            var cls = scope.IClassCode.Trim();
+            query = query.Where(x => x.sm.IClassCode == cls);
+        }
+
+        if (!string.IsNullOrWhiteSpace(scope.ISubClassCode))
+        {
+            var sub = scope.ISubClassCode.Trim();
+            query = query.Where(x => x.sm.ISubClassCode == sub);
+        }
+
+        if (!string.IsNullOrWhiteSpace(scope.IType))
+        {
+            var type = scope.IType.Trim();
+            query = query.Where(x => x.sm.IType == type);
+        }
+
+        var iCodes = scope.ICodes
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct()
+            .ToList();
+        if (iCodes.Count > 0)
+        {
+            query = query.Where(x => iCodes.Contains(x.bal.ICode));
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var rows = await query
+            .OrderBy(x => x.bal.ICode)
+            .ThenBy(x => x.bal.WhCode)
+            .ThenBy(x => x.bal.LocCode)
+            .ThenBy(x => x.bal.LotNo)
+            .ThenBy(x => x.bal.Id)
+            .Skip(skip)
+            .Take(take)
+            .Select(x => new IvOnHandBalanceRow
+            {
+                Id = x.bal.Id,
+                ICode = x.bal.ICode,
+                IDesc = x.sm.IDesc,
+                WhCode = x.bal.WhCode,
+                LocCode = x.bal.LocCode,
+                LotNo = x.bal.LotNo,
+                StdQty = x.bal.StdQty,
+                StdUom = x.bal.StdUom ?? x.sm.StdUom,
+                IStatus = x.bal.IStatus,
+                ExpiryDate = x.lot != null ? x.lot.ExpiryDate : null,
+                IClassCode = x.sm.IClassCode,
+                LotControl = x.sm.LotControl,
+                PurchasePrice = x.sm.PurchasePrice,
+                LotId = x.bal.LotId
+            })
+            .ToListAsync(cancellationToken);
+
+        return (rows, total);
     }
 
     public Task<IvWarehouse?> GetActiveWarehouseAsync(

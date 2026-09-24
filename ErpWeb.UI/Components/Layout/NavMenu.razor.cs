@@ -10,6 +10,8 @@ public partial class NavMenu
 
     private IReadOnlyList<MenuNavItem>? _items;
 
+    private static readonly string ChangePasswordRoute = "/change-password";
+
     protected override async Task OnInitializedAsync()
     {
         _items = await NavigationService.GetSidebarAsync();

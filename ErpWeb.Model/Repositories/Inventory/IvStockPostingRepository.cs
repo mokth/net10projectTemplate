@@ -557,7 +557,8 @@ WHERE ID = {id}
                 TransDate = row.TransDate,
                 StdQty = row.StdQty,
                 StdUom = row.StdUom,
-                LotId = row.LotId
+                LotId = row.LotId,
+                UnitPrice = row.UnitPrice
             };
     }
 

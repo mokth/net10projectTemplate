@@ -77,7 +77,7 @@ public sealed class MenuSyncService : IMenuSyncService
                         !string.Equals(menu.Icon, def.Icon, StringComparison.Ordinal) ||
                         menu.SortOrder != def.SortOrder ||
                         menu.AlwaysVisible != def.AlwaysVisible ||
-                        !menu.IsActive;
+                        menu.IsActive != def.IsActive;
 
                     if (changed)
                     {
@@ -88,7 +88,7 @@ public sealed class MenuSyncService : IMenuSyncService
                             menu.Icon = def.Icon;
                             menu.SortOrder = def.SortOrder;
                             menu.AlwaysVisible = def.AlwaysVisible;
-                            menu.IsActive = true;
+                            menu.IsActive = def.IsActive;
                             menu.ModifiedDate = DateTime.UtcNow;
                             menu.ModifiedBy = "XMLSYNC";
                         }
@@ -112,7 +112,7 @@ public sealed class MenuSyncService : IMenuSyncService
                             Icon = def.Icon,
                             SortOrder = def.SortOrder,
                             AlwaysVisible = def.AlwaysVisible,
-                            IsActive = true,
+                            IsActive = def.IsActive,
                             CreatedDate = DateTime.UtcNow,
                             CreatedBy = "XMLSYNC"
                         };

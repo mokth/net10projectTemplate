@@ -82,9 +82,9 @@ public class NavigationServiceTests
         {
             new()
             {
-                Code = "HOME",
-                Name = "Home",
-                Route = "/home",
+                Code = "DASHBOARD",
+                Name = "Dashboard",
+                Route = "/dashboard",
                 AlwaysVisible = true,
                 SortOrder = 1
             }
@@ -93,7 +93,7 @@ public class NavigationServiceTests
         var sut = CreateSut(tree, _ => false);
         var sidebar = await sut.GetSidebarAsync();
         Assert.Single(sidebar);
-        Assert.Equal("HOME", sidebar[0].Code);
+        Assert.Equal("DASHBOARD", sidebar[0].Code);
     }
 
     [Fact]

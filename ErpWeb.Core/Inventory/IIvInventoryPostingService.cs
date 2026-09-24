@@ -118,4 +118,20 @@ public interface IIvInventoryPostingService
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stock-adjustment (ADJ) post on the caller's context and transaction. Does not SaveChanges or
+    /// Commit. Caller must already have begun a transaction on <paramref name="db"/>; on a failed
+    /// result the caller must roll that transaction back.
+    ///
+    /// Unlike the stock-out/stock-in in-transaction members there is NO <c>expectedTrxType</c>: the
+    /// ADJ core serves exactly one transaction type and keeps its own hard check.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> PostStockAdjustmentInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken = default);
 }

@@ -819,6 +819,38 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var result = await PostInventoryADJCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Posted {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            IvTrxTypes.StockAdjustment, companyCode, branchCode, batchNo, result.OperationId, Truncate(userId, 10));
+
+        return result;
+    }
+
+    /// <summary>
+    /// The ADJ post body. Contains NO <c>RollbackAsync</c> / <c>SaveChangesAsync</c> /
+    /// <c>CommitAsync</c> — it finishes nothing, which is what lets it run inside a caller-owned
+    /// transaction (the stock-count document). The <c>IvTrxTypes.StockAdjustment</c> check stays
+    /// hard-coded here on purpose: this core owns exactly one transaction type.
+    /// </summary>
+    private async Task<IvInventoryPostingBatchResult> PostInventoryADJCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken)
+    {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase))
@@ -847,7 +879,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             var invariantError = IvStockAdjustmentLineInvariant.ValidateDetail(detail, detail.TrxLineNo);
             if (invariantError is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, invariantError);
             }
         }
@@ -866,7 +897,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                 db, balLocId, companyCode, branchCode, cancellationToken);
             if (lockedRow is null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Balance Id {balLocId} was not found for this company/branch.");
@@ -875,7 +905,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             var detail = details.First(d => IvStockAdjustmentLineInvariant.GetBalLocId(d) == balLocId);
             if (!ValidateAdjSliceMatch(detail, lockedRow, balLocId, out var sliceError))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, sliceError);
             }
 
@@ -894,7 +923,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         {
             if (net < 0m && Math.Abs(net) > locked[balLocId].StdQty)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Insufficient quantity on balance Id {balLocId} (on hand {locked[balLocId].StdQty}, required decrease {Math.Abs(net)}).");
@@ -916,7 +944,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                     db, balLocId, companyCode, branchCode, net, batch.TrxDtTime, cancellationToken);
                 if (affected != 1)
                 {
-                    await tx.RollbackAsync(cancellationToken);
                     return IvInventoryPostingBatchResult.Fail(
                         batchNo,
                         $"Stock increase failed for balance Id {balLocId}.");
@@ -929,13 +956,15 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                     db, balLocId, companyCode, branchCode, decrease, batch.TrxDtTime, cancellationToken);
                 if (affected != 1)
                 {
-                    await tx.RollbackAsync(cancellationToken);
                     return IvInventoryPostingBatchResult.Fail(
                         batchNo,
                         $"Stock decrease failed for balance Id {balLocId} (insufficient quantity or missing row).");
                 }
             }
         }
+
+        // Test-only failure injection: the balances have moved, no history row exists yet.
+        TestHookAfterAdjStockUpdate?.Invoke();
 
         var opId = Guid.NewGuid();
         foreach (var detail in details.OrderBy(d => d.TrxLineNo))
@@ -1005,6 +1034,9 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             _posting.AddHistory(db, history);
         }
 
+        // Test-only failure injection: the history rows are staged, the batch is not flagged yet.
+        TestHookAfterAdjHistory?.Invoke();
+
         batch.BatchStatus = IvBatchStatuses.Posted;
         batch.PostedDate = now;
         batch.PostedBy = uid;
@@ -1012,13 +1044,6 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         batch.PostingOperationId = opId;
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
-
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Posted {TrxType}. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
-            IvTrxTypes.StockAdjustment, companyCode, branchCode, batchNo, opId, uid);
 
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
@@ -1272,6 +1297,29 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
 
     /// <summary>Test-only hook invoked after MI rollback stock restore, before history delete.</summary>
     internal Action? TestHookAfterMiRollbackStock { get; set; }
+
+    /// <summary>Test-only hook invoked after the ADJ balances moved, before history insert. Throws to force rollback.</summary>
+    internal Action? TestHookAfterAdjStockUpdate { get; set; }
+
+    /// <summary>Test-only hook invoked after the ADJ history rows are staged, before the batch is flagged POSTED.</summary>
+    internal Action? TestHookAfterAdjHistory { get; set; }
+
+    /// <summary>
+    /// Stock-adjustment post on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Caller must already have begun a transaction on <paramref name="db"/>; on a failed result the
+    /// caller must roll that transaction back.
+    /// </summary>
+    public Task<IvInventoryPostingBatchResult> PostStockAdjustmentInTransactionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return PostInventoryADJCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken);
+    }
 
     public Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(
         AppDbContext db,

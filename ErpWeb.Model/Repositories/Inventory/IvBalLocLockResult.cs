@@ -18,4 +18,10 @@ public sealed class IvBalLocLockResult
     public decimal StdQty { get; init; }
     public string? StdUom { get; init; }
     public int? LotId { get; init; }
+
+    /// <summary>
+    /// The pile's own price. This is the FIRST operand the stock-count post uses to price its ADJ
+    /// line (<c>UnitPrice ?? item.PurchasePrice ?? 0</c>) — never the count sheet's snapshot column.
+    /// </summary>
+    public decimal? UnitPrice { get; init; }
 }

@@ -1,0 +1,516 @@
+@page "/inventory/stock-count/{Mode:regex(^(new|edit|count|view)$)}"
+@page "/inventory/stock-count/{Mode:regex(^(new|edit|count|view)$)}/{CountNo}"
+
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockCount">
+    <div class="sa-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="sa-toast sa-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sa-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="sa-toast sa-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="sa-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="sa-card">
+                <p class="mb-0">Loading stock count…</p>
+            </div>
+        }
+        else
+        {
+            <header class="sa-hero">
+                <div class="sa-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-clipboard-check"></i>
+                </div>
+                <div class="sa-hero__copy">
+                    <p class="sa-eyebrow">Inventory</p>
+                    <h1 class="sa-title">@PageHeading</h1>
+                    <div class="sa-chips">
+                        <span class="sa-chip">@ModeChip</span>
+                        <span class="sa-chip">@(string.IsNullOrWhiteSpace(_countNo) ? "not saved" : _countNo)</span>
+                        <span class="sa-chip">@Lines.Count line(s)</span>
+                        <span class="sa-chip">@StatusDisplay</span>
+                        @if (StaleLineCount > 0)
+                        {
+                            <span class="sa-chip sa-chip--warn">@StaleLineCount stale</span>
+                        }
+                    </div>
+                </div>
+                <div class="sa-hero__kpi">
+                    <span>Net difference</span>
+                    <strong>@NetDifference.ToString("n4")</strong>
+                </div>
+            </header>
+
+            <section class="sa-card">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-header-form">
+                    <DxFormLayoutItem Caption="Count date" ColSpanMd="3">
+                        <Template>
+                            <DxDateEdit @bind-Date="@Header.CountDate"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        Enabled="@CanConfigureScope" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Counted by" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.CountedBy" maxlength="10" ReadOnly="@(!CanConfigureScope)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Posted batch" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox Text="@BatchDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@Header.Remark"
+                                    Rows="2"
+                                    maxlength="250"
+                                    ReadOnly="@(!CanConfigureScope)"
+                                    NullText="Optional notes for this count" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            @if (IsViewMode)
+            {
+                <section class="sa-card">
+                    <p class="sa-eyebrow">Scope</p>
+                    <div class="sa-scope-summary">
+                        <span class="sa-chip">@ScopeWarehouseText</span>
+                        <span class="sa-chip">@ScopeClassText</span>
+                        <span class="sa-chip">@ScopeStatusText</span>
+                        <span class="sa-chip">Zero qty: @(Header.IncludeZeroQty ? "included" : "excluded")</span>
+                        @if (!string.IsNullOrWhiteSpace(Header.ICodeList))
+                        {
+                            <span class="sa-chip">Items: @Header.ICodeList</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(Header.RollbackReason))
+                    {
+                        <p class="sa-hint">Last rollback/recover: @Header.RollbackReason</p>
+                    }
+                </section>
+            }
+            else if (CanConfigureScope)
+            {
+                <section class="sa-card">
+                    <div class="sa-lines__head">
+                        <div>
+                            <p class="sa-eyebrow">Scope</p>
+                            <h2 class="sa-lines__title">What to count</h2>
+                        </div>
+                    </div>
+                    <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-header-form">
+                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Warehouses"
+                                            TextFieldName="@nameof(ScopeOption.Name)"
+                                            ValueFieldName="@nameof(ScopeOption.Code)"
+                                            @bind-Value="@Header.WHCode"
+                                            @bind-Value:after="OnScopeDependencyChangedAsync"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            NullText="All warehouses" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Location" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Locations"
+                                            TextFieldName="@nameof(ScopeOption.Name)"
+                                            ValueFieldName="@nameof(ScopeOption.Code)"
+                                            @bind-Value="@Header.LocCode"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            NullText="All locations" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Item class" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Classes"
+                                            TextFieldName="@nameof(ScopeOption.Name)"
+                                            ValueFieldName="@nameof(ScopeOption.Code)"
+                                            @bind-Value="@Header.IClassCode"
+                                            @bind-Value:after="OnScopeDependencyChangedAsync"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            NullText="All classes" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Sub class" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@SubClasses"
+                                            TextFieldName="@nameof(ScopeOption.Name)"
+                                            ValueFieldName="@nameof(ScopeOption.Code)"
+                                            @bind-Value="@Header.ISubClassCode"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            NullText="All sub classes" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Item type" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Types"
+                                            TextFieldName="@nameof(ScopeOption.Name)"
+                                            ValueFieldName="@nameof(ScopeOption.Code)"
+                                            @bind-Value="@Header.IType"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            NullText="All types" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Include zero qty" ColSpanMd="4">
+                            <Template>
+                                <DxCheckBox @bind-Checked="@Header.IncludeZeroQty" AllowIndeterminateState="false" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Item status scope" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@Header.IStatus"
+                                           maxlength="20"
+                                           NullText="All except SCRAPS" />
+                                <span class="sa-hint">Comma separated. Blank excludes SCRAPS.</span>
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Item codes" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@Header.ICodeList"
+                                           maxlength="1000"
+                                           NullText="All items in scope" />
+                                <span class="sa-hint">Comma separated IN-list.</span>
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                    <div class="sa-scope-actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="GENERATE"
+                                  IconCssClass="fa-solid fa-wand-magic-sparkles"
+                                  Click="@OnGenerateClickAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <span class="sa-hint">Generating replaces every line from the scope above.</span>
+                    </div>
+                </section>
+            }
+
+            <section class="sa-card sa-lines">
+                <div class="sa-lines__head">
+                    <div>
+                        <p class="sa-eyebrow">Lines</p>
+                        <h2 class="sa-lines__title">Piles to count</h2>
+                    </div>
+                    @if (CanCountLines)
+                    {
+                        <div class="sa-row-actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Enter by item"
+                                      IconCssClass="fa-solid fa-barcode"
+                                      Click="@OpenEnterByItem"
+                                      Enabled="@(!IsSubmitting)" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Save counts"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      Click="@OnSaveCountsAsync"
+                                      Enabled="@(!IsSubmitting)" />
+                        </div>
+                    }
+                </div>
+
+                @if (Lines.Count == 0)
+                {
+                    <p class="sa-empty">No lines yet. Set the scope and press GENERATE.</p>
+                }
+                else
+                {
+                    <DxGrid Data="@Lines"
+                            KeyFieldName="@nameof(IvStockCountLineVm.UiKey)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="50"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            CssClass="sa-line-grid">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.LineNumber)" Caption="#" Width="60px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.ICode)" Caption="Item" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IDesc)" Caption="Description" Width="220px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.SliceLabel)" Caption="Warehouse / Loc / Lot" Width="180px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IStatus)" Caption="Status" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.StdUom)" Caption="UOM" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.SystemQty)" Caption="System" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.LiveQty)" Caption="Live" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            @if (CanCountLines)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.PhysicalQty)" Caption="Counted" Width="140px">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var line = (IvStockCountLineVm)context.DataItem;
+                                        }
+                                        <DxSpinEdit Value="@line.PhysicalQty"
+                                                    ValueChanged="@((decimal? v) => OnPhysicalQtyChanged(line, v))"
+                                                    MinValue="0m"
+                                                    Increment="1m"
+                                                    DisplayFormat="n4"
+                                                    CssClass="w-100" />
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            }
+                            else
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.PhysicalQty)" Caption="Counted" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            }
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.Variance)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.Direction)" Caption="Direction" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.StaleText)" Caption="Changed?" Width="110px" />
+                        </Columns>
+                    </DxGrid>
+                }
+            </section>
+
+            <section class="sa-card sa-actions">
+                <div class="sa-row-actions">
+                    @if (!IsViewMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="SAVE"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@OnSaveAsync"
+                                  Enabled="@(!IsSubmitting && CanSaveHeader)" />
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="EDIT"
+                                  IconCssClass="fa-solid fa-pen"
+                                  Click="@NavigateEdit"
+                                  Enabled="@(CanEditDocument && !IsSubmitting)" />
+                    }
+
+                    @if (ShowPostButton)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Success"
+                                  Text="POST"
+                                  IconCssClass="fa-solid fa-check"
+                                  Click="@OnPreviewPostAsync"
+                                  Enabled="@(!IsSubmitting && CanPostDocument)" />
+                    }
+
+                    @if (ShowRollbackButton)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Warning"
+                                  Text="ROLLBACK"
+                                  IconCssClass="fa-solid fa-rotate-left"
+                                  Click="@OpenRollback"
+                                  Enabled="@(!IsSubmitting && CanRollbackDocument)" />
+                    }
+
+                    @if (CanRecover)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Warning"
+                                  Text="RECOVER"
+                                  IconCssClass="fa-solid fa-screwdriver-wrench"
+                                  Click="@OnRecoverAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="BACK TO LIST"
+                              Click="@NavigateList" />
+                </div>
+                @if (!string.IsNullOrWhiteSpace(Header.RollbackReason))
+                {
+                    <p class="sa-hint">@Header.RollbackReason</p>
+                }
+            </section>
+        }
+    </div>
+
+    <DxPopup HeaderText="Regenerate lines"
+             CloseOnOutsideClick="false"
+             Width="460px"
+             CssClass="common-popup"
+             @bind-Visible="@GenerateConfirmVisible">
+        <Content>
+            <p class="sa-hint">@GenerateConfirmMessage</p>
+            <div class="sa-popup-footer">
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => GenerateConfirmVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="Regenerate and discard"
+                              Click="@OnGenerateConfirmedAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Enter by item"
+             CloseOnOutsideClick="false"
+             Width="520px"
+             CssClass="common-popup"
+             @bind-Visible="@EnterByItemVisible">
+        <Content>
+            <div class="sa-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Item code" ColSpanMd="12">
+                        <Template>
+                            <div class="sa-inline">
+                                <DxTextBox @bind-Text="@EnterByItemCode" maxlength="30" NullText="Scan or type an item code" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Find"
+                                          Click="@OnEnterByItemFindAsync"
+                                          Enabled="@(!IsSubmitting)" />
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Counted qty" ColSpanMd="12">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@EnterByItemQty" MinValue="0m" Increment="1m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Pile" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@EnterByItemSlices"
+                                        TextFieldName="@nameof(EnterByItemSlice.Name)"
+                                        ValueFieldName="@nameof(EnterByItemSlice.Key)"
+                                        @bind-Value="@EnterByItemSliceKey"
+                                        Enabled="@(EnterByItemSlices.Count > 1)"
+                                        NullText="— no pile —" />
+                            <span class="sa-hint">@EnterByItemHint</span>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="sa-popup-footer">
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => EnterByItemVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@OnEnterByItemApplyAsync"
+                              Enabled="@(!IsSubmitting && EnterByItemSameSheet)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Post preview"
+             CloseOnOutsideClick="false"
+             Width="900px"
+             CssClass="common-popup"
+             @bind-Visible="@PreviewVisible">
+        <Content>
+            @if (Preview is not null)
+            {
+                @if (!string.IsNullOrWhiteSpace(Preview.DateError))
+                {
+                    <p class="sa-popup-error">@Preview.DateError</p>
+                }
+                <div class="sa-scope-summary">
+                    <span class="sa-chip">Increase @Preview.IncreaseLines (@Preview.TotalIncrease.ToString("n4"))</span>
+                    <span class="sa-chip">Decrease @Preview.DecreaseLines (@Preview.TotalDecrease.ToString("n4"))</span>
+                    <span class="sa-chip">No variance @Preview.ZeroVarianceLines</span>
+                    <span class="sa-chip">Not counted @Preview.NotCountedLines</span>
+                    <span class="sa-chip @(Preview.StaleLines > 0 ? "sa-chip--warn" : string.Empty)">Stale @Preview.StaleLines</span>
+                    <span class="sa-chip">Errors @Preview.ErrorLines</span>
+                </div>
+                @if (Preview.RequiresStaleConfirmation)
+                {
+                    <p class="sa-popup-hint">
+                        @Preview.StaleLines line(s) changed on the shelf between GENERATE and now.
+                        The adjustment is computed against the current live quantity.
+                    </p>
+                    <DxCheckBox @bind-Checked="@StaleAcknowledged" AllowIndeterminateState="false">
+                        I understand and want to post against live stock.
+                    </DxCheckBox>
+                }
+                <div class="sa-preview-grid">
+                    <DxGrid Data="@Preview.Lines.ToList()"
+                            KeyFieldName="@nameof(IvStockCountPreviewLine.LineNumber)"
+                            PageSize="15"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            CssClass="sa-line-grid">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LineNumber)" Caption="#" Width="60px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.ICode)" Caption="Item" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.WHCode)" Caption="WH" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LocCode)" Caption="Loc" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.SystemQty)" Caption="System" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LiveQty)" Caption="Live" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.PhysicalQty)" Caption="Counted" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Variance)" Caption="Variance" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Direction)" Caption="Direction" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.IsStale)" Caption="Stale" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Error)" Caption="Problem" Width="260px" />
+                        </Columns>
+                    </DxGrid>
+                </div>
+            }
+            <div class="sa-popup-footer">
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => PreviewVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Success"
+                              Text="Post now"
+                              Click="@OnPostConfirmedAsync"
+                              Enabled="@(!IsSubmitting && CanConfirmPost)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Roll back stock count"
+             CloseOnOutsideClick="false"
+             Width="460px"
+             CssClass="common-popup"
+             @bind-Visible="@RollbackVisible">
+        <Content>
+            <p class="sa-hint">
+                Rolling back restores stock from the posted quantities and re-opens this sheet for a re-count.
+                The batch number is kept as the audit trail; a re-post allocates a new batch.
+            </p>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                    <Template>
+                        <DxMemo @bind-Text="@RollbackReason" Rows="2" maxlength="250" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+            <div class="sa-popup-footer">
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => RollbackVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Warning"
+                              Text="Rollback"
+                              Click="@OnRollbackConfirmedAsync"
+                              Enabled="@(!IsSubmitting && !string.IsNullOrWhiteSpace(RollbackReason))" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

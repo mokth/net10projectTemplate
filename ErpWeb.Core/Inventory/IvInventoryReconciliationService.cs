@@ -195,6 +195,102 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
             }
         }
 
+        // ── Stock-count document vs. its ADJ batch ────────────────────────────────────────────────
+        // Two rollback routes exist on purpose (the count screen and the Stock Adjustment list), and
+        // D8 says that is safe BECAUSE divergence is detected. This is that detector.
+        var countHeaders = await db.IvStockCountHdrs
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
+            .Select(x => new
+            {
+                x.Id,
+                x.CountNo,
+                x.Status,
+                x.PostedBatchNo
+            })
+            .ToListAsync(cancellationToken);
+
+        var countIds = countHeaders.Select(x => x.Id).ToList();
+        var countLines = countIds.Count == 0
+            ? []
+            : await db.IvStockCountLines
+                .AsNoTracking()
+                .Where(l => countIds.Contains(l.StockCountId))
+                .Select(l => new { l.StockCountId, l.PhysicalQty, l.SystemQty })
+                .ToListAsync(cancellationToken);
+
+        var linesByCount = countLines
+            .GroupBy(l => l.StockCountId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var countedBatchNos = countHeaders
+            .Where(x => x.PostedBatchNo is not null)
+            .Select(x => x.PostedBatchNo!.Value)
+            .Distinct()
+            .ToList();
+
+        var batchStatuses = countedBatchNos.Count == 0
+            ? new Dictionary<int, string>()
+            : await db.IvTrxBatches
+                .AsNoTracking()
+                .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                            && countedBatchNos.Contains(x.BatchNo))
+                .ToDictionaryAsync(x => x.BatchNo, x => x.BatchStatus, cancellationToken);
+
+        foreach (var header in countHeaders)
+        {
+            var batchStatus = header.PostedBatchNo is int linkedBatchNo
+                ? batchStatuses.GetValueOrDefault(linkedBatchNo)
+                : null;
+
+            if (string.Equals(header.Status, IvStockCountStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+            {
+                if (header.PostedBatchNo is int postedBatchNo)
+                {
+                    if (!string.Equals(batchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+                    {
+                        findings.Add(new IvInventoryReconcileFinding
+                        {
+                            Code = "STOCK_COUNT_BATCH_NOT_POSTED",
+                            Message = $"Stock count {header.CountNo} is POSTED but its batch {postedBatchNo} "
+                                + $"is {batchStatus ?? "missing"} (its adjustment may have been rolled back "
+                                + "outside the count screen — run Recover)."
+                        });
+                    }
+                }
+                else
+                {
+                    // The all-zero-variance post is legitimate and must never be flagged, so the test is
+                    // the EVIDENCE: a counted line whose count differed from the snapshot implies a
+                    // variance existed, which means a batch should have been produced.
+                    var varianceLines = linesByCount
+                        .GetValueOrDefault(header.Id, [])
+                        .Count(l => l.PhysicalQty is decimal physical
+                                    && IvQty.Round(physical) != IvQty.Round(l.SystemQty));
+
+                    if (varianceLines > 0)
+                    {
+                        findings.Add(new IvInventoryReconcileFinding
+                        {
+                            Code = "STOCK_COUNT_UNPOSTED_VARIANCE",
+                            Message = $"Stock count {header.CountNo} is POSTED with no batch, but {varianceLines} "
+                                + "counted line(s) differ from the snapshot taken at Generate. No adjustment was posted."
+                        });
+                    }
+                }
+            }
+            else if (string.Equals(header.Status, IvStockCountStatuses.RolledBack, StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(batchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(new IvInventoryReconcileFinding
+                {
+                    Code = "STOCK_COUNT_BATCH_STILL_POSTED",
+                    Message = $"Stock count {header.CountNo} is ROLLED_BACK but its batch {header.PostedBatchNo} "
+                        + "is still POSTED."
+                });
+            }
+        }
+
         return IvInventoryReconcileResult.Ok(findings);
     }
 }

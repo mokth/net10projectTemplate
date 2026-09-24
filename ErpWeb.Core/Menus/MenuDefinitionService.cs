@@ -120,6 +120,7 @@ public sealed class MenuDefinitionService : IMenuDefinitionService
             var icon = NullIfEmpty(element.Attribute("Icon")?.Value);
             var sortText = element.Attribute("SortOrder")?.Value;
             var alwaysVisibleText = element.Attribute("AlwaysVisible")?.Value;
+            var isActiveText = element.Attribute("IsActive")?.Value;
 
             if (string.IsNullOrWhiteSpace(code))
             {
@@ -151,6 +152,14 @@ public sealed class MenuDefinitionService : IMenuDefinitionService
                 errors.Add($"Menu '{code}' has invalid AlwaysVisible.");
             }
 
+            var isActive = true;
+            if (!string.IsNullOrWhiteSpace(isActiveText) &&
+                !bool.TryParse(isActiveText, out isActive))
+            {
+                errors.Add($"Menu '{code}' has invalid IsActive.");
+                isActive = true;
+            }
+
             var children = ParseChildren(element, code, flat, errors);
             var node = new MenuDefinitionNode
             {
@@ -160,6 +169,7 @@ public sealed class MenuDefinitionService : IMenuDefinitionService
                 Icon = icon,
                 SortOrder = sortOrder,
                 AlwaysVisible = alwaysVisible,
+                IsActive = isActive,
                 ParentCode = parentCode,
                 Children = children
             };

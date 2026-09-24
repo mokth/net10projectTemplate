@@ -5,6 +5,13 @@ public sealed class NavigationService : INavigationService
     private readonly IMenuService _menuService;
     private readonly IAccessRightService _accessRights;
 
+    /// <summary>
+    /// Menu codes rendered outside the tree (e.g. in a pinned utility area)
+    /// and therefore excluded from <see cref="GetSidebarAsync"/>.
+    /// </summary>
+    private static readonly HashSet<string> PinnedCodes =
+        new(StringComparer.OrdinalIgnoreCase) { MenuCodes.ChangePassword };
+
     public NavigationService(IMenuService menuService, IAccessRightService accessRights)
     {
         _menuService = menuService;
@@ -18,6 +25,11 @@ public sealed class NavigationService : INavigationService
 
         foreach (var node in tree)
         {
+            if (PinnedCodes.Contains(node.Code))
+            {
+                continue;
+            }
+
             var pruned = await FilterNodeAsync(node, cancellationToken);
             if (pruned is not null)
             {

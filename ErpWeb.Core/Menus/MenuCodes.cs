@@ -2,10 +2,9 @@ namespace ErpWeb.Core.Menus;
 
 public static class MenuCodes
 {
-    public const string Home = "HOME";
+    public const string Dashboard = "DASHBOARD";
     public const string Operations = "OPERATIONS";
     public const string Overview = "OVERVIEW";
-    public const string Dashboard = "DASHBOARD";
     public const string Inventory = "INVENTORY";
     public const string InventoryDemo = "INVENTORY_DEMO";
     public const string InventoryMiscReceipt = "INV_MISC_RECEIPT";
@@ -16,6 +15,7 @@ public static class MenuCodes
     public const string InventoryStockReturn = "INV_STOCK_RETURN";
     public const string InventoryVendorReturn = "INV_VENDOR_RETURN";
     public const string InventoryStockAdjustment = "INV_STOCK_ADJUSTMENT";
+    public const string InventoryStockCount = "INV_STOCK_COUNT";
     public const string InventoryItemMaster = "INV_ITEM_MASTER";
     public const string InventoryWarehouse = "INV_WAREHOUSE";
     public const string InventoryLocation = "INV_LOCATION";
