@@ -96,13 +96,17 @@ public partial class IvStockMasterList : PageBase, IDisposable
         new() { Caption = "Sell price", FieldName = nameof(IvStockMasterListRow.SellingPrice), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 9 },
         new() { Caption = "Buy price", FieldName = nameof(IvStockMasterListRow.PurchasePrice), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 10 },
         new() { Caption = "Active", FieldName = nameof(IvStockMasterListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 11 },
-        new() { Caption = "Barcode", FieldName = nameof(IvStockMasterListRow.Barcode), Visible = false, VisibleIndex = 12 },
-        new() { Caption = "Sell UOM", FieldName = nameof(IvStockMasterListRow.SellingUom), Visible = false, VisibleIndex = 13 },
-        new() { Caption = "Buy UOM", FieldName = nameof(IvStockMasterListRow.PurUom), Visible = false, VisibleIndex = 14 },
-        new() { Caption = "Sell GL", FieldName = nameof(IvStockMasterListRow.SellingGlCode), Visible = false, VisibleIndex = 15 },
-        new() { Caption = "Buy GL", FieldName = nameof(IvStockMasterListRow.PurchaseGlCode), Visible = false, VisibleIndex = 16 },
-        new() { Caption = "Classification", FieldName = nameof(IvStockMasterListRow.Classification), Visible = false, VisibleIndex = 17 },
-        ..AuditColumns.For(startVisibleIndex: 18)
+        // Reorder thresholds belong on the list: without them a low-stock alert cannot be explained
+        // from the item it flags. Both are item-level columns and never alert when NULL or 0.
+        new() { Caption = "Min stock", FieldName = nameof(IvStockMasterListRow.MinStock), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 12 },
+        new() { Caption = "Max stock", FieldName = nameof(IvStockMasterListRow.MaxStock), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 13 },
+        new() { Caption = "Barcode", FieldName = nameof(IvStockMasterListRow.Barcode), Visible = false, VisibleIndex = 14 },
+        new() { Caption = "Sell UOM", FieldName = nameof(IvStockMasterListRow.SellingUom), Visible = false, VisibleIndex = 15 },
+        new() { Caption = "Buy UOM", FieldName = nameof(IvStockMasterListRow.PurUom), Visible = false, VisibleIndex = 16 },
+        new() { Caption = "Sell GL", FieldName = nameof(IvStockMasterListRow.SellingGlCode), Visible = false, VisibleIndex = 17 },
+        new() { Caption = "Buy GL", FieldName = nameof(IvStockMasterListRow.PurchaseGlCode), Visible = false, VisibleIndex = 18 },
+        new() { Caption = "Classification", FieldName = nameof(IvStockMasterListRow.Classification), Visible = false, VisibleIndex = 19 },
+        ..AuditColumns.For(startVisibleIndex: 20)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

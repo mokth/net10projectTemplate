@@ -11,7 +11,7 @@
 
 .shell-body {
     display: grid;
-    grid-template-columns: var(--nav-w, 248px) minmax(0, 1fr);
+    grid-template-columns: var(--nav-w, 280px) minmax(0, 1fr);
     min-height: 0;
     min-width: 0;
     transition: grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -76,7 +76,8 @@
         top: var(--top-h, 52px);
         left: 0;
         bottom: 0;
-        width: var(--nav-w, 248px);
+        /* Never let the drawer eat the whole phone viewport. */
+        width: min(var(--nav-w, 280px), 85vw);
         opacity: 1;
         pointer-events: auto;
         transform: translateX(-105%);

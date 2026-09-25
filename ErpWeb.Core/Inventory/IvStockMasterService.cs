@@ -787,6 +787,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
             IsActive = x.IsActive,
             SellingPrice = x.SellingPrice,
             PurchasePrice = x.PurchasePrice,
+            MinStock = x.MinStock,
+            MaxStock = x.MaxStock,
             RowVersion = x.RowVersion ?? [],
             CreatedDate = x.CreatedDate,
             CreatedBy = x.CreatedBy,

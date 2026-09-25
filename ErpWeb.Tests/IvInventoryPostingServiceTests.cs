@@ -426,7 +426,8 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
     private IIvInventoryReconciliationService CreateReconcile() =>
         new IvInventoryReconciliationService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext());
+            InventoryTenantTestHelper.CreateTenantContext(),
+            Access().Object);
 
     private static Mock<IAccessRightService> Access(bool canPost = true, bool canRollback = true)
     {

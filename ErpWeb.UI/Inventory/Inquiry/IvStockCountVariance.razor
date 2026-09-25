@@ -1,0 +1,208 @@
+@page "/inventory/stock-count-variance"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Stock Count Variance</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockCountVar">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-scale-unbalanced"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Stock Count Variance</h1>
+                <p class="iv-subtitle">
+                    What the counted sheets found, per line and per pile. <strong>POSTED sheets only</strong>:
+                    a draft or counted sheet has no evidence yet, and a rolled-back sheet's adjustment is no
+                    longer in the ledger.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Sheets: @SummarySheetCount.ToString("N0")</span>
+                    <span class="iv-chip">Counted: @SummaryCountedLines.ToString("N0")</span>
+                    <span class="iv-chip">Exact: @SummaryExactMatchLines.ToString("N0")</span>
+                    <span class="iv-chip">Accuracy: @AccuracyCaption</span>
+                    <span class="iv-chip">Net var: @SummaryNetVarianceQty.ToString("N4")</span>
+                    <span class="iv-chip">Absolute var: @SummaryAbsVarianceQty.ToString("N4")</span>
+                    <span class="iv-chip">Stale lines: @SummaryPostedStaleLines.ToString("N0")</span>
+                    @if (SummaryVarianceValue is decimal value)
+                    {
+                        <span class="iv-chip">Variance value: @value.ToString("N4")</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Line accuracy</span>
+                <strong>@AccuracyCaption</strong>
+            </div>
+        </header>
+
+        <div class="iv-toast iv-toast--wait" role="status">
+            <span>
+                <strong>This is sheet variance, not as-posted variance.</strong>
+                <em>System qty</em> is the quantity recorded when the sheet was generated, and posting
+                re-reads the live balance and computes its own adjustment. A line marked
+                <strong>stale</strong> is one where stock moved in between — the count is still posted, and
+                the sheet's stale-line count is disclosed on every row.
+                @if (SummaryPostedStaleLines > 0)
+                {
+                    <strong>@SummaryPostedStaleLines line(s) across the matching sheets were stale when posted.</strong>
+                }
+            </span>
+        </div>
+
+        <p class="iv-subtitle">
+            <strong>Accuracy = exact matches ÷ counted lines.</strong> Lines that were never counted are
+            excluded rather than treated as agreement, and when nothing was counted at all the figure is
+            shown as “—” — it is not 0 and it is not 100.
+        </p>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvStockMasterPicker ICode="@AppliedICode"
+                                         ICodeChanged="@OnItemCodeChangedAsync"
+                                         Selected="@OnItemSelectedAsync" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvStockCountVarianceRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvStockCountVarianceRow.LineId)"
+                                      GridKey="inv-stock-count-variance"
+                                      Title="@GridTitle"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Variance filters"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Count date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Count date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftICode"
+                                       NullText="All items"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="All warehouses" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Classes"
+                                            @bind-Value="@DraftIClassCode"
+                                            NullText="All classes" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item status" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxListBox Data="@Statuses"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftStatuses"
+                                       CssClass="iv-card-status-list" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Search" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftSearchText"
+                                       NullText="Sheet number, item code or description"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    An empty status list means <strong>all</strong> statuses, never "none". The date range is
+                    inclusive of both days.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

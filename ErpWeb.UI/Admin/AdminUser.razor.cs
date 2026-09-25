@@ -95,10 +95,18 @@ public partial class AdminUser : PageBase
         },
         new()
         {
+            Caption = "Can View Price",
+            FieldName = nameof(UserLogin.CanViewPrice),
+            DataType = "bool",
+            VisibleIndex = 8,
+            Width = "110px"
+        },
+        new()
+        {
             Caption = AuditColumns.CreatedCaption,
             FieldName = nameof(UserLogin.Created),
             DataType = "datetime",
-            VisibleIndex = 8,
+            VisibleIndex = 9,
             Width = "140px"
         },
         new()
@@ -106,7 +114,7 @@ public partial class AdminUser : PageBase
             Caption = AuditColumns.CreatedByCaption,
             FieldName = nameof(UserLogin.UserID),
             DataType = "string",
-            VisibleIndex = 9,
+            VisibleIndex = 10,
             Width = "110px"
         },
         new()
@@ -114,7 +122,7 @@ public partial class AdminUser : PageBase
             Caption = AuditColumns.ModifiedCaption,
             FieldName = nameof(UserLogin.Updated),
             DataType = "datetime",
-            VisibleIndex = 10,
+            VisibleIndex = 11,
             Width = "140px"
         },
         new()
@@ -122,7 +130,7 @@ public partial class AdminUser : PageBase
             Caption = AuditColumns.ModifiedByCaption,
             FieldName = nameof(UserLogin.UpdatedUID),
             DataType = "string",
-            VisibleIndex = 11,
+            VisibleIndex = 12,
             Width = "110px"
         }
     ];

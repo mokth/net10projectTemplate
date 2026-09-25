@@ -10,7 +10,7 @@ namespace ErpWeb.UI.Components.Layout;
 public partial class MainLayout : IDisposable
 {
     [Inject]
-    private NavigationManager NavigationManager { get; set; } = default!;
+    private AppNavigation Navigation { get; set; } = default!;
 
     [Inject]
     private AuthenticationStateProvider AuthenticationStateProvider { get; set; } = default!;
@@ -31,7 +31,12 @@ public partial class MainLayout : IDisposable
 
     private string NavShellClass => _sidebarOpen ? "nav-open" : "nav-collapsed";
 
-    private string LocalPath => new Uri(NavigationManager.Uri).LocalPath;
+    /// <summary>
+    /// The current location RELATIVE to the app base path ("sales/invoices"). The absolute path
+    /// carries the deployment prefix ("\erpweb\sales\invoices"), so comparing it against a
+    /// root-relative route never matches when the app is hosted under a sub-path.
+    /// </summary>
+    private string LocalPath => Navigation.RelativePath;
 
     private void CloseNav() => _sidebarOpen = false;
 
@@ -81,10 +86,10 @@ public partial class MainLayout : IDisposable
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         if (state.User.Identity?.IsAuthenticated == true &&
             CurrentUser.MustChangePassword &&
-            !LocalPath.StartsWith("/change-password", StringComparison.OrdinalIgnoreCase) &&
-            !LocalPath.StartsWith("/account/logout", StringComparison.OrdinalIgnoreCase))
+            !LocalPath.StartsWith("change-password", StringComparison.OrdinalIgnoreCase) &&
+            !LocalPath.StartsWith("account/logout", StringComparison.OrdinalIgnoreCase))
         {
-            NavigationManager.NavigateTo("/change-password", forceLoad: true);
+            Navigation.NavigateTo("/change-password", forceLoad: true);
         }
     }
 }

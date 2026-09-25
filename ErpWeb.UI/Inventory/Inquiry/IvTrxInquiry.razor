@@ -1,0 +1,218 @@
+@page "/inventory/trx-inquiry"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Transaction Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryTrxInquiry">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Transaction Inquiry</h1>
+                <p class="iv-subtitle">
+                    Posted stock movements. Selecting <strong>ADJ</strong> alone turns this into the
+                    adjustment inquiry / analysis.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">@SummaryBatchCount.ToString("N0") batches</span>
+                    <span class="iv-chip">In: @SummaryInQty.ToString("N4")</span>
+                    <span class="iv-chip">Out: @SummaryOutQty.ToString("N4")</span>
+                    <span class="iv-chip">Net: @SummaryNetQty.ToString("N4")</span>
+                    <span class="iv-chip">Adjust (net): @SummaryAdjustNetQty.ToString("N4")</span>
+                    @if (CanViewValue)
+                    {
+                        <span class="iv-chip">Est. value: @(SummaryTotalValue?.ToString("N4") ?? "0.0000")</span>
+                    }
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Lines</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search item, description, product code, reference, remarks…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvTrxHistoryRow"
+                                      Columns="@Columns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvTrxHistoryRow.Id)"
+                                      GridKey="inv-trx-inquiry"
+                                      Title="Movements"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter movements"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <Template>
+                            <IvStockMasterPicker @bind-ICode="@DraftICode" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="Any warehouse" />
+                            <small class="text-muted d-block">Matches either leg of a transfer.</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Bin" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLocCode"
+                                       NullText="Any bin"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Lot no." ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLotNo"
+                                       NullText="Any lot"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Batch no." ColSpanMd="6">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftBatchNo" MinValue="0" ShowSpinButtons="false" NullText="Any batch" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Movement date from" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTrxDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Movement date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTrxDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Batch ref" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftRefNo"
+                                       NullText="Contains…"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Document no." ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftDocumentNo"
+                                       NullText="DO / INV / SO / PO"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Transaction type" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxListBox Data="@TrxTypes"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftTrxTypes"
+                                       CssClass="iv-trx-type-list" />
+                            <small class="text-muted d-block">No selection means all types. ADJ alone = adjustment analysis.</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                        <Template>
+                            <DxListBox Data="@Statuses"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftStatuses"
+                                       CssClass="iv-trx-type-list" />
+                            <small class="text-muted d-block">No selection means all statuses.</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint text-muted">
+                    Cancelled and rolled-back documents never appear: history is written on POSTED batches
+                    only, and a rollback deletes it.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

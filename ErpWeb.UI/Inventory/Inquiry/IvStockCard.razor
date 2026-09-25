@@ -1,0 +1,223 @@
+@page "/inventory/stock-card"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Stock Card</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockCard">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-book"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Stock Card</h1>
+                <p class="iv-subtitle">
+                    Posted movements of one stock slice in movement order, with the opening balance and a
+                    running balance. Rows are chronological — the running column depends on that order, so
+                    sorting is not applied.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Opening: @OpeningQty.ToString("N4")</span>
+                    <span class="iv-chip">In: @CardInQty.ToString("N4")</span>
+                    <span class="iv-chip">Out: @CardOutQty.ToString("N4")</span>
+                    <span class="iv-chip">Adjust (net): @CardAdjustNetQty.ToString("N4")</span>
+                    <span class="iv-chip">Closing (ledger): @LedgerClosingQty.ToString("N4")</span>
+                    @if (LiveQty is decimal live)
+                    {
+                        <span class="iv-chip">On hand (live): @live.ToString("N4")</span>
+                    }
+                    @if (HasDifference)
+                    {
+                        <span class="iv-chip iv-chip--warn">Difference: @DifferenceQty!.Value.ToString("N4")</span>
+                    }
+                    @if (CanViewValue)
+                    {
+                        <span class="iv-chip">Est. value: @(CardTotalValue?.ToString("N4") ?? "0.0000")</span>
+                    }
+                    @if (Truncated)
+                    {
+                        <span class="iv-chip iv-chip--warn">Capped at @TotalCount.ToString("N0") of @MatchingCount.ToString("N0")</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Closing</span>
+                <strong>@LedgerClosingQty.ToString("N4")</strong>
+            </div>
+        </header>
+
+        @if (HasDifference)
+        {
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>
+                    <strong>The ledger closing and the live on-hand quantity differ by
+                    @DifferenceQty!.Value.ToString("N4").</strong>
+                    The opening balance is only sound when every stock entry was posted here; legacy or
+                    imported on-hand with no matching history is the expected cause.
+                </span>
+            </div>
+        }
+
+        @if (Truncated)
+        {
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>
+                    <strong>The ledger was capped at @TotalCount.ToString("N0") of @MatchingCount.ToString("N0") lines.</strong>
+                    Narrow the date range or pin the warehouse, bin, lot and status.
+                </span>
+            </div>
+        }
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvStockMasterPicker ICode="@AppliedICode"
+                                         ICodeChanged="@OnItemCodeChangedAsync"
+                                         Selected="@OnItemSelectedAsync" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (!HasItem)
+            {
+                <div class="iv-skeleton" aria-busy="false">
+                    <p class="iv-subtitle">Select an item to build its stock card.</p>
+                </div>
+            }
+            else if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvTrxHistoryRow"
+                                      Columns="@Columns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvTrxHistoryRow.Id)"
+                                      GridKey="inv-stock-card"
+                                      Title="Movements"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            Cancelled and rolled-back documents never appear: history is written on POSTED batches only,
+            and a rollback deletes it. Values are estimates from the stored unit price or the item's
+            purchase price — this is not a general-ledger valuation.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Card scope and period"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="All warehouses" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Bin" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLocCode"
+                                       NullText="Any bin"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Lot no." ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLotNo"
+                                       NullText="Any lot"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                        <Template>
+                            <DxListBox Data="@Statuses"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftStatuses"
+                                       CssClass="iv-card-status-list" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Movement date from" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTrxDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Movement date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTrxDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    Pin warehouse, bin, lot <strong>and a single status</strong> for a true single-pile card.
+                    Anything wider makes the running column a total across every matching pile, and the
+                    column heading says so.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

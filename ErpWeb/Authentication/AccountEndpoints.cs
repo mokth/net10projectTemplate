@@ -16,7 +16,8 @@ public static class AccountEndpoints
             [FromForm] LoginInputModel model,
             IAuthService authService,
             ICookieSignInService cookieSignIn,
-            IAccessRightService accessRights) =>
+            IAccessRightService accessRights,
+            HttpContext http) =>
         {
             var result = await authService.ValidateCredentialsAsync(
                 model.CompanyCode?.Trim() ?? string.Empty,
@@ -25,57 +26,75 @@ public static class AccountEndpoints
 
             if (!result.Succeeded || result.User is null)
             {
-                return Results.Redirect("/login?error=1");
+                return RedirectToApp(http, "/login?error=1");
             }
 
             await cookieSignIn.SignInAsync(result.User, model.RememberMe);
             await accessRights.RefreshPermissionsAsync();
 
             return result.MustChangePassword
-                ? Results.Redirect("/change-password")
-                : Results.Redirect("/home");
+                ? RedirectToApp(http, "/change-password")
+                : RedirectToApp(http, "/home");
         }).DisableAntiforgery().AllowAnonymous();
 
         group.MapGet("/logout", async (
             ICookieSignInService cookieSignIn,
-            IAccessRightService accessRights) =>
+            IAccessRightService accessRights,
+            HttpContext http) =>
         {
             await accessRights.RefreshPermissionsAsync();
             await cookieSignIn.SignOutAsync();
-            return Results.Redirect("/login");
+            return RedirectToApp(http, "/login");
         }).AllowAnonymous();
 
         group.MapPost("/logout", async (
             ICookieSignInService cookieSignIn,
-            IAccessRightService accessRights) =>
+            IAccessRightService accessRights,
+            HttpContext http) =>
         {
             await accessRights.RefreshPermissionsAsync();
             await cookieSignIn.SignOutAsync();
-            return Results.Redirect("/login");
+            return RedirectToApp(http, "/login");
         }).DisableAntiforgery().AllowAnonymous();
 
         group.MapPost("/change-password", async (
             [FromForm] ChangePasswordInputModel model,
             IAuthService authService,
             ICookieSignInService cookieSignIn,
-            IAccessRightService accessRights) =>
+            IAccessRightService accessRights,
+            HttpContext http) =>
         {
             if (!string.Equals(model.NewPassword, model.ConfirmPassword, StringComparison.Ordinal))
             {
-                return Results.Redirect("/change-password?error=mismatch");
+                return RedirectToApp(http, "/change-password?error=mismatch");
             }
 
             var result = await authService.ChangePasswordAsync(model.CurrentPassword, model.NewPassword);
             if (!result.Succeeded || result.User is null)
             {
-                return Results.Redirect("/change-password?error=1");
+                return RedirectToApp(http, "/change-password?error=1");
             }
 
             await cookieSignIn.SignInAsync(result.User);
             await accessRights.RefreshPermissionsAsync();
-            return Results.Redirect("/home");
+            return RedirectToApp(http, "/home");
         }).DisableAntiforgery();
 
         return endpoints;
     }
+
+    /// <summary>
+    /// Builds a redirect that stays inside the app when it is deployed below the site root.
+    ///
+    /// <para>
+    /// <c>Results.Redirect("/home")</c> emits <c>Location: /home</c>, and a Location header is resolved
+    /// by the browser against the ORIGIN - <c>&lt;base href&gt;</c> does not apply to it - so on an IIS
+    /// sub-application at <c>/erpweb</c> the operator would be sent to the root site and never come
+    /// back. Prefixing the request's path base keeps the redirect local, and is a no-op at the site
+    /// root. (The cookie handler does this itself for LoginPath/LogoutPath/AccessDeniedPath, which is
+    /// why those need no change.)
+    /// </para>
+    /// </summary>
+    private static IResult RedirectToApp(HttpContext http, string appRelativePath) =>
+        Results.Redirect($"{http.Request.PathBase}/{appRelativePath.TrimStart('/')}");
 }

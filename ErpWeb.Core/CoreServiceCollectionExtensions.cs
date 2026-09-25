@@ -148,6 +148,20 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvStockCountService, IvStockCountService>();
 
+        services.AddScoped<IIvBalanceLotService, IvBalanceLotService>();
+
+        services.AddScoped<IIvTrxHistoryService, IvTrxHistoryService>();
+
+        // Inventory inquiry suite, Phase 2 — alerts, lot passport and grouped summary
+        // (plans/plan-inventoryInquirySuite.prompt.md §Phase 2).
+        services.AddScoped<IIvStockAlertService, IvStockAlertService>();
+        services.AddScoped<IIvLotInquiryService, IvLotInquiryService>();
+        services.AddScoped<IIvStockSummaryService, IvStockSummaryService>();
+
+        // Inventory period close (month end) — the close/reopen workflow + stored closing balances
+        // (plans/plan-inventoryPeriodClose.prompt.md Phase 2).
+        services.AddScoped<IIvPeriodCloseService, IvPeriodCloseService>();
+
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
@@ -206,6 +220,9 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaDocApplication, SaDocApplicationService>();
 
         services.AddScoped<ISaSalesAnalysisService, SaSalesAnalysisService>();
+
+        // Sales Inquiry — read-only operational grids (plan-salesReportsAndInquiries.prompt.md Phase 1).
+        services.AddScoped<ISaSalesInquiryService, SaSalesInquiryService>();
 
 
 

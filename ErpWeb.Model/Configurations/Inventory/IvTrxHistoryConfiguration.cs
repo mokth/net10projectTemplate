@@ -81,6 +81,11 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
         builder.HasIndex(e => new { e.ICode, e.TrxDtTime })
             .HasDatabaseName("IX_IvTrxHistory_ICode_TrxDtTime");
 
+        // Type-and-date-range inquiry (the default unfiltered view). Additive index only, no column:
+        // scripts/alter-ivtrxhistory-inquiry-index.sql ships the same index to existing databases.
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.TrxType, e.TrxDtTime })
+            .HasDatabaseName("IX_IvTrxHistory_Inquiry");
+
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.BatchNo })
             .HasDatabaseName("IX_IvTrxHistory_BatchNo");
 

@@ -24,6 +24,7 @@ public class UserLoginConfiguration : IEntityTypeConfiguration<UserLogin>
         builder.Property(e => e.LocationCode).HasMaxLength(10).IsRequired();
         builder.Property(e => e.ImagePath).HasMaxLength(100);
         builder.Property(e => e.changepass).IsRequired();
+        builder.Property(e => e.CanViewPrice).IsRequired();
 
         builder.HasIndex(e => new { e.id, e.CompanyCode }).IsUnique();
     }

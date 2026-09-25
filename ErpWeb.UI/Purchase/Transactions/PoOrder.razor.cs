@@ -1029,7 +1029,8 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     }
 
     protected string BuildAttachmentDownloadUrl(string docName) =>
-        $"/purchase/orders/attachments/{Uri.EscapeDataString(AttachmentDocId ?? string.Empty)}/file?docName={Uri.EscapeDataString(docName ?? string.Empty)}";
+        Navigation.Resolve(
+            $"/purchase/orders/attachments/{Uri.EscapeDataString(AttachmentDocId ?? string.Empty)}/file?docName={Uri.EscapeDataString(docName ?? string.Empty)}");
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;

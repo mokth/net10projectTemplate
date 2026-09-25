@@ -41,6 +41,30 @@
             Icon="fa-solid fa-sliders" />
       <Menu Code="INV_STOCK_COUNT" Name="Stock Count" Route="/inventory/stock-count" SortOrder="9"
             Icon="fa-solid fa-calculator" />
+      <Menu Code="INV_PERIOD_CLOSE" Name="Period Close" Route="/inventory/period-close" SortOrder="10"
+            Icon="fa-solid fa-lock" />
+    </Menu>
+    <Menu Code="INV_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
+      <Menu Code="INV_BALANCE_LOT" Name="Balance by Lot" Route="/inventory/balance-by-lot" SortOrder="1"
+            Icon="fa-solid fa-scale-balanced" />
+      <Menu Code="INV_TRX_INQUIRY" Name="Transaction Inquiry" Route="/inventory/trx-inquiry" SortOrder="2"
+            Icon="fa-solid fa-clock-rotate-left" />
+      <Menu Code="INV_STOCK_CARD" Name="Stock Card" Route="/inventory/stock-card" SortOrder="3"
+            Icon="fa-solid fa-book" />
+      <Menu Code="INV_STOCK_ALERTS" Name="Stock Alerts" Route="/inventory/stock-alerts" SortOrder="4"
+            Icon="fa-solid fa-triangle-exclamation" />
+      <Menu Code="INV_LOT_INQUIRY" Name="Lot / Batch Inquiry" Route="/inventory/lots" SortOrder="5"
+            Icon="fa-solid fa-barcode" />
+      <Menu Code="INV_STOCK_SUMMARY" Name="Stock Summary" Route="/inventory/stock-summary" SortOrder="6"
+            Icon="fa-solid fa-layer-group" />
+      <Menu Code="INV_STOCK_COUNT_VAR" Name="Stock Count Variance" Route="/inventory/stock-count-variance" SortOrder="7"
+            Icon="fa-solid fa-scale-unbalanced" />
+      <Menu Code="INV_STOCK_VALUE" Name="Est. Inventory Value" Route="/inventory/valuation" SortOrder="8"
+            Icon="fa-solid fa-sack-dollar" />
+      <Menu Code="INV_RECONCILIATION" Name="Reconciliation" Route="/inventory/reconciliation" SortOrder="9"
+            Icon="fa-solid fa-stethoscope" />
+      <Menu Code="INV_PERIOD_CLOSE_INQ" Name="Period Close Balances" Route="/inventory/period-close-inquiry" SortOrder="10"
+            Icon="fa-solid fa-lock-open" />
     </Menu>
   </Menu>
 
@@ -115,6 +139,22 @@
             Icon="fa-solid fa-chart-pie" />
       <Menu Code="SA_QT_CONVERSION" Name="Quotation Conversion" Route="/sales/analysis/qt-conversion" SortOrder="3"
             Icon="fa-solid fa-diagram-successor" />
+    </Menu>
+    <Menu Code="SA_INQUIRY" Name="Inquiry" SortOrder="4" Icon="fa-solid fa-magnifying-glass-chart">
+      <Menu Code="SA_CUST_TRX" Name="Customer Transactions" Route="/sales/inquiry/customer" SortOrder="1"
+            Icon="fa-solid fa-arrow-right-arrow-left" />
+      <Menu Code="SA_QT_STATUS" Name="Quotation Status / Expiry" Route="/sales/inquiry/quotation-status" SortOrder="2"
+            Icon="fa-solid fa-hourglass-half" />
+      <Menu Code="SA_SO_OUTSTANDING" Name="Sales Order Outstanding" Route="/sales/inquiry/so-outstanding" SortOrder="3"
+            Icon="fa-solid fa-boxes-stacked" />
+      <Menu Code="SA_DO_STATUS" Name="Delivery Status" Route="/sales/inquiry/do-status" SortOrder="4"
+            Icon="fa-solid fa-truck-ramp-box" />
+      <Menu Code="SA_INV_VS_DOC" Name="Invoice vs DO / SO" Route="/sales/inquiry/invoice-vs-doc" SortOrder="5"
+            Icon="fa-solid fa-link" />
+      <Menu Code="SA_CDN_INQUIRY" Name="Credit / Debit Notes" Route="/sales/inquiry/credit-debit-notes" SortOrder="6"
+            Icon="fa-solid fa-file-circle-question" />
+      <Menu Code="SA_EINV_INQUIRY" Name="e-Invoice Status" Route="/sales/inquiry/einvoice" SortOrder="7"
+            Icon="fa-solid fa-file-signature" />
     </Menu>
   </Menu>
 

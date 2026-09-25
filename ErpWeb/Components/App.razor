@@ -1,12 +1,19 @@
 @using ErpWeb.UI.Services.Theme
+@using Microsoft.AspNetCore.Http
+@using Microsoft.Extensions.Configuration
 @inject ThemeService ThemeService
+@inject IConfiguration Configuration
+@inject IHttpContextAccessor HttpContextAccessor
 
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="@BootstrapMode">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <base href="/" />
+    <link rel="icon" type="image/x-icon" href="@Assets["favicon.ico"]" />
+    <link rel="icon" type="image/png" href="@Assets["favicon.png"]" />
+    <link rel="icon" type="image/svg+xml" href="@Assets["favicon.svg"]" />
+    <base href="@BaseHref" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
@@ -14,6 +21,7 @@
     @DxResourceManager.RegisterTheme(ThemeService.ActiveTheme)
     @DxResourceManager.RegisterScripts()
     <link href="@Assets["css/site.css"]" rel="stylesheet" />
+    <link href="@Assets["css/login.css"]" rel="stylesheet" />
     <link href="@Assets["css/inventory-chrome.css"]" rel="stylesheet" />
     <link href="@Assets["ErpWeb.styles.css"]" rel="stylesheet" />
     <link href="@Assets["_content/ErpWeb.UI/ErpWeb.UI.styles.css"]" rel="stylesheet" />
@@ -33,6 +41,37 @@
     </script>
 </body>
 </html>
+
+@code {
+    /// <summary>
+    /// The app's relative root path, WITH the trailing slash <c>&lt;base&gt;</c> requires. It is read
+    /// once: the element only describes the initial document.
+    ///
+    /// <para>
+    /// Order of precedence: the configured <c>AppBasePath</c> (needed when a reverse proxy strips the
+    /// prefix before the app ever sees it), then the request's path base (which <c>UsePathBase</c> has
+    /// already populated for an IIS sub-application), then the site root. This is what makes a
+    /// deployment at <c>/erpweb</c> work: every relative URL in the document - the Blazor script, the
+    /// static asset links, the import map and every relative link - then resolves inside the
+    /// sub-application instead of against the site root.
+    /// </para>
+    /// </summary>
+    private string BaseHref { get; set; } = "/";
+
+    protected override void OnInitialized() => BaseHref = ComputeBaseHref();
+
+    private string ComputeBaseHref()
+    {
+        var configured = Configuration.GetValue<string>("AppBasePath");
+        var path = !string.IsNullOrWhiteSpace(configured)
+            ? "/" + configured.Trim('/')
+            : HttpContextAccessor.HttpContext?.Request.PathBase.Value ?? string.Empty;
+
+        return string.IsNullOrEmpty(path) || path == "/"
+            ? "/"
+            : path.TrimEnd('/') + "/";
+    }
+}
 
 @code {
     private string BootstrapMode =>

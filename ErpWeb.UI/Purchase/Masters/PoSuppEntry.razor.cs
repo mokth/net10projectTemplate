@@ -412,8 +412,11 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
     protected void SetStatementType(string value) => Model.StatementType = value;
     protected void SetAgingType(string value) => Model.AgingType = value;
 
+    /// <summary>A root-absolute app route, resolved through the navigation seam so the link still
+    /// works when the app is hosted below the site root.</summary>
     protected string BuildAttachmentDownloadUrl(string docName) =>
-        $"/purchase/suppliers/attachment/{BuildSuppCodePath(Model.SuppCode)}?docName={Uri.EscapeDataString(docName ?? string.Empty)}";
+        Navigation.Resolve(
+            $"/purchase/suppliers/attachment/{BuildSuppCodePath(Model.SuppCode)}?docName={Uri.EscapeDataString(docName ?? string.Empty)}");
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;

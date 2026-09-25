@@ -109,6 +109,16 @@ public sealed class IvStockMasterListRow
     public bool IsActive { get; init; }
     public decimal? SellingPrice { get; init; }
     public decimal? PurchasePrice { get; init; }
+
+    /// <summary>
+    /// Reorder thresholds. Entered on the entry page and, until the stock-alert inquiry landed, invisible
+    /// here — which made a low-stock result impossible to explain from the item list.
+    /// </summary>
+    public decimal? MinStock { get; init; }
+
+    /// <inheritdoc cref="MinStock"/>
+    public decimal? MaxStock { get; init; }
+
     public byte[] RowVersion { get; init; } = [];
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }

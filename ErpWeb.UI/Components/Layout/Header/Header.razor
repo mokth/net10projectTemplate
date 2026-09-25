@@ -38,6 +38,7 @@
         </div>
 
         <ThemeSwitcher />
-        <a class="shell-logout" href="/account/logout">Sign out</a>
+        <!-- Relative on purpose: resolves against <base href>, so it keeps the deployment base path. -->
+        <a class="shell-logout" href="account/logout">Sign out</a>
     </div>
 </header>

@@ -35,6 +35,11 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var location = command.LocationCode.Trim();
         var documentNo = command.DocumentNo.Trim();
         var documentDate = command.DocumentDate.Date;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, documentDate, cancellationToken) is string periodGuard)
+        {
+            return IvSpShipmentResult.Fail(periodGuard);
+        }
+
         var detailDoNo = string.IsNullOrWhiteSpace(command.DoNo) ? null : command.DoNo.Trim();
         // DO: DocumentNo is DO/{doNo} for RefNo; InvNo/DoNo on detail stay bare doNo.
         // Invoice: DocumentNo is InvNo; detail InvNo matches.

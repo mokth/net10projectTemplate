@@ -1,0 +1,147 @@
+@page "/sales/inquiry/customer"
+@inherits SaInquiryPageBase
+
+<PageTitle>Customer Transactions</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesCustomerTransaction">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Inquiry</p>
+                <h1 class="iv-title">Customer Transactions</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">All statuses</span>
+                    <span class="iv-chip">History is posted only</span>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@CustomerOptions"
+                                    Value="@CustCode"
+                                    ValueChanged="@(async (string? v) => await OnCustomerChangedAsync(v))"
+                                    NullText="All customers" />
+                    <DxTextBox NullText="Search customers"
+                               maxlength="40"
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            <DxTabs>
+                <DxTabPage Text="Transactions">
+                    <CommonDataGridEx T="SaCustomerTransactionRow"
+                                      Columns="@TransactionColumns"
+                                      Buttons="@Buttons"
+                                      KeyName="@nameof(SaCustomerTransactionRow.DocNo)"
+                                      GridKey="sa-cust-trx"
+                                      Title="Customer transactions"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      UseBuiltInExport="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </DxTabPage>
+                <DxTabPage Text="Sales History">
+                    @if (!string.IsNullOrWhiteSpace(HistoryError))
+                    {
+                        <div class="iv-toast iv-toast--err" role="alert"><span>@HistoryError</span></div>
+                    }
+                    else if (HistoryRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No posted invoices match the current filters.</p>
+                    }
+                    else
+                    {
+                        <div class="iv-toolbar-row">
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Export CSV" Click="@OnExportHistoryClick" />
+                        </div>
+                        <DxGrid Data="@HistoryRows" CssClass="w-100">
+                            <Columns>
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.Period)" Caption="Period" Width="100px" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.InvoiceCount)" Caption="Invoices" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.InvoiceTotal)" Caption="Invoice total" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.CreditNoteCount)" Caption="Credit notes" Width="100px" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.CreditNoteTotal)" Caption="Credit total" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.DebitNoteCount)" Caption="Debit notes" Width="100px" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.DebitNoteTotal)" Caption="Debit total" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                                <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.NetSales)" Caption="Net sales" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            </Columns>
+                        </DxGrid>
+                        <p class="iv-subtitle">Net sales = posted invoices + debit notes − credit notes (stored positive, netted once).</p>
+                    }
+                </DxTabPage>
+            </DxTabs>
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter customer transactions"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@SalesmanOptions"
+                                            @bind-Value="@DraftSalesmanCode"
+                                            NullText="All salesmen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    An empty field means <strong>all</strong> values, never "none". Both tabs read the same
+                    applied filters, so the transaction log and the sales history can never disagree. The
+                    customer is chosen on the toolbar and applies as soon as it is picked.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

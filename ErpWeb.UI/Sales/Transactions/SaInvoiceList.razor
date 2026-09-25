@@ -126,7 +126,7 @@
 
                                 @if (EInvoiceDetailLink.Resolve(row.IrbmStatus, row.IrbmUuid, CanAccessEInvoiceTin).Url is { } detailUrl)
                                 {
-                                    <a class="iv-list-compact__lhdn" href="@detailUrl">
+                                    <a class="iv-list-compact__lhdn" href="@Navigation.Resolve(detailUrl)">
                                         <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
                                         Why is this invalid?
                                     </a>

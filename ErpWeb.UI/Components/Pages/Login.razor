@@ -2,31 +2,83 @@
 @layout EmptyLayout
 @attribute [AllowAnonymous]
 
-<PageTitle>Sign in · ErpWeb</PageTitle>
+<PageTitle>Sign in · Wincom ERP</PageTitle>
 
 <div class="login-shell">
+    <!-- Left Panel - Brand & Features -->
     <aside class="login-visual" aria-hidden="true">
-        <img class="login-visual-img" src="images/login-hero.svg" alt="" />
+        <div class="login-visual-bg"></div>
         <div class="login-visual-content">
             <div class="login-visual-brand">
-                <span class="login-logo" aria-hidden="true">EW</span>
-                <span class="login-visual-product">ErpWeb</span>
+                <div class="login-logo-container">
+                    <span class="login-logo" aria-hidden="true">ERP</span>
+                </div>
+                <div class="login-brand-text">
+                    <span class="login-visual-product">Wincom ERP</span>
+                    <span class="login-visual-version">Enterprise Edition</span>
+                </div>
             </div>
-            <p class="login-visual-tagline">Operations, finance, and team access — in one secure workspace.</p>
+            
+            <div class="login-visual-hero">
+                <h1 class="login-visual-tagline">Streamline Your Business Operations</h1>
+                <p class="login-visual-subtitle">Unified platform for finance, inventory, sales, and procurement management</p>
+            </div>
+            
             <ul class="login-visual-points">
-                <li>Company-scoped sign-in</li>
-                <li>Role-based menu access</li>
-                <li>Audit-ready administration</li>
+                <li>
+                    <div class="feature-icon">
+                        <i class="fa-solid fa-building"></i>
+                    </div>
+                    <div class="feature-content">
+                        <strong>Company-scoped Access</strong>
+                        <span>Multi-tenant architecture with isolated data</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="feature-icon">
+                        <i class="fa-solid fa-shield-halved"></i>
+                    </div>
+                    <div class="feature-content">
+                        <strong>Role-based Security</strong>
+                        <span>Granular permissions and menu access control</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="feature-icon">
+                        <i class="fa-solid fa-chart-line"></i>
+                    </div>
+                    <div class="feature-content">
+                        <strong>Real-time Analytics</strong>
+                        <span>Comprehensive reporting and business insights</span>
+                    </div>
+                </li>
+                <li>
+                    <div class="feature-icon">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                    </div>
+                    <div class="feature-content">
+                        <strong>Audit Trail</strong>
+                        <span>Complete transaction history and compliance</span>
+                    </div>
+                </li>
             </ul>
+            
+            <div class="login-visual-footer">
+                <span class="login-trust-badge">
+                    <i class="fa-solid fa-lock"></i>
+                    Enterprise-grade Security
+                </span>
+            </div>
         </div>
     </aside>
 
+    <!-- Right Panel - Login Form -->
     <section class="login-panel">
         <div class="login-panel-inner">
             <header class="login-header">
                 <div class="login-mobile-brand">
-                    <span class="login-logo" aria-hidden="true">EW</span>
-                    <span>ErpWeb</span>
+                    <span class="login-logo" aria-hidden="true">ERP</span>
+                    <span>Wincom ERP</span>
                 </div>
                 <h1>Welcome back</h1>
                 <p>Sign in with your company credentials to continue.</p>
@@ -41,58 +93,86 @@
             }
 
             <form class="login-form" method="post" action="/account/login">
-                <label class="field" for="CompanyCode">
-                    <span>Company code</span>
-                    <input name="CompanyCode"
-                           id="CompanyCode"
-                           maxlength="5"
-                           required
-                           value="@CompanyCode"
-                           autocomplete="organization"
-                           placeholder="e.g. DEMO" />
-                </label>
+                <div class="form-group">
+                    <label class="field" for="CompanyCode">
+                        <span class="field-label">Company Code</span>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-building input-icon" aria-hidden="true"></i>
+                            <input name="CompanyCode"
+                                   id="CompanyCode"
+                                   maxlength="5"
+                                   required
+                                   value="@CompanyCode"
+                                   autocomplete="organization"
+                                   placeholder="e.g. DEMO" />
+                        </div>
+                    </label>
+                </div>
 
-                <label class="field" for="Username">
-                    <span>Username</span>
-                    <input name="Username"
-                           id="Username"
-                           maxlength="10"
-                           required
-                           autocomplete="username"
-                           placeholder="Enter your username" />
-                </label>
+                <div class="form-group">
+                    <label class="field" for="Username">
+                        <span class="field-label">Username</span>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-user input-icon" aria-hidden="true"></i>
+                            <input name="Username"
+                                   id="Username"
+                                   maxlength="10"
+                                   required
+                                   autocomplete="username"
+                                   placeholder="Enter your username" />
+                        </div>
+                    </label>
+                </div>
 
-                <label class="field" for="Password">
-                    <span>Password</span>
-                    <div class="field-password">
-                        <input name="Password"
-                               id="Password"
-                               type="@(ShowPassword ? "text" : "password")"
-                               required
-                               autocomplete="current-password"
-                               placeholder="Enter your password" />
-                        <button type="button"
-                                class="password-toggle"
-                                @onclick="TogglePassword"
-                                aria-label="@(ShowPassword ? "Hide password" : "Show password")">
-                            <i class="fa-solid @(ShowPassword ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i>
-                        </button>
-                    </div>
-                </label>
+                <div class="form-group">
+                    <label class="field" for="Password">
+                        <span class="field-label">Password</span>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-lock input-icon" aria-hidden="true"></i>
+                            <input name="Password"
+                                   id="Password"
+                                   type="@(ShowPassword ? "text" : "password")"
+                                   required
+                                   autocomplete="current-password"
+                                   placeholder="Enter your password" />
+                            <button type="button"
+                                    class="password-toggle"
+                                    @onclick="TogglePassword"
+                                    aria-label="@(ShowPassword ? "Hide password" : "Show password")">
+                                <i class="fa-solid @(ShowPassword ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </label>
+                </div>
 
-                <div class="login-row">
+                <div class="login-options">
                     <label class="remember" for="RememberMe">
                         <input type="checkbox"
                                name="RememberMe"
                                id="RememberMe"
                                value="true" />
+                        <span class="checkmark"></span>
                         <span>Remember me</span>
                     </label>
-                    <a class="forgot-link" href="/forgot-password">Forgot password?</a>
+                    <a class="forgot-link" href="forgot-password">Forgot password?</a>
                 </div>
 
-                <button class="login-btn" type="submit">Sign in</button>
+                <button class="login-btn" type="submit">
+                    <span>Sign in</span>
+                    <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                </button>
             </form>
+
+            <div class="login-divider">
+                <span>or</span>
+            </div>
+
+            <div class="login-alternatives">
+                <button class="login-btn-secondary" type="button">
+                    <i class="fa-solid fa-key" aria-hidden="true"></i>
+                    <span>Sign in with SSO</span>
+                </button>
+            </div>
 
             <p class="login-footnote">
                 Need access? Contact your company administrator.

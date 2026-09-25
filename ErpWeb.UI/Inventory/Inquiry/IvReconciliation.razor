@@ -1,0 +1,116 @@
+@page "/inventory/reconciliation"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Inventory Reconciliation</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryReconciliation">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-stethoscope"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Inventory Reconciliation</h1>
+                <p class="iv-subtitle">
+                    Compares the live on-hand piles against the posted movement ledger and reports what does
+                    not agree. <strong>This screen never changes anything.</strong>
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip @(HasFindings ? "iv-chip--warn" : string.Empty)">@StatusCaption</span>
+                    <span class="iv-chip">@FindingCountLabel</span>
+                    @if (!string.IsNullOrWhiteSpace(AppliedICode))
+                    {
+                        <span class="iv-chip">Item: @AppliedICode</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(AppliedWhCode))
+                    {
+                        <span class="iv-chip">Warehouse: @AppliedWhCode</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Findings</span>
+                <strong>@Findings.Count.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <div class="iv-toast iv-toast--wait" role="status">
+            <span>
+                <strong>Diagnostic only.</strong> OpeningQty=0 is valid for empty test DBs — do not enable as
+                production stock-audit until an opening-balance baseline exists.
+            </span>
+        </div>
+
+        <p class="iv-subtitle">
+            Both sides are aggregated on the same stock slice — company, branch, item, warehouse, bin, lot
+            and status — before they are compared, so two balance rows that describe one slice are measured
+            against that slice's whole ledger instead of against the whole ledger each.
+        </p>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label">Item (optional)</label>
+                    <DxTextBox @bind-Text="@DraftICode"
+                               NullText="All items"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div>
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label">Warehouse (optional)</label>
+                    <IvCodeComboBox Data="@Warehouses"
+                                    @bind-Value="@DraftWhCode"
+                                    NullText="All warehouses" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="RUN"
+                          IconCssClass="fa-solid fa-play"
+                          Click="@RunAsync" />
+            </div>
+
+            @if (IsBootstrapping || IsRunning)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Findings.Count == 0)
+            {
+                <div class="iv-skeleton" aria-busy="false">
+                    <p class="iv-subtitle">
+                        No findings for the current filter — the balances and the ledger agree.
+                    </p>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvInventoryReconcileFinding"
+                                      Columns="@Columns"
+                                      GridKey="inv-reconciliation"
+                                      Title="Findings"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false" />
+                </div>
+            }
+        </section>
+    </div>
+</MenuAuthorize>

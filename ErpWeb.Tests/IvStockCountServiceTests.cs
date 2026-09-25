@@ -962,8 +962,12 @@ public class IvStockCountServiceTests : IAsyncLifetime
 
     private async Task<IvInventoryReconcileResult> ReconcileAsync()
     {
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         var service = new IvInventoryReconciliationService(
-            _factory, InventoryTenantTestHelper.CreateTenantContext());
+            _factory, InventoryTenantTestHelper.CreateTenantContext(), access.Object);
         var result = await service.ReconcileAsync();
         Assert.True(result.Succeeded, result.ErrorMessage);
         return result;

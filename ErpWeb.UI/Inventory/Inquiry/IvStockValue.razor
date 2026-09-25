@@ -1,0 +1,232 @@
+@page "/inventory/valuation"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Est. Inventory Value</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockValue">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-sack-dollar"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Est. Inventory Value</h1>
+                <p class="iv-subtitle">
+                    The on-hand estimate by <strong>@GroupByCaption</strong>, using the price each pile was
+                    received at. <strong>This is an estimate, not a GL valuation.</strong>
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@GroupByCaption</span>
+                    <span class="iv-chip">@GroupCountLabel</span>
+                    <span class="iv-chip">Items: @SummaryItemCount.ToString("N0")</span>
+                    <span class="iv-chip">Piles: @SummaryPileCount.ToString("N0")</span>
+                    @if (ShowsQuantityColumn)
+                    {
+                        <span class="iv-chip">@QuantityCaption: @SummaryTotalQty.ToString("N4")</span>
+                    }
+                    @if (CanViewValue)
+                    {
+                        <span class="iv-chip">Est. value: @(SummaryTotalValue?.ToString("N4") ?? "0.0000")</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Est. value</span>
+                <strong>@(CanViewValue ? SummaryTotalValue?.ToString("N2") ?? "0.00" : "—")</strong>
+            </div>
+        </header>
+
+        @if (!CanViewValue)
+        {
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>
+                    <strong>The value columns are hidden.</strong>
+                    Seeing stock value needs the <code>VIEW_PRICE</code> permission on this screen; without it
+                    the columns are omitted rather than blanked, because a blank column reads as "worth
+                    nothing" instead of "not shown".
+                </span>
+            </div>
+        }
+        else
+        {
+            <p class="iv-subtitle">
+                <strong>Estimate — not a GL valuation.</strong> Each pile keeps the price it was received at;
+                there is no costing method, no cost layer and no revaluation, so this figure cannot tie to a
+                general-ledger balance. The unit price is the pile's own price when it has one, otherwise the
+                item's purchase price.
+            </p>
+        }
+
+        @if (!ShowsQuantityColumn)
+        {
+            <p class="iv-subtitle">
+                A quantity total across <strong>@GroupByCaption</strong> would add each item's own standard
+                UOM together (PCS + KG + BOX), which is not a quantity, so it is hidden. Use the filter popup
+                if you deliberately want the mixed-unit total.
+            </p>
+        }
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label">Group by</label>
+                    <DxComboBox Data="@GroupByOptions"
+                                TextFieldName="@nameof(GroupByOption.Name)"
+                                ValueFieldName="@nameof(GroupByOption.Token)"
+                                Value="@AppliedGroupBy"
+                                ValueChanged="@((string? groupBy) => OnGroupByChanged(groupBy))"
+                                CssClass="iv-card-group-combo" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvStockSummaryRow"
+                                      Columns="@Columns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvStockSummaryRow.RowKey)"
+                                      GridKey="@GridKey"
+                                      Title="@GridTitle"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Grouping and scope"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Group by" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@GroupByOptions"
+                                        TextFieldName="@nameof(GroupByOption.Name)"
+                                        ValueFieldName="@nameof(GroupByOption.Token)"
+                                        @bind-Value="@DraftGroupBy" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftICode"
+                                       NullText="All items"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="All warehouses" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Classes"
+                                            @bind-Value="@DraftIClassCode"
+                                            NullText="All classes" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item status" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxListBox Data="@Statuses"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftStatuses"
+                                       CssClass="iv-card-status-list" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeZeroQty"
+                                        Text="Include zero-quantity piles" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftShowMixedQty"
+                                        Text="Show mixed-unit quantity total (Warehouse / Class)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeInactive"
+                                        Text="Include deactivated items" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeNonStockControl"
+                                        Text="Include items that are not stock controlled" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    An empty status list means <strong>all</strong> statuses, never "none".
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

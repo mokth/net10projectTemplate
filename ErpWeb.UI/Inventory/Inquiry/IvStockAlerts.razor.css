@@ -1,0 +1,20 @@
+/* The rule selector is the page's primary control — give it room, and keep the label attached. */
+.iv-card-rule-combo {
+    min-width: 260px;
+}
+
+.iv-field-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 0.15rem;
+}
+
+/* A capped/filtered result must not read as ordinary hero chrome. */
+.iv-chip--warn {
+    background: var(--iv-warn-bg, #fdf0d5);
+    color: var(--iv-warn-ink, #8a5a00);
+}

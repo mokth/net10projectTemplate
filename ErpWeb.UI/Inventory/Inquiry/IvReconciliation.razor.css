@@ -1,0 +1,15 @@
+/* A finding banner must not read as ordinary chrome — it is a data-integrity signal. */
+.iv-chip--warn {
+    background: var(--iv-warn-bg, #fdf0d5);
+    color: var(--iv-warn-ink, #8a5a00);
+}
+
+.iv-field-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 0.15rem;
+}

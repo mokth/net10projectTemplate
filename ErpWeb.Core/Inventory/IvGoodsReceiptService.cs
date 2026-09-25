@@ -508,12 +508,18 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         var batchNo = await _runningNumbers.GetNextAsync(db, context.CompanyCode!, RunningNumberKeys.IvBatch, cancellationToken);
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
+        var trxDate = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvGoodsReceiptOperationResult.Fail(periodGuard);
+        }
+
         var batch = new IvTrxBatch
         {
             CompanyCode = context.CompanyCode!,
             BranchCode = context.BranchCode!,
             BatchNo = batchNo,
-            TrxDtTime = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date,
+            TrxDtTime = trxDate,
             TrxType = trxType,
             BatchStatus = IvBatchStatuses.New,
             RefNo = NormalizeRefNo(request.RefNo, batchNo),
@@ -585,8 +591,13 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
+        var trxDate = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvGoodsReceiptOperationResult.Fail(periodGuard);
+        }
         batch.TrxType = trxType;
-        batch.TrxDtTime = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date;
+        batch.TrxDtTime = trxDate;
         batch.RefNo = NormalizeRefNo(request.RefNo, batch.BatchNo);
         batch.Remarks = TruncateOptional(request.Remark, 250);
         batch.ModifiedDate = now;

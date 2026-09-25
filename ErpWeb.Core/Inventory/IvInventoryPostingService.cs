@@ -248,6 +248,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInNotFoundMessage(expectedTrxType));
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInOnlyNewCanPostMessage(expectedTrxType));
@@ -496,6 +501,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInNotFoundMessage(expectedTrxType));
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInOnlyPostedCanRollbackMessage(expectedTrxType));
@@ -710,6 +720,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Only NEW goods receipts can be posted.");
@@ -784,6 +799,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Only POSTED goods receipts can be rolled back.");
@@ -856,6 +876,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             || !string.Equals(batch.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock adjustment was not found.");
+        }
+
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1063,6 +1088,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             || !string.Equals(batch.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock adjustment was not found.");
+        }
+
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
@@ -1467,6 +1497,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutNotFoundMessage(expectedTrxType));
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutOnlyNewCanPostMessage(expectedTrxType));
@@ -1681,6 +1716,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutNotFoundMessage(expectedTrxType));
         }
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutOnlyPostedCanRollbackMessage(expectedTrxType));
@@ -1804,6 +1844,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             || !string.Equals(batch.TrxType, IvTrxTypes.StockTransfer, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
+        }
+
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -2146,6 +2191,11 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             || !string.Equals(batch.TrxType, IvTrxTypes.StockTransfer, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
+        }
+
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))

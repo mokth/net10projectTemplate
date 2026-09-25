@@ -1,0 +1,123 @@
+@page "/inventory/period-close-inquiry"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+
+<PageTitle>Period Close Balances</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryPeriodCloseInq">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-lock-open"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Period Close Balances</h1>
+                <p class="iv-subtitle">
+                    The stored closing snapshot for one closed period: per stock slice, its opening,
+                    opening adjustment, in, out, adjustment net and closing quantities.
+                </p>
+                @if (Page?.Header is { } h)
+                {
+                    <div class="iv-chips">
+                        <span class="iv-chip">Lines: @h.LineCount.ToString("N0")</span>
+                        <span class="iv-chip">Zero-closing slices excluded: @h.SkippedZeroSlices.ToString("N0")</span>
+                        <span class="iv-chip">Opening-adjust slices: @h.OpeningAdjustSlices.ToString("N0")</span>
+                        <span class="iv-chip">Reopens: @h.ReopenCount.ToString("N0")</span>
+                        <span class="iv-chip">Unposted batches at close: @h.UnpostedBatchCount.ToString("N0")</span>
+                        <span class="iv-chip">Reconcile findings: @h.ReconcileFindingCount.ToString("N0")</span>
+                        <span class="iv-chip @(h.CurrentBalanceCheckApplies ? "iv-chip" : "iv-chip iv-chip--warn")">
+                            @(h.CurrentBalanceCheckApplies ? "Pile check: applied" : "Pile check: not applicable")
+                        </span>
+                    </div>
+                }
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Period</span>
+                <strong>@PeriodCaption</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label">Closed period</label>
+                    <DxComboBox Data="@Periods"
+                                TextFieldName="@nameof(IvPeriodCloseHeaderRow.PeriodFrom)"
+                                ValueFieldName="@nameof(IvPeriodCloseHeaderRow.Id)"
+                                Value="@SelectedPeriodId"
+                                ValueChanged="@((int id) => OnPeriodChangedAsync(id))"
+                                CssClass="iv-card-group-combo" />
+                </div>
+            </div>
+
+            @if (IsLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Page?.Lines is { Count: > 0 } lines)
+            {
+                <p class="iv-subtitle">
+                    Zero-closing slices are intentionally excluded. Historical movement remains available
+                    through Transaction Inquiry / Stock Card. This screen represents <strong>ending
+                    stock, not a complete movement ledger</strong>.
+                </p>
+                @if (Page.Header is { CurrentBalanceCheckApplies: false })
+                {
+                    <p class="iv-subtitle iv-toast iv-toast--warn">
+                        This was a back-period close — movements after the period end existed, so the
+                        pile-vs-ledger reconciliation did not run.
+                    </p>
+                }
+                <div class="iv-list-desktop">
+                    <DxGrid Data="@lines" PageSize="20" ShowPager="true" AllowSelectRowByClick="false">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.ICode)" Caption="Item" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.WhCode)" Caption="Warehouse" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.LocCode)" Caption="Location" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.LotNo)" Caption="Lot" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.IStatus)" Caption="Status" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.OpeningQty)" Caption="Opening" Width="90px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.OpeningAdjustQty)" Caption="Opening adjust" Width="100px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.InQty)" Caption="In" Width="80px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.OutQty)" Caption="Out" Width="80px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.AdjustNetQty)" Caption="Adjust net" Width="90px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.ClosingQty)" Caption="Closing" Width="90px" DisplayFormat="N4" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.StdUom)" Caption="UOM" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.CarryForwardOk)" Caption="Carry-forward" Width="110px">
+                                <CellDisplayTemplate>
+                                    @{ var row = (IvPeriodCloseBalRow)context.DataItem; }
+                                    <span class="@(row.CarryForwardOk ? "iv-chip iv-chip--ok" : "iv-chip iv-chip--warn")">
+                                        @(row.CarryForwardOk ? "OK" : "MISMATCH")
+                                    </span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            @if (CanViewPrice)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.UnitPrice)" Caption="Unit price" Width="90px" DisplayFormat="N4" />
+                                <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.ClosingValue)" Caption="Closing value" Width="110px" DisplayFormat="N2" />
+                            }
+                        </Columns>
+                    </DxGrid>
+                </div>
+            }
+            else
+            {
+                <p class="iv-subtitle">Select a closed period to read its stored balances.</p>
+            }
+        </section>
+    </div>
+</MenuAuthorize>

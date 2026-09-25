@@ -236,6 +236,7 @@ public class UserLoginRepository : IUserLoginRepository
         existing.userlevel = user.userlevel;
         existing.BranchCode = user.BranchCode;
         existing.LocationCode = user.LocationCode;
+        existing.CanViewPrice = user.CanViewPrice;
         existing.ImagePath = user.ImagePath;
         existing.Updated = user.Updated;
         existing.UpdatedUID = user.UpdatedUID;

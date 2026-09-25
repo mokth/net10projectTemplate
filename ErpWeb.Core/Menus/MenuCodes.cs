@@ -17,6 +17,80 @@ public static class MenuCodes
     public const string InventoryStockAdjustment = "INV_STOCK_ADJUSTMENT";
     public const string InventoryStockCount = "INV_STOCK_COUNT";
     public const string InventoryItemMaster = "INV_ITEM_MASTER";
+
+    /// <summary>Inventory inquiry parent menu — Balance by Lot is its first child (D6).</summary>
+    public const string InventoryInquiry = "INV_INQUIRY";
+
+    /// <summary>Read-only pile-level on-hand inquiry over IvBalLoc (plan-inventoryBalanceByLot).</summary>
+    public const string InventoryBalanceLot = "INV_BALANCE_LOT";
+
+    /// <summary>
+    /// Posted-movement inquiry over IvTrxHistory. The TrxType multi-select makes this one page
+    /// deliver Transaction Inquiry, Adjustment Inquiry and Adjustment Analysis
+    /// (plan-inventoryInquirySuite Phase 1).
+    /// </summary>
+    public const string InventoryTrxInquiry = "INV_TRX_INQUIRY";
+
+    /// <summary>
+    /// Stock Card / Stock Movement — the chronological ledger for one stock slice with an opening and
+    /// a running balance (plan-inventoryInquirySuite Phase 1, D12/D13).
+    /// </summary>
+    public const string InventoryStockCard = "INV_STOCK_CARD";
+
+    /// <summary>
+    /// Stock control alerts over the item master's own Min/Max thresholds plus movement and expiry
+    /// ageing — one page whose Rule selector delivers Low, Over, Slow, Dead, Never moved, Expiring and
+    /// Expired (plan-inventoryInquirySuite Phase 2, D14/D15/D21).
+    /// </summary>
+    public const string InventoryStockAlerts = "INV_STOCK_ALERTS";
+
+    /// <summary>
+    /// Lot / Batch inquiry — the lot passport (origin, dates, QC) with its on-hand piles and its
+    /// movement history (plan-inventoryInquirySuite Phase 2). Code artefact stays <c>IvLot*</c>
+    /// although the screen is titled "Lot / Batch Inquiry".
+    /// </summary>
+    public const string InventoryLotInquiry = "INV_LOT_INQUIRY";
+
+    /// <summary>
+    /// Stock summary — server-side GROUP BY over the balance slice with an Item / Warehouse /
+    /// Item×Warehouse / Class selector (plan-inventoryInquirySuite Phase 2, D16).
+    /// </summary>
+    public const string InventoryStockSummary = "INV_STOCK_SUMMARY";
+
+    /// <summary>
+    /// Stock-count variance — variance and line accuracy over POSTED count sheets
+    /// (plan-inventoryInquirySuite Phase 3, D4/D17). Its own grant on purpose: reading count evidence
+    /// is not the same right as creating, counting, posting or rolling back a sheet.
+    /// </summary>
+    public const string InventoryStockCountVar = "INV_STOCK_COUNT_VAR";
+
+    /// <summary>
+    /// Est. Inventory Value by Item / Warehouse / Class (plan-inventoryInquirySuite Phase 3, D5/D11).
+    /// Deliberately NOT titled "Inventory Valuation": there is no costing method, no cost layer and no
+    /// revaluation, so the figure is an estimate and cannot tie to a general ledger.
+    /// </summary>
+    public const string InventoryStockValue = "INV_STOCK_VALUE";
+
+    /// <summary>
+    /// Inventory reconciliation — the diagnostic findings of
+    /// <c>IIvInventoryReconciliationService</c> (plan-inventoryInquirySuite Phase 3, D6/D18). ACCESS
+    /// only, no export: findings are diagnostics, and exporting them invites treating them as an audit
+    /// report.
+    /// </summary>
+    public const string InventoryReconciliation = "INV_RECONCILIATION";
+
+    /// <summary>
+    /// Inventory period close (month end) — the action screen that closes / reopens a period
+    /// (plan-inventoryPeriodClose). CLOSE + REOPEN are built-in permissions.
+    /// </summary>
+    public const string InventoryPeriodClose = "INV_PERIOD_CLOSE";
+
+    /// <summary>
+    /// Stored closing-balance inquiry — the read-only page over <c>IvPeriodCloseBal</c>
+    /// (plan-inventoryPeriodClose Phase 4). ACCESS + EXPORT + VIEW_PRICE.
+    /// </summary>
+    public const string InventoryPeriodCloseInq = "INV_PERIOD_CLOSE_INQ";
+
     public const string InventoryWarehouse = "INV_WAREHOUSE";
     public const string InventoryLocation = "INV_LOCATION";
     public const string InventoryStatus = "INV_STATUS";
@@ -62,6 +136,18 @@ public static class MenuCodes
     public const string SalesAnalysisSummary = "SA_SALES_SUMMARY";
     public const string SalesAnalysisAttainment = "SA_SALES_ATTAINMENT";
     public const string SalesAnalysisQtConversion = "SA_QT_CONVERSION";
+
+    // Sales Inquiry (plan-salesReportsAndInquiries.prompt.md Phase 1) — read-only operational grids.
+    // The parent carries no route. ACCESS only; the CSV downloads are gated by the same ACCESS check
+    // inside the service, so no EXPORT permission is seeded (matches the analysis screens).
+    public const string SalesInquiry = "SA_INQUIRY";
+    public const string SalesCustomerTransaction = "SA_CUST_TRX";
+    public const string SalesQtStatus = "SA_QT_STATUS";
+    public const string SalesSoOutstanding = "SA_SO_OUTSTANDING";
+    public const string SalesDoStatus = "SA_DO_STATUS";
+    public const string SalesInvVsDoc = "SA_INV_VS_DOC";
+    public const string SalesCdnInquiry = "SA_CDN_INQUIRY";
+    public const string SalesEInvoiceInquiry = "SA_EINV_INQUIRY";
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
     public const string SalesOrder = "SA_SO";

@@ -1,0 +1,129 @@
+@page "/sales/inquiry/quotation-status"
+@inherits SaInquiryPageBase
+
+<PageTitle>Quotation Status / Expiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesQtStatus">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Inquiry</p>
+                <h1 class="iv-title">Quotation Status / Expiry</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Current revisions only</span>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@CustomerOptions"
+                                    Value="@CustCode"
+                                    ValueChanged="@(async (string? v) => await OnCustomerChangedAsync(v))"
+                                    NullText="All customers" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SaQtStatusRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      KeyName="@nameof(SaQtStatusRow.QtNo)"
+                                      GridKey="sa-qt-status"
+                                      Title="Quotation status"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            Expired means the system date is past the validity limit. Accepted quotations never
+            auto-expire.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Filter quotations"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@SalesmanOptions"
+                                            @bind-Value="@DraftSalesmanCode"
+                                            NullText="All salesmen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    An empty field means <strong>all</strong> values, never "none". The customer is chosen
+                    on the toolbar and applies as soon as it is picked.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

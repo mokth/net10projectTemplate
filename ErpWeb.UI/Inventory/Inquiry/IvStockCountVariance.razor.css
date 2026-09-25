@@ -1,0 +1,10 @@
+/* The variance disclosure banner is a first-class part of the page, not decoration. */
+.iv-card-status-list {
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.iv-chip--warn {
+    background: var(--iv-warn-bg, #fdf0d5);
+    color: var(--iv-warn-ink, #8a5a00);
+}

@@ -57,6 +57,9 @@ public class UserLogin
 
     public bool changepass { get; set; }
 
+    [Required]
+    public bool CanViewPrice { get; set; }
+
     [MaxLength(100)]
     public string? ImagePath { get; set; }
 }

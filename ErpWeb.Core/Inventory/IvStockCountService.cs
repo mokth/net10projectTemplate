@@ -24,8 +24,14 @@ namespace ErpWeb.Core.Inventory;
 /// Semantic departure from the legacy cycle count (deliberate): the adjustment delta is computed at
 /// POST against live stock, never frozen at Generate. <c>SystemQty</c> is evidence and is displayed in
 /// the preview; a line that moved in the meantime is flagged stale and the post still proceeds.
+///
+/// <para>
+/// The variance report (plan-inventoryInquirySuite Phase 3) is a read over this same evidence, so it
+/// lives in <c>IvStockCountService.Variance.cs</c> as the other half of this class rather than in a
+/// parallel service.
+/// </para>
 /// </summary>
-public sealed class IvStockCountService : IIvStockCountService
+public sealed partial class IvStockCountService : IIvStockCountService
 {
     private const string CountNoPrefix = "CC";
 
@@ -269,6 +275,11 @@ public sealed class IvStockCountService : IIvStockCountService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, request.CountDate.Date, cancellationToken) is string periodGuard)
+        {
+            return IvStockCountOperationResult.Fail(periodGuard);
+        }
+
         var sequence = await _runningNumbers.GetNextAsync(
             db, context.CompanyCode!, RunningNumberKeys.InventoryStockCount, cancellationToken);
 
@@ -343,6 +354,11 @@ public sealed class IvStockCountService : IIvStockCountService
         if (!TryApplyRowVersion(db, header, request.RowVersion, out var tokenError))
         {
             return IvStockCountOperationResult.Fail(tokenError!);
+        }
+
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, request.CountDate.Date, cancellationToken) is string periodGuard)
+        {
+            return IvStockCountOperationResult.Fail(periodGuard);
         }
 
         header.CountDate = request.CountDate.Date;

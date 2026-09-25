@@ -8,8 +8,13 @@ namespace ErpWeb.UI.Components.Pages;
 [Authorize]
 public abstract class PageBase : ComponentBase
 {
+    /// <summary>
+    /// The one navigation seam (see <see cref="AppNavigation"/>): it keeps root-absolute app URLs
+    /// inside the deployment's app base path, so a page works at the site root and below it (an IIS
+    /// sub-application at <c>/erpweb</c>) without changing a single call site.
+    /// </summary>
     [Inject]
-    protected NavigationManager Navigation { get; set; } = default!;
+    protected AppNavigation Navigation { get; set; } = default!;
 
     [Inject]
     protected ICurrentUserService CurrentUser { get; set; } = default!;

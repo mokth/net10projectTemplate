@@ -1,0 +1,210 @@
+@page "/inventory/balance-by-lot"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Security
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Balance by Lot</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryBalanceLot">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-scale-balanced"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Balance by Lot</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Total qty (all UOM): @TotalQty.ToString("N4")</span>
+                    @if (CanViewPrice)
+                    {
+                        <span class="iv-chip">Est. value: @(TotalValue?.ToString("N4") ?? "0.0000")</span>
+                    }
+                    <span class="iv-chip">Zero qty: @ZeroQtyRowCount.ToString("N0")</span>
+                    <span class="iv-chip">Expired: @ExpiredRowCount.ToString("N0")</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Piles</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search item, description, warehouse, bin, lot…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvBalanceLotRow"
+                                      Columns="@Columns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvBalanceLotRow.Id)"
+                                      GridKey="inv-balance-by-lot"
+                                      Title="Balances"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter balances"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <Template>
+                            <IvStockMasterPicker @bind-ICode="@DraftICode" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="All warehouses" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Bin" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLocCode"
+                                       NullText="Any bin"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Lot no." ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLotNo"
+                                       NullText="Any lot"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxListBox Data="@Statuses"
+                                       TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
+                                       ValueFieldName="@nameof(IvCodeLookupRow.Code)"
+                                       SelectionMode="ListBoxSelectionMode.Multiple"
+                                       @bind-Values="@DraftStatuses"
+                                       CssClass="iv-balance-status-list" />
+                            <small class="text-muted d-block">No selection means all statuses.</small>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Min qty" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftMinQty" MinValue="0m" ShowSpinButtons="false" NullText="No minimum" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Max qty" ColSpanMd="6">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftMaxQty" MinValue="0m" ShowSpinButtons="false" NullText="No maximum" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Expiry before" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftExpiryBefore"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Last movement from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTransDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Last movement to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftTransDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Include zero qty" ColSpanMd="4" BeginRow="true">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeZeroQty" AllowIndeterminateState="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Include inactive items" ColSpanMd="4">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeInactive" AllowIndeterminateState="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Include non-stock-control" ColSpanMd="4">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeNonStockControl" AllowIndeterminateState="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

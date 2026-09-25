@@ -140,6 +140,7 @@ public class AuthService : IAuthService
             new(AppClaimTypes.LocationCode, user.LocationCode),
             new(AppClaimTypes.Level, user.userlevel ?? string.Empty),
             new(AppClaimTypes.ChangePassword, user.changepass ? "true" : "false"),
+            new(AppClaimTypes.CanViewPrice, user.CanViewPrice ? "true" : "false"),
             new(ClaimTypes.Name, user.name),
             new(ClaimTypes.NameIdentifier, user.uid.ToString())
         };

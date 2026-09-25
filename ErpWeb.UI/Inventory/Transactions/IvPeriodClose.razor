@@ -1,0 +1,163 @@
+@page "/inventory/period-close"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+
+<PageTitle>Period Close</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryPeriodClose">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-lock"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Period Close</h1>
+                <p class="iv-subtitle">
+                    Freeze a stock month. Closing refuses any stock-driving document dated inside the
+                    period, and records each slice's opening, movement and closing quantities as a
+                    snapshot. Reopen (with a reason) withdraws the snapshot so the period can be fixed
+                    and re-closed.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">Next closable period: @NextPeriodCaption</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Closed periods</span>
+                <strong>@Headers.Count.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <h2 class="iv-card__title">Close a period</h2>
+            <div class="iv-form-row">
+                <div class="iv-form-row__field">
+                    <label class="iv-field-label">Period start</label>
+                    <DxDateEdit @bind-Date="@PeriodFrom" DisplayFormat="dd/MM/yyyy" />
+                </div>
+                <div class="iv-form-row__field">
+                    <label class="iv-field-label">Period end</label>
+                    <DxDateEdit @bind-Date="@PeriodTo" DisplayFormat="dd/MM/yyyy" />
+                </div>
+                <div class="iv-form-row__field iv-form-row__field--grow">
+                    <label class="iv-field-label">Remark</label>
+                    <DxTextBox @bind-Text="@Remark" />
+                </div>
+            </div>
+            <div class="iv-toolbar-row">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="CLOSE PERIOD"
+                          IconCssClass="fa-solid fa-lock"
+                          Enabled="@(CanClose && !IsSubmitting)"
+                          Click="@OpenCloseConfirm" />
+                <span class="iv-field-hint">
+                    The period end date must not be in the future — a partial month cannot be closed.
+                </span>
+            </div>
+        </section>
+
+        <section class="iv-card">
+            <h2 class="iv-card__title">Closed periods</h2>
+            @if (IsLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <DxGrid Data="@Headers" PageSize="10" ShowPager="true" AllowSelectRowByClick="false">
+                        <Columns>
+                            <DxGridDataColumn Caption="Period" Width="180px">
+                                <CellDisplayTemplate>
+                                    @{ var row = (IvPeriodCloseHeaderRow)context.DataItem; }
+                                    <span>@row.PeriodFrom.ToString("dd/MM/yyyy") – @row.PeriodTo.ToString("dd/MM/yyyy")</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.Status)" Caption="Status" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.LineCount)" Caption="Lines" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.TotalClosingValue)" Caption="Closing value" Width="120px" DisplayFormat="N2" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.OpeningAdjustSlices)" Caption="Opening adjust" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.ReopenCount)" Caption="Reopens" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.ClosedBy)" Caption="Closed by" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(IvPeriodCloseHeaderRow.ClosedOn)" Caption="Closed on" Width="150px" DisplayFormat="dd/MM/yyyy HH:mm" />
+                            <DxGridCommandColumn Width="90px">
+                                <HeaderTemplate>
+                                    <span class="iv-grid-col-hint">Reopen</span>
+                                </HeaderTemplate>
+                                <CellDisplayTemplate>
+                                    @{ var row = (IvPeriodCloseHeaderRow)context.DataItem; }
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="REOPEN"
+                                              IconCssClass="fa-solid fa-lock-open"
+                                              Enabled="@(CanReopen && row.Status == IvPeriodCloseStatuses.Closed)"
+                                              Click="@(() => OpenReopen(row))" />
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        </Columns>
+                    </DxGrid>
+                </div>
+            }
+        </section>
+
+        <DxPopup @bind-Visible="@CloseConfirmVisible"
+                 HeaderText="Confirm close"
+                 Width="480px"
+                 CloseOnOutsideClick="false">
+            <BodyContentTemplate>
+                <p>Close the period <strong>@(PeriodFrom?.ToString("dd/MM/yyyy")) – @(PeriodTo?.ToString("dd/MM/yyyy"))</strong>?</p>
+                <p class="iv-field-hint">
+                    Stock-driving documents dated inside this period will be refused after the close.
+                </p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Close period" Click="@ConfirmCloseAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelClose" />
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup @bind-Visible="@ReopenPopupVisible"
+                 HeaderText="Reopen period"
+                 Width="480px"
+                 CloseOnOutsideClick="false">
+            <BodyContentTemplate>
+                <p>
+                    Reopen <strong>@(ReopenTarget?.PeriodFrom.ToString("dd/MM/yyyy")) – @(ReopenTarget?.PeriodTo.ToString("dd/MM/yyyy"))</strong>?
+                </p>
+                <label class="iv-field-label">Reason (required)</label>
+                <DxTextBox @bind-Text="@ReopenReason" />
+                <p class="iv-field-hint">
+                    Reopening withdraws this period's stored snapshot (only its line count and closing
+                    value are retained). A later closed period must be reopened first.
+                </p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="Reopen"
+                          Enabled="@(!string.IsNullOrWhiteSpace(ReopenReason))"
+                          Click="@ConfirmReopenAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelReopen" />
+            </FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

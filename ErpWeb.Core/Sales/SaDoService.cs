@@ -455,6 +455,12 @@ public sealed class SaDoService : ISaDoService
             }
 
             var doDate = request.DoDate == default ? _dates.Today.Date : request.DoDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, doDate, cancellationToken) is string periodGuard)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoOperationResult.Fail(periodGuard);
+            }
+
             DocumentNumberResult issued;
             try
             {
@@ -719,6 +725,12 @@ public sealed class SaDoService : ISaDoService
             }
 
             var doDate = request.DoDate == default ? _dates.Today.Date : request.DoDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, doDate, cancellationToken) is string periodGuard)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoOperationResult.Fail(periodGuard);
+            }
+
             deliveryOrder.DoDate = doDate;
             deliveryOrder.CustCode = prepared.Customer!.CustCode;
             deliveryOrder.Currency = prepared.Currency;

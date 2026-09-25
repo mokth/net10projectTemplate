@@ -1,4 +1,5 @@
 using ErpWeb.Core.Menus;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Components.Security;
@@ -9,7 +10,7 @@ public partial class MenuAuthorize
     private IAccessRightService AccessRights { get; set; } = default!;
 
     [Inject]
-    private NavigationManager Navigation { get; set; } = default!;
+    private AppNavigation Navigation { get; set; } = default!;
 
     [Parameter, EditorRequired]
     public string MenuCode { get; set; } = string.Empty;

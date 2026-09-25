@@ -1,0 +1,250 @@
+@page "/inventory/lots"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Lot / Batch Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryLotInquiry">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-barcode"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Lot / Batch Inquiry</h1>
+                <p class="iv-subtitle">
+                    <strong>Lot / Batch Inquiry — Inventory Lot Traceability.</strong>
+                    The passport of an inventory lot: where it came from, its dates and QC status, the piles
+                    currently holding it, and its posted movements.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Items: @SummaryItemCount.ToString("N0")</span>
+                    <span class="iv-chip">On hand: @SummaryTotalOnHandQty.ToString("N4")</span>
+                    <span class="iv-chip">Expired: @SummaryExpiredCount.ToString("N0")</span>
+                    <span class="iv-chip">No expiry: @SummaryNoExpiryCount.ToString("N0")</span>
+                    <span class="iv-chip">As of @AsOfDate.ToString("dd/MM/yyyy")</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Lots</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <p class="iv-subtitle">
+            <em>Lot</em> = an inventory traceability lot (<code>IvLot</code>, identified by item + lot no.).
+            <em>Batch</em> = an inventory document/batch number (<code>IvTrxBatch</code>), reachable from the
+            Transaction Inquiry page. Non-lot-controlled items have no lot and never appear here.
+        </p>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvStockMasterPicker ICode="@AppliedICode"
+                                         ICodeChanged="@OnItemCodeChangedAsync"
+                                         Selected="@OnItemSelectedAsync" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvLotInquiryRow"
+                                      Columns="@LotColumns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvLotInquiryRow.LotId)"
+                                      GridKey="inv-lot-inquiry"
+                                      Title="Lots"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      GridSelectionMode="GridSelectionMode.Single"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionEventHandle="@OnLotSelectedAsync"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+
+        @if (SelectedLot is not null)
+        {
+            <section class="iv-card">
+                <div class="iv-toolbar-row">
+                    <div class="iv-toolbar-row__search">
+                        <strong>@SelectedLot.ICode</strong>
+                        <span class="iv-subtitle"> — lot @SelectedLot.LotNo</span>
+                    </div>
+                </div>
+                <div class="iv-chips">
+                    <span class="iv-chip">Source: @(SelectedLot.SourceType ?? "—") @(SelectedLot.SourceDocNo ?? string.Empty)</span>
+                    <span class="iv-chip">Supplier: @(SelectedLot.SupplierCode ?? "—")</span>
+                    <span class="iv-chip">Received: @(SelectedLot.ReceiptDate?.ToString("dd/MM/yyyy") ?? "—")</span>
+                    <span class="iv-chip">Mfg: @(SelectedLot.MfgDate?.ToString("dd/MM/yyyy") ?? "—")</span>
+                    <span class="iv-chip">Expiry: @(SelectedLot.ExpiryDate?.ToString("dd/MM/yyyy") ?? "—")</span>
+                    <span class="iv-chip">Age: @(SelectedLot.AgeDays?.ToString("N0") ?? "—") d</span>
+                    <span class="iv-chip">To expiry: @(SelectedLot.DaysToExpiry?.ToString("N0") ?? "—") d</span>
+                    <span class="iv-chip">QC: @(SelectedLot.QcStatus ?? "—")</span>
+                    <span class="iv-chip">On hand: @DetailPileQty.ToString("N4")</span>
+                    <span class="iv-chip">Movement net: @DetailMovementNetQty.ToString("N4")</span>
+                </div>
+
+                @if (DetailLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else
+                {
+                    <CommonDataGridEx T="IvLotPileRow"
+                                      Columns="@PileColumns()"
+                                      GridKey="inv-lot-piles"
+                                      Title="On-hand piles"
+                                      CustomDataSource="@PileDataSource"
+                                      ShowToolbarText="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false" />
+
+                    <CommonDataGridEx T="IvTrxHistoryRow"
+                                      Columns="@MovementColumns()"
+                                      GridKey="inv-lot-movements"
+                                      Title="Posted movements"
+                                      CustomDataSource="@MovementDataSource"
+                                      ShowToolbarText="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false" />
+                }
+            </section>
+        }
+        else if (!IsBootstrapping)
+        {
+            <p class="iv-subtitle">Select a lot to see its piles and its movements.</p>
+        }
+    </div>
+
+    <DxPopup HeaderText="Lot filters"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftICode"
+                                       NullText="All items"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Lot no. contains" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftLotNo"
+                                       NullText="Any lot"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="QC status" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftQcStatus"
+                                       NullText="Any QC status"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Expiry from" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftExpiryFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Expiry to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftExpiryTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Search" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftSearchText"
+                                       NullText="Item, description, source document or supplier"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeInactive"
+                                        Text="Include deactivated lots" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    A lot with no stock left still appears — its history is the audit trail. The expiry
+                    window is inclusive of both dates.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

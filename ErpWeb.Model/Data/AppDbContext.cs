@@ -46,6 +46,8 @@ public class AppDbContext : DbContext
     public DbSet<IvTrxHistory> IvTrxHistories => Set<IvTrxHistory>();
     public DbSet<IvStockCountHdr> IvStockCountHdrs => Set<IvStockCountHdr>();
     public DbSet<IvStockCountLine> IvStockCountLines => Set<IvStockCountLine>();
+    public DbSet<IvPeriodCloseHdr> IvPeriodCloseHdrs => Set<IvPeriodCloseHdr>();
+    public DbSet<IvPeriodCloseBal> IvPeriodCloseBals => Set<IvPeriodCloseBal>();
 
     public DbSet<SaCust> SaCusts => Set<SaCust>();
     public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();

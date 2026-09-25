@@ -28,6 +28,12 @@ public sealed class IvStockCountOperationResult
     public IvStockCountListPage? ListPage { get; init; }
     public IvStockCountPostPreview? Preview { get; init; }
 
+    /// <summary>The variance report over POSTED sheets (plan-inventoryInquirySuite Phase 3, item 14).</summary>
+    public IvStockCountVariancePage? VariancePage { get; init; }
+
+    /// <inheritdoc cref="VariancePage"/>
+    public IvStockCountVarianceSummary? VarianceSummary { get; init; }
+
     public static IvStockCountOperationResult Ok() => new() { Succeeded = true };
 
     public static IvStockCountOperationResult OkSaved(int id, string countNo) =>
@@ -57,6 +63,12 @@ public sealed class IvStockCountOperationResult
             PostedBatchNo = batchNo,
             PostedStaleLines = staleLines
         };
+
+    public static IvStockCountOperationResult OkVariance(IvStockCountVariancePage page) =>
+        new() { Succeeded = true, VariancePage = page };
+
+    public static IvStockCountOperationResult OkVarianceSummary(IvStockCountVarianceSummary summary) =>
+        new() { Succeeded = true, VarianceSummary = summary };
 
     public static IvStockCountOperationResult Fail(string message) =>
         new() { Succeeded = false, ErrorMessage = message };
@@ -348,5 +360,36 @@ public interface IIvStockCountService
     /// </summary>
     Task<IvStockCountOperationResult> RecoverAsync(
         int id,
+        CancellationToken cancellationToken = default);
+
+    // ── Variance report (plan-inventoryInquirySuite Phase 3, item 14) ─────────────────────────────
+    //
+    // These live on THIS service rather than a parallel one, because the variance report is a read of
+    // the very same sheet/line evidence this service owns.
+    //
+    // Each takes the MENU CODE the caller is serving, because the variance report is its OWN screen
+    // with its own grant: a user may be allowed to read variance evidence without being allowed to
+    // create, count, post or roll back a sheet. That is the whole point of a separate menu, and it is
+    // why the menu is a parameter instead of a constant here.
+
+    /// <summary>Paged variance rows over POSTED sheets. ACCESS-gated on the variance menu.</summary>
+    Task<IvStockCountOperationResult> SearchVarianceAsync(
+        string menuCode,
+        IvStockCountVarianceQuery? query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Aggregate over the SAME predicate as <see cref="SearchVarianceAsync"/> (D17).</summary>
+    Task<IvStockCountOperationResult> GetVarianceSummaryAsync(
+        string menuCode,
+        IvStockCountVarianceQuery? query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Rows for the xlsx export. ACCESS-gated; the endpoint additionally checks EXPORT and the row cap.
+    /// Reuses the same composition, so <c>TotalCount</c> equals the grid's.
+    /// </summary>
+    Task<IvStockCountOperationResult> ExportVarianceRowsAsync(
+        string menuCode,
+        IvStockCountVarianceQuery? query,
         CancellationToken cancellationToken = default);
 }

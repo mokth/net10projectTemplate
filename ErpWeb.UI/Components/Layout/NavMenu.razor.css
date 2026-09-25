@@ -48,6 +48,11 @@
     color: var(--nav-text, #374151);
     text-transform: none;
     letter-spacing: 0;
+    /* One line per caption; ellipsize rather than wrap into 2-3 rows. */
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ── Icons ──────────────────────────────────────────────────── */

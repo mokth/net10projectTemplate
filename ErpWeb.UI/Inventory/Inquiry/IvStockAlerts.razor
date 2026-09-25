@@ -1,0 +1,213 @@
+@page "/inventory/stock-alerts"
+@inherits PageBase
+@using ErpWeb.Core.Inventory
+@using ErpWeb.Core.Menus
+@using ErpWeb.Model.Repositories.Inventory
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Stock Alerts</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryStockAlerts">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Stock Alerts</h1>
+                <p class="iv-subtitle">
+                    One rule at a time, evaluated against the company-local date
+                    <strong>@AsOfDate.ToString("dd/MM/yyyy")</strong>. Every row carries the threshold it
+                    breached and the basis that threshold was measured over, so an alert can always be
+                    explained.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@RuleCaption</span>
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Items: @SummaryItemCount.ToString("N0")</span>
+                    @if (RuleNeedsDays)
+                    {
+                        <span class="iv-chip">Slow: @AppliedSlowDays d</span>
+                        <span class="iv-chip">Dead: @AppliedDeadDays d</span>
+                    }
+                    @if (RuleIsExpiry)
+                    {
+                        <span class="iv-chip">Within: @AppliedExpiryDays d</span>
+                    }
+                    <span class="iv-chip">Basis: @ThresholdBasisCaption</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>On hand</span>
+                <strong>@SummaryTotalOnHand.ToString("N4")</strong>
+            </div>
+        </header>
+
+        <p class="iv-subtitle">
+            <strong>@RuleExplanation</strong>
+        </p>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label">Rule</label>
+                    <DxComboBox Data="@RuleOptions"
+                                TextFieldName="@nameof(RuleOption.Name)"
+                                ValueFieldName="@nameof(RuleOption.Token)"
+                                Value="@AppliedRule"
+                                ValueChanged="@((string? rule) => OnRuleChanged(rule))"
+                                CssClass="iv-card-rule-combo" />
+                </div>
+                <div class="iv-toolbar-row__search">
+                    <IvStockMasterPicker ICode="@AppliedICode"
+                                         ICodeChanged="@OnItemCodeChangedAsync"
+                                         Selected="@OnItemSelectedAsync" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="IvStockAlertRow"
+                                      Columns="@Columns()"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(IvStockAlertRow.ICode)"
+                                      GridKey="inv-stock-alerts"
+                                      Title="@GridTitle"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Alert rule and scope"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Rule" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@RuleOptions"
+                                        TextFieldName="@nameof(RuleOption.Name)"
+                                        ValueFieldName="@nameof(RuleOption.Token)"
+                                        @bind-Value="@DraftRule" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftICode"
+                                       NullText="All items"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Warehouses"
+                                            @bind-Value="@DraftWhCode"
+                                            NullText="All warehouses" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@Classes"
+                                            @bind-Value="@DraftIClassCode"
+                                            NullText="All classes" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Slow days" ColSpanMd="4" BeginRow="true"
+                                      Visible="@RuleNeedsDays">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftSlowDays" MinValue="1" MaxValue="3650" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Dead days" ColSpanMd="4" Visible="@RuleNeedsDays">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftDeadDays" MinValue="1" MaxValue="3650" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem Caption="Expiry horizon (days)" ColSpanMd="4"
+                                      Visible="@RuleIsExpiry">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@DraftExpiryDays" MinValue="1" MaxValue="3650" />
+                        </Template>
+                    </DxFormLayoutItem>
+
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeInactive"
+                                        Text="Include deactivated items" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem ColSpanMd="12">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftIncludeNonStockControl"
+                                        Text="Include items that are not stock controlled" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    <strong>Dead days must be greater than slow days</strong> — otherwise both ageing rules
+                    describe the same population. High/low alerts compare the whole branch's on-hand against
+                    the item's own Min/Max, because those are item-level columns (D3).
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

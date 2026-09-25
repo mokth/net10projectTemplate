@@ -14,6 +14,7 @@ public interface ICurrentUserService
     string? LocationCode { get; }
     string? UserLevel { get; }
     bool MustChangePassword { get; }
+    bool CanViewPrice { get; }
     string? SubjectUid { get; }
     bool IsInRole(string role);
 }
@@ -50,6 +51,9 @@ public class CurrentUserService : ICurrentUserService
 
     public bool MustChangePassword =>
         string.Equals(Find(AppClaimTypes.ChangePassword), "true", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanViewPrice =>
+        string.Equals(Find(AppClaimTypes.CanViewPrice), "true", StringComparison.OrdinalIgnoreCase);
 
     public bool IsInRole(string role) =>
         User?.IsInRole(role) == true;

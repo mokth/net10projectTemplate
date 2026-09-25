@@ -55,6 +55,10 @@ try
     builder.Services.AddScoped<CookiesService>();
     builder.Services.AddScoped<ThemeService>();
     builder.Services.AddScoped<PageNavigationGuard>();
+
+    // The one navigation seam for pages (see ErpWeb.UI/Services/AppNavigation.cs).
+    builder.Services.AddScoped<AppNavigation>();
+
     builder.Services.AddScoped<IGridLayoutStorage, LocalStorageGridLayoutStorage>();
 
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -79,6 +83,21 @@ try
     });
 
     var app = builder.Build();
+
+    // Deployment base path. When the app is hosted below the site root - an IIS sub-application such as
+    // https://host/erpweb - the request path arrives carrying that prefix (ANCM passes it through), so
+    // it must be stripped here or routing, MapStaticAssets, the Blazor SignalR hub and every cookie
+    // redirect miss. This must run FIRST: everything downstream (including routing) reads the path.
+    //
+    // "AppBasePath" is blank by default, which keeps the shipped at-the-site-root behaviour unchanged.
+    // It is also harmless if it is set and the app is served at the root: UsePathBase only strips a
+    // prefix that is actually present, otherwise it is a no-op.
+    var appBasePath = builder.Configuration.GetValue<string>("AppBasePath");
+    if (!string.IsNullOrWhiteSpace(appBasePath))
+    {
+        app.UsePathBase("/" + appBasePath.Trim('/'));
+        Log.Information("Deployment base path applied: {PathBase}", appBasePath);
+    }
 
     if (!app.Environment.IsDevelopment())
     {
@@ -107,11 +126,19 @@ try
     app.MapAccountEndpoints();
     app.MapMenuAdminEndpoints();
     app.MapIvStockMasterExportEndpoints();
+    app.MapIvBalanceLotExportEndpoints();
+    app.MapIvTrxInquiryExportEndpoints();
+    app.MapIvStockCardExportEndpoints();
+    app.MapIvStockAlertsExportEndpoints();
+    app.MapIvStockSummaryExportEndpoints();
+    app.MapIvStockCountVarianceExportEndpoints();
+    app.MapIvStockValueExportEndpoints();
     app.MapSaCustExportEndpoints();
     app.MapPoSupplierExportEndpoints();
     app.MapPoMasterRefExportEndpoints();
     app.MapSaMasterRefExportEndpoints();
     app.MapSaAnalysisExportEndpoints();
+    app.MapSaInquiryExportEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();
     app.MapPoPrAttachmentEndpoints();

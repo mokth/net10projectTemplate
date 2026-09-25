@@ -85,6 +85,42 @@ public interface IIvStockCommonRepository
         int take,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Paged Balance-by-Lot inquiry over <c>IvBalLoc</c>. Unlike the pickers this applies NO hard
+    /// quantity / active / stock-control filter: the query object decides via its inclusion toggles,
+    /// and the item master is LEFT-joined so an orphan pile is still returned.
+    /// </summary>
+    Task<(IReadOnlyList<IvBalanceLotRow> Rows, int TotalCount)> SearchBalanceLotPagedAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Match count for the Balance-by-Lot inquiry — same predicate as the grid.</summary>
+    Task<int> CountBalanceLotAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Aggregates over the SAME predicate as the grid. <see cref="IvBalanceLotSummary.TotalValue"/> is
+    /// the raw SQL <c>SUM(StdQty * price)</c>; the caller applies <c>IvQty.Round</c> to the scalar.
+    /// </summary>
+    Task<IvBalanceLotSummary> SummariseBalanceLotAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        DateTime businessDate,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Export rows (no Skip, capped by <c>query.Take</c>) using the same composition.</summary>
+    Task<IReadOnlyList<IvBalanceLotRow>> ListBalanceLotForExportAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default);
+
     Task<IvWarehouse?> GetActiveWarehouseAsync(
         AppDbContext db,
         string companyCode,
@@ -673,6 +709,318 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
             .ToListAsync(cancellationToken);
 
         return (rows, total);
+    }
+
+    public async Task<(IReadOnlyList<IvBalanceLotRow> Rows, int TotalCount)> SearchBalanceLotPagedAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var skip = Math.Max(0, query.Skip);
+        var take = Math.Clamp(query.Take <= 0 ? 50 : query.Take, 1, 100);
+
+        var slice = BuildBalanceLotQuery(db, company, branch, query);
+        var total = await slice.CountAsync(cancellationToken);
+        var rows = await Project(ApplySort(slice, query.SortField, query.SortDescending)
+                .Skip(skip)
+                .Take(take))
+            .ToListAsync(cancellationToken);
+
+        return (rows, total);
+    }
+
+    public async Task<int> CountBalanceLotAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+
+        return await BuildBalanceLotQuery(db, company, branch, query).CountAsync(cancellationToken);
+    }
+
+    public async Task<IvBalanceLotSummary> SummariseBalanceLotAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        DateTime businessDate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var slice = BuildBalanceLotQuery(db, company, branch, query);
+        var today = businessDate.Date;
+
+        var totalRows = await slice.CountAsync(cancellationToken);
+        var totalQty = await slice.SumAsync(x => x.Bal.StdQty, cancellationToken);
+        var totalValue = await slice.SumAsync(
+            x => x.Bal.StdQty * (x.Bal.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null) ?? 0m),
+            cancellationToken);
+        var zeroQty = await slice.CountAsync(x => x.Bal.StdQty == 0m, cancellationToken);
+        var expired = await slice.CountAsync(
+            x => x.Lot != null && x.Lot.ExpiryDate != null && x.Lot.ExpiryDate < today,
+            cancellationToken);
+
+        return new IvBalanceLotSummary
+        {
+            TotalRows = totalRows,
+            TotalQty = totalQty,
+            TotalValue = totalValue,
+            ZeroQtyRowCount = zeroQty,
+            ExpiredRowCount = expired
+        };
+    }
+
+    public async Task<IReadOnlyList<IvBalanceLotRow>> ListBalanceLotForExportAsync(
+        string companyCode,
+        string branchCode,
+        IvBalanceLotQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var take = Math.Clamp(query.Take <= 0 ? 50 : query.Take, 1, 100_000);
+
+        var slice = BuildBalanceLotQuery(db, company, branch, query);
+        return await Project(ApplySort(slice, query.SortField, query.SortDescending).Take(take))
+            .ToListAsync(cancellationToken);
+    }
+
+    // ── Shared composition (D1): joins + predicate, reused by grid / count / summary / export ────
+
+    private static IQueryable<IvBalanceLotSlice> BuildBalanceLotQuery(
+        AppDbContext db,
+        string company,
+        string branch,
+        IvBalanceLotQuery query)
+    {
+        IQueryable<IvBalanceLotSlice> slice =
+            from bal in db.IvBalLocs.AsNoTracking()
+            join sm in db.IvStockMasters.AsNoTracking()
+                on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode }
+                into sms
+            from sm in sms.DefaultIfEmpty()
+            join lot in db.IvLots.AsNoTracking()
+                on bal.LotId equals lot.Id
+                into lots
+            from lot in lots.DefaultIfEmpty()
+            join status in db.IvStatuses.AsNoTracking()
+                on new { bal.CompanyCode, bal.IStatus } equals new { status.CompanyCode, status.IStatus }
+                into statuses
+            from status in statuses.DefaultIfEmpty()
+            join wh in db.IvWarehouses.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WhCode = bal.WhCode }
+                equals new { wh.CompanyCode, wh.BranchCode, WhCode = wh.WarehouseCode }
+                into whs
+            from wh in whs.DefaultIfEmpty()
+            join loc in db.IvLocations.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WhCode = bal.WhCode, bal.LocCode }
+                equals new { loc.CompanyCode, loc.BranchCode, WhCode = loc.WarehouseCode, loc.LocCode }
+                into locs
+            from loc in locs.DefaultIfEmpty()
+            where bal.CompanyCode == company && bal.BranchCode == branch
+            select new IvBalanceLotSlice
+            {
+                Bal = bal,
+                Sm = sm,
+                Lot = lot,
+                Status = status,
+                Wh = wh,
+                Loc = loc
+            };
+
+        // Inclusion toggles — true means "do not restrict", false means "apply the predicate".
+        if (!query.IncludeZeroQty)
+        {
+            slice = slice.Where(x => x.Bal.StdQty > 0m);
+        }
+
+        if (!query.IncludeInactive)
+        {
+            slice = slice.Where(x => x.Sm != null && x.Sm.IsActive);
+        }
+
+        if (!query.IncludeNonStockControl)
+        {
+            slice = slice.Where(x => x.Sm != null && x.Sm.StockControl);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ICode))
+        {
+            var code = query.ICode.Trim();
+            slice = slice.Where(x => x.Bal.ICode == code);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.WhCode))
+        {
+            var wh = query.WhCode.Trim();
+            slice = slice.Where(x => x.Bal.WhCode == wh);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.LocCode))
+        {
+            var loc = query.LocCode.Trim();
+            slice = slice.Where(x => x.Bal.LocCode == loc);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.LotNo))
+        {
+            var lot = query.LotNo.Trim();
+            slice = slice.Where(x => x.Bal.LotNo.Contains(lot));
+        }
+
+        var statusCodes = (query.IStatuses ?? [])
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct()
+            .ToList();
+        if (statusCodes.Count > 0)
+        {
+            slice = slice.Where(x => statusCodes.Contains(x.Bal.IStatus));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            var term = query.SearchText.Trim();
+            slice = slice.Where(x =>
+                x.Bal.ICode.Contains(term)
+                || (x.Sm != null && x.Sm.IDesc != null && x.Sm.IDesc.Contains(term))
+                || x.Bal.WhCode.Contains(term)
+                || x.Bal.LocCode.Contains(term)
+                || x.Bal.LotNo.Contains(term));
+        }
+
+        if (query.MinQty is decimal minQty)
+        {
+            slice = slice.Where(x => x.Bal.StdQty >= minQty);
+        }
+
+        if (query.MaxQty is decimal maxQty)
+        {
+            slice = slice.Where(x => x.Bal.StdQty <= maxQty);
+        }
+
+        if (query.ExpiryBefore is DateTime expiryBefore)
+        {
+            var bound = expiryBefore.Date;
+            slice = slice.Where(x => x.Lot != null && x.Lot.ExpiryDate != null && x.Lot.ExpiryDate < bound);
+        }
+
+        // Last-movement range, half-open: >= from.Date and < to.Date.AddDays(1). No .Date on the column.
+        if (query.TransDateFrom is DateTime from)
+        {
+            var fromBound = from.Date;
+            slice = slice.Where(x => x.Bal.TransDate != null && x.Bal.TransDate >= fromBound);
+        }
+
+        if (query.TransDateTo is DateTime to)
+        {
+            var toBound = to.Date.AddDays(1);
+            slice = slice.Where(x => x.Bal.TransDate != null && x.Bal.TransDate < toBound);
+        }
+
+        return slice;
+    }
+
+    private static IQueryable<IvBalanceLotRow> Project(IQueryable<IvBalanceLotSlice> slice) =>
+        slice.Select(x => new IvBalanceLotRow
+        {
+            Id = x.Bal.Id,
+            ICode = x.Bal.ICode,
+            IDesc = x.Sm != null ? x.Sm.IDesc : null,
+            WhCode = x.Bal.WhCode,
+            WhDesc = x.Wh != null ? x.Wh.WarehouseDesc : null,
+            LocCode = x.Bal.LocCode,
+            LocDesc = x.Loc != null ? x.Loc.LocDesc : null,
+            LotNo = x.Bal.LotNo,
+            IStatus = x.Bal.IStatus,
+            IStatusDesc = x.Status != null ? x.Status.StatusDesc : null,
+            StdQty = x.Bal.StdQty,
+            StdUom = x.Bal.StdUom ?? (x.Sm != null ? x.Sm.StdUom : null),
+            LotId = x.Bal.LotId,
+            ExpiryDate = x.Lot != null ? x.Lot.ExpiryDate : null,
+            TransDate = x.Bal.TransDate,
+            PoNo = x.Bal.PoNo,
+            RefNo = x.Bal.RefNo,
+            Remarks = x.Bal.Remarks,
+            UnitPrice = x.Bal.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null),
+            CreatedDate = x.Bal.CreatedDate,
+            CreatedBy = x.Bal.CreatedBy,
+            ModifiedDate = x.Bal.ModifiedDate,
+            ModifiedBy = null
+        });
+
+    private static IOrderedQueryable<IvBalanceLotSlice> ApplySort(
+        IQueryable<IvBalanceLotSlice> slice,
+        string? sortField,
+        bool sortDescending)
+    {
+        var field = (sortField ?? string.Empty).Trim();
+        if (!IvBalanceLotSortFields.Allowed.Contains(field))
+        {
+            return slice
+                .OrderBy(x => x.Bal.ICode)
+                .ThenBy(x => x.Bal.WhCode)
+                .ThenBy(x => x.Bal.LocCode)
+                .ThenBy(x => x.Bal.LotNo)
+                .ThenBy(x => x.Bal.Id);
+        }
+
+        return OrderByField(slice, field, sortDescending).ThenBy(x => x.Bal.Id);
+    }
+
+    private static IOrderedQueryable<IvBalanceLotSlice> OrderByField(
+        IQueryable<IvBalanceLotSlice> slice,
+        string field,
+        bool descending)
+    {
+        return field switch
+        {
+            nameof(IvBalanceLotRow.ICode) => descending
+                ? slice.OrderByDescending(x => x.Bal.ICode)
+                : slice.OrderBy(x => x.Bal.ICode),
+            nameof(IvBalanceLotRow.IDesc) => descending
+                ? slice.OrderByDescending(x => x.Sm != null ? x.Sm.IDesc : null)
+                : slice.OrderBy(x => x.Sm != null ? x.Sm.IDesc : null),
+            nameof(IvBalanceLotRow.WhCode) => descending
+                ? slice.OrderByDescending(x => x.Bal.WhCode)
+                : slice.OrderBy(x => x.Bal.WhCode),
+            nameof(IvBalanceLotRow.LocCode) => descending
+                ? slice.OrderByDescending(x => x.Bal.LocCode)
+                : slice.OrderBy(x => x.Bal.LocCode),
+            nameof(IvBalanceLotRow.LotNo) => descending
+                ? slice.OrderByDescending(x => x.Bal.LotNo)
+                : slice.OrderBy(x => x.Bal.LotNo),
+            nameof(IvBalanceLotRow.IStatus) => descending
+                ? slice.OrderByDescending(x => x.Bal.IStatus)
+                : slice.OrderBy(x => x.Bal.IStatus),
+            nameof(IvBalanceLotRow.StdQty) => descending
+                ? slice.OrderByDescending(x => x.Bal.StdQty)
+                : slice.OrderBy(x => x.Bal.StdQty),
+            nameof(IvBalanceLotRow.ExpiryDate) => descending
+                ? slice.OrderByDescending(x => x.Lot != null ? x.Lot.ExpiryDate : null)
+                : slice.OrderBy(x => x.Lot != null ? x.Lot.ExpiryDate : null),
+            nameof(IvBalanceLotRow.TransDate) => descending
+                ? slice.OrderByDescending(x => x.Bal.TransDate)
+                : slice.OrderBy(x => x.Bal.TransDate),
+            nameof(IvBalanceLotRow.StdUom) => descending
+                ? slice.OrderByDescending(x => x.Bal.StdUom ?? (x.Sm != null ? x.Sm.StdUom : null))
+                : slice.OrderBy(x => x.Bal.StdUom ?? (x.Sm != null ? x.Sm.StdUom : null)),
+            _ => slice.OrderBy(x => x.Bal.ICode)
+        };
     }
 
     public Task<IvWarehouse?> GetActiveWarehouseAsync(

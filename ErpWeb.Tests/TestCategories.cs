@@ -126,6 +126,33 @@ public static class TestCategories
     /// <summary>Inventory — physical stock count (cycle count).</summary>
     public const string InventoryStockCount = "InventoryStockCount";
 
+    /// <summary>Inventory — Balance by Lot pile-level on-hand inquiry.</summary>
+    public const string InventoryBalanceLot = "InventoryBalanceLot";
+
+    /// <summary>Inventory — posted-movement inquiry over IvTrxHistory (transaction / adjustment).</summary>
+    public const string InventoryTrxInquiry = "InventoryTrxInquiry";
+
+    /// <summary>Inventory — Stock Card ledger with opening and running balance.</summary>
+    public const string InventoryStockCard = "InventoryStockCard";
+
+    /// <summary>Inventory — stock control alerts (low/over/slow/dead/never-moved/expiring/expired).</summary>
+    public const string InventoryStockAlerts = "InventoryStockAlerts";
+
+    /// <summary>Inventory — Lot / Batch inquiry (lot passport, piles, movements).</summary>
+    public const string InventoryLotInquiry = "InventoryLotInquiry";
+
+    /// <summary>Inventory — Stock summary (server-side GROUP BY over the balance slice).</summary>
+    public const string InventoryStockSummary = "InventoryStockSummary";
+
+    /// <summary>Inventory — stock-count variance and line accuracy over POSTED sheets.</summary>
+    public const string InventoryStockCountVar = "InventoryStockCountVar";
+
+    /// <summary>Inventory — Est. Inventory Value grouped by item / warehouse / class.</summary>
+    public const string InventoryStockValue = "InventoryStockValue";
+
+    /// <summary>Inventory — reconciliation findings (diagnostic slice-vs-ledger comparison).</summary>
+    public const string InventoryReconciliation = "InventoryReconciliation";
+
     /// <summary>Inventory — stock return.</summary>
     public const string InventoryStockReturn = "InventoryStockReturn";
 
@@ -137,6 +164,9 @@ public static class TestCategories
 
     /// <summary>Inventory — the posting engine shared by every inventory document.</summary>
     public const string InventoryPosting = "InventoryPosting";
+
+    /// <summary>Inventory — period close (month end), the guard and the close/reopen workflow.</summary>
+    public const string InventoryPeriodClose = "InventoryPeriodClose";
 
     // ── Environment axis ──────────────────────────────────────────────────────────────────────────
 

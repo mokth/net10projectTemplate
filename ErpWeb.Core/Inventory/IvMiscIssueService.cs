@@ -315,6 +315,11 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
         var refNo = NormalizeRefNo(request.RefNo, batchNo);
         var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
 
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvMiscIssueOperationResult.Fail(periodGuard);
+        }
+
         var batch = new IvTrxBatch
         {
             CompanyCode = context.CompanyCode!,
@@ -409,7 +414,12 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        batch.TrxDtTime = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvMiscIssueOperationResult.Fail(periodGuard);
+        }
+        batch.TrxDtTime = trxDate;
         batch.RefNo = NormalizeRefNo(request.RefNo, batch.BatchNo);
         batch.Remarks = TruncateOptional(request.Remark, 250);
         batch.ModifiedDate = now;

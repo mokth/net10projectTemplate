@@ -1,3 +1,4 @@
+using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
@@ -35,41 +36,82 @@ public sealed class IvInventoryReconcileResult
 /// <summary>
 /// Diagnostic only. OpeningQty=0 is valid for empty test DBs — do not enable as production
 /// stock-audit until an opening-balance baseline exists.
+///
+/// <para>
+/// ACCESS-gated on <c>INV_RECONCILIATION</c>: the findings name piles and history rows, so reading them
+/// is a right of its own and must not be reachable from another inventory screen.
+/// </para>
 /// </summary>
 public interface IIvInventoryReconciliationService
 {
+    /// <summary>Reconcile under the reconciliation screen's own grant.</summary>
     Task<IvInventoryReconcileResult> ReconcileAsync(
         string? iCode = null,
         string? whCode = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reconcile under the caller's own menu. The period-close workflow reuses this same diagnostic
+    /// under <c>INV_PERIOD_CLOSE</c> as its blocking precondition, so a close cannot borrow the
+    /// reconciliation screen's grant (and vice versa).
+    /// </summary>
+    Task<IvInventoryReconcileResult> ReconcileAsync(
+        string menuCode,
+        string? iCode,
+        string? whCode,
         CancellationToken cancellationToken = default);
 }
 
 public sealed class IvInventoryReconciliationService : IIvInventoryReconciliationService
 {
+    /// <summary>
+    /// Menus this service is allowed to serve — the reconciliation screen and the period-close
+    /// workflow (which uses the same diagnostic as its blocking precondition).
+    /// </summary>
+    private static readonly HashSet<string> KnownMenus = new(StringComparer.OrdinalIgnoreCase)
+    {
+        MenuCodes.InventoryReconciliation,
+        MenuCodes.InventoryPeriodClose
+    };
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
+    private readonly IAccessRightService _accessRights;
 
     public IvInventoryReconciliationService(
         IDbContextFactory<AppDbContext> dbFactory,
-        IInventoryTenantContext tenant)
+        IInventoryTenantContext tenant,
+        IAccessRightService accessRights)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
+        _accessRights = accessRights;
     }
 
     public async Task<IvInventoryReconcileResult> ReconcileAsync(
         string? iCode = null,
         string? whCode = null,
         CancellationToken cancellationToken = default)
+        => await ReconcileAsync(MenuCodes.InventoryReconciliation, iCode, whCode, cancellationToken);
+
+    public async Task<IvInventoryReconcileResult> ReconcileAsync(
+        string menuCode,
+        string? iCode,
+        string? whCode,
+        CancellationToken cancellationToken = default)
     {
-        var scope = _tenant.TryBranchScope();
-        if (scope is null)
+        // Tenant first (fail closed), then ACCESS on the CALLER's menu — the same order every other
+        // inquiry service uses, so a caller can never learn of another company's data by being
+        // denied the permission.
+        var context = await IvInquiryScopeResolver.ResolveAsync(
+            _tenant, _accessRights, menuCode, KnownMenus, cancellationToken);
+        if (!context.Succeeded)
         {
-            return IvInventoryReconcileResult.Fail("Invalid company or branch context.");
+            return IvInventoryReconcileResult.Fail(context.Error!);
         }
 
-        var company = scope.CompanyCode;
-        var branch = scope.BranchCode!;
+        var company = context.CompanyCode!;
+        var branch = context.BranchCode!;
         var itemFilter = string.IsNullOrWhiteSpace(iCode) ? null : iCode.Trim();
         var whFilter = string.IsNullOrWhiteSpace(whCode) ? null : whCode.Trim();
 
@@ -112,7 +154,16 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
         }
 
         var histories = await historyQuery.ToListAsync(cancellationToken);
-        var balIds = balances.Select(x => x.Id).ToHashSet();
+
+        // The orphan check asks whether a pile EXISTS, so it is resolved against the WHOLE branch — never
+        // against the filtered set. Resolving it against the filtered set would report every transfer
+        // that came from another warehouse (or another item) as "orphaned history": a false positive
+        // manufactured by asking a narrower question than the one the check means.
+        var branchBalLocIds = await db.IvBalLocs.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var balIds = branchBalLocIds.ToHashSet();
 
         // Orphan history: stock-controlled (has BalLoc FK) but missing BalLoc
         foreach (var h in histories)
@@ -145,52 +196,82 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
         }
 
         // Non-stock history (null BalLoc FKs) is valid — ignore for on-hand.
-        var netByBalLoc = new Dictionary<int, decimal>();
-        foreach (var h in histories)
+        //
+        // D18: BOTH sides are aggregated on the same 7-part slice key, never row-by-row. Per-BalLoc
+        // comparison manufactures false discrepancies the moment a legacy database holds two balance
+        // rows for one slice (a defect this service also reports as DUPLICATE_SLICE), because each row
+        // would be measured against the whole of that slice's history. The slice a history leg belongs
+        // to is resolved through the BalLoc it points at, so a leg can never be attributed to a slice
+        // by string inference.
+        var sliceById = new Dictionary<int, IvStockSliceKey>();
+        foreach (var bal in balances)
         {
-            if (h.ToBalLocId is int toId)
+            sliceById[bal.Id] = IvStockSliceKey.Create(
+                bal.CompanyCode, bal.BranchCode, bal.ICode, bal.WhCode, bal.LocCode, bal.LotNo, bal.IStatus);
+        }
+
+        var balQtyBySlice = new Dictionary<IvStockSliceKey, decimal>();
+        var balIdsBySlice = new Dictionary<IvStockSliceKey, List<int>>();
+        foreach (var bal in balances)
+        {
+            var key = sliceById[bal.Id];
+            balQtyBySlice[key] = balQtyBySlice.GetValueOrDefault(key) + bal.StdQty;
+            if (!balIdsBySlice.TryGetValue(key, out var ids))
             {
-                netByBalLoc[toId] = netByBalLoc.GetValueOrDefault(toId) + (h.ToStdQty ?? 0m);
+                ids = [];
+                balIdsBySlice[key] = ids;
             }
 
-            if (h.FromBalLocId is int fromId)
+            ids.Add(bal.Id);
+        }
+
+        var netBySlice = new Dictionary<IvStockSliceKey, decimal>();
+        foreach (var h in histories)
+        {
+            if (h.ToBalLocId is int toId && sliceById.TryGetValue(toId, out var toSlice))
             {
-                netByBalLoc[fromId] = netByBalLoc.GetValueOrDefault(fromId) - (h.FrStdQty ?? 0m);
+                netBySlice[toSlice] = netBySlice.GetValueOrDefault(toSlice) + (h.ToStdQty ?? 0m);
+            }
+
+            if (h.FromBalLocId is int fromId && sliceById.TryGetValue(fromId, out var fromSlice))
+            {
+                netBySlice[fromSlice] = netBySlice.GetValueOrDefault(fromSlice) - (h.FrStdQty ?? 0m);
             }
         }
 
-        foreach (var bal in balances)
+        // Ordered by slice so a run's findings are stable and diffable between runs.
+        foreach (var (slice, balQty) in balQtyBySlice.OrderBy(x => x.Key))
         {
-            var net = netByBalLoc.GetValueOrDefault(bal.Id);
-            var std = IvQty.Round(bal.StdQty);
+            var net = netBySlice.GetValueOrDefault(slice);
+            var std = IvQty.Round(balQty);
             var netRounded = IvQty.Round(net);
+            var balanceIds = balIdsBySlice[slice];
+
             if (std != netRounded)
             {
                 findings.Add(new IvInventoryReconcileFinding
                 {
                     Code = "MISMATCH",
-                    Message = $"BalLoc {bal.Id} StdQty {std} != history net {netRounded}.",
-                    BalLocId = bal.Id,
+                    Message = balanceIds.Count == 1
+                        ? $"BalLoc {balanceIds[0]} StdQty {std} != history net {netRounded}."
+                        : $"Slice {slice} has {balanceIds.Count} balance rows totalling {std}, which != history net {netRounded}.",
+                    BalLocId = balanceIds.Min(),
                     BalLocQty = std,
                     HistoryNetQty = netRounded,
-                    Slice = IvStockSliceKey.Create(
-                        bal.CompanyCode, bal.BranchCode, bal.ICode, bal.WhCode, bal.LocCode, bal.LotNo, bal.IStatus)
-                        .ToString()
+                    Slice = slice.ToString()
                 });
             }
 
-            if (!netByBalLoc.ContainsKey(bal.Id) && std != 0m)
+            if (!netBySlice.ContainsKey(slice) && std != 0m)
             {
                 findings.Add(new IvInventoryReconcileFinding
                 {
                     Code = "UNEXPECTED_BALANCE",
-                    Message = $"BalLoc {bal.Id} has qty {std} with no posted stock history (OpeningQty assumed 0).",
-                    BalLocId = bal.Id,
+                    Message = $"BalLoc {balanceIds.Min()} has qty {std} with no posted stock history (OpeningQty assumed 0).",
+                    BalLocId = balanceIds.Min(),
                     BalLocQty = std,
                     HistoryNetQty = 0m,
-                    Slice = IvStockSliceKey.Create(
-                        bal.CompanyCode, bal.BranchCode, bal.ICode, bal.WhCode, bal.LocCode, bal.LotNo, bal.IStatus)
-                        .ToString()
+                    Slice = slice.ToString()
                 });
             }
         }

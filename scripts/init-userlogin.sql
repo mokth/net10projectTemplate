@@ -24,6 +24,7 @@ BEGIN
         BranchCode nvarchar(5) NOT NULL,
         LocationCode nvarchar(10) NOT NULL,
         changepass bit NOT NULL CONSTRAINT DF_userlogin_changepass DEFAULT (0),
+        CanViewPrice bit NOT NULL CONSTRAINT DF_userlogin_CanViewPrice DEFAULT (0),
         ImagePath nvarchar(100) NULL
     );
 

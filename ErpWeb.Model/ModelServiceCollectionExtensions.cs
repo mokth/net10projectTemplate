@@ -19,6 +19,10 @@ public static class ModelServiceCollectionExtensions
         services.AddScoped<IIvStockCommonRepository, IvStockCommonRepository>();
         services.AddScoped<IIvStockTransactionRepository, IvStockTransactionRepository>();
         services.AddScoped<IIvStockPostingRepository, IvStockPostingRepository>();
+        // Inquiry suite (plan-inventoryInquirySuite): IvTrxHistory reads and the new on-hand-derived
+        // compositions live in their own files so IvStockCommonRepository stays byte-stable (D8).
+        services.AddScoped<IIvStockHistoryRepository, IvStockHistoryRepository>();
+        services.AddScoped<IIvStockInquiryRepository, IvStockInquiryRepository>();
         services.AddScoped<ISaCustRepository, SaCustRepository>();
         services.AddScoped<IPoSupplierRepository, PoSupplierRepository>();
         services.AddScoped<IPoPrRepository, PoPrRepository>();

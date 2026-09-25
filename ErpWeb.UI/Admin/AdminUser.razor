@@ -69,6 +69,12 @@
                                         <DxCheckBox @bind-Checked="@selectedRow.active" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
                                     </Template>
                                 </DxFormLayoutItem>
+                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Can View Price" ColSpanMd="3">
+                                    <Template>
+                                        <DxCheckBox @bind-Checked="@selectedRow.CanViewPrice" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
+                                        <small class="text-muted d-block">Applies after the user's next sign-in.</small>
+                                    </Template>
+                                </DxFormLayoutItem>
                                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
                                     <Template>
                                         <DxTextBox @bind-Text="@selectedRow.name" maxlength="50" ReadOnly="@IsChgPass" InputCssClass="required-field"></DxTextBox>

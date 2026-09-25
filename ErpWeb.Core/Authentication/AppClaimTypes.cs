@@ -11,4 +11,5 @@ public static class AppClaimTypes
     public const string LocationCode = "location_code";
     public const string Level = "level";
     public const string ChangePassword = "change_password";
+    public const string CanViewPrice = "can_view_price";
 }
