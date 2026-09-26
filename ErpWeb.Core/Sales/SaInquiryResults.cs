@@ -35,6 +35,12 @@ public sealed class SaInquiryQuery
     /// </summary>
     public string? SearchText { get; set; }
 
+    /// <summary>
+    /// Item code filter (Price History and other line inquiries). Empty means all items. Exact match on
+    /// <c>ICode</c> after normalize/trim — same ApplyText semantics as customer/salesman filters.
+    /// </summary>
+    public string? ItemCode { get; set; }
+
     /// <summary>Server-side paging. The grid's data source supplies these; the export supplies 0 / cap.</summary>
     public int Skip { get; set; }
 
@@ -69,6 +75,12 @@ public sealed class SaInquiryQuery
 
     /// <summary>A3: keep only quotations already past their validity date.</summary>
     public bool ExpiredOnly { get; set; }
+
+    /// <summary>
+    /// SO Transaction Inquiry: when true, keep only <c>IsCurrent</c> revisions (same predicate as
+    /// Outstanding). Default false — history includes superseded revisions.
+    /// </summary>
+    public bool CurrentOnly { get; set; }
 }
 
 /// <summary>A paged, server-side materialised result.</summary>
@@ -305,4 +317,102 @@ public sealed class SaEInvoiceReconciliationRow
 
     /// <summary>Human-readable finding, e.g. <c>match</c> / <c>status differs</c> / <c>not submitted</c>.</summary>
     public string Finding { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One sales invoice header for the Invoice Inquiry. Document <see cref="Status"/> is
+/// <see cref="SaInvoiceStatuses"/> only; <see cref="EInvoiceStatusLabel"/> is a separate decorated
+/// e-Invoice label (never merged into Status).
+/// </summary>
+public sealed class SaInvoiceInquiryRow
+{
+    public string InvNo { get; set; } = string.Empty;
+    public DateTime InvDate { get; set; }
+    public string? CustCode { get; set; }
+    public string? CustName { get; set; }
+    public string? SalesmanCode { get; set; }
+    public string? LocationCode { get; set; }
+    public string? PoNo { get; set; }
+    public string? Currency { get; set; }
+    public decimal GrossAmnt { get; set; }
+    public decimal Taxes { get; set; }
+    public decimal TotAmnt { get; set; }
+
+    /// <summary><see cref="SaInvoiceStatuses.New"/> or <see cref="SaInvoiceStatuses.Posted"/>.</summary>
+    public string? Status { get; set; }
+
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>Raw ERP <c>IRBMStatus</c> used for e-Invoice decoration (not shown as document status).</summary>
+    public string? IrbmStatus { get; set; }
+
+    /// <summary>Same label vocabulary as the e-Invoice Status inquiry (<c>StatusLabel</c>).</summary>
+    public string EInvoiceStatusLabel { get; set; } = string.Empty;
+
+    /// <summary>First non-empty SO number from invoice detail links (drill-down hint).</summary>
+    public string? RelatedSoNo { get; set; }
+
+    /// <summary>Revision of <see cref="RelatedSoNo"/> when present.</summary>
+    public short? RelatedSoCustRel { get; set; }
+
+    /// <summary>First non-empty DO number from invoice detail links (drill-down hint).</summary>
+    public string? RelatedDoNo { get; set; }
+}
+
+/// <summary>
+/// One SO line across all revisions (Transaction Inquiry). Quantities are the persisted detail
+/// rollups for that revision — never recomputed. Outstanding Inquiry remains <c>IsCurrent</c> only.
+/// </summary>
+public sealed class SaSoTransactionRow
+{
+    public string SoNo { get; set; } = string.Empty;
+    public short Rev { get; set; }
+    public bool IsCurrent { get; set; }
+    public DateTime SoDate { get; set; }
+    public string? Status { get; set; }
+    public string? FulfillmentStatus { get; set; }
+    public string? BillingStatus { get; set; }
+    public string? CustCode { get; set; }
+    public string? CustName { get; set; }
+    public string? SalesRep { get; set; }
+    public decimal TotAmnt { get; set; }
+    public string? QtNo { get; set; }
+    public short? QtCustRel { get; set; }
+
+    public short Line { get; set; }
+    public string? ICode { get; set; }
+    public string? IDesc { get; set; }
+    public decimal OrderQty { get; set; }
+    public decimal ShippedQty { get; set; }
+    public decimal DeliveredQty { get; set; }
+    public decimal InvoicedQty { get; set; }
+    public decimal BalanceQty { get; set; }
+    public decimal WrittenOffQty { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+}
+
+/// <summary>
+/// One POSTED invoice line for Sales Price History. Amounts are persisted; <see cref="NetUnitPrice"/>
+/// is <c>NetAmount / Qty</c> only when Qty ≠ 0. Currency and UOM are never normalized.
+/// </summary>
+public sealed class SaSalesPriceHistoryRow
+{
+    public DateTime InvDate { get; set; }
+    public string InvNo { get; set; } = string.Empty;
+    public string? CustCode { get; set; }
+    public string? CustName { get; set; }
+    public string? ICode { get; set; }
+    public string? IDesc { get; set; }
+    public decimal Qty { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal ItemDiscAmount { get; set; }
+    public decimal NetAmount { get; set; }
+
+    /// <summary>Null when Qty is zero — do not invent a unit price.</summary>
+    public decimal? NetUnitPrice { get; set; }
+
+    public string? Currency { get; set; }
+    public string? Uom { get; set; }
+    public string? SalesmanCode { get; set; }
+    public string? FrWarehouse { get; set; }
 }

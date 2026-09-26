@@ -1,9 +1,9 @@
-@page "/sales/inquiry/quotation-status"
+@page "/sales/inquiry/invoice"
 @inherits SaInquiryPageBase
 
-<PageTitle>Quotation Status / Expiry</PageTitle>
+<PageTitle>Sales Invoices</PageTitle>
 
-<MenuAuthorize MenuCode="@MenuCodes.SalesQtStatus">
+<MenuAuthorize MenuCode="@MenuCodes.SalesInvoiceInquiry">
     <div class="iv-page">
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
@@ -21,12 +21,13 @@
         }
 
         <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></div>
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-invoice-dollar"></i></div>
             <div class="iv-hero__copy">
                 <p class="iv-eyebrow">Sales · Inquiry</p>
-                <h1 class="iv-title">Quotation Status / Expiry</h1>
+                <h1 class="iv-title">Sales Invoices</h1>
                 <div class="iv-chips">
-                    <span class="iv-chip">Current revisions only</span>
+                    <span class="iv-chip">NEW and POSTED</span>
+                    <span class="iv-chip">e-Invoice status separate</span>
                     @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
                     {
                         <span class="iv-chip">Branch: @ScopeBranchCode</span>
@@ -55,17 +56,18 @@
                     <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
                     <div class="iv-skeleton__line iv-skeleton__line--md"></div>
                     <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
                 </div>
             }
             else
             {
                 <div class="iv-list-desktop">
-                    <CommonDataGridEx T="SaQtStatusRow"
+                    <CommonDataGridEx T="SaInvoiceInquiryRow"
                                       Columns="@Columns"
                                       Buttons="@Buttons"
-                                      KeyName="@nameof(SaQtStatusRow.QtNo)"
-                                      GridKey="sa-qt-status"
-                                      Title="Quotation status"
+                                      KeyName="@nameof(SaInvoiceInquiryRow.InvNo)"
+                                      GridKey="sa-invoice-inquiry"
+                                      Title="Sales invoices"
                                       CustomDataSource="@DataSource"
                                       ShowToolbarText="true"
                                       ShowResetLayoutButton="true"
@@ -76,21 +78,16 @@
                                       allowSelect="false"
                                       OnGridInstance="@OnGridInstance"
                                       OnButtonEventHandle="@OnButtonClick"
-                                      ActionButtons="@ActionButtons"
+                                      ActionButtons="@InvoiceActionButtons"
                                       OnActionEventHandle="@OnActionClick" />
                 </div>
             }
         </section>
-
-        <p class="iv-subtitle">
-            Expired means the system date is past the validity limit. Accepted quotations never
-            auto-expire.
-        </p>
     </div>
 
-    <DxPopup HeaderText="Filter quotations"
+    <DxPopup HeaderText="Filter sales invoices"
              CloseOnOutsideClick="false"
-             Width="640px"
+             Width="720px"
              CssClass="common-popup"
              @bind-Visible="@FilterPopupVisible">
         <Content>
@@ -110,6 +107,15 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@StatusOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatus"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@SalesmanOptions"
@@ -117,11 +123,19 @@
                                             NullText="All salesmen" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Search" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftSearchText"
+                                       NullText="Invoice no., PO / reference, customer name"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
                 </DxFormLayout>
                 <p class="iv-popup-hint">
-                    An empty field means <strong>all</strong> values, never "none". The customer is chosen
-                    on the toolbar and applies as soon as it is picked. For quotation → sales order
-                    conversion totals, use Analysis · Quotation Conversion.
+                    An empty field means <strong>all</strong> values. Search matches a contained fragment
+                    of the invoice number, customer PO / reference, or customer name. Document Status is
+                    NEW/POSTED only; e-Invoice status is a separate column. Related DO/SO open from the
+                    first linked detail when present — see also Invoice vs DO / SO.
                 </p>
             </div>
             <div class="iv-popup-footer">

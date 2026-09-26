@@ -161,6 +161,9 @@ public static class MenuCodes
     public const string SalesInvVsDoc = "SA_INV_VS_DOC";
     public const string SalesCdnInquiry = "SA_CDN_INQUIRY";
     public const string SalesEInvoiceInquiry = "SA_EINV_INQUIRY";
+    public const string SalesInvoiceInquiry = "SA_INV_INQUIRY";
+    public const string SalesSoTransactions = "SA_SO_TRX";
+    public const string SalesPriceHistory = "SA_PRICE_HISTORY";
 
     // Sales Monitor (plan-salesDecisionSupport.prompt.md Phase A) — read-only decision-support screens
     // over the existing columns. The parent carries no route. ACCESS only; the CSV downloads call the

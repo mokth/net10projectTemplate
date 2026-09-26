@@ -155,13 +155,19 @@
             Icon="fa-solid fa-hourglass-half" />
       <Menu Code="SA_SO_OUTSTANDING" Name="Sales Order Outstanding" Route="/sales/inquiry/so-outstanding" SortOrder="3"
             Icon="fa-solid fa-boxes-stacked" />
-      <Menu Code="SA_DO_STATUS" Name="Delivery Status" Route="/sales/inquiry/do-status" SortOrder="4"
+      <Menu Code="SA_SO_TRX" Name="Sales Order Transactions" Route="/sales/inquiry/so-transactions" SortOrder="4"
+            Icon="fa-solid fa-clock-rotate-left" />
+      <Menu Code="SA_DO_STATUS" Name="Delivery Status" Route="/sales/inquiry/do-status" SortOrder="5"
             Icon="fa-solid fa-truck-ramp-box" />
-      <Menu Code="SA_INV_VS_DOC" Name="Invoice vs DO / SO" Route="/sales/inquiry/invoice-vs-doc" SortOrder="5"
+      <Menu Code="SA_INV_INQUIRY" Name="Sales Invoices" Route="/sales/inquiry/invoice" SortOrder="6"
+            Icon="fa-solid fa-file-invoice-dollar" />
+      <Menu Code="SA_INV_VS_DOC" Name="Invoice vs DO / SO" Route="/sales/inquiry/invoice-vs-doc" SortOrder="7"
             Icon="fa-solid fa-link" />
-      <Menu Code="SA_CDN_INQUIRY" Name="Credit / Debit Notes" Route="/sales/inquiry/credit-debit-notes" SortOrder="6"
+      <Menu Code="SA_CDN_INQUIRY" Name="Credit / Debit Notes" Route="/sales/inquiry/credit-debit-notes" SortOrder="8"
             Icon="fa-solid fa-file-circle-question" />
-      <Menu Code="SA_EINV_INQUIRY" Name="e-Invoice Status" Route="/sales/inquiry/einvoice" SortOrder="7"
+      <Menu Code="SA_PRICE_HISTORY" Name="Sales Price History" Route="/sales/inquiry/price-history" SortOrder="9"
+            Icon="fa-solid fa-tags" />
+      <Menu Code="SA_EINV_INQUIRY" Name="e-Invoice Status" Route="/sales/inquiry/einvoice" SortOrder="10"
             Icon="fa-solid fa-file-signature" />
     </Menu>
     <!-- Sales Monitor (plan-salesDecisionSupport.prompt.md): read-only decision-support views. The

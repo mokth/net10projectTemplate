@@ -31,6 +31,9 @@ public static class SaInquiryExportEndpoints
         endpoints.MapGet("/sales/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization();
         endpoints.MapGet("/sales/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization();
         endpoints.MapGet("/sales/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/inquiry/invoice/export", ExportInvoiceInquiryAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/inquiry/so-transactions/export", ExportSoTransactionsAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization();
 
         // Sales Monitor (plan-salesDecisionSupport.prompt.md, Phase A). Same service method as the grid,
         // same applied filter, same ACCESS check inside the service.
@@ -387,6 +390,158 @@ public static class SaInquiryExportEndpoints
         }));
 
         return Csv(rows, "SaEInvoiceReconciliation");
+    }
+
+    private static async Task<IResult> ExportInvoiceInquiryAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetInvoiceInquiryAsync(
+            MenuCodes.SalesInvoiceInquiry, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Invoice no.", "Date", "Customer", "Customer name", "Salesman", "Location", "Reference",
+                "Currency", "Gross", "Tax", "Total", "Status", "Due date", "e-Invoice", "Related SO", "Related DO"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.InvNo,
+            Date(x.InvDate),
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.SalesmanCode ?? string.Empty,
+            x.LocationCode ?? string.Empty,
+            x.PoNo ?? string.Empty,
+            x.Currency ?? string.Empty,
+            Money(x.GrossAmnt),
+            Money(x.Taxes),
+            Money(x.TotAmnt),
+            x.Status ?? string.Empty,
+            x.DueDate is DateTime d ? Date(d) : string.Empty,
+            x.EInvoiceStatusLabel,
+            x.RelatedSoNo ?? string.Empty,
+            x.RelatedDoNo ?? string.Empty
+        }));
+
+        return Csv(rows, "SaInvoiceInquiry");
+    }
+
+    private static async Task<IResult> ExportSoTransactionsAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetSoTransactionsAsync(
+            MenuCodes.SalesSoTransactions, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "SO no.", "Rev", "Current", "Date", "Status", "Fulfillment", "Billing", "Customer", "Customer name",
+                "Sales rep", "Amount", "QT no.", "Line", "Item", "Description", "Ordered", "Shipped", "Delivered",
+                "Invoiced", "Balance", "Written off"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.SoNo,
+            x.Rev.ToString(CultureInfo.InvariantCulture),
+            x.IsCurrent ? "Yes" : "No",
+            Date(x.SoDate),
+            x.Status ?? string.Empty,
+            x.FulfillmentStatus ?? string.Empty,
+            x.BillingStatus ?? string.Empty,
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.SalesRep ?? string.Empty,
+            Money(x.TotAmnt),
+            x.QtNo ?? string.Empty,
+            x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            Qty(x.OrderQty),
+            Qty(x.ShippedQty),
+            Qty(x.DeliveredQty),
+            Qty(x.InvoicedQty),
+            Qty(x.BalanceQty),
+            Qty(x.WrittenOffQty)
+        }));
+
+        return Csv(rows, "SaSoTransactions");
+    }
+
+    private static async Task<IResult> ExportPriceHistoryAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetSalesPriceHistoryAsync(
+            MenuCodes.SalesPriceHistory, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Date", "Invoice no.", "Customer", "Customer name", "Item", "Description", "Qty", "UOM",
+                "Unit price", "Discount", "Net amount", "Net unit", "Currency", "Salesman", "Warehouse"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            Date(x.InvDate),
+            x.InvNo,
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            Qty(x.Qty),
+            x.Uom ?? string.Empty,
+            Qty(x.UnitPrice),
+            Money(x.ItemDiscAmount),
+            Money(x.NetAmount),
+            x.NetUnitPrice is decimal n ? Qty(n) : string.Empty,
+            x.Currency ?? string.Empty,
+            x.SalesmanCode ?? string.Empty,
+            x.FrWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "SaSalesPriceHistory");
     }
 
     private static SaInquiryQuery ForExport(SaInquiryQuery query)

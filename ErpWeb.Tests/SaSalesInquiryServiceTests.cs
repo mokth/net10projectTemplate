@@ -220,6 +220,218 @@ public class SaSalesInquiryServiceTests : IAsyncLifetime
         Assert.Equal(6m, row.BalanceQty);
     }
 
+    // ============================ Invoice Inquiry ============================
+
+    [Fact]
+    public async Task InvoiceInquiry_IncludesNewAndPosted_SeparatesEInvoiceLabel()
+    {
+        await SeedAsync(db =>
+        {
+            db.SaInvoices.Add(Inv("INV_NEW", "2026-09-10", 100m, status: SaInvoiceStatuses.New));
+            db.SaInvoices.Add(Inv("INV_POSTED", "2026-09-11", 200m, irbmStatus: EInvoiceStatuses.Valid));
+            db.EInvDocSubmissions.Add(Submission("INV", "INV_POSTED", "Valid"));
+        });
+
+        var result = await CreateSut().GetInvoiceInquiryAsync(
+            MenuCodes.SalesInvoiceInquiry, Range("2026-09-01", "2026-09-30"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(2, result.Data!.TotalCount);
+        var draft = result.Data.Rows.Single(x => x.InvNo == "INV_NEW");
+        Assert.Equal(SaInvoiceStatuses.New, draft.Status);
+        Assert.Equal("Not submitted", draft.EInvoiceStatusLabel);
+        var posted = result.Data.Rows.Single(x => x.InvNo == "INV_POSTED");
+        Assert.Equal(SaInvoiceStatuses.Posted, posted.Status);
+        Assert.Equal(EInvoiceStatuses.Valid, posted.EInvoiceStatusLabel);
+        Assert.Equal(200m, posted.TotAmnt);
+    }
+
+    [Fact]
+    public async Task InvoiceInquiry_SearchAndStatusFilter_AndRelatedDocs()
+    {
+        await SeedAsync(db =>
+        {
+            var inv = Inv("INV_LINK", "2026-09-12", 150m);
+            inv.PoNo = "PO-99";
+            inv.CustName = "Customer One";
+            inv.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                InvNo = "INV_LINK",
+                Line = 1,
+                ICode = "ITM1",
+                Qty = 1m,
+                UnitPrice = 150m,
+                NetAmount = 150m,
+                SoNo = "SO9",
+                CustRel = 2,
+                DoNo = "DO9"
+            });
+            db.SaInvoices.Add(inv);
+            db.SaInvoices.Add(Inv("INV_OTHER", "2026-09-13", 50m, status: SaInvoiceStatuses.New));
+        });
+
+        var bySearch = await CreateSut().GetInvoiceInquiryAsync(
+            MenuCodes.SalesInvoiceInquiry,
+            new SaInquiryQuery
+            {
+                DateFrom = DateTime.Parse("2026-09-01"),
+                DateTo = DateTime.Parse("2026-09-30"),
+                SearchText = "PO-99"
+            });
+        Assert.True(bySearch.Succeeded, bySearch.Message);
+        var linked = Assert.Single(bySearch.Data!.Rows);
+        Assert.Equal("INV_LINK", linked.InvNo);
+        Assert.Equal("SO9", linked.RelatedSoNo);
+        Assert.Equal((short)2, linked.RelatedSoCustRel);
+        Assert.Equal("DO9", linked.RelatedDoNo);
+
+        var onlyNew = await CreateSut().GetInvoiceInquiryAsync(
+            MenuCodes.SalesInvoiceInquiry,
+            new SaInquiryQuery
+            {
+                DateFrom = DateTime.Parse("2026-09-01"),
+                DateTo = DateTime.Parse("2026-09-30"),
+                Status = SaInvoiceStatuses.New
+            });
+        Assert.True(onlyNew.Succeeded, onlyNew.Message);
+        Assert.All(onlyNew.Data!.Rows, r => Assert.Equal(SaInvoiceStatuses.New, r.Status));
+    }
+
+    // ============================ SO Transactions ============================
+
+    [Fact]
+    public async Task SoTransactions_IncludesSuperseded_CurrentOnlyFilter_OutstandingUnchanged()
+    {
+        await SeedAsync(db =>
+        {
+            var current = So("SO1", "2026-09-02", 500m);
+            current.CustRel = 2;
+            current.IsCurrent = true;
+            current.Status = SaSoStatuses.New;
+            current.Details.Add(SoLine("SO1", 1, 10m, 0m, 0m, 0m, 10m));
+            current.Details.Last().CustRel = 2;
+
+            var prior = So("SO1", "2026-09-01", 400m);
+            prior.CustRel = 1;
+            prior.IsCurrent = false;
+            prior.Status = SaSoStatuses.Superseded;
+            prior.Details.Add(SoLine("SO1", 1, 8m, 0m, 0m, 0m, 8m));
+
+            db.SaSos.Add(current);
+            db.SaSos.Add(prior);
+        });
+
+        var all = await CreateSut().GetSoTransactionsAsync(
+            MenuCodes.SalesSoTransactions, Range("2026-09-01", "2026-09-30"));
+        Assert.True(all.Succeeded, all.Message);
+        Assert.Equal(2, all.Data!.TotalCount);
+        Assert.Contains(all.Data.Rows, r => !r.IsCurrent && r.Rev == 1);
+        Assert.Contains(all.Data.Rows, r => r.IsCurrent && r.Rev == 2);
+
+        var currentOnly = await CreateSut().GetSoTransactionsAsync(
+            MenuCodes.SalesSoTransactions,
+            new SaInquiryQuery
+            {
+                DateFrom = DateTime.Parse("2026-09-01"),
+                DateTo = DateTime.Parse("2026-09-30"),
+                CurrentOnly = true
+            });
+        Assert.True(currentOnly.Succeeded, currentOnly.Message);
+        var currentRow = Assert.Single(currentOnly.Data!.Rows);
+        Assert.True(currentRow.IsCurrent);
+        Assert.Equal(2, currentRow.Rev);
+
+        var outstanding = await CreateSut().GetSoOutstandingAsync(
+            MenuCodes.SalesSoOutstanding, Range("2026-09-01", "2026-09-30"));
+        Assert.True(outstanding.Succeeded, outstanding.Message);
+        var open = Assert.Single(outstanding.Data!.Rows);
+        Assert.Equal(2, open.Rev);
+        Assert.Equal(10m, open.OrderQty);
+    }
+
+    // ============================ Price History ============================
+
+    [Fact]
+    public async Task PriceHistory_PostedLinesOnly_NetUnitFromPersistedNetAmount()
+    {
+        await SeedAsync(db =>
+        {
+            var posted = Inv("INV_P", "2026-09-10", 100m);
+            posted.Currency = "MYR";
+            posted.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                InvNo = "INV_P",
+                Line = 1,
+                ICode = "ITM1",
+                IDesc = "Item one",
+                Qty = 4m,
+                UnitPrice = 30m,
+                ItemDiscAmount = 20m,
+                NetAmount = 100m,
+                StdUom = "PCS",
+                FrWarehouse = "WH1"
+            });
+            posted.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                InvNo = "INV_P",
+                Line = 2,
+                ICode = "ITM2",
+                Qty = 0m,
+                UnitPrice = 10m,
+                NetAmount = 0m,
+                StdUom = "BOX"
+            });
+            db.SaInvoices.Add(posted);
+
+            var draft = Inv("INV_D", "2026-09-11", 50m, status: SaInvoiceStatuses.New);
+            draft.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                InvNo = "INV_D",
+                Line = 1,
+                ICode = "ITM1",
+                Qty = 1m,
+                UnitPrice = 50m,
+                NetAmount = 50m
+            });
+            db.SaInvoices.Add(draft);
+        });
+
+        var result = await CreateSut().GetSalesPriceHistoryAsync(
+            MenuCodes.SalesPriceHistory, Range("2026-09-01", "2026-09-30"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(2, result.Data!.TotalCount);
+        Assert.DoesNotContain(result.Data.Rows, r => r.InvNo == "INV_D");
+
+        var priced = result.Data.Rows.Single(x => x.ICode == "ITM1");
+        Assert.Equal(100m, priced.NetAmount);
+        Assert.Equal(25m, priced.NetUnitPrice);
+        Assert.Equal("MYR", priced.Currency);
+        Assert.Equal("PCS", priced.Uom);
+
+        var zeroQty = result.Data.Rows.Single(x => x.ICode == "ITM2");
+        Assert.Null(zeroQty.NetUnitPrice);
+
+        var byItem = await CreateSut().GetSalesPriceHistoryAsync(
+            MenuCodes.SalesPriceHistory,
+            new SaInquiryQuery
+            {
+                DateFrom = DateTime.Parse("2026-09-01"),
+                DateTo = DateTime.Parse("2026-09-30"),
+                ItemCode = "ITM1"
+            });
+        Assert.True(byItem.Succeeded, byItem.Message);
+        Assert.Single(byItem.Data!.Rows);
+    }
+
     // ============================ Delivery Order Status ============================
 
     [Fact]

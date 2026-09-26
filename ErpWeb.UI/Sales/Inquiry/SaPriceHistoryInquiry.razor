@@ -1,9 +1,10 @@
-@page "/sales/inquiry/quotation-status"
+@page "/sales/inquiry/price-history"
+@using ErpWeb.UI.Components.Common
 @inherits SaInquiryPageBase
 
-<PageTitle>Quotation Status / Expiry</PageTitle>
+<PageTitle>Sales Price History</PageTitle>
 
-<MenuAuthorize MenuCode="@MenuCodes.SalesQtStatus">
+<MenuAuthorize MenuCode="@MenuCodes.SalesPriceHistory">
     <div class="iv-page">
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
@@ -21,12 +22,13 @@
         }
 
         <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></div>
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-tags"></i></div>
             <div class="iv-hero__copy">
                 <p class="iv-eyebrow">Sales · Inquiry</p>
-                <h1 class="iv-title">Quotation Status / Expiry</h1>
+                <h1 class="iv-title">Sales Price History</h1>
                 <div class="iv-chips">
-                    <span class="iv-chip">Current revisions only</span>
+                    <span class="iv-chip">Posted invoice lines only</span>
+                    <span class="iv-chip">No currency / UOM conversion</span>
                     @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
                     {
                         <span class="iv-chip">Branch: @ScopeBranchCode</span>
@@ -55,17 +57,18 @@
                     <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
                     <div class="iv-skeleton__line iv-skeleton__line--md"></div>
                     <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--sm"></div>
                 </div>
             }
             else
             {
                 <div class="iv-list-desktop">
-                    <CommonDataGridEx T="SaQtStatusRow"
+                    <CommonDataGridEx T="SaSalesPriceHistoryRow"
                                       Columns="@Columns"
                                       Buttons="@Buttons"
-                                      KeyName="@nameof(SaQtStatusRow.QtNo)"
-                                      GridKey="sa-qt-status"
-                                      Title="Quotation status"
+                                      KeyName="@nameof(SaSalesPriceHistoryRow.InvNo)"
+                                      GridKey="sa-price-history"
+                                      Title="Sales price history"
                                       CustomDataSource="@DataSource"
                                       ShowToolbarText="true"
                                       ShowResetLayoutButton="true"
@@ -81,16 +84,11 @@
                 </div>
             }
         </section>
-
-        <p class="iv-subtitle">
-            Expired means the system date is past the validity limit. Accepted quotations never
-            auto-expire.
-        </p>
     </div>
 
-    <DxPopup HeaderText="Filter quotations"
+    <DxPopup HeaderText="Filter sales price history"
              CloseOnOutsideClick="false"
-             Width="640px"
+             Width="720px"
              CssClass="common-popup"
              @bind-Visible="@FilterPopupVisible">
         <Content>
@@ -110,6 +108,13 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                        <Template>
+                            <IvStockMasterPicker ICode="@DraftItemCode"
+                                                 ICodeChanged="@OnDraftItemCodeChangedAsync"
+                                                 Selected="@OnDraftItemSelectedAsync" />
+                        </Template>
+                    </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@SalesmanOptions"
@@ -119,9 +124,10 @@
                     </DxFormLayoutItem>
                 </DxFormLayout>
                 <p class="iv-popup-hint">
-                    An empty field means <strong>all</strong> values, never "none". The customer is chosen
-                    on the toolbar and applies as soon as it is picked. For quotation → sales order
-                    conversion totals, use Analysis · Quotation Conversion.
+                    An empty field means <strong>all</strong> values. Only POSTED invoice lines are
+                    included. Net unit price is the persisted net amount divided by quantity when
+                    quantity is not zero. Currency and UOM are shown as invoiced — do not treat
+                    different currencies or UOMs as directly comparable.
                 </p>
             </div>
             <div class="iv-popup-footer">

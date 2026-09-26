@@ -39,6 +39,9 @@ public sealed partial class SaSalesInquiryService : ISaSalesInquiryService
         MenuCodes.SalesInvVsDoc,
         MenuCodes.SalesCdnInquiry,
         MenuCodes.SalesEInvoiceInquiry,
+        MenuCodes.SalesInvoiceInquiry,
+        MenuCodes.SalesSoTransactions,
+        MenuCodes.SalesPriceHistory,
 
         // Sales Monitor (plan-salesDecisionSupport.prompt.md Phase A). Each screen carries its own
         // grant, so holding SA_SO_AGEING must not open SA_EINV_ACTION.

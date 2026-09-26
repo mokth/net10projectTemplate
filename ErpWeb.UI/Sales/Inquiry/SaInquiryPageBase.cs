@@ -32,6 +32,7 @@ public abstract class SaInquiryPageBase : PageBase
     protected string? Status { get; set; }
     protected string? Type { get; set; }
     protected string? SearchText { get; set; }
+    protected string? ItemCode { get; set; }
 
     // ---- Sales Monitor filters (plan-salesDecisionSupport.prompt.md, Phase A) ---------------------
     // The Phase-1 inquiry pages never set these, so the shared query builder keeps producing exactly
@@ -55,6 +56,9 @@ public abstract class SaInquiryPageBase : PageBase
     /// <summary>A3: keep only quotations already past their validity date.</summary>
     protected bool ExpiredOnly { get; set; }
 
+    /// <summary>SO Transaction Inquiry: restrict to <c>IsCurrent</c> revisions when true.</summary>
+    protected bool CurrentOnly { get; set; }
+
     protected IReadOnlyList<IvCodeLookupRow> SalesmanOptions { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> CustomerOptions { get; set; } = [];
 
@@ -77,6 +81,7 @@ public abstract class SaInquiryPageBase : PageBase
     protected string? DraftStatus { get; set; }
     protected string? DraftType { get; set; }
     protected string? DraftSearchText { get; set; }
+    protected string? DraftItemCode { get; set; }
 
     protected bool DraftOverdueOnly { get; set; }
     protected string? DraftBucket { get; set; }
@@ -84,6 +89,7 @@ public abstract class SaInquiryPageBase : PageBase
     protected bool DraftPendingOnly { get; set; }
     protected bool DraftExpiringSoonOnly { get; set; }
     protected bool DraftExpiredOnly { get; set; }
+    protected bool DraftCurrentOnly { get; set; }
 
     /// <summary>The filter popup's visibility (house pattern: filters live in a popup, not inline).</summary>
     protected bool FilterPopupVisible { get; set; }
@@ -169,13 +175,15 @@ public abstract class SaInquiryPageBase : PageBase
         Status = Clean(Status),
         Type = Clean(Type),
         SearchText = Clean(SearchText),
+        ItemCode = Clean(ItemCode),
         AsOfDate = Dates.Now.Date,
         OverdueOnly = OverdueOnly,
         Bucket = Clean(Bucket),
         InvoiceState = Clean(InvoiceState),
         PendingOnly = PendingOnly,
         ExpiringSoonOnly = ExpiringSoonOnly,
-        ExpiredOnly = ExpiredOnly
+        ExpiredOnly = ExpiredOnly,
+        CurrentOnly = CurrentOnly
     };
 
     /// <summary>The filters the grid is actually showing, so the export can never disagree with it.</summary>
@@ -199,12 +207,14 @@ public abstract class SaInquiryPageBase : PageBase
         DraftStatus = Status;
         DraftType = Type;
         DraftSearchText = SearchText;
+        DraftItemCode = ItemCode;
         DraftOverdueOnly = OverdueOnly;
         DraftBucket = Bucket;
         DraftInvoiceState = InvoiceState;
         DraftPendingOnly = PendingOnly;
         DraftExpiringSoonOnly = ExpiringSoonOnly;
         DraftExpiredOnly = ExpiredOnly;
+        DraftCurrentOnly = CurrentOnly;
         FilterPopupVisible = true;
     }
 
@@ -221,12 +231,14 @@ public abstract class SaInquiryPageBase : PageBase
         Status = DraftStatus;
         Type = DraftType;
         SearchText = DraftSearchText;
+        ItemCode = DraftItemCode;
         OverdueOnly = DraftOverdueOnly;
         Bucket = DraftBucket;
         InvoiceState = DraftInvoiceState;
         PendingOnly = DraftPendingOnly;
         ExpiringSoonOnly = DraftExpiringSoonOnly;
         ExpiredOnly = DraftExpiredOnly;
+        CurrentOnly = DraftCurrentOnly;
         FilterPopupVisible = false;
         await ReloadAsync();
     }
@@ -245,6 +257,7 @@ public abstract class SaInquiryPageBase : PageBase
         Status = null;
         Type = null;
         SearchText = null;
+        ItemCode = null;
         ResetMonitorFilters();
 
         DraftDateFrom = DateFrom;
@@ -254,12 +267,14 @@ public abstract class SaInquiryPageBase : PageBase
         DraftStatus = null;
         DraftType = null;
         DraftSearchText = null;
+        DraftItemCode = null;
         DraftOverdueOnly = OverdueOnly;
         DraftBucket = Bucket;
         DraftInvoiceState = InvoiceState;
         DraftPendingOnly = PendingOnly;
         DraftExpiringSoonOnly = ExpiringSoonOnly;
         DraftExpiredOnly = ExpiredOnly;
+        DraftCurrentOnly = CurrentOnly;
 
         FilterPopupVisible = false;
         await ReloadAsync();
@@ -277,6 +292,7 @@ public abstract class SaInquiryPageBase : PageBase
         PendingOnly = false;
         ExpiringSoonOnly = false;
         ExpiredOnly = false;
+        CurrentOnly = false;
     }
 
     /// <summary>
@@ -385,6 +401,7 @@ public abstract class SaInquiryPageBase : PageBase
         AddIfSet(parameters, "status", AppliedQuery.Status);
         AddIfSet(parameters, "type", AppliedQuery.Type);
         AddIfSet(parameters, "searchText", AppliedQuery.SearchText);
+        AddIfSet(parameters, "itemCode", AppliedQuery.ItemCode);
         AddIfSet(parameters, "asOf", AppliedQuery.AsOfDate?.ToString("yyyy-MM-dd"));
         AddIfSet(parameters, "bucket", AppliedQuery.Bucket);
         AddIfSet(parameters, "invoiceState", AppliedQuery.InvoiceState);
@@ -407,6 +424,11 @@ public abstract class SaInquiryPageBase : PageBase
         if (AppliedQuery.ExpiredOnly)
         {
             parameters["expiredOnly"] = "true";
+        }
+
+        if (AppliedQuery.CurrentOnly)
+        {
+            parameters["currentOnly"] = "true";
         }
 
         foreach (var pair in extras)
@@ -500,6 +522,7 @@ public sealed class SaInquiryGridDataSource<T> : GridCustomDataSource
         Status = source.Status,
         Type = source.Type,
         SearchText = source.SearchText,
+        ItemCode = source.ItemCode,
         Skip = source.Skip,
         Take = source.Take,
         AsOfDate = source.AsOfDate,
@@ -508,6 +531,7 @@ public sealed class SaInquiryGridDataSource<T> : GridCustomDataSource
         InvoiceState = source.InvoiceState,
         PendingOnly = source.PendingOnly,
         ExpiringSoonOnly = source.ExpiringSoonOnly,
-        ExpiredOnly = source.ExpiredOnly
+        ExpiredOnly = source.ExpiredOnly,
+        CurrentOnly = source.CurrentOnly
     };
 }

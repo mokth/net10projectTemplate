@@ -89,6 +89,33 @@ public interface ISaSalesInquiryService
         SaInquiryQuery query,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Sales Invoice Inquiry — invoice headers (<see cref="SaInvoiceStatuses"/> NEW and POSTED) with a
+    /// separately decorated e-Invoice status label. Header amounts are persisted; never re-totalled.
+    /// </summary>
+    Task<IvMasterOperationResult<SaInquiryPage<SaInvoiceInquiryRow>>> GetInvoiceInquiryAsync(
+        string menuCode,
+        SaInquiryQuery query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sales Order Transaction Inquiry — all revisions (unless <see cref="SaInquiryQuery.CurrentOnly"/>).
+    /// Persisted quantity rollups per revision; does not change Outstanding semantics.
+    /// </summary>
+    Task<IvMasterOperationResult<SaInquiryPage<SaSoTransactionRow>>> GetSoTransactionsAsync(
+        string menuCode,
+        SaInquiryQuery query,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sales Price History — POSTED invoice lines only. Net unit price derives from persisted
+    /// <c>NetAmount / Qty</c> when Qty ≠ 0. Currency and UOM are not normalized.
+    /// </summary>
+    Task<IvMasterOperationResult<SaInquiryPage<SaSalesPriceHistoryRow>>> GetSalesPriceHistoryAsync(
+        string menuCode,
+        SaInquiryQuery query,
+        CancellationToken cancellationToken = default);
+
     // ================== Sales Monitor — Phase A (plan-salesDecisionSupport.prompt.md) ==================
     // Read-only decision-support screens. Each takes its own menuCode so a screen cannot borrow another
     // screen's rights. Ageing and expiry figures are measured against <see cref="SaInquiryQuery.AsOfDate"/>
