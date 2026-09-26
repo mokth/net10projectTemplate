@@ -73,4 +73,15 @@ public partial class SaCdnInquiry : SaInquiryPageBase
                 break;
         }
     }
+
+    /// <summary>CN and DN are two menus over one page, so the row's type decides the view route.</summary>
+    protected Task OnActionClick(SelectedButtonInfo<SaCdnInquiryRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType(row.Type, row.DocNo);
+        }
+
+        return Task.CompletedTask;
+    }
 }

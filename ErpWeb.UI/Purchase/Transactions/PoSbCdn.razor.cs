@@ -3,6 +3,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Purchase.Transactions;
@@ -528,9 +529,10 @@ public partial class PoSbCdn : PageBase
         }
     }
 
-    protected void OnEditFromView() => Navigation.NavigateTo($"{BaseRoute}/edit/{Model.DocNo}");
+    protected void OnEditFromView() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"{BaseRoute}/edit/{Model.DocNo}"));
 
-    protected void GoBack() => Navigation.NavigateTo(BaseRoute);
+    protected void GoBack() => DocumentReturnNavigation.NavigateBack(Navigation, BaseRoute);
 
     protected void DismissStatus() => StatusMessage = null;
 

@@ -27,7 +27,7 @@ namespace ErpWeb.Core.Sales;
 ///     <c>(companyID, documentType, documentNo)</c>, normalised via <c>EInvoiceStatuses.Normalize</c>.
 /// </para>
 /// </summary>
-public sealed class SaSalesInquiryService : ISaSalesInquiryService
+public sealed partial class SaSalesInquiryService : ISaSalesInquiryService
 {
     /// <summary>Menus this service may serve. A page cannot borrow another screen's rights.</summary>
     private static readonly HashSet<string> KnownMenus = new(StringComparer.OrdinalIgnoreCase)
@@ -38,7 +38,14 @@ public sealed class SaSalesInquiryService : ISaSalesInquiryService
         MenuCodes.SalesDoStatus,
         MenuCodes.SalesInvVsDoc,
         MenuCodes.SalesCdnInquiry,
-        MenuCodes.SalesEInvoiceInquiry
+        MenuCodes.SalesEInvoiceInquiry,
+
+        // Sales Monitor (plan-salesDecisionSupport.prompt.md Phase A). Each screen carries its own
+        // grant, so holding SA_SO_AGEING must not open SA_EINV_ACTION.
+        MenuCodes.SalesSoAgeing,
+        MenuCodes.SalesDoNotFullyInvoiced,
+        MenuCodes.SalesQtExpiry,
+        MenuCodes.SalesEInvoiceAction
     };
 
     private const int DefaultPageSize = 50;
@@ -797,7 +804,9 @@ public sealed class SaSalesInquiryService : ISaSalesInquiryService
                 CustName = x.CustName,
                 IrbmStatus = x.IrbmStatus,
                 IrbmUuid = x.IrbmUuid,
-                IrbmSubmitId = x.IrbmSubmitId
+                IrbmSubmitId = x.IrbmSubmitId,
+                IrbmSentOn = x.IrbmSentOn,
+                TotAmnt = x.TotAmnt
             });
         invs = ApplyCommonEInvoice(invs, from, toExclusive, cust);
 
@@ -812,7 +821,9 @@ public sealed class SaSalesInquiryService : ISaSalesInquiryService
                 CustName = x.CustName,
                 IrbmStatus = x.IrbmStatus,
                 IrbmUuid = x.IrbmUuid,
-                IrbmSubmitId = x.IrbmSubmitId
+                IrbmSubmitId = x.IrbmSubmitId,
+                IrbmSentOn = x.IrbmSentOn,
+                TotAmnt = x.TotAmnt
             });
         cdns = ApplyCommonEInvoice(cdns, from, toExclusive, cust);
 

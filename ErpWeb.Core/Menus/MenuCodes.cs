@@ -98,8 +98,15 @@ public static class MenuCodes
     public const string InventoryType = "INV_TYPE";
     public const string InventoryClass = "INV_CLASS";
     public const string Sales = "SALES";
-    public const string SalesCustomerProfile = "SA_CUST";
-    public const string SalesCustType = "SA_CUST_TYPE";
+
+    /// <summary>
+    /// Sales Dashboard (plan-salesReportsAndInquiries.prompt.md Phase 3) — read-only KPI chips and
+    /// charts over the current company. ACCESS only. Its chart payloads reuse the analysis service,
+    /// so a dashboard role should also hold the analysis menus it renders.
+    /// </summary>
+    public const string SalesDashboard = "SA_DASHBOARD";
+
+    public const string SalesCustomerProfile = "SA_CUST";    public const string SalesCustType = "SA_CUST_TYPE";
     public const string SalesCustGroup = "SA_CUST_GROUP";
     public const string SalesArea = "SA_AREA";
     public const string SalesCountry = "SA_COUNTRY";
@@ -137,6 +144,12 @@ public static class MenuCodes
     public const string SalesAnalysisAttainment = "SA_SALES_ATTAINMENT";
     public const string SalesAnalysisQtConversion = "SA_QT_CONVERSION";
 
+    // Sales analysis Phase 2 (plan-salesReportsAndInquiries.prompt.md): item / category / warehouse
+    // detail grids over POSTED invoice lines. Read-only — ACCESS only, CSV gated by the same ACCESS.
+    public const string SalesByItem = "SA_SALES_ITEM";
+    public const string SalesByCategory = "SA_SALES_CATEGORY";
+    public const string SalesByWarehouse = "SA_SALES_WAREHOUSE";
+
     // Sales Inquiry (plan-salesReportsAndInquiries.prompt.md Phase 1) — read-only operational grids.
     // The parent carries no route. ACCESS only; the CSV downloads are gated by the same ACCESS check
     // inside the service, so no EXPORT permission is seeded (matches the analysis screens).
@@ -148,6 +161,16 @@ public static class MenuCodes
     public const string SalesInvVsDoc = "SA_INV_VS_DOC";
     public const string SalesCdnInquiry = "SA_CDN_INQUIRY";
     public const string SalesEInvoiceInquiry = "SA_EINV_INQUIRY";
+
+    // Sales Monitor (plan-salesDecisionSupport.prompt.md Phase A) — read-only decision-support screens
+    // over the existing columns. The parent carries no route. ACCESS only; the CSV downloads call the
+    // same service method as the grid, under the same ACCESS check.
+    public const string SalesMonitor = "SA_MONITOR";
+    public const string SalesSoAgeing = "SA_SO_AGEING";
+    public const string SalesDoNotFullyInvoiced = "SA_DO_NOT_FULLY_INVOICED";
+    public const string SalesQtExpiry = "SA_QT_EXPIRY";
+    public const string SalesEInvoiceAction = "SA_EINV_ACTION";
+
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
     public const string SalesOrder = "SA_SO";
@@ -186,6 +209,17 @@ public static class MenuCodes
 
     /// <summary>Self-billed purchase debit note (LHDN 13).</summary>
     public const string PurchaseSbDebitNote = "PO_SB_DN";
+
+    // Purchase Inquiry (Phase 1) — read-only operational grids. Parent has no route. ACCESS only.
+    public const string PurchaseInquiry = "PO_INQUIRY";
+    public const string PurchaseOrderOutstanding = "PO_ORDER_OUTSTANDING";
+    public const string PurchasePrStatus = "PO_PR_STATUS";
+    public const string PurchaseSupplierTransaction = "PO_SUPP_TRX";
+    public const string PurchaseInvoiceInquiry = "PO_INV_INQUIRY";
+    public const string PurchaseCdnInquiry = "PO_CDN_INQUIRY";
+    public const string PurchaseDocRelationship = "PO_DOC_REL";
+    public const string PurchaseSbEInvoiceInquiry = "PO_SB_EINV_INQUIRY";
+
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

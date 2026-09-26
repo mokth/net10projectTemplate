@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Purchase.Transactions;
@@ -192,7 +193,8 @@ public partial class PoInvoice : PageBase
     }
 
     protected void OnEditFromView() =>
-        Navigation.NavigateTo($"/purchase/invoices/edit/{Uri.EscapeDataString(Model.DocNo)}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(
+            Navigation.Uri, $"/purchase/invoices/edit/{Uri.EscapeDataString(Model.DocNo)}"));
 
     protected async Task OnVendorChanged(string? vendorCode)
     {
@@ -502,7 +504,7 @@ public partial class PoInvoice : PageBase
         Model.TotAmnt = Model.GrossAmnt + Model.Taxes;
     }
 
-    protected void GoBack() => Navigation.NavigateTo("/purchase/invoices");
+    protected void GoBack() => DocumentReturnNavigation.NavigateBack(Navigation, "/purchase/invoices");
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 

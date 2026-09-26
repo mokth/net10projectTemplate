@@ -3,6 +3,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Purchase.Transactions;
@@ -348,9 +349,10 @@ public partial class PoSbInvoice : PageBase
     }
 
     protected void OnEditFromView() =>
-        Navigation.NavigateTo($"/purchase/self-billed-invoices/edit/{Model.DocNo}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(
+            Navigation.Uri, $"/purchase/self-billed-invoices/edit/{Model.DocNo}"));
 
-    protected void GoBack() => Navigation.NavigateTo("/purchase/self-billed-invoices");
+    protected void GoBack() => DocumentReturnNavigation.NavigateBack(Navigation, "/purchase/self-billed-invoices");
 
     protected void DismissStatus() => StatusMessage = null;
 

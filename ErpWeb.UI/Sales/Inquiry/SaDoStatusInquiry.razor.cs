@@ -71,4 +71,14 @@ public partial class SaDoStatusInquiry : SaInquiryPageBase
                 break;
         }
     }
+
+    protected Task OnActionClick(SelectedButtonInfo<SaDoStatusRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType("DO", row.DoNo);
+        }
+
+        return Task.CompletedTask;
+    }
 }

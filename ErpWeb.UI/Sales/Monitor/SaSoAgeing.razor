@@ -1,0 +1,186 @@
+@page "/sales/monitor/so-ageing"
+@inherits SaInquiryPageBase
+@using ErpWeb.UI.Sales.Inquiry
+@using ErpWeb.Core.Sales
+
+<PageTitle>Sales Order Ageing</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesSoAgeing">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(NavMessage))
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@NavMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissNavMessage" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-hourglass-half"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Monitor</p>
+                <h1 class="iv-title">Open Order Ageing</h1>
+                <div class="iv-chips" aria-busy="@SummaryLoading">
+                    <span class="iv-chip">Open orders: @(SummaryLoading ? "…" : Summary.OpenCount.ToString("N0"))</span>
+                    <span class="iv-chip">Original: @(SummaryLoading ? "…" : Summary.OriginalValue.ToString("N2"))</span>
+                    <span class="iv-chip" title="A derived ratio: line net amount pro-rated by the outstanding quantity.">
+                        Outstanding (derived): @(SummaryLoading ? "…" : Summary.OutstandingValue.ToString("N2"))
+                    </span>
+                    <span class="iv-chip">Pending qty: @(SummaryLoading ? "…" : Summary.PendingQty.ToString("N4"))</span>
+                    <button type="button" class="@(OverdueOnly ? "iv-chip iv-chip--active" : "iv-chip")"
+                            @onclick="OnOverdueChipClick">
+                        Overdue qty: @(SummaryLoading ? "…" : Summary.OverdueQty.ToString("N4"))
+                    </button>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        @if (!IsBootstrapping && Summary.Buckets.Count > 0)
+        {
+            <section class="iv-card">
+                <div class="iv-chips">
+                    <span class="iv-chip">SO age buckets</span>
+                    @foreach (var bucket in Summary.Buckets)
+                    {
+                        <button type="button" class="@BucketChipClass(bucket.Label)"
+                                @onclick="@(() => OnBucketClick(bucket.Label))">
+                            @bucket.Label: @bucket.Count.ToString("N0") · @bucket.Value.ToString("N2") · @bucket.Qty.ToString("N4")
+                        </button>
+                    }
+                </div>
+            </section>
+        }
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@CustomerOptions"
+                                    Value="@CustCode"
+                                    ValueChanged="@(async (string? v) => await OnCustomerChangedAsync(v))"
+                                    NullText="All customers" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SaSoAgeingRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SaSoAgeingRow.SoNo)"
+                                      GridKey="sa-so-ageing"
+                                      Title="Sales order ageing"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            <strong>SO Age</strong> is the age of the order, never delivery ageing.
+            <strong>Delivery Due Date</strong> is the line's expected delivery; a delivery due today is
+            <strong>not</strong> overdue. <strong>Overdue Days</strong> is derived from that date alone.
+            Balance quantity is the persisted outstanding quantity maintained by the document engine —
+            shown, never recomputed.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Filter open orders"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="SO date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="SO date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@SalesmanOptions"
+                                            @bind-Value="@DraftSalesmanCode"
+                                            NullText="All salesmen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@StatusOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatus"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="SO age bucket" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@BucketOptions"
+                                        @bind-Value="@DraftBucket"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Delivery" ColSpanMd="6">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftOverdueOnly" Text="Overdue delivery only" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    An empty field means <strong>all</strong> values, never "none". A superseded revision is
+                    historical and never appears here. The customer is chosen on the toolbar and applies as
+                    soon as it is picked.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

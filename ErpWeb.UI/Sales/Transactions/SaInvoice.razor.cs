@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Transactions;
@@ -1606,7 +1607,7 @@ public partial class SaInvoice : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
-    protected void OnClose() => Navigation.NavigateTo("/sales/invoices");
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/sales/invoices");
 
     protected void OnEditFromView() => Navigation.NavigateTo($"/sales/invoices/edit/{InvNo}");
 

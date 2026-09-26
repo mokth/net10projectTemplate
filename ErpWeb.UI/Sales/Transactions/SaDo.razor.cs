@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Transactions;
@@ -1271,7 +1272,7 @@ public partial class SaDo : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
-    protected void OnClose() => Navigation.NavigateTo("/sales/delivery-orders");
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/sales/delivery-orders");
 
     protected void OnEditFromView() => Navigation.NavigateTo($"/sales/delivery-orders/edit/{DoNo}");
 

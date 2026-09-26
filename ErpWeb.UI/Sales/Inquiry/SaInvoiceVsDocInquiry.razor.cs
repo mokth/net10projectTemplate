@@ -16,6 +16,13 @@ public partial class SaInvoiceVsDocInquiry : SaInquiryPageBase
         new() { Text = "EXPORT", IConClass = "fa-solid fa-file-csv", Style = "primary" }
     ];
 
+    /// <summary>A relationship row has two ends, so the grid exposes one action per end.</summary>
+    protected override List<ButtonInfo> ActionButtons =>
+    [
+        new() { Text = "SOURCE", IConClass = "fa-solid fa-up-right-from-square", ToolTip = "View source document" },
+        new() { Text = "TARGET", IConClass = "fa-solid fa-up-right-from-square", ToolTip = "View target document" }
+    ];
+
     protected List<GridColumnData> Columns =>
     [
         new() { Caption = "Relationship", FieldName = nameof(SaDocumentRelationshipRow.Relation), Width = "110px", VisibleIndex = 1 },
@@ -57,5 +64,16 @@ public partial class SaInvoiceVsDocInquiry : SaInquiryPageBase
                 Navigation.NavigateTo(BuildExportUrl("/sales/inquiry/document-relationship/export", []), forceLoad: true);
                 break;
         }
+    }
+
+    protected Task OnActionClick(SelectedButtonInfo<SaDocumentRelationshipRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            var openSource = !string.Equals(info.SelectedButton.Text, "TARGET", StringComparison.OrdinalIgnoreCase);
+            TryOpenByRelationship(row.Relation, row.SourceDocNo, row.TargetDocNo, openSource);
+        }
+
+        return Task.CompletedTask;
     }
 }

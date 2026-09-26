@@ -121,8 +121,19 @@ public sealed class AccessRightService : IAccessRightService
         return Task.CompletedTask;
     }
 
-    private bool HasAdminBypass() =>
-        _currentUser.IsInRole(AdminRole) || _currentUser.IsInRole(SystemAdminRole);
+    private bool HasAdminBypass()
+    {
+        if (_currentUser.IsInRole(AdminRole) || _currentUser.IsInRole(SystemAdminRole))
+        {
+            return true;
+        }
+
+        // Defense in depth: same values are stored on the Level claim at login. After /erpweb
+        // PathBase + Interactive Server, Role-claim IsInRole can fail while Level is still present.
+        var level = _currentUser.UserLevel;
+        return string.Equals(level, AdminRole, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(level, SystemAdminRole, StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task<Dictionary<string, EffectiveMenuPermissions>> EnsureCacheAsync(CancellationToken cancellationToken)
     {

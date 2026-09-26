@@ -5,6 +5,7 @@ using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Purchase.Transactions;
@@ -942,9 +943,10 @@ public partial class PoCdn : PageBase, IDisposable
         }
     }
 
-    protected void OnClose() => Navigation.NavigateTo(ListRoute);
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, ListRoute);
 
-    protected void OnEditFromView() => Navigation.NavigateTo(EditRouteFor(DocNo!));
+    protected void OnEditFromView() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, EditRouteFor(DocNo!)));
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;

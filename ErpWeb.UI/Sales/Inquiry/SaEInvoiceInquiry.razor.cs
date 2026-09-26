@@ -109,4 +109,26 @@ public partial class SaEInvoiceInquiry : SaInquiryPageBase
                 break;
         }
     }
+
+    /// <summary>Opens the ERP document behind the status row (INV / CN / DN).</summary>
+    protected Task OnStatusActionClick(SelectedButtonInfo<SaEInvoiceStatusRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType(row.DocType, row.DocNo);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Opens the ERP document behind the reconciliation row (INV / CN / DN).</summary>
+    protected Task OnReconciliationActionClick(SelectedButtonInfo<SaEInvoiceReconciliationRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType(row.DocType, row.DocNo);
+        }
+
+        return Task.CompletedTask;
+    }
 }

@@ -12,6 +12,12 @@ public interface IPoSupplierLookupService
     Task<IReadOnlyList<IvCodeLookupRow>> ListPayCodesForAssignmentAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListBuyingTermsForAssignmentAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Supplier search for inquiry toolbar combos (Sales <c>SearchCustomersAsync</c> shape).</summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> SearchSuppliersAsync(
+        string? searchText = null,
+        int maxRows = 200,
+        CancellationToken cancellationToken = default);
+
     Task<bool> ValidateAreaAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateStateAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateCountryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);

@@ -70,6 +70,8 @@
 
   <!-- ─── Sales ─────────────────────────────────────────────────── -->
   <Menu Code="SALES" Name="Sales" SortOrder="3" Icon="fa-solid fa-cart-shopping">
+    <Menu Code="SA_DASHBOARD" Name="Sales Dashboard" Route="/sales/dashboard" SortOrder="0"
+          Icon="fa-solid fa-gauge-high" />
     <Menu Code="SA_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
       <Menu Code="SA_CUST" Name="Customer Profile" Route="/sales/customers" SortOrder="1"
             Icon="fa-solid fa-user-tie" />
@@ -139,6 +141,12 @@
             Icon="fa-solid fa-chart-pie" />
       <Menu Code="SA_QT_CONVERSION" Name="Quotation Conversion" Route="/sales/analysis/qt-conversion" SortOrder="3"
             Icon="fa-solid fa-diagram-successor" />
+      <Menu Code="SA_SALES_ITEM" Name="Sales by Item" Route="/sales/analysis/by-item" SortOrder="4"
+            Icon="fa-solid fa-cube" />
+      <Menu Code="SA_SALES_CATEGORY" Name="Sales by Category" Route="/sales/analysis/by-category" SortOrder="5"
+            Icon="fa-solid fa-tags" />
+      <Menu Code="SA_SALES_WAREHOUSE" Name="Sales by Warehouse" Route="/sales/analysis/by-warehouse" SortOrder="6"
+            Icon="fa-solid fa-warehouse" />
     </Menu>
     <Menu Code="SA_INQUIRY" Name="Inquiry" SortOrder="4" Icon="fa-solid fa-magnifying-glass-chart">
       <Menu Code="SA_CUST_TRX" Name="Customer Transactions" Route="/sales/inquiry/customer" SortOrder="1"
@@ -155,6 +163,19 @@
             Icon="fa-solid fa-file-circle-question" />
       <Menu Code="SA_EINV_INQUIRY" Name="e-Invoice Status" Route="/sales/inquiry/einvoice" SortOrder="7"
             Icon="fa-solid fa-file-signature" />
+    </Menu>
+    <!-- Sales Monitor (plan-salesDecisionSupport.prompt.md): read-only decision-support views. The
+         Inquiry group above stays the raw row-level detail; these screens answer "what needs doing". -->
+    <Menu Code="SA_MONITOR" Name="Monitor" SortOrder="5" Icon="fa-solid fa-gauge-high">
+      <Menu Code="SA_SO_AGEING" Name="Open Order Ageing" Route="/sales/monitor/so-ageing" SortOrder="1"
+            Icon="fa-solid fa-hourglass-half" />
+      <Menu Code="SA_DO_NOT_FULLY_INVOICED" Name="Delivered Not Fully Invoiced"
+            Route="/sales/monitor/delivered-not-fully-invoiced" SortOrder="2"
+            Icon="fa-solid fa-file-invoice-dollar" />
+      <Menu Code="SA_QT_EXPIRY" Name="Quotation Expiry Watch" Route="/sales/monitor/quotation-expiry" SortOrder="3"
+            Icon="fa-solid fa-calendar-xmark" />
+      <Menu Code="SA_EINV_ACTION" Name="e-Invoice Action Queue" Route="/sales/monitor/einvoice-action" SortOrder="4"
+            Icon="fa-solid fa-list-check" />
     </Menu>
   </Menu>
 
@@ -193,6 +214,22 @@
             Icon="fa-solid fa-file-circle-xmark" />
       <Menu Code="PO_SB_DN" Name="Self-billed Debit Note" Route="/purchase/self-billed-debit-notes" SortOrder="9"
             Icon="fa-solid fa-file-circle-question" />
+    </Menu>
+    <Menu Code="PO_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
+      <Menu Code="PO_ORDER_OUTSTANDING" Name="PO Outstanding" Route="/purchase/inquiry/po-outstanding" SortOrder="1"
+            Icon="fa-solid fa-boxes-stacked" />
+      <Menu Code="PO_PR_STATUS" Name="PR Status / Outstanding" Route="/purchase/inquiry/pr-status" SortOrder="2"
+            Icon="fa-solid fa-clipboard-list" />
+      <Menu Code="PO_SUPP_TRX" Name="Supplier Transactions" Route="/purchase/inquiry/supplier" SortOrder="3"
+            Icon="fa-solid fa-arrow-right-arrow-left" />
+      <Menu Code="PO_INV_INQUIRY" Name="Purchase Invoices" Route="/purchase/inquiry/invoices" SortOrder="4"
+            Icon="fa-solid fa-file-invoice-dollar" />
+      <Menu Code="PO_CDN_INQUIRY" Name="Credit / Debit Notes" Route="/purchase/inquiry/credit-debit-notes" SortOrder="5"
+            Icon="fa-solid fa-file-invoice" />
+      <Menu Code="PO_DOC_REL" Name="Document Relationships" Route="/purchase/inquiry/doc-relationships" SortOrder="6"
+            Icon="fa-solid fa-diagram-project" />
+      <Menu Code="PO_SB_EINV_INQUIRY" Name="Self-billed e-Invoice" Route="/purchase/inquiry/einvoice" SortOrder="7"
+            Icon="fa-solid fa-file-circle-check" />
     </Menu>
   </Menu>
 

@@ -1,11 +1,13 @@
 using System.Linq;
+using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Routing;
 
 namespace ErpWeb.UI.Components.Layout;
 
-public partial class NavMenu
+public partial class NavMenu : IDisposable
 {
     [Inject]
     private INavigationService NavigationService { get; set; } = default!;
@@ -14,6 +16,7 @@ public partial class NavMenu
     private AppNavigation Navigation { get; set; } = default!;
 
     private IReadOnlyList<MenuNavItem>? _items;
+    private NavigationUrlMatchMode _urlMatchMode = NavigationUrlMatchMode.Prefix;
 
     /// <summary>Relative on purpose: it resolves against <c>&lt;base href&gt;</c>, so it stays inside
     /// the deployment's base path.</summary>
@@ -22,7 +25,26 @@ public partial class NavMenu
     protected override async Task OnInitializedAsync()
     {
         _items = PrefixRoutes(await NavigationService.GetSidebarAsync());
+        RefreshUrlMatchMode();
+        Navigation.LocationChanged += OnLocationChanged;
     }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        RefreshUrlMatchMode();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void RefreshUrlMatchMode()
+    {
+        // Inquiry-originated document views carry ?returnUrl=/purchase/inquiry/…
+        // Prefix-matching the transaction route would expand Transactions and steal focus.
+        _urlMatchMode = DocumentReturnNavigation.HasSafeInquiryReturn(Navigation.Uri)
+            ? NavigationUrlMatchMode.None
+            : NavigationUrlMatchMode.Prefix;
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
 
     /// <summary>
     /// Prefixes every menu route with the deployment's app base path. The routes come from menus.xml /

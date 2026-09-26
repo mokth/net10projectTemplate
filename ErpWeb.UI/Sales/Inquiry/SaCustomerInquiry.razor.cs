@@ -95,6 +95,20 @@ public partial class SaCustomerInquiry : SaInquiryPageBase
         }
     }
 
+    /// <summary>
+    /// Opens the row's document. The transaction log reports the document number without a revision,
+    /// so a REVISABLE document (QT/SO) opens its latest revision — the row never claims otherwise.
+    /// </summary>
+    protected Task OnActionClick(SelectedButtonInfo<SaCustomerTransactionRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType(row.DocType, row.DocNo);
+        }
+
+        return Task.CompletedTask;
+    }
+
     protected async Task OnExportHistoryClick()
     {
         Navigation.NavigateTo(BuildExportUrl("/sales/inquiry/customer-history/export", []), forceLoad: true);

@@ -40,6 +40,35 @@ public sealed class SaInquiryQuery
 
     /// <summary>Server-side page size. 0 means the service default.</summary>
     public int Take { get; set; }
+
+    // ---- Sales Monitor filters (plan-salesDecisionSupport.prompt.md, Phase A) -------------------
+    // Only the monitor screens read these; the Phase-1 inquiry methods ignore them, so an extra
+    // property here cannot change an existing screen's predicate.
+
+    /// <summary>
+    /// The company-local "as of" date every derived age/expiry figure is measured against. The page
+    /// supplies it from <c>ICurrentDateService</c> (never <c>DateTime.Today</c>); a monitor method
+    /// falls back to <c>DateTime.Today</c> when it is null.
+    /// </summary>
+    public DateTime? AsOfDate { get; set; }
+
+    /// <summary>A1: keep only lines whose expected delivery date is strictly before <see cref="AsOfDate"/>.</summary>
+    public bool OverdueOnly { get; set; }
+
+    /// <summary>A1/A3: restrict to one monitoring bucket label (<see cref="SaMonitorBuckets"/>).</summary>
+    public string? Bucket { get; set; }
+
+    /// <summary>A2: restrict to one <see cref="SaDoInvoiceStates"/> value.</summary>
+    public string? InvoiceState { get; set; }
+
+    /// <summary>A2: keep only lines that still owe billing (the default for that screen).</summary>
+    public bool PendingOnly { get; set; }
+
+    /// <summary>A3: keep only quotations the lazy-expiry sweep is about to expire.</summary>
+    public bool ExpiringSoonOnly { get; set; }
+
+    /// <summary>A3: keep only quotations already past their validity date.</summary>
+    public bool ExpiredOnly { get; set; }
 }
 
 /// <summary>A paged, server-side materialised result.</summary>
@@ -221,6 +250,12 @@ public sealed class SaEInvoiceStatusRow
 
     public string? IrbmUuid { get; set; }
     public string? IrbmSubmitId { get; set; }
+
+    /// <summary>When MyInvois accepted the submission (persisted <c>IrbmSentOn</c>), null if never sent.</summary>
+    public DateTime? IrbmSentOn { get; set; }
+
+    /// <summary>The document's stored header total (never re-totalled from lines).</summary>
+    public decimal TotAmnt { get; set; }
 
     /// <summary>The latest submission row's status, or null when no submission row exists.</summary>
     public string? LatestSubmissionStatus { get; set; }

@@ -81,4 +81,15 @@ public partial class SaSoOutstandingInquiry : SaInquiryPageBase
                 break;
         }
     }
+
+    /// <summary>Opens the SO revision the row shows — never a different revision than displayed.</summary>
+    protected Task OnActionClick(SelectedButtonInfo<SaSoOutstandingRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType("SO", row.SoNo, row.Rev);
+        }
+
+        return Task.CompletedTask;
+    }
 }

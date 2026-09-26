@@ -265,6 +265,27 @@ public class AccessRightServiceTests : IAsyncLifetime
         Assert.False(await sut.CanAccessAsync("DASHBOARD"));
     }
 
+    [Fact]
+    public async Task Admin_bypass_via_UserLevel_when_IsInRole_false()
+    {
+        var current = MockUser(uid: 1, company: "DEMO", admin: false);
+        current.SetupGet(x => x.UserLevel).Returns("SYSTEM_ADMIN");
+        var sut = CreateSut(current);
+
+        Assert.True(await sut.CanAccessAsync("ANY_MENU_CODE"));
+        Assert.True(await sut.CanAsync("ANY_MENU_CODE", PermissionCodes.Delete));
+    }
+
+    [Fact]
+    public async Task Admin_bypass_via_UserLevel_ADMIN()
+    {
+        var current = MockUser(uid: 1, company: "DEMO", admin: false);
+        current.SetupGet(x => x.UserLevel).Returns("ADMIN");
+        var sut = CreateSut(current);
+
+        Assert.True(await sut.CanAccessAsync("DASHBOARD"));
+    }
+
     private AccessRightService CreateSut(Mock<ICurrentUserService> current) =>
         new(current.Object, _factory, NullLogger<AccessRightService>.Instance);
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using Microsoft.AspNetCore.Mvc;
 
@@ -20,6 +21,9 @@ public static class SaAnalysisExportEndpoints
         endpoints.MapGet("/sales/analysis/summary/export", ExportSummaryAsync).RequireAuthorization();
         endpoints.MapGet("/sales/analysis/attainment/export", ExportAttainmentAsync).RequireAuthorization();
         endpoints.MapGet("/sales/analysis/qt-conversion/export", ExportQtConversionAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/analysis/by-item/export", ExportByItemAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/analysis/by-category/export", ExportByCategoryAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/analysis/by-warehouse/export", ExportByWarehouseAsync).RequireAuthorization();
         return endpoints;
     }
 
@@ -157,10 +161,61 @@ public static class SaAnalysisExportEndpoints
         return Csv(rows, "SaQtConversion");
     }
 
-    private static string[] Bucket(string name, SaQtConversionBucket bucket) =>
-        [name, bucket.Count.ToString(CultureInfo.InvariantCulture), Money(bucket.Amount)];
+    private static async Task<IResult> ExportByItemAsync(
+        [AsParameters] SaSalesAnalysisQuery query,
+        [FromServices] ISaSalesAnalysisService analysis,
+        CancellationToken cancellationToken) =>
+        await ExportDetailAsync(query, analysis, MenuCodes.SalesByItem, SaSalesDetailDimension.Item, "Item", cancellationToken);
 
-    private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+    private static async Task<IResult> ExportByCategoryAsync(
+        [AsParameters] SaSalesAnalysisQuery query,
+        [FromServices] ISaSalesAnalysisService analysis,
+        CancellationToken cancellationToken) =>
+        await ExportDetailAsync(query, analysis, MenuCodes.SalesByCategory, SaSalesDetailDimension.Category, "Category", cancellationToken);
+
+    private static async Task<IResult> ExportByWarehouseAsync(
+        [AsParameters] SaSalesAnalysisQuery query,
+        [FromServices] ISaSalesAnalysisService analysis,
+        CancellationToken cancellationToken) =>
+        await ExportDetailAsync(query, analysis, MenuCodes.SalesByWarehouse, SaSalesDetailDimension.Warehouse, "Warehouse", cancellationToken);
+
+    private static async Task<IResult> ExportDetailAsync(
+        SaSalesAnalysisQuery query,
+        ISaSalesAnalysisService analysis,
+        string menuCode,
+        SaSalesDetailDimension dimension,
+        string keyCaption,
+        CancellationToken cancellationToken)
+    {
+        var result = await analysis.GetSalesDetailAsync(menuCode, query, dimension, cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[] { keyCaption, "Description", "Qty", "Amount", "Net amount", "Tax", "Discount", "ASP" }
+        };
+        rows.AddRange((result.Data ?? []).Select(x => new[]
+        {
+            x.Key,
+            x.Description ?? string.Empty,
+            Qty(x.Qty),
+            Money(x.Amount),
+            Money(x.NetAmount),
+            Money(x.TaxAmount),
+            Money(x.Discount),
+            x.Asp.ToString("0.####", CultureInfo.InvariantCulture)
+        }));
+
+        return Csv(rows, $"SaSalesBy{dimension}");
+    }
+
+    private static string[] Bucket(string name, SaQtConversionBucket bucket) =>
+        [name, bucket.Count.ToString(CultureInfo.InvariantCulture), Money(bucket.Amount)];    private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+
+    private static string Qty(decimal value) => value.ToString("0.####", CultureInfo.InvariantCulture);
 
     private static string Percent(decimal value) => value.ToString("0.##", CultureInfo.InvariantCulture);
 

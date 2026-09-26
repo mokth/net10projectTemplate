@@ -12,6 +12,13 @@
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
             </div>
         }
+        @if (!string.IsNullOrWhiteSpace(NavMessage))
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@NavMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissNavMessage" aria-label="Dismiss">×</button>
+            </div>
+        }
 
         <header class="iv-hero">
             <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-link"></i></div>
@@ -68,7 +75,9 @@
                                       ShowGroupPanel="false"
                                       allowSelect="false"
                                       OnGridInstance="@OnGridInstance"
-                                      OnButtonEventHandle="@OnButtonClick" />
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      ActionButtons="@ActionButtons"
+                                      OnActionEventHandle="@OnActionClick" />
                 </div>
             }
         </section>

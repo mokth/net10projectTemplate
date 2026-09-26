@@ -1,0 +1,182 @@
+@page "/sales/monitor/delivered-not-fully-invoiced"
+@inherits SaInquiryPageBase
+@using ErpWeb.UI.Sales.Inquiry
+@using ErpWeb.Core.Sales
+
+<PageTitle>Delivered Not Fully Invoiced</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDoNotFullyInvoiced">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(NavMessage))
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@NavMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissNavMessage" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Monitor</p>
+                <h1 class="iv-title">Delivered Not Fully Invoiced</h1>
+                <div class="iv-chips" aria-busy="@SummaryLoading">
+                    <span class="iv-chip">Orders: @(SummaryLoading ? "…" : Summary.DoCount.ToString("N0"))</span>
+                    <span class="iv-chip">Lines: @(SummaryLoading ? "…" : Summary.LineCount.ToString("N0"))</span>
+                    <button type="button" class="@(PendingOnly ? "iv-chip iv-chip--active" : "iv-chip")"
+                            @onclick="OnPendingChipClick">
+                        Not fully invoiced qty: @(SummaryLoading ? "…" : Summary.NotFullyInvoicedQty.ToString("N4"))
+                    </button>
+                    <span class="iv-chip">Line value: @(SummaryLoading ? "…" : Summary.NotFullyInvoicedValue.ToString("N2"))</span>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        @if (!IsBootstrapping && Summary.States.Count > 0)
+        {
+            <section class="iv-card">
+                <div class="iv-chips">
+                    <span class="iv-chip">Line state</span>
+                    @foreach (var state in Summary.States)
+                    {
+                        <button type="button" class="@StateChipClass(state.State)"
+                                @onclick="@(() => OnStateClick(state.State))">
+                            @state.State: @state.Count.ToString("N0") · @state.Value.ToString("N2")
+                        </button>
+                    }
+                </div>
+            </section>
+        }
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@CustomerOptions"
+                                    Value="@CustCode"
+                                    ValueChanged="@(async (string? v) => await OnCustomerChangedAsync(v))"
+                                    NullText="All customers" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SaDoNotFullyInvoicedRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SaDoNotFullyInvoicedRow.DoNo)"
+                                      GridKey="sa-do-not-fully-invoiced"
+                                      Title="Delivered not fully invoiced"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            <strong>Not fully invoiced</strong> — a partially billed order legitimately carries invoice
+            numbers on the lines it has billed. <strong>WRITTEN_OFF</strong> is terminal for billing and is
+            never outstanding. Delivered quantity is the persisted DO line quantity; no balance-to-invoice
+            figure is shown because the delivery line does not persist one.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Filter delivered lines"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="DO date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="DO date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Salesman" ColSpanMd="6">
+                        <Template>
+                            <IvCodeComboBox Data="@SalesmanOptions"
+                                            @bind-Value="@DraftSalesmanCode"
+                                            NullText="All salesmen" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@StatusOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatus"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Line state" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@StateOptions"
+                                        @bind-Value="@DraftInvoiceState"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Scope" ColSpanMd="6">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@DraftPendingOnly" Text="Still owes billing only" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    Only <strong>posted</strong> delivery orders are listed. An empty field means
+                    <strong>all</strong> values, never "none". Picking an explicit line state clears the
+                    "still owes billing" scope.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

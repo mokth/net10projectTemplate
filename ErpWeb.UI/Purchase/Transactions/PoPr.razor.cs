@@ -5,6 +5,7 @@ using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Http;
@@ -683,9 +684,10 @@ public partial class PoPr : PageBase, IAsyncDisposable
         Navigation.NavigateTo("/purchase/requisitions");
     }
 
-    protected void OnClose() => Navigation.NavigateTo("/purchase/requisitions");
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/purchase/requisitions");
 
-    protected void OnEditFromView() => Navigation.NavigateTo($"/purchase/requisitions/edit/{PrNo}");
+    protected void OnEditFromView() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/purchase/requisitions/edit/{PrNo}"));
 
     protected async Task ConfirmDiscardAsync()
     {

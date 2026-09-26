@@ -1,6 +1,7 @@
 @page "/login"
 @layout EmptyLayout
 @attribute [AllowAnonymous]
+@inject NavigationManager NavigationManager
 
 <PageTitle>Sign in · Wincom ERP</PageTitle>
 
@@ -92,7 +93,7 @@
                 </div>
             }
 
-            <form class="login-form" method="post" action="/account/login">
+            <form class="login-form" method="post" action="@($"{NavigationManager.BaseUri}account/login")">
                 <div class="form-group">
                     <label class="field" for="CompanyCode">
                         <span class="field-label">Company Code</span>

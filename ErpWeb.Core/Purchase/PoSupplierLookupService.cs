@@ -126,6 +126,37 @@ public sealed class PoSupplierLookupService : IPoSupplierLookupService
     public Task<bool> ValidateBuyingTermAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListBuyingTermsForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
 
+    public async Task<IReadOnlyList<IvCodeLookupRow>> SearchSuppliersAsync(
+        string? searchText = null,
+        int maxRows = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryBranchScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        var limit = Math.Clamp(maxRows, 1, 500);
+        var term = string.IsNullOrWhiteSpace(searchText) ? null : searchText.Trim();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.PoSuppliers
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.IsActive);
+
+        if (term is not null)
+        {
+            query = query.Where(x => x.SuppCode.Contains(term) || x.SuppName.Contains(term));
+        }
+
+        return await query
+            .OrderBy(x => x.SuppCode)
+            .Select(x => new IvCodeLookupRow { Code = x.SuppCode, Desc = x.SuppName })
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
     private async Task<IReadOnlyList<IvCodeLookupRow>> ListMsCodesAsync(string codeType, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);

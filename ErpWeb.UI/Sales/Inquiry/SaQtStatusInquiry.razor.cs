@@ -61,4 +61,15 @@ public partial class SaQtStatusInquiry : SaInquiryPageBase
                 break;
         }
     }
+
+    /// <summary>Opens the quotation revision the row shows — never a different revision than displayed.</summary>
+    protected Task OnActionClick(SelectedButtonInfo<SaQtStatusRow> info)
+    {
+        if (info.SelectedRow is { } row)
+        {
+            TryOpenByDocType("QT", row.QtNo, row.Rev);
+        }
+
+        return Task.CompletedTask;
+    }
 }

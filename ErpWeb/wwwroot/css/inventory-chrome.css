@@ -46,6 +46,12 @@
     border-color: color-mix(in srgb, var(--accent, #2f6fed) 28%, var(--line, #d7dde5));
 }
 
+.iv-toast--warn {
+    background: var(--iv-hold-bg);
+    color: var(--iv-hold);
+    border-color: color-mix(in srgb, var(--iv-hold) 28%, var(--iv-line));
+}
+
 .iv-toast__close {
     border: 0;
     background: transparent;
@@ -153,6 +159,18 @@
 .iv-status.is-on {
     background: var(--iv-ok-bg);
     color: var(--iv-ok);
+}
+
+.iv-chip--active {
+    background: color-mix(in srgb, var(--accent, #2563eb) 18%, var(--iv-surface));
+    color: var(--accent, #2563eb);
+    font-weight: 700;
+}
+
+button.iv-chip {
+    font: inherit;
+    border: 0;
+    cursor: pointer;
 }
 
 .iv-status.is-off {

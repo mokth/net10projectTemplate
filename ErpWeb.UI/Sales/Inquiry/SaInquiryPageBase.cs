@@ -5,6 +5,7 @@ using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -32,6 +33,28 @@ public abstract class SaInquiryPageBase : PageBase
     protected string? Type { get; set; }
     protected string? SearchText { get; set; }
 
+    // ---- Sales Monitor filters (plan-salesDecisionSupport.prompt.md, Phase A) ---------------------
+    // The Phase-1 inquiry pages never set these, so the shared query builder keeps producing exactly
+    // the predicate it produced before. The monitor pages use them as ordinary applied filters.
+
+    /// <summary>A1: keep only lines whose expected delivery date has passed.</summary>
+    protected bool OverdueOnly { get; set; }
+
+    /// <summary>A1/A3: restrict to one monitoring bucket label.</summary>
+    protected string? Bucket { get; set; }
+
+    /// <summary>A2: restrict to one <see cref="SaDoInvoiceStates"/> value.</summary>
+    protected string? InvoiceState { get; set; }
+
+    /// <summary>A2: keep only lines that still owe billing.</summary>
+    protected bool PendingOnly { get; set; }
+
+    /// <summary>A3: keep only quotations the lazy-expiry sweep is about to expire.</summary>
+    protected bool ExpiringSoonOnly { get; set; }
+
+    /// <summary>A3: keep only quotations already past their validity date.</summary>
+    protected bool ExpiredOnly { get; set; }
+
     protected IReadOnlyList<IvCodeLookupRow> SalesmanOptions { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> CustomerOptions { get; set; } = [];
 
@@ -55,14 +78,33 @@ public abstract class SaInquiryPageBase : PageBase
     protected string? DraftType { get; set; }
     protected string? DraftSearchText { get; set; }
 
+    protected bool DraftOverdueOnly { get; set; }
+    protected string? DraftBucket { get; set; }
+    protected string? DraftInvoiceState { get; set; }
+    protected bool DraftPendingOnly { get; set; }
+    protected bool DraftExpiringSoonOnly { get; set; }
+    protected bool DraftExpiredOnly { get; set; }
+
     /// <summary>The filter popup's visibility (house pattern: filters live in a popup, not inline).</summary>
     protected bool FilterPopupVisible { get; set; }
 
     /// <summary>One entry of a Status filter combo — the value sent to the service and its display text.</summary>
     protected sealed record StatusFilterOption(string Key, string Name);
 
+    /// <summary>
+    /// The screen's own menu code. Optional — the Phase-1 pages pass their code straight to the service;
+    /// the monitor pages derive several calls from it, so they expose it once here.
+    /// </summary>
+    protected virtual string MenuCode => string.Empty;
+
     protected DxGrid? Grid;
     protected bool IsBootstrapping = true;
+
+    /// <summary>
+    /// Warning raised by a drill-down attempt that could not be resolved (e.g. a document row whose
+    /// type has no view route). Shown as a non-blocking toast, never as an error.
+    /// </summary>
+    protected string? NavMessage { get; set; }
 
     protected override async Task OnPageInitializedAsync()
     {
@@ -126,7 +168,14 @@ public abstract class SaInquiryPageBase : PageBase
         SalesmanCode = Clean(SalesmanCode),
         Status = Clean(Status),
         Type = Clean(Type),
-        SearchText = Clean(SearchText)
+        SearchText = Clean(SearchText),
+        AsOfDate = Dates.Now.Date,
+        OverdueOnly = OverdueOnly,
+        Bucket = Clean(Bucket),
+        InvoiceState = Clean(InvoiceState),
+        PendingOnly = PendingOnly,
+        ExpiringSoonOnly = ExpiringSoonOnly,
+        ExpiredOnly = ExpiredOnly
     };
 
     /// <summary>The filters the grid is actually showing, so the export can never disagree with it.</summary>
@@ -150,6 +199,12 @@ public abstract class SaInquiryPageBase : PageBase
         DraftStatus = Status;
         DraftType = Type;
         DraftSearchText = SearchText;
+        DraftOverdueOnly = OverdueOnly;
+        DraftBucket = Bucket;
+        DraftInvoiceState = InvoiceState;
+        DraftPendingOnly = PendingOnly;
+        DraftExpiringSoonOnly = ExpiringSoonOnly;
+        DraftExpiredOnly = ExpiredOnly;
         FilterPopupVisible = true;
     }
 
@@ -166,6 +221,12 @@ public abstract class SaInquiryPageBase : PageBase
         Status = DraftStatus;
         Type = DraftType;
         SearchText = DraftSearchText;
+        OverdueOnly = DraftOverdueOnly;
+        Bucket = DraftBucket;
+        InvoiceState = DraftInvoiceState;
+        PendingOnly = DraftPendingOnly;
+        ExpiringSoonOnly = DraftExpiringSoonOnly;
+        ExpiredOnly = DraftExpiredOnly;
         FilterPopupVisible = false;
         await ReloadAsync();
     }
@@ -184,6 +245,7 @@ public abstract class SaInquiryPageBase : PageBase
         Status = null;
         Type = null;
         SearchText = null;
+        ResetMonitorFilters();
 
         DraftDateFrom = DateFrom;
         DraftDateTo = DateTo;
@@ -192,9 +254,29 @@ public abstract class SaInquiryPageBase : PageBase
         DraftStatus = null;
         DraftType = null;
         DraftSearchText = null;
+        DraftOverdueOnly = OverdueOnly;
+        DraftBucket = Bucket;
+        DraftInvoiceState = InvoiceState;
+        DraftPendingOnly = PendingOnly;
+        DraftExpiringSoonOnly = ExpiringSoonOnly;
+        DraftExpiredOnly = ExpiredOnly;
 
         FilterPopupVisible = false;
         await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Resets the monitor-only filters to this screen's default. A1/A3 default to "no restriction"; A2
+    /// overrides this because "pending only" is the point of that screen.
+    /// </summary>
+    protected virtual void ResetMonitorFilters()
+    {
+        OverdueOnly = false;
+        Bucket = null;
+        InvoiceState = null;
+        PendingOnly = false;
+        ExpiringSoonOnly = false;
+        ExpiredOnly = false;
     }
 
     /// <summary>
@@ -226,6 +308,65 @@ public abstract class SaInquiryPageBase : PageBase
 
     protected void DismissError() => ErrorMessage = null;
 
+    protected void DismissNavMessage() => NavMessage = null;
+
+    // ---- Inquiry → document drill-down -----------------------------------------------------------
+
+    /// <summary>
+    /// Row-action button set every drill-down capable inquiry grid exposes. The grid renders one button
+    /// per row; the click lands in <c>OnActionClick</c> of the page.
+    /// </summary>
+    protected virtual List<ButtonInfo> ActionButtons =>
+    [
+        new() { Text = "VIEW", IConClass = "fa-solid fa-up-right-from-square", ToolTip = "View document" }
+    ];
+
+    /// <summary>
+    /// Opens a document view <b>from this inquiry</b>. The current inquiry path is attached as a
+    /// <c>returnUrl</c>, so the document's Close button returns here (not to the transaction list) and
+    /// the sidebar does not expand the Transactions group while the document is open.
+    /// </summary>
+    protected void OpenDocument(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            NavMessage = SaInquiryNavigation.DocumentUnavailableMessage;
+            return;
+        }
+
+        NavMessage = null;
+        var returnPath = "/" + Navigation.RelativePath.Split('?', 2)[0].TrimStart('/');
+        Navigation.NavigateTo(DocumentReturnNavigation.WithReturnUrl(url, returnPath));
+    }
+
+    /// <summary>Resolves a row's document-type / document-number pair and opens it; warns when unknown.</summary>
+    protected void TryOpenByDocType(string? docType, string? docNo, short? custRel = null)
+    {
+        if (!SaInquiryNavigation.TryResolveByDocType(docType, docNo, custRel, out var url))
+        {
+            NavMessage = SaInquiryNavigation.DocumentUnavailableMessage;
+            return;
+        }
+
+        OpenDocument(url);
+    }
+
+    /// <summary>Resolves a relationship row's SOURCE or TARGET endpoint and opens it.</summary>
+    protected void TryOpenByRelationship(
+        string? relation,
+        string? sourceDocNo,
+        string? targetDocNo,
+        bool openSource)
+    {
+        if (!SaInquiryNavigation.TryResolveRelationship(relation, sourceDocNo, targetDocNo, openSource, out var url))
+        {
+            NavMessage = SaInquiryNavigation.DocumentUnavailableMessage;
+            return;
+        }
+
+        OpenDocument(url);
+    }
+
     protected static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
@@ -244,6 +385,29 @@ public abstract class SaInquiryPageBase : PageBase
         AddIfSet(parameters, "status", AppliedQuery.Status);
         AddIfSet(parameters, "type", AppliedQuery.Type);
         AddIfSet(parameters, "searchText", AppliedQuery.SearchText);
+        AddIfSet(parameters, "asOf", AppliedQuery.AsOfDate?.ToString("yyyy-MM-dd"));
+        AddIfSet(parameters, "bucket", AppliedQuery.Bucket);
+        AddIfSet(parameters, "invoiceState", AppliedQuery.InvoiceState);
+
+        if (AppliedQuery.OverdueOnly)
+        {
+            parameters["overdueOnly"] = "true";
+        }
+
+        if (AppliedQuery.PendingOnly)
+        {
+            parameters["pendingOnly"] = "true";
+        }
+
+        if (AppliedQuery.ExpiringSoonOnly)
+        {
+            parameters["expiringSoonOnly"] = "true";
+        }
+
+        if (AppliedQuery.ExpiredOnly)
+        {
+            parameters["expiredOnly"] = "true";
+        }
 
         foreach (var pair in extras)
         {
@@ -337,6 +501,13 @@ public sealed class SaInquiryGridDataSource<T> : GridCustomDataSource
         Type = source.Type,
         SearchText = source.SearchText,
         Skip = source.Skip,
-        Take = source.Take
+        Take = source.Take,
+        AsOfDate = source.AsOfDate,
+        OverdueOnly = source.OverdueOnly,
+        Bucket = source.Bucket,
+        InvoiceState = source.InvoiceState,
+        PendingOnly = source.PendingOnly,
+        ExpiringSoonOnly = source.ExpiringSoonOnly,
+        ExpiredOnly = source.ExpiredOnly
     };
 }

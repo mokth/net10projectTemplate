@@ -224,6 +224,12 @@ public static class CoreServiceCollectionExtensions
         // Sales Inquiry — read-only operational grids (plan-salesReportsAndInquiries.prompt.md Phase 1).
         services.AddScoped<ISaSalesInquiryService, SaSalesInquiryService>();
 
+        // Purchase Inquiry — read-only operational grids (plans/Procurement-Inquiry-Assessment.md Phase 1).
+        services.AddScoped<IPoPurchaseInquiryService, PoPurchaseInquiryService>();
+
+        // Sales Dashboard (plan-salesReportsAndInquiries.prompt.md Phase 3).
+        services.AddScoped<ISaSalesDashboardService, SaSalesDashboardService>();
+
 
 
         // LHDN MyInvois e-Invoice adapter. Registered scoped so per-company credentials stay

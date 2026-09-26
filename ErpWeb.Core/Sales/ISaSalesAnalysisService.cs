@@ -37,4 +37,16 @@ public interface ISaSalesAnalysisService
     Task<IvMasterOperationResult<SaQtConversionResult>> GetQtConversionAsync(
         SaSalesAnalysisQuery query,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sales detail by item / category / warehouse over POSTED invoice lines (plan-salesReportsAndInquiries
+    /// Phase 2). Every aggregation stays server-side (<c>GROUP BY</c>) and the caller's menu is the grant,
+    /// so each of the three screens carries its own ACCESS right. Item and warehouse read the invoice
+    /// line's own columns; category joins the live item master on <c>(CompanyCode, ICode)</c>.
+    /// </summary>
+    Task<IvMasterOperationResult<IReadOnlyList<SaSalesDetailRow>>> GetSalesDetailAsync(
+        string menuCode,
+        SaSalesAnalysisQuery query,
+        SaSalesDetailDimension dimension,
+        CancellationToken cancellationToken = default);
 }

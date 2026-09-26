@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -990,7 +991,7 @@ public partial class SaCdn : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
-    protected void OnClose() => Navigation.NavigateTo(ListRoute);
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, ListRoute);
 
     protected void OnEditFromView() => Navigation.NavigateTo(EditRouteFor(DocNo!));
 

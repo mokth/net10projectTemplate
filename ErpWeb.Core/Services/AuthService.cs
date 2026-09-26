@@ -147,10 +147,16 @@ public class AuthService : IAuthService
 
         if (!string.IsNullOrWhiteSpace(user.userlevel))
         {
-            claims.Add(new Claim(ClaimTypes.Role, user.userlevel));
+            claims.Add(new Claim(ClaimTypes.Role, user.userlevel.Trim()));
         }
 
-        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        // Explicit name/role claim types so IsInRole("SYSTEM_ADMIN") survives cookie serialize
+        // under IIS sub-path (/erpweb) hosting.
+        var identity = new ClaimsIdentity(
+            claims,
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            ClaimTypes.Name,
+            ClaimTypes.Role);
         return new ClaimsPrincipal(identity);
     }
 

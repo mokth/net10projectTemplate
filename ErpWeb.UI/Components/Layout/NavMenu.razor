@@ -1,4 +1,5 @@
-@using ErpWeb.Core.Menus
+﻿@using ErpWeb.Core.Menus
+@implements IDisposable
 
 <nav class="nav-tree-wrap" aria-label="Primary">
     @if (_items is null)
@@ -8,10 +9,12 @@
     else
     {
         <div class="nav-tree-scroll">
+            @* When a document was opened from Purchase Inquiry (returnUrl present), disable
+               Prefix URL matching so /purchase/orders/view/… does not expand Transactions. *@
             <DxTreeView Data="@_items"
                         CssClass="nav-tree"
                         AllowSelectNodes="true"
-                        UrlMatchMode="NavigationUrlMatchMode.Prefix"
+                        UrlMatchMode="@_urlMatchMode"
                         AnimationType="LayoutAnimationType.Slide">
                 <DataMappings>
                     <DxTreeViewDataMapping Text="Name"

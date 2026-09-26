@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
@@ -442,6 +443,217 @@ public sealed class SaSalesAnalysisService : ISaSalesAnalysisService
             : null;
     }
 
+    // ============================ Sales Detail (Phase 2) ============================
+
+    public async Task<IvMasterOperationResult<IReadOnlyList<SaSalesDetailRow>>> GetSalesDetailAsync(
+        string menuCode,
+        SaSalesAnalysisQuery query,
+        SaSalesDetailDimension dimension,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = await GateAsync(menuCode, cancellationToken);
+        if (gate.Error is not null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<SaSalesDetailRow>>.Fail(gate.Error.Value, gate.Message!);
+        }
+
+        var range = ResolveRange(query);
+        if (range.Error is not null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<SaSalesDetailRow>>.Fail(
+                IvMasterErrorCode.Validation, range.Error);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = gate.CompanyCode!;
+
+        var invoices = ApplyDocumentFilters(PostedInvoices(db, company, range), query);
+
+        IQueryable<DetailSlice> slice =
+            from i in invoices
+            join d in db.SaInvoiceDetails.AsNoTracking()
+                on new { i.CompanyCode, i.BranchCode, i.InvNo } equals new { d.CompanyCode, d.BranchCode, d.InvNo }
+            select new DetailSlice { Invoice = i, Detail = d };
+
+        if (!string.IsNullOrWhiteSpace(query.ItemCode))
+        {
+            var item = query.ItemCode.Trim();
+            slice = slice.Where(x => x.Detail.ICode == item);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Warehouse))
+        {
+            var warehouse = query.Warehouse.Trim();
+            slice = slice.Where(x => x.Detail.FrWarehouse == warehouse);
+        }
+
+        var raw = dimension switch
+        {
+            SaSalesDetailDimension.Category => await GroupDetailByCategoryAsync(db, slice, query, cancellationToken),
+            SaSalesDetailDimension.Warehouse => await GroupDetailAsync(slice, x => x.Detail.FrWarehouse, cancellationToken),
+            _ => await GroupDetailAsync(slice, x => x.Detail.ICode, cancellationToken)
+        };
+
+        var keys = raw
+            .Select(x => x.Key ?? string.Empty)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var descriptions = await ResolveDetailDescriptionsAsync(
+            db, company, query.BranchCode, dimension, keys, cancellationToken);
+
+        // A category with no item master is "(unknown)" — a genuinely unknown classification — while a
+        // blank item/warehouse key is just "(blank)". The plan pins the category label.
+        var blankLabel = dimension == SaSalesDetailDimension.Category ? "(unknown)" : BlankLabel;
+
+        var rows = raw
+            .Select(x =>
+            {
+                var net = Money(x.NetAmount);
+                var qty = x.Qty;
+                return new SaSalesDetailRow
+                {
+                    Key = string.IsNullOrWhiteSpace(x.Key) ? blankLabel : x.Key!,
+                    Description = x.Key is not null && descriptions.TryGetValue(x.Key, out var desc) ? desc : null,
+                    Qty = qty,
+                    Amount = Money(x.Amount),
+                    NetAmount = net,
+                    TaxAmount = Money(x.TaxAmount),
+                    Discount = Money(x.Discount),
+                    Asp = qty != 0m ? Math.Round(net / qty, 4, MidpointRounding.AwayFromZero) : 0m
+                };
+            })
+            .OrderByDescending(x => x.NetAmount)
+            .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return IvMasterOperationResult<IReadOnlyList<SaSalesDetailRow>>.Ok(rows);
+    }
+
+    /// <summary>
+    /// Groups the invoice × detail slice by one line key. All aggregation stays server-side: the
+    /// <see cref="RawDetail"/> projection is a SQL <c>GROUP BY</c>, never a client-side grouping.
+    /// </summary>
+    private static async Task<List<RawDetail>> GroupDetailAsync(
+        IQueryable<DetailSlice> slice,
+        Expression<Func<DetailSlice, string?>> keySelector,
+        CancellationToken cancellationToken) =>
+        await slice
+            .GroupBy(keySelector)
+            .Select(g => new RawDetail
+            {
+                Key = g.Key,
+                Qty = g.Sum(x => x.Detail.Qty),
+                Amount = g.Sum(x => x.Detail.Amount),
+                NetAmount = g.Sum(x => x.Detail.NetAmount),
+                TaxAmount = g.Sum(x => x.Detail.TaxAmt),
+                Discount = g.Sum(x => x.Detail.ItemDiscAmount + x.Detail.ItemDiscAmount1)
+            })
+            .ToListAsync(cancellationToken);
+
+    /// <summary>
+    /// Category grouping joins the LIVE item master on <c>(CompanyCode, ICode)</c> and groups by
+    /// <c>IClassCode</c>. A line whose item has no master row groups under <c>null</c> — rendered
+    /// "(unknown)" — never a cross-company match (R5 live-attribution, same as the Source dimension).
+    /// </summary>
+    private static async Task<List<RawDetail>> GroupDetailByCategoryAsync(
+        AppDbContext db,
+        IQueryable<DetailSlice> slice,
+        SaSalesAnalysisQuery query,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<CategorySlice> joined =
+            from x in slice
+            join sm in db.IvStockMasters.AsNoTracking()
+                on new { x.Detail.CompanyCode, x.Detail.ICode } equals new { sm.CompanyCode, sm.ICode } into smj
+            from sm in smj.DefaultIfEmpty()
+            select new CategorySlice { Detail = x.Detail, ClassCode = sm != null ? sm.IClassCode : null };
+
+        if (!string.IsNullOrWhiteSpace(query.ClassCode))
+        {
+            var cls = query.ClassCode.Trim();
+            joined = joined.Where(x => x.ClassCode == cls);
+        }
+
+        return await joined
+            .GroupBy(x => x.ClassCode)
+            .Select(g => new RawDetail
+            {
+                Key = g.Key,
+                Qty = g.Sum(x => x.Detail.Qty),
+                Amount = g.Sum(x => x.Detail.Amount),
+                NetAmount = g.Sum(x => x.Detail.NetAmount),
+                TaxAmount = g.Sum(x => x.Detail.TaxAmt),
+                Discount = g.Sum(x => x.Detail.ItemDiscAmount + x.Detail.ItemDiscAmount1)
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Master descriptions for the detail grouping keys. Warehouse is branch-scoped
+    /// (<c>IvWarehouse</c> keys on company + branch + code), so a branch filter narrows the lookup;
+    /// without one the first match per code wins (branch is a leftover stamp in this ERP).
+    /// </summary>
+    private static async Task<Dictionary<string, string>> ResolveDetailDescriptionsAsync(
+        AppDbContext db,
+        string company,
+        string? branchFilter,
+        SaSalesDetailDimension dimension,
+        List<string> keys,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (keys.Count == 0)
+        {
+            return result;
+        }
+
+        switch (dimension)
+        {
+            case SaSalesDetailDimension.Item:
+                foreach (var row in await db.IvStockMasters.AsNoTracking()
+                    .Where(x => x.CompanyCode == company && keys.Contains(x.ICode))
+                    .Select(x => new { x.ICode, x.IDesc })
+                    .ToListAsync(cancellationToken))
+                {
+                    Add(result, row.ICode, row.IDesc);
+                }
+                break;
+
+            case SaSalesDetailDimension.Category:
+                foreach (var row in await db.IvClasses.AsNoTracking()
+                    .Where(x => x.CompanyCode == company && keys.Contains(x.IClassCode))
+                    .Select(x => new { x.IClassCode, x.IDesc })
+                    .ToListAsync(cancellationToken))
+                {
+                    Add(result, row.IClassCode, row.IDesc);
+                }
+                break;
+
+            case SaSalesDetailDimension.Warehouse:
+                var warehouses = db.IvWarehouses.AsNoTracking()
+                    .Where(x => x.CompanyCode == company && keys.Contains(x.WarehouseCode));
+                if (!string.IsNullOrWhiteSpace(branchFilter))
+                {
+                    var branch = branchFilter.Trim();
+                    warehouses = warehouses.Where(x => x.BranchCode == branch);
+                }
+
+                foreach (var row in await warehouses
+                    .OrderBy(x => x.WarehouseCode).ThenBy(x => x.BranchCode)
+                    .Select(x => new { x.WarehouseCode, x.WarehouseDesc })
+                    .ToListAsync(cancellationToken))
+                {
+                    if (!result.ContainsKey(row.WarehouseCode))
+                    {
+                        Add(result, row.WarehouseCode, row.WarehouseDesc);
+                    }
+                }
+                break;
+        }
+
+        return result;
+    }
+
     // ============================ Shared helpers ============================
 
     private async Task<UserGate> GateAsync(string menuCode, CancellationToken cancellationToken)
@@ -737,6 +949,30 @@ public sealed class SaSalesAnalysisService : ISaSalesAnalysisService
         public decimal InvoiceTotal { get; set; }
         public decimal GrossAmount { get; set; }
         public decimal TaxAmount { get; set; }
+    }
+
+    /// <summary>Invoice × detail slice for the Phase 2 detail aggregation.</summary>
+    private sealed class DetailSlice
+    {
+        public SaInvoice Invoice { get; set; } = null!;
+        public SaInvoiceDetail Detail { get; set; } = null!;
+    }
+
+    /// <summary>Detail slice plus the live category (item class), for the Category grouping.</summary>
+    private sealed class CategorySlice
+    {
+        public SaInvoiceDetail Detail { get; set; } = null!;
+        public string? ClassCode { get; set; }
+    }
+
+    private sealed class RawDetail
+    {
+        public string? Key { get; set; }
+        public decimal Qty { get; set; }
+        public decimal Amount { get; set; }
+        public decimal NetAmount { get; set; }
+        public decimal TaxAmount { get; set; }
+        public decimal Discount { get; set; }
     }
 
     private readonly record struct AnalysisRange(

@@ -31,6 +31,13 @@ public static class SaInquiryExportEndpoints
         endpoints.MapGet("/sales/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization();
         endpoints.MapGet("/sales/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization();
         endpoints.MapGet("/sales/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
+
+        // Sales Monitor (plan-salesDecisionSupport.prompt.md, Phase A). Same service method as the grid,
+        // same applied filter, same ACCESS check inside the service.
+        endpoints.MapGet("/sales/monitor/so-ageing/export", ExportSoAgeingAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/monitor/delivered-not-fully-invoiced/export", ExportNotFullyInvoicedAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/monitor/quotation-expiry/export", ExportQtExpiryAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/monitor/einvoice-action/export", ExportEInvoiceActionAsync).RequireAuthorization();
         return endpoints;
     }
 
@@ -387,6 +394,207 @@ public static class SaInquiryExportEndpoints
         query.Skip = 0;
         query.Take = MaxExportRows;
         return query;
+    }
+
+    // ================== Sales Monitor — Phase A exports ==================
+
+    private static async Task<IResult> ExportSoAgeingAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetSoAgeingAsync(MenuCodes.SalesSoAgeing, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "SO no.", "Rev", "SO date", "SO Age (days)", "Age bucket", "Status", "Fulfillment", "Billing",
+                "Customer", "Customer name", "Sales rep", "Amount", "Line", "Item", "Description",
+                "Ordered", "Delivered", "Invoiced", "Balance", "Written off",
+                "Delivery Due Date", "Overdue", "Overdue Days"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.SoNo,
+            x.Rev.ToString(CultureInfo.InvariantCulture),
+            Date(x.SoDate),
+            x.AgeDays.ToString(CultureInfo.InvariantCulture),
+            x.AgeBucket,
+            x.Status ?? string.Empty,
+            x.FulfillmentStatus ?? string.Empty,
+            x.BillingStatus ?? string.Empty,
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.SalesRep ?? string.Empty,
+            Money(x.TotAmnt),
+            x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            Qty(x.OrderQty),
+            Qty(x.DeliveredQty),
+            Qty(x.InvoicedQty),
+            Qty(x.BalanceQty),
+            Qty(x.WrittenOffQty),
+            x.DeliveryDate is DateTime due ? Date(due) : string.Empty,
+            x.IsOverdueDelivery ? "Yes" : "No",
+            x.OverdueDays.ToString(CultureInfo.InvariantCulture)
+        }));
+
+        return Csv(rows, "SaSoAgeing");
+    }
+
+    private static async Task<IResult> ExportNotFullyInvoicedAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetDeliveredNotFullyInvoicedAsync(
+            MenuCodes.SalesDoNotFullyInvoiced, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "DO no.", "DO date", "Posted", "Days since delivered", "Status", "Billing", "Line state",
+                "Customer", "Customer name", "Sales rep", "Amount", "Line", "Item", "Description",
+                "Delivered qty", "SO no.", "Line invoice no.", "Pending"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.DoNo,
+            Date(x.DoDate),
+            x.PostedDate is DateTime posted ? Date(posted) : string.Empty,
+            x.DaysSinceDelivered.ToString(CultureInfo.InvariantCulture),
+            x.Status ?? string.Empty,
+            x.BillingStatus ?? string.Empty,
+            x.InvoiceState,
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.SalesRep ?? string.Empty,
+            Money(x.TotAmnt),
+            x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            Qty(x.Qty),
+            x.SoNo ?? string.Empty,
+            x.LineInvNo ?? string.Empty,
+            x.IsPendingInvoice ? "Yes" : "No"
+        }));
+
+        return Csv(rows, "SaDoNotFullyInvoiced");
+    }
+
+    private static async Task<IResult> ExportQtExpiryAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetQtExpiryAsync(MenuCodes.SalesQtExpiry, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "QT no.", "Rev", "QT date", "Valid until", "Days to expiry", "Expiry bucket", "Expired",
+                "Expiring soon", "Status", "Conversion", "Customer", "Customer name", "Sales rep", "Amount"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.QtNo,
+            x.Rev.ToString(CultureInfo.InvariantCulture),
+            Date(x.QtDate),
+            Date(x.ValidUntil),
+            x.DaysToExpiry.ToString(CultureInfo.InvariantCulture),
+            x.ExpiryBucket,
+            x.IsExpired ? "Yes" : "No",
+            x.IsExpiringSoon ? "Yes" : "No",
+            x.Status ?? string.Empty,
+            x.ConversionStatus ?? string.Empty,
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.SalesRep ?? string.Empty,
+            Money(x.TotAmnt)
+        }));
+
+        return Csv(rows, "SaQtExpiry");
+    }
+
+    private static async Task<IResult> ExportEInvoiceActionAsync(
+        [AsParameters] SaInquiryQuery query,
+        [FromServices] ISaSalesInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetEInvoiceActionQueueAsync(
+            MenuCodes.SalesEInvoiceAction, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Doc type", "Doc no.", "Date", "Customer", "Customer name", "Status", "IRBM status",
+                "Sent on", "Days since submitted", "Action", "Amount"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.DocType,
+            x.DocNo,
+            Date(x.DocDate),
+            x.CustCode ?? string.Empty,
+            x.CustName ?? string.Empty,
+            x.StatusLabel,
+            x.IrbmStatus ?? string.Empty,
+            x.IrbmSentOn is DateTime sent ? Date(sent) : string.Empty,
+            x.DaysSinceSubmitted?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            x.ActionReason ?? string.Empty,
+            Money(x.TotAmnt)
+        }));
+
+        return Csv(rows, "SaEInvoiceAction");
     }
 
     private static IResult TooManyRows(int total) =>

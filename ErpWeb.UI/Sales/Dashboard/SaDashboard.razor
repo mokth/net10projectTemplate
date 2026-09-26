@@ -1,0 +1,170 @@
+@page "/sales/dashboard"
+@inherits PageBase
+
+<PageTitle>Sales Dashboard</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDashboard">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-gauge-high"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Dashboard</p>
+                <h1 class="iv-title">Sales Dashboard</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Posted invoices only</span>
+                    <span class="iv-chip">Current company</span>
+                </div>
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      IconCssClass="fa-solid fa-rotate"
+                      Click="@LoadAsync" />
+        </header>
+
+        @if (IsLoading)
+        {
+            <div class="iv-skeleton" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                <div class="iv-skeleton__line"></div>
+            </div>
+        }
+        else if (Result is not null)
+        {
+            <section class="iv-card">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.75rem;">
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Sales today</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.SalesToday)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Sales this month</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.SalesMonth)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Sales this year</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.SalesYear)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Open quotations</span>
+                        <strong class="iv-kpi__value">@Result.OpenQtCount.ToString("N0")</strong>
+                        <span class="iv-kpi__sub">@MoneyText(Result.OpenQtValue)</span>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Open sales orders</span>
+                        <strong class="iv-kpi__value">@Result.OpenSoCount.ToString("N0")</strong>
+                        <span class="iv-kpi__sub">@MoneyText(Result.OpenSoValue) original</span>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">SO outstanding value</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.OpenSoOutstandingValue)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Pending delivery</span>
+                        <strong class="iv-kpi__value">@QtyText(Result.PendingDeliveryQty)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Open DO quantity</span>
+                        <strong class="iv-kpi__value">@QtyText(Result.OpenDoQty)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Credit notes (month)</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.CreditNoteTotal)</strong>
+                    </div>
+                    <div class="iv-kpi">
+                        <span class="iv-kpi__label">Debit notes (month)</span>
+                        <strong class="iv-kpi__value">@MoneyText(Result.DebitNoteTotal)</strong>
+                    </div>
+                </div>
+                <p class="iv-hint">
+                    Sales figures are posted invoices. Pending delivery is the open sales-order balance
+                    quantity; open DO quantity is shown separately and is never added on top (that would
+                    double-count the same obligation). Outstanding/overdue AR is omitted until the AR
+                    module exists.
+                </p>
+            </section>
+
+            <section class="iv-card">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;">
+                    <div>
+                        <h2 class="pi-headline">Sales by customer (month)</h2>
+                        @if (TopCustomers.Count == 0)
+                        {
+                            <p class="text-muted">No posted invoices this month.</p>
+                        }
+                        else
+                        {
+                            <DxChart Data="@TopCustomers" Height="260px">
+                                <DxChartBarSeries ArgumentField="@((SaSalesSummaryRow x) => x.Key)"
+                                                  ValueField="@((SaSalesSummaryRow x) => x.InvoiceTotal)"
+                                                  Name="Invoice total" />
+                                <DxChartLegend Visible="false" />
+                            </DxChart>
+                        }
+                    </div>
+                    <div>
+                        <h2 class="pi-headline">Sales by salesperson (month)</h2>
+                        @if (TopSalespeople.Count == 0)
+                        {
+                            <p class="text-muted">No posted invoices this month.</p>
+                        }
+                        else
+                        {
+                            <DxChart Data="@TopSalespeople" Height="260px">
+                                <DxChartBarSeries ArgumentField="@((SaSalesSummaryRow x) => x.Key)"
+                                                  ValueField="@((SaSalesSummaryRow x) => x.InvoiceTotal)"
+                                                  Name="Invoice total" />
+                                <DxChartLegend Visible="false" />
+                            </DxChart>
+                        }
+                    </div>
+                    <div>
+                        <h2 class="pi-headline">Sales by category (month)</h2>
+                        @if (Categories.Count == 0)
+                        {
+                            <p class="text-muted">No posted invoice lines this month.</p>
+                        }
+                        else
+                        {
+                            <DxChart Data="@Categories" Height="260px">
+                                <DxChartBarSeries ArgumentField="@((SaSalesDetailRow x) => x.Key)"
+                                                  ValueField="@((SaSalesDetailRow x) => x.NetAmount)"
+                                                  Name="Net amount" />
+                                <DxChartLegend Visible="false" />
+                            </DxChart>
+                        }
+                    </div>
+                    <div>
+                        <h2 class="pi-headline">Top items (month)</h2>
+                        @if (TopItems.Count == 0)
+                        {
+                            <p class="text-muted">No posted invoice lines this month.</p>
+                        }
+                        else
+                        {
+                            <DxChart Data="@TopItems" Height="260px">
+                                <DxChartBarSeries ArgumentField="@((SaSalesDetailRow x) => x.Key)"
+                                                  ValueField="@((SaSalesDetailRow x) => x.NetAmount)"
+                                                  Name="Net amount" />
+                                <DxChartLegend Visible="false" />
+                            </DxChart>
+                        }
+                    </div>
+                </div>
+            </section>
+        }
+        else if (HasLoaded)
+        {
+            <section class="iv-card">
+                <p class="text-muted mb-0">The dashboard has no data to show.</p>
+            </section>
+        }
+    </div>
+</MenuAuthorize>

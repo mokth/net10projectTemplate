@@ -1,11 +1,14 @@
 /* ============================================================================
-   Sales Analysis Phase 1 — menu triad (SA_ANALYSIS + SA_SALES_SUMMARY /
-   SA_SALES_ATTAINMENT / SA_QT_CONVERSION)
+   Sales Analysis — menu triad (SA_ANALYSIS + SA_SALES_SUMMARY / SA_SALES_ATTAINMENT /
+   SA_QT_CONVERSION / SA_SALES_ITEM / SA_SALES_CATEGORY / SA_SALES_WAREHOUSE)
    ----------------------------------------------------------------------------
-   THREE read-only analysis screens:
+   SIX read-only analysis screens:
      /sales/analysis/summary        — period sales by dimension + INV/CN/DN chips
      /sales/analysis/attainment     — company-wide monthly targets vs posted actuals
      /sales/analysis/qt-conversion  — current-revision quotation win/loss
+     /sales/analysis/by-item        — posted invoice lines by item (Phase 2)
+     /sales/analysis/by-category    — posted invoice lines by item class (Phase 2)
+     /sales/analysis/by-warehouse   — posted invoice lines by warehouse (Phase 2)
 
    TWO artefacts are required and BOTH must stay in step — this is the repo trap that
    MenuDeploymentParityTests guards:
@@ -16,7 +19,7 @@
    Adding the XML rows alone leaves a fresh database without menus; adding this script alone
    gets the rows soft-disabled on the next startup.
 
-   ACCESS only. All three screens are read-only aggregate inquiries: they create no data, so
+   ACCESS only. All six screens are read-only aggregate inquiries: they create no data, so
    ADD / EDIT / DELETE / EXPORT are deliberately NOT seeded. (The CSV downloads call the same
    service methods as the grid and are gated by the same ACCESS check, so no EXPORT permission
    is involved.)
@@ -67,6 +70,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_QT_CONVERSION')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
         VALUES (N'SA_QT_CONVERSION', N'Quotation Conversion', @analysisId, N'/sales/analysis/qt-conversion', 3, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_SALES_ITEM')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'SA_SALES_ITEM', N'Sales by Item', @analysisId, N'/sales/analysis/by-item', 4, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_SALES_CATEGORY')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'SA_SALES_CATEGORY', N'Sales by Category', @analysisId, N'/sales/analysis/by-category', 5, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'SA_SALES_WAREHOUSE')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'SA_SALES_WAREHOUSE', N'Sales by Warehouse', @analysisId, N'/sales/analysis/by-warehouse', 6, 0, 1, SYSUTCDATETIME(), N'SEED');
 END
 GO
 
@@ -95,6 +110,30 @@ SET MenuName  = N'Quotation Conversion',
     IsActive  = 1
 WHERE MenuCode = N'SA_QT_CONVERSION'
   AND (Route IS NULL OR Route <> N'/sales/analysis/qt-conversion' OR SortOrder <> 3 OR IsActive <> 1);
+
+UPDATE dbo.Menu
+SET MenuName  = N'Sales by Item',
+    Route     = N'/sales/analysis/by-item',
+    SortOrder = 4,
+    IsActive  = 1
+WHERE MenuCode = N'SA_SALES_ITEM'
+  AND (Route IS NULL OR Route <> N'/sales/analysis/by-item' OR SortOrder <> 4 OR IsActive <> 1);
+
+UPDATE dbo.Menu
+SET MenuName  = N'Sales by Category',
+    Route     = N'/sales/analysis/by-category',
+    SortOrder = 5,
+    IsActive  = 1
+WHERE MenuCode = N'SA_SALES_CATEGORY'
+  AND (Route IS NULL OR Route <> N'/sales/analysis/by-category' OR SortOrder <> 5 OR IsActive <> 1);
+
+UPDATE dbo.Menu
+SET MenuName  = N'Sales by Warehouse',
+    Route     = N'/sales/analysis/by-warehouse',
+    SortOrder = 6,
+    IsActive  = 1
+WHERE MenuCode = N'SA_SALES_WAREHOUSE'
+  AND (Route IS NULL OR Route <> N'/sales/analysis/by-warehouse' OR SortOrder <> 6 OR IsActive <> 1);
 GO
 
 /* ACCESS only — the screens are read-only. */
@@ -102,7 +141,8 @@ INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p ON p.PermissionCode = N'ACCESS'
-WHERE m.MenuCode IN (N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION')
+WHERE m.MenuCode IN (N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION',
+                     N'SA_SALES_ITEM', N'SA_SALES_CATEGORY', N'SA_SALES_WAREHOUSE')
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
@@ -118,7 +158,8 @@ SELECT
     Parent    = parent.MenuCode
 FROM dbo.Menu m
 LEFT JOIN dbo.Menu parent ON parent.MenuId = m.ParentMenuId
-WHERE m.MenuCode IN (N'SA_ANALYSIS', N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION')
+WHERE m.MenuCode IN (N'SA_ANALYSIS', N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION',
+                     N'SA_SALES_ITEM', N'SA_SALES_CATEGORY', N'SA_SALES_WAREHOUSE')
 ORDER BY m.MenuCode;
 GO
 
@@ -128,7 +169,8 @@ SELECT
 FROM dbo.MenuPermission mp
 INNER JOIN dbo.Menu m       ON m.MenuId = mp.MenuId
 INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
-WHERE m.MenuCode IN (N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION')
+WHERE m.MenuCode IN (N'SA_SALES_SUMMARY', N'SA_SALES_ATTAINMENT', N'SA_QT_CONVERSION',
+                     N'SA_SALES_ITEM', N'SA_SALES_CATEGORY', N'SA_SALES_WAREHOUSE')
 ORDER BY m.MenuCode, p.PermissionCode;
 GO
 

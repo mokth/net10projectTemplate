@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Base Path Test</title>
+    <script>
+        // Test if the base path is working correctly
+        window.onload = function() {
+            var baseElement = document.querySelector('base');
+            var baseHref = baseElement ? baseElement.href : 'No base element found';
+            var currentUrl = window.location.href;
+            var expectedBase = '/erpweb/';
+
+            document.getElementById('baseHref').textContent = baseHref;
+            document.getElementById('currentUrl').textContent = currentUrl;
+            document.getElementById('expectedBase').textContent = expectedBase;
+
+            if (baseHref.includes(expectedBase)) {
+                document.getElementById('status').textContent = '✓ Base path is correctly configured';
+                document.getElementById('status').style.color = 'green';
+            } else {
+                document.getElementById('status').textContent = '✗ Base path is NOT correctly configured';
+                document.getElementById('status').style.color = 'red';
+            }
+        };
+    </script>
+</head>
+<body>
+    <h1>Base Path Configuration Test</h1>
+    <p><strong>Current URL:</strong> <span id="currentUrl"></span></p>
+    <p><strong>Base Href:</strong> <span id="baseHref"></span></p>
+    <p><strong>Expected Base:</strong> <span id="expectedBase"></span></p>
+    <p><strong>Status:</strong> <span id="status"></span></p>
+    <hr>
+    <h2>Test Links</h2>
+    <ul>
+        <li><a href="/account/login">/account/login</a> - Should go to https://werp3.wincomcloud.com/erpweb/account/login</li>
+        <li><a href="/home">/home</a> - Should go to https://werp3.wincomcloud.com/erpweb/home</li>
+        <li><a href="account/login">account/login</a> - Relative link (should work)</li>
+    </ul>
+</body>
+</html>

@@ -51,6 +51,17 @@ public sealed class SaSalesAnalysisQuery
 
     /// <summary>QT conversion: also break the buckets down per sales rep.</summary>
     public bool GroupQtBySalesRep { get; set; }
+
+    // ── Sales detail (Phase 2) — item / category / warehouse filters. Only the detail query reads them. ──
+
+    /// <summary>Item code filter for the Sales-by-Item detail grid.</summary>
+    public string? ItemCode { get; set; }
+
+    /// <summary>Warehouse filter for the Sales-by-Warehouse detail grid.</summary>
+    public string? Warehouse { get; set; }
+
+    /// <summary>Item class (category) filter for the Sales-by-Category detail grid.</summary>
+    public string? ClassCode { get; set; }
 }
 
 public sealed class SaSalesSummaryRow
@@ -181,4 +192,52 @@ public sealed class SaQtConversionResult
 
     public IReadOnlyList<SaQtLostReasonRow> LostReasons { get; init; } = [];
     public IReadOnlyList<SaQtConversionBySalesRepRow> BySalesRep { get; init; } = [];
+}
+
+/// <summary>
+/// Dimension a Sales Detail grid groups by. Item and Warehouse read the invoice line's own columns;
+/// Category joins the live <see cref="ErpWeb.Model.Entities.Inventory.IvStockMaster"/> on
+/// <c>(CompanyCode, ICode)</c>, so an item with no master row groups under "(unknown)" rather than
+/// vanishing — the same live-attribution note that applies to the Source summary dimension.
+/// </summary>
+public enum SaSalesDetailDimension
+{
+    Item = 0,
+    Category = 1,
+    Warehouse = 2
+}
+
+/// <summary>
+/// One row of the item / category / warehouse detail grid. Aggregated from POSTED invoice lines.
+/// <para>
+/// <see cref="Discount"/> is the stored monetary discount amount
+/// (<c>ItemDiscAmount + ItemDiscAmount1</c>); the percentage discounts are already reflected inside
+/// <see cref="Amount"/> / <see cref="NetAmount"/> and are not re-derived. <see cref="Asp"/> is the
+/// net average selling price (<c>NetAmount / Qty</c>), computed after aggregation.
+/// </para>
+/// </summary>
+public sealed class SaSalesDetailRow
+{
+    /// <summary>The grouping key (item code, class code or warehouse code). Blank keys render as "(blank)".</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>Master description (item / class / warehouse name), resolved by batched lookup.</summary>
+    public string? Description { get; set; }
+
+    public decimal Qty { get; set; }
+
+    /// <summary>Sum of line <c>Amount</c> (pre-discount, ex-tax).</summary>
+    public decimal Amount { get; set; }
+
+    /// <summary>Sum of line <c>NetAmount</c> (post-discount, ex-tax).</summary>
+    public decimal NetAmount { get; set; }
+
+    /// <summary>Sum of line <c>TaxAmt</c>.</summary>
+    public decimal TaxAmount { get; set; }
+
+    /// <summary>Sum of the stored monetary discount (<c>ItemDiscAmount + ItemDiscAmount1</c>).</summary>
+    public decimal Discount { get; set; }
+
+    /// <summary>Net average selling price: <c>NetAmount / Qty</c>, 0 when the quantity is zero.</summary>
+    public decimal Asp { get; set; }
 }

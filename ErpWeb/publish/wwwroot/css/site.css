@@ -1,0 +1,252 @@
+@import url('./icons.css');
+
+:root {
+    --bg: #edf0f3;
+    --surface: #ffffff;
+    --text: #1c2430;
+    --muted: #667085;
+    --line: #d7dde5;
+    --navy: #1a2332;
+    --navy-2: #243044;
+    --navy-3: #2f3f58;
+    --accent: #2f6fed;
+    --danger: #b42318;
+    --font: "Public Sans", "Segoe UI", sans-serif;
+    /* 280px keeps the longest depth-3 captions (e.g. "Self-billed Credit Note") on one line. */
+    --nav-w: 280px;
+    --top-h: 52px;
+
+    --nav-bg: #ffffff;
+    --nav-text: #374151;
+    --nav-muted: #9ca3af;
+    --nav-hover-bg: #f0f4ff;
+    --nav-hover-text: #1d4ed8;
+    --nav-selected-bg: transparent;
+    --nav-selected-text: #1d4ed8;
+    --nav-selected-bar: #2f6fed;
+    --nav-header-bg: #2f6fed;
+    --nav-header-text: #ffffff;
+    --nav-border: #e5e7eb;
+    --nav-divider: #e5e7eb;
+    --topbar-bg: #ffffff;
+    --topbar-control-bg: #ffffff;
+    --topbar-control-hover: #f8fafc;
+    --meta-th-bg: #f8fafc;
+    --overlay-scrim: rgba(255, 255, 255, 0.72);
+    --control-border: #cfd6df;
+    --field-label: #344054;
+    --required-field-bg: #fff6e5;
+}
+
+/* Fluent Dark (and any data-bs-theme=dark host) */
+[data-bs-theme="dark"] {
+    --bg: #0f141c;
+    --surface: #1a2332;
+    --text: #e8edf4;
+    --muted: #9aa4b2;
+    --line: #2d3a4f;
+    --navy: #0b1018;
+    --navy-2: #141b26;
+    --navy-3: #243044;
+    --accent: #5b8cff;
+    --danger: #f97066;
+
+    --nav-bg: #141b26;
+    --nav-text: #c5ced9;
+    --nav-muted: #6b7280;
+    --nav-hover-bg: #1e293b;
+    --nav-hover-text: #93c5fd;
+    --nav-selected-bg: transparent;
+    --nav-selected-text: #93c5fd;
+    --nav-selected-bar: #2f6fed;
+    --nav-header-bg: #1e3a5f;
+    --nav-header-text: #ffffff;
+    --nav-border: #2d3a4f;
+    --nav-divider: #2d3a4f;
+    --topbar-bg: #1a2332;
+    --topbar-control-bg: #141b26;
+    --topbar-control-hover: #243044;
+    --meta-th-bg: #141b26;
+    --overlay-scrim: rgba(15, 20, 28, 0.72);
+    --control-border: #3a4a63;
+    --field-label: #c5ced9;
+    --required-field-bg: #3a3220;
+
+    color-scheme: dark;
+}
+
+/* Mandatory-field tint (InputCssClass on text/date/combo, CssClass on DxComboBox root). */
+.required-field,
+.required-field input,
+.required-field .dxbl-text-edit-input,
+.required-field.dxbl-text-edit .dxbl-text-edit-input,
+.required-field.dxbl-spin-edit .dxbl-text-edit-input {
+    background-color: var(--required-field-bg) !important;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+a { color: inherit; }
+
+.w-100 { width: 100% !important; }
+.h-100 { height: 100% !important; }
+.h-auto { height: auto !important; }
+.overflow-hidden { overflow: hidden !important; }
+
+.text-danger { color: var(--danger); }
+.validation-message { color: var(--danger); font-size: 0.85rem; }
+.button-link { text-decoration: none; }
+
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #12b76a;
+}
+.invalid {
+    outline: 1px solid var(--danger);
+}
+
+/* ===== APP PAGES ===== */
+
+.page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.page-title {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.page-sub {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.meta-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.meta-table th,
+.meta-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.9rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.meta-table tr:last-child th,
+.meta-table tr:last-child td {
+    border-bottom: none;
+}
+
+.meta-table th {
+    width: 18%;
+    color: var(--muted);
+    font-weight: 600;
+    background: var(--meta-th-bg, #f8fafc);
+}
+
+.meta-table td {
+    width: 32%;
+    font-weight: 500;
+}
+
+.common-datagrid {
+    width: 100%;
+}
+
+.page-toolbar-title {
+    margin: 0;
+    color: var(--text, #1c2430);
+}
+
+.page-toolbar-title i {
+    color: var(--muted, #667085);
+}
+
+.theme-btn {
+    color: var(--text, #1c2430);
+}
+
+/* Lightweight alerts when Bootstrap CSS is not loaded (Fluent / Classic) */
+.alert {
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+}
+
+.alert-info {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    color: var(--text);
+}
+
+.alert-danger {
+    background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+    color: var(--text);
+}
+
+.alert-success {
+    background: color-mix(in srgb, #12b76a 12%, var(--surface));
+    border-color: color-mix(in srgb, #12b76a 35%, var(--line));
+    color: var(--text);
+}
+
+@media (max-width: 720px) {
+    .meta-table,
+    .meta-table tbody,
+    .meta-table tr,
+    .meta-table th,
+    .meta-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .meta-table th {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .meta-table td {
+        padding-top: 4px;
+    }
+}

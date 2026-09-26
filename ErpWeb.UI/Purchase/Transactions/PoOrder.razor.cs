@@ -5,6 +5,7 @@ using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Http;
@@ -909,8 +910,9 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         Navigation.NavigateTo("/purchase/orders");
     }
 
-    protected void OnClose() => Navigation.NavigateTo("/purchase/orders");
-    protected void OnEditFromView() => Navigation.NavigateTo($"/purchase/orders/edit/{PoNo}");
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/purchase/orders");
+    protected void OnEditFromView() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/purchase/orders/edit/{PoNo}"));
     protected void NavigateRevisionView(short poRelNo) =>
         Navigation.NavigateTo($"/purchase/orders/view/{PoNoDisplay}/{poRelNo}");
 

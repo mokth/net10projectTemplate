@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Transactions;
@@ -1356,7 +1357,7 @@ public partial class SaQt : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
-    protected void OnClose() => Navigation.NavigateTo("/sales/quotations");
+    protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/sales/quotations");
 
     protected void OnEditFromView() => Navigation.NavigateTo($"/sales/quotations/edit/{QtNo}");
 

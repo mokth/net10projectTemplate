@@ -1,4 +1,4 @@
-﻿using ErpWeb.Authentication;
+using ErpWeb.Authentication;
 using ErpWeb.Components;
 using ErpWeb.Core;
 using ErpWeb.Core.Menus;
@@ -12,6 +12,7 @@ using ErpWeb.UI.Services;
 using ErpWeb.UI.Services.Theme;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Serilog;
 
@@ -46,6 +47,13 @@ try
     });
     builder.Services.AddMvc();
 
+    // Configure Data Protection to persist keys to file system
+    // This prevents antiforgery token errors when the application restarts
+    var keysFolder = Path.Combine(builder.Environment.ContentRootPath, "DataProtection-Keys");
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(keysFolder))
+        .SetApplicationName("ErpWeb");
+
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
         ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
 
@@ -61,6 +69,13 @@ try
 
     builder.Services.AddScoped<IGridLayoutStorage, LocalStorageGridLayoutStorage>();
 
+    // Cookie path must match the IIS sub-application (/erpweb). If PathBase is missing at SignIn
+    // (proxy/IIS misconfig), the default cookie path becomes "/" and auth/menus break under /erpweb.
+    var configuredBasePath = builder.Configuration.GetValue<string>("AppBasePath");
+    var authCookiePath = string.IsNullOrWhiteSpace(configuredBasePath)
+        ? null
+        : "/" + configuredBasePath.Trim('/');
+
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
         {
@@ -68,6 +83,11 @@ try
             options.Cookie.HttpOnly = true;
             options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
             options.Cookie.SameSite = SameSiteMode.Lax;
+            if (authCookiePath is not null)
+            {
+                options.Cookie.Path = authCookiePath;
+            }
+
             options.LoginPath = "/login";
             options.LogoutPath = "/account/logout";
             options.AccessDeniedPath = "/unauthorized";
@@ -139,6 +159,7 @@ try
     app.MapSaMasterRefExportEndpoints();
     app.MapSaAnalysisExportEndpoints();
     app.MapSaInquiryExportEndpoints();
+    app.MapPoInquiryExportEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();
     app.MapPoPrAttachmentEndpoints();
