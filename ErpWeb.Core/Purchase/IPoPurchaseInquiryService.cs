@@ -49,4 +49,20 @@ public interface IPoPurchaseInquiryService
 
     Task<IvMasterOperationResult<PoInquiryPage<PoSbEInvoiceReconciliationRow>>> GetSbEInvoiceReconciliationAsync(
         string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    // Phase 2
+    Task<IvMasterOperationResult<PoInquiryPage<PoPurchasePriceHistoryRow>>> GetPurchasePriceHistoryAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoPurchasePriceHistorySummary>> GetPurchasePriceHistorySummaryAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoInquiryPage<PoMatchingRow>>> GetPoMatchingAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoMatchingSummary>> GetPoMatchingSummaryAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetSupplierDeliveryPerformanceAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
 }

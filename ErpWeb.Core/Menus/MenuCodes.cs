@@ -223,6 +223,11 @@ public static class MenuCodes
     public const string PurchaseDocRelationship = "PO_DOC_REL";
     public const string PurchaseSbEInvoiceInquiry = "PO_SB_EINV_INQUIRY";
 
+    // Purchase Inquiry Phase 2
+    public const string PurchasePriceHistory = "PO_PRICE_HISTORY";
+    public const string PurchaseMatching = "PO_MATCHING";
+    public const string PurchaseDeliveryPerformance = "PO_DELIVERY_PERF";
+
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

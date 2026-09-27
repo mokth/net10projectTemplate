@@ -108,6 +108,30 @@ public static class PoInquiryNavigation
         return false;
     }
 
+    public static bool TryResolveGr(int? batchNo, out string url)
+    {
+        url = string.Empty;
+        if (batchNo is null or <= 0)
+        {
+            return false;
+        }
+
+        url = $"/inventory/goods-receipts/view/{batchNo.Value}";
+        return true;
+    }
+
+    public static bool TryResolveGr(string? batchNoText, out string url)
+    {
+        url = string.Empty;
+        if (string.IsNullOrWhiteSpace(batchNoText)
+            || !int.TryParse(batchNoText.Trim(), out var batchNo))
+        {
+            return false;
+        }
+
+        return TryResolveGr(batchNo, out url);
+    }
+
     /// <summary>
     /// Resolves a supplier-transaction / relationship DocType + DocNo pair.
     /// Unknown types return false (never invent a route).
@@ -135,8 +159,8 @@ public static class PoInquiryNavigation
 
     /// <summary>
     /// Document-relationship OPEN for SOURCE or TARGET.
-    /// Relation values from Phase 1: PR→PO, PO→GR, PO→INV, INV→CDN, INV→QtyCN.
-    /// GR targets are not deep-linked in this phase (returns false).
+    /// Relation values from Phase 1/2: PR→PO, PO→GR, PO→INV, INV→CDN, INV→QtyCN.
+    /// PO→GR target resolves to Inventory GR view when TargetDocNo is a BatchNo.
     /// </summary>
     public static bool TryResolveRelationship(
         string? relation,
@@ -169,7 +193,7 @@ public static class PoInquiryNavigation
                 : TryResolveInvoice(docNo, out url),
             "PO→GR" or "PO->GR" => openSource
                 ? TryResolvePo(docNo, poRelNo: null, out url)
-                : false, // Inventory GR deep-link is a non-goal this phase
+                : TryResolveGr(docNo, out url),
             _ => false
         };
     }

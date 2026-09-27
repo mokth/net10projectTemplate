@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace ErpWeb.UI.Purchase.Inquiry;
 
@@ -44,10 +45,24 @@ public partial class PoSupplierInquiry : PoInquiryPageBase
 
     protected override async Task OnInquiryInitializedAsync()
     {
+        ApplySuppCodeFromQuery();
         DataSource = new PoInquiryGridDataSource<PoSupplierTransactionRow>(SearchTransactionsAsync, OnError);
         await LoadCommonLookupsAsync();
         await ReloadAsync();
         IsBootstrapping = false;
+    }
+
+    private void ApplySuppCodeFromQuery()
+    {
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("suppCode", out var values))
+        {
+            var code = values.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                SuppCode = code.Trim();
+            }
+        }
     }
 
     protected override void ApplyFiltersToGrids() => DataSource.UpdateFilters(AppliedQuery);

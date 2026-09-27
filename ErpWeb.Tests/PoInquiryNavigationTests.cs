@@ -60,7 +60,7 @@ public class PoInquiryNavigationTests
     }
 
     [Fact]
-    public void TryResolveRelationship_PrPo_And_GrTargetBlocked()
+    public void TryResolveRelationship_PrPo_And_GrTarget()
     {
         Assert.True(PoInquiryNavigation.TryResolveRelationship("PR→PO", "PR1", "PO1", openSource: true, out var src));
         Assert.Equal("/purchase/requisitions/view/PR1", src);
@@ -68,9 +68,19 @@ public class PoInquiryNavigationTests
         Assert.True(PoInquiryNavigation.TryResolveRelationship("PR→PO", "PR1", "PO1", openSource: false, out var tgt));
         Assert.Equal("/purchase/orders/view/PO1", tgt);
 
-        Assert.False(PoInquiryNavigation.TryResolveRelationship("PO→GR", "PO1", "100", openSource: false, out _));
+        Assert.True(PoInquiryNavigation.TryResolveRelationship("PO→GR", "PO1", "100", openSource: false, out var gr));
+        Assert.Equal("/inventory/goods-receipts/view/100", gr);
         Assert.True(PoInquiryNavigation.TryResolveRelationship("PO→GR", "PO1", "100", openSource: true, out var po));
         Assert.Equal("/purchase/orders/view/PO1", po);
+    }
+
+    [Fact]
+    public void TryResolveGr_BuildsInventoryViewUrl()
+    {
+        Assert.True(PoInquiryNavigation.TryResolveGr(42, out var url));
+        Assert.Equal("/inventory/goods-receipts/view/42", url);
+        Assert.False(PoInquiryNavigation.TryResolveGr(0, out _));
+        Assert.False(PoInquiryNavigation.TryResolveGr("abc", out _));
     }
 
     [Fact]

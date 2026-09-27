@@ -1,0 +1,175 @@
+@page "/purchase/inquiry/matching"
+@inherits PoInquiryPageBase
+@using ErpWeb.Core.Purchase
+
+<PageTitle>PO / GR / Invoice Matching</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseMatching">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(NavMessage))
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@NavMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissNavMessage" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-scale-balanced"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase · Inquiry</p>
+                <h1 class="iv-title">PO / GR / Invoice Matching</h1>
+                <div class="iv-chips" aria-busy="@SummaryLoading">
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.ReceivedNotInvoiced)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.ReceivedNotInvoiced))">
+                        Received not invoiced: @(SummaryLoading ? "…" : Summary.ReceivedNotInvoicedCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.PoOutstanding)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.PoOutstanding))">
+                        PO outstanding: @(SummaryLoading ? "…" : Summary.PoOutstandingCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.PartiallyMatched)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.PartiallyMatched))">
+                        Partial: @(SummaryLoading ? "…" : Summary.PartiallyMatchedCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.PriceMismatch)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.PriceMismatch))">
+                        Price mismatch: @(SummaryLoading ? "…" : Summary.PriceMismatchCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.InvoicedNotReceived)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.InvoicedNotReceived))">
+                        Over-invoiced: @(SummaryLoading ? "…" : Summary.InvoicedNotReceivedCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.All)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.All))">
+                        All lines
+                    </button>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@SupplierOptions"
+                                    Value="@SuppCode"
+                                    ValueChanged="@(async (string? v) => await OnSupplierChangedAsync(v))"
+                                    NullText="All suppliers" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PoMatchingRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(PoMatchingRow.PoNo)"
+                                      GridKey="po-matching"
+                                      Title="PO matching"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            Matching is at PO-line grain using persisted rollups. Received amount is an inquiry-only
+            proportional allocation, not stock valuation. InvoiceQtyPosted is diagnostic only.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Filter matching"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                        <Template>
+                            <IvStockMasterPicker ICode="@DraftItemCode"
+                                                 ICodeChanged="@OnDraftItemCodeChangedAsync"
+                                                 Selected="@OnDraftItemSelectedAsync" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Buyer" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftBuyerCode"
+                                       NullText="All buyers"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftWarehouse"
+                                       NullText="All warehouses"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    Date filter applies to <strong>PO date</strong>. Empty field = all.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

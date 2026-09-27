@@ -13,7 +13,7 @@ namespace ErpWeb.Core.Purchase;
 /// Mirrors <see cref="Sales.SaSalesInquiryService"/> gating (tenant first, then ACCESS) and the
 /// locked Step 0.5 rules in <c>plans/Procurement-Inquiry-Assessment.md</c>.
 /// </summary>
-public sealed class PoPurchaseInquiryService : IPoPurchaseInquiryService
+public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
 {
     private static readonly HashSet<string> KnownMenus = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -23,7 +23,10 @@ public sealed class PoPurchaseInquiryService : IPoPurchaseInquiryService
         MenuCodes.PurchaseInvoiceInquiry,
         MenuCodes.PurchaseCdnInquiry,
         MenuCodes.PurchaseDocRelationship,
-        MenuCodes.PurchaseSbEInvoiceInquiry
+        MenuCodes.PurchaseSbEInvoiceInquiry,
+        MenuCodes.PurchasePriceHistory,
+        MenuCodes.PurchaseMatching,
+        MenuCodes.PurchaseDeliveryPerformance
     };
 
     private const int DefaultPageSize = 50;

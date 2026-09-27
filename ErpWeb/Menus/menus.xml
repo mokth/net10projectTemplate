@@ -236,6 +236,12 @@
             Icon="fa-solid fa-diagram-project" />
       <Menu Code="PO_SB_EINV_INQUIRY" Name="Self-billed e-Invoice" Route="/purchase/inquiry/einvoice" SortOrder="7"
             Icon="fa-solid fa-file-circle-check" />
+      <Menu Code="PO_PRICE_HISTORY" Name="Purchase Price History" Route="/purchase/inquiry/price-history" SortOrder="8"
+            Icon="fa-solid fa-tags" />
+      <Menu Code="PO_MATCHING" Name="PO / GR / Invoice Matching" Route="/purchase/inquiry/matching" SortOrder="9"
+            Icon="fa-solid fa-scale-balanced" />
+      <Menu Code="PO_DELIVERY_PERF" Name="Supplier Delivery Performance" Route="/purchase/inquiry/delivery-performance" SortOrder="10"
+            Icon="fa-solid fa-truck-fast" />
     </Menu>
   </Menu>
 

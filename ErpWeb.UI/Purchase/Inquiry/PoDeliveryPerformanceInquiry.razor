@@ -1,0 +1,152 @@
+@page "/purchase/inquiry/delivery-performance"
+@inherits PoInquiryPageBase
+@using ErpWeb.Core.Purchase
+
+<PageTitle>Supplier Delivery Performance</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseDeliveryPerformance">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(NavMessage))
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@NavMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissNavMessage" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-truck-fast"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Purchase · Inquiry</p>
+                <h1 class="iv-title">Supplier Delivery Performance</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">ETA-based; latest RecvDate; lines without ETA or RecvDate excluded</span>
+                    @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
+                    {
+                        <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <IvCodeComboBox Data="@SupplierOptions"
+                                    Value="@SuppCode"
+                                    ValueChanged="@(async (string? v) => await OnSupplierChangedAsync(v))"
+                                    NullText="All suppliers" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PoDeliveryPerformanceRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(PoDeliveryPerformanceRow.SuppCode)"
+                                      GridKey="po-delivery-performance"
+                                      Title="Supplier delivery performance"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+
+        <p class="iv-subtitle">
+            On-time % uses only evaluated lines (both ETA and latest receipt date, RecvQty &gt; 0).
+            A partial early receipt with a later final receipt is classified by the latest RecvDate.
+        </p>
+    </div>
+
+    <DxPopup HeaderText="Filter delivery performance"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                        <Template>
+                            <IvStockMasterPicker ICode="@DraftItemCode"
+                                                 ICodeChanged="@OnDraftItemCodeChangedAsync"
+                                                 Selected="@OnDraftItemSelectedAsync" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Buyer" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftBuyerCode"
+                                       NullText="All buyers"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@DraftWarehouse"
+                                       NullText="All warehouses"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+                <p class="iv-popup-hint">
+                    Date filter applies to <strong>PO date</strong>. Empty field = all.
+                </p>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

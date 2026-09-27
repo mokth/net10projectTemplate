@@ -20,6 +20,15 @@ public sealed class PoInquiryQuery
     public string? SearchText { get; set; }
     public string? BranchCode { get; set; }
 
+    /// <summary>Item code filter (Phase 2 screens). Empty = ALL.</summary>
+    public string? ItemCode { get; set; }
+
+    /// <summary>Currency filter (Price History). Empty = ALL.</summary>
+    public string? Currency { get; set; }
+
+    /// <summary>Warehouse filter — Matching/Delivery use <c>PoOrderDetail.ToWarehouse</c>. Empty = ALL.</summary>
+    public string? Warehouse { get; set; }
+
     /// <summary>
     /// Workbench exception preset (<see cref="PoInquiryWorkbenchPresets"/>). Applied in the
     /// canonical service pipeline after base filters / ACCESS / revision rules.
@@ -43,6 +52,27 @@ public static class PoInquiryWorkbenchPresets
     public const string Unconverted = "UNCONVERTED";
     public const string SbNotSubmitted = "SB_NOT_SUBMITTED";
     public const string SbInvalid = "SB_INVALID";
+
+    // Phase 2 Matching
+    public const string ReceivedNotInvoiced = "RECEIVED_NOT_INVOICED";
+    public const string PoOutstanding = "PO_OUTSTANDING";
+    public const string PartiallyMatched = "PARTIALLY_MATCHED";
+    public const string FullyMatched = "FULLY_MATCHED";
+    public const string PriceMismatch = "PRICE_MISMATCH";
+    public const string InvoicedNotReceived = "INVOICED_NOT_RECEIVED";
+    public const string All = "ALL";
+}
+
+/// <summary>Matching status values — exclusive priority order in the service.</summary>
+public static class PoMatchingStatuses
+{
+    public const string InvoicedNotReceived = "INVOICED_NOT_RECEIVED";
+    public const string PriceMismatch = "PRICE_MISMATCH";
+    public const string ReceivedNotInvoiced = "RECEIVED_NOT_INVOICED";
+    public const string PoOutstanding = "PO_OUTSTANDING";
+    public const string PartiallyMatched = "PARTIALLY_MATCHED";
+    public const string FullyMatched = "FULLY_MATCHED";
+    public const string Exception = "EXCEPTION";
 }
 
 public sealed class PoInquiryPage<T>
@@ -255,4 +285,110 @@ public sealed class PoSbEInvoiceReconciliationRow
     public string? RegistryStatus { get; set; }
     public string? RegistryUuid { get; set; }
     public string Finding { get; set; } = string.Empty;
+}
+
+// ============================ Phase 2 rows ============================
+
+/// <summary>Posted purchase invoice line price history (mirrors Sales price history).</summary>
+public sealed class PoPurchasePriceHistoryRow
+{
+    public DateTime DocDate { get; set; }
+    public string DocNo { get; set; } = string.Empty;
+    public short Line { get; set; }
+    public string? VendorCode { get; set; }
+    public string? VendorName { get; set; }
+    public string? ICode { get; set; }
+    public string? IDesc { get; set; }
+    public string? PoNo { get; set; }
+    public short? PoRelNo { get; set; }
+    public decimal Qty { get; set; }
+    public string? Uom { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal ItemDiscAmount { get; set; }
+    public decimal NetAmount { get; set; }
+    public decimal? NetUnitPrice { get; set; }
+    public string? Currency { get; set; }
+    public decimal CurrRate { get; set; }
+    public decimal? LocalAmount { get; set; }
+}
+
+public sealed class PoPurchasePriceHistorySummary
+{
+    public decimal? LatestNetUnitPrice { get; set; }
+    public decimal? PreviousNetUnitPrice { get; set; }
+    public decimal? MinNetUnitPrice { get; set; }
+    public decimal? MaxNetUnitPrice { get; set; }
+    public decimal? AvgNetUnitPrice { get; set; }
+    public int SampleCount { get; set; }
+}
+
+/// <summary>PO-line matching workbench row (one row per latest-revision PO line).</summary>
+public sealed class PoMatchingRow
+{
+    public string PoNo { get; set; } = string.Empty;
+    public short PoRelNo { get; set; }
+    public DateTime? PoDate { get; set; }
+    public string? VendCode { get; set; }
+    public string? VendName { get; set; }
+    public string? Buyer { get; set; }
+    public string? CurCode { get; set; }
+    public short Line { get; set; }
+    public string? ICode { get; set; }
+    public string? IDesc { get; set; }
+    public string? PurchaseUom { get; set; }
+    public decimal PoUnitPrice { get; set; }
+    public decimal PoPurQty { get; set; }
+    public decimal RecvQty { get; set; }
+    public decimal ReturnQty { get; set; }
+    public decimal NetReceivedQty { get; set; }
+    public decimal InvoicedQty { get; set; }
+    public decimal InvoiceableQty { get; set; }
+    public decimal OverInvoicedQty { get; set; }
+    public decimal BalanceQty { get; set; }
+    public decimal PoAmount { get; set; }
+    /// <summary>Inquiry-only proportional allocation — not GR stock valuation.</summary>
+    public decimal ReceivedAmount { get; set; }
+    public decimal InvoiceAmount { get; set; }
+    /// <summary>Diagnostic only — sum of posted INV line qty; does not drive status.</summary>
+    public decimal InvoiceQtyPosted { get; set; }
+    public decimal? EffectiveInvoiceUnitPrice { get; set; }
+    public decimal QtyVariance { get; set; }
+    public decimal? PriceVariance { get; set; }
+    public decimal? PriceVariancePct { get; set; }
+    public string MatchingStatus { get; set; } = string.Empty;
+    public bool PriceMismatch { get; set; }
+    public bool OverInvoiced { get; set; }
+    public bool HasMultipleInvoices { get; set; }
+    public bool HasMultipleInvoicePrices { get; set; }
+    public bool HasMultipleGRs { get; set; }
+    public string? LatestInvoiceDocNo { get; set; }
+    public int? SingleGrBatchNo { get; set; }
+    public DateTime? EtaDate { get; set; }
+    public string? ToWarehouse { get; set; }
+}
+
+public sealed class PoMatchingSummary
+{
+    public int ReceivedNotInvoicedCount { get; set; }
+    public int PoOutstandingCount { get; set; }
+    public int PartiallyMatchedCount { get; set; }
+    public int FullyMatchedCount { get; set; }
+    public int PriceMismatchCount { get; set; }
+    public int InvoicedNotReceivedCount { get; set; }
+}
+
+/// <summary>Supplier-level ETA delivery performance (latest RecvDate vs EtaDate).</summary>
+public sealed class PoDeliveryPerformanceRow
+{
+    public string? SuppCode { get; set; }
+    public string? SuppName { get; set; }
+    public int PurchaseOrderCount { get; set; }
+    public int PoLinesEvaluated { get; set; }
+    public decimal OrderedQty { get; set; }
+    public decimal ReceivedQty { get; set; }
+    public int OnTimeLines { get; set; }
+    public int LateLines { get; set; }
+    public decimal? OnTimePct { get; set; }
+    public decimal? AvgDaysLate { get; set; }
+    public int? MaxDaysLate { get; set; }
 }

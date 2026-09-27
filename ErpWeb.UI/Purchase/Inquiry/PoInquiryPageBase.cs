@@ -28,6 +28,9 @@ public abstract class PoInquiryPageBase : PageBase
     protected string? Status { get; set; }
     protected string? Type { get; set; }
     protected string? SearchText { get; set; }
+    protected string? ItemCode { get; set; }
+    protected string? Currency { get; set; }
+    protected string? Warehouse { get; set; }
 
     /// <summary>Active workbench preset key; null means screen default exception set.</summary>
     protected string? WorkbenchPreset { get; set; }
@@ -45,6 +48,9 @@ public abstract class PoInquiryPageBase : PageBase
     protected string? DraftStatus { get; set; }
     protected string? DraftType { get; set; }
     protected string? DraftSearchText { get; set; }
+    protected string? DraftItemCode { get; set; }
+    protected string? DraftCurrency { get; set; }
+    protected string? DraftWarehouse { get; set; }
 
     protected bool FilterPopupVisible { get; set; }
 
@@ -101,6 +107,9 @@ public abstract class PoInquiryPageBase : PageBase
         Status = Clean(Status),
         Type = Clean(Type),
         SearchText = Clean(SearchText),
+        ItemCode = Clean(ItemCode),
+        Currency = Clean(Currency),
+        Warehouse = Clean(Warehouse),
         WorkbenchPreset = Clean(WorkbenchPreset),
         AsOfDate = Dates.Now.Date
     };
@@ -118,6 +127,9 @@ public abstract class PoInquiryPageBase : PageBase
         DraftStatus = Status;
         DraftType = Type;
         DraftSearchText = SearchText;
+        DraftItemCode = ItemCode;
+        DraftCurrency = Currency;
+        DraftWarehouse = Warehouse;
         FilterPopupVisible = true;
     }
 
@@ -130,6 +142,9 @@ public abstract class PoInquiryPageBase : PageBase
         Status = DraftStatus;
         Type = DraftType;
         SearchText = DraftSearchText;
+        ItemCode = DraftItemCode;
+        Currency = DraftCurrency;
+        Warehouse = DraftWarehouse;
         FilterPopupVisible = false;
         await ReloadAsync();
     }
@@ -144,6 +159,9 @@ public abstract class PoInquiryPageBase : PageBase
         Status = null;
         Type = null;
         SearchText = null;
+        ItemCode = null;
+        Currency = null;
+        Warehouse = null;
 
         DraftDateFrom = DateFrom;
         DraftDateTo = DateTo;
@@ -152,6 +170,9 @@ public abstract class PoInquiryPageBase : PageBase
         DraftStatus = null;
         DraftType = null;
         DraftSearchText = null;
+        DraftItemCode = null;
+        DraftCurrency = null;
+        DraftWarehouse = null;
 
         FilterPopupVisible = false;
         await ReloadAsync();
@@ -243,6 +264,9 @@ public abstract class PoInquiryPageBase : PageBase
         AddIfSet(parameters, "status", AppliedQuery.Status);
         AddIfSet(parameters, "type", AppliedQuery.Type);
         AddIfSet(parameters, "searchText", AppliedQuery.SearchText);
+        AddIfSet(parameters, "itemCode", AppliedQuery.ItemCode);
+        AddIfSet(parameters, "currency", AppliedQuery.Currency);
+        AddIfSet(parameters, "warehouse", AppliedQuery.Warehouse);
         AddIfSet(parameters, "workbenchPreset", AppliedQuery.WorkbenchPreset);
         if (AppliedQuery.AsOfDate is DateTime asOf)
         {
@@ -328,6 +352,9 @@ public sealed class PoInquiryGridDataSource<T> : GridCustomDataSource
         Status = source.Status,
         Type = source.Type,
         SearchText = source.SearchText,
+        ItemCode = source.ItemCode,
+        Currency = source.Currency,
+        Warehouse = source.Warehouse,
         WorkbenchPreset = source.WorkbenchPreset,
         AsOfDate = source.AsOfDate,
         Skip = source.Skip,

@@ -31,6 +31,9 @@ public static class PoInquiryExportEndpoints
         endpoints.MapGet("/purchase/inquiry/document-relationship/export", ExportDocumentRelationshipAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/matching/export", ExportMatchingAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceAsync).RequireAuthorization();
         return endpoints;
     }
 
@@ -390,6 +393,150 @@ public static class PoInquiryExportEndpoints
         }));
 
         return Csv(rows, "PoSbEInvoiceReconciliation");
+    }
+
+    private static async Task<IResult> ExportPriceHistoryAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetPurchasePriceHistoryAsync(
+            MenuCodes.PurchasePriceHistory, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Date", "Invoice", "Supplier", "Supplier name", "Item", "Description", "PO no.",
+                "Qty", "UOM", "Unit price", "Discount", "Net unit", "Currency", "Rate", "Local amount"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            Date(x.DocDate),
+            x.DocNo,
+            x.VendorCode ?? string.Empty,
+            x.VendorName ?? string.Empty,
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            x.PoNo ?? string.Empty,
+            Qty(x.Qty),
+            x.Uom ?? string.Empty,
+            Qty(x.UnitPrice),
+            Money(x.ItemDiscAmount),
+            x.NetUnitPrice is decimal nup ? Qty(nup) : string.Empty,
+            x.Currency ?? string.Empty,
+            Qty(x.CurrRate),
+            x.LocalAmount is decimal la ? Money(la) : string.Empty
+        }));
+
+        return Csv(rows, "PoPurchasePriceHistory");
+    }
+
+    private static async Task<IResult> ExportMatchingAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetPoMatchingAsync(
+            MenuCodes.PurchaseMatching, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "PO no.", "Rev", "Date", "Supplier", "Item", "Ordered", "Received", "Invoiced", "Balance",
+                "PO amount", "Received amount", "Invoice amount", "Qty variance", "Status",
+                "Price mismatch", "Multi INV", "Multi GR", "Warehouse"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.PoNo,
+            x.PoRelNo.ToString(CultureInfo.InvariantCulture),
+            x.PoDate is DateTime pd ? Date(pd) : string.Empty,
+            x.VendCode ?? string.Empty,
+            x.ICode ?? string.Empty,
+            Qty(x.PoPurQty),
+            Qty(x.NetReceivedQty),
+            Qty(x.InvoicedQty),
+            Qty(x.BalanceQty),
+            Money(x.PoAmount),
+            Money(x.ReceivedAmount),
+            Money(x.InvoiceAmount),
+            Qty(x.QtyVariance),
+            x.MatchingStatus,
+            x.PriceMismatch ? "Y" : "N",
+            x.HasMultipleInvoices ? "Y" : "N",
+            x.HasMultipleGRs ? "Y" : "N",
+            x.ToWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "PoMatching");
+    }
+
+    private static async Task<IResult> ExportDeliveryPerformanceAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        var result = await inquiry.GetSupplierDeliveryPerformanceAsync(
+            MenuCodes.PurchaseDeliveryPerformance, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Supplier", "Name", "Purchase orders", "PO lines evaluated", "Ordered qty", "Received qty",
+                "On-time lines", "Late lines", "On-time %", "Avg days late", "Max days late"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.SuppCode ?? string.Empty,
+            x.SuppName ?? string.Empty,
+            x.PurchaseOrderCount.ToString(CultureInfo.InvariantCulture),
+            x.PoLinesEvaluated.ToString(CultureInfo.InvariantCulture),
+            Qty(x.OrderedQty),
+            Qty(x.ReceivedQty),
+            x.OnTimeLines.ToString(CultureInfo.InvariantCulture),
+            x.LateLines.ToString(CultureInfo.InvariantCulture),
+            x.OnTimePct is decimal pct ? Money(pct) : string.Empty,
+            x.AvgDaysLate is decimal avg ? Money(avg) : string.Empty,
+            x.MaxDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty
+        }));
+
+        return Csv(rows, "PoDeliveryPerformance");
     }
 
     private static PoInquiryQuery ForExport(PoInquiryQuery query)
