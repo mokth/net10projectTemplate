@@ -803,7 +803,45 @@ public sealed partial class PoPurchaseInquiryService
 
     // ============================ Delivery Performance ============================
 
-    public async Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetSupplierDeliveryPerformanceAsync(
+    public Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetSupplierDeliveryPerformanceAsync(
+        string menuCode,
+        PoInquiryQuery query,
+        CancellationToken cancellationToken = default) =>
+        GetDeliveryPerformanceSummaryAsync(menuCode, query, cancellationToken);
+
+    public async Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceLineRow>>> GetDeliveryPerformanceLinesAsync(
+        string menuCode,
+        PoInquiryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = await GateAsync(menuCode, cancellationToken);
+        if (!gate.Succeeded)
+        {
+            return Fail<PoInquiryPage<PoDeliveryPerformanceLineRow>>(gate);
+        }
+
+        var prepared = query ?? new PoInquiryQuery();
+        if (string.IsNullOrWhiteSpace(prepared.WorkbenchPreset))
+        {
+            prepared.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
+        }
+
+        var (skip, take) = Page(prepared);
+        var asOf = prepared.AsOfDate?.Date ?? DateTime.Today;
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = gate.CompanyCode!;
+        var branch = gate.BranchCode!;
+
+        var lines = await LoadDeliveryPerformanceLinesAsync(db, company, branch, prepared, asOf, cancellationToken);
+        var total = lines.Count;
+        var pageRows = lines.Skip(skip).Take(take).ToList();
+
+        return IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceLineRow>>.Ok(
+            new PoInquiryPage<PoDeliveryPerformanceLineRow> { Rows = pageRows, TotalCount = total });
+    }
+
+    public async Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetDeliveryPerformanceSummaryAsync(
         string menuCode,
         PoInquiryQuery query,
         CancellationToken cancellationToken = default)
@@ -815,12 +853,168 @@ public sealed partial class PoPurchaseInquiryService
         }
 
         var prepared = query ?? new PoInquiryQuery();
+        if (string.IsNullOrWhiteSpace(prepared.WorkbenchPreset))
+        {
+            prepared.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
+        }
+
         var (skip, take) = Page(prepared);
+        var asOf = prepared.AsOfDate?.Date ?? DateTime.Today;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var company = gate.CompanyCode!;
         var branch = gate.BranchCode!;
 
+        // Same post-preset/status filtered line set as the line grid, BEFORE line paging.
+        var lines = await LoadDeliveryPerformanceLinesAsync(db, company, branch, prepared, asOf, cancellationToken);
+        var grouped = GroupDeliveryPerformanceBySupplier(lines)
+            .OrderBy(x => x.SuppCode)
+            .ToList();
+
+        var total = grouped.Count;
+        var pageRows = grouped.Skip(skip).Take(take).ToList();
+
+        return IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>.Ok(
+            new PoInquiryPage<PoDeliveryPerformanceRow> { Rows = pageRows, TotalCount = total });
+    }
+
+    public async Task<IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>> GetDeliveryPerformanceReceiptsAsync(
+        string menuCode,
+        string poNo,
+        short poRelNo,
+        short line,
+        DateTime? asOfDate = null,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = await GateAsync(menuCode, cancellationToken);
+        if (!gate.Succeeded)
+        {
+            return Fail<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>(gate);
+        }
+
+        var asOf = asOfDate?.Date ?? DateTime.Today;
+        var no = (poNo ?? string.Empty).Trim();
+        if (no.Length == 0)
+        {
+            return IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>.Ok([]);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = gate.CompanyCode!;
+        var branch = gate.BranchCode!;
+
+        var poLine = await db.PoOrderDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.BranchCode == branch
+                        && x.PoNo == no
+                        && x.PoRelNo == poRelNo
+                        && x.Line == line)
+            .Select(x => new { x.PoPurQty, x.EtaDate })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (poLine?.EtaDate is null || poLine.PoPurQty <= 0m)
+        {
+            return IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>.Ok([]);
+        }
+
+        var movements = await LoadPostedDeliveryMovementsAsync(
+            db, company, branch, [(no, poRelNo, line)], asOf, cancellationToken);
+        var walk = PoDeliveryPerformanceCalc.WalkReceipts(
+            poLine.PoPurQty,
+            poLine.EtaDate.Value,
+            movements.GetValueOrDefault((no, poRelNo, line)) ?? []);
+
+        return IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>.Ok(walk.Receipts);
+    }
+
+    private async Task<List<PoDeliveryPerformanceLineRow>> LoadDeliveryPerformanceLinesAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        PoInquiryQuery prepared,
+        DateTime asOf,
+        CancellationToken cancellationToken)
+    {
+        var spine = await LoadDeliveryPerformanceSpineAsync(db, company, branch, prepared, cancellationToken);
+        if (spine.Count == 0)
+        {
+            return [];
+        }
+
+        var keys = spine.Select(x => (x.PoNo, x.PoRelNo, x.Line)).ToList();
+        var movementsByKey = await LoadPostedDeliveryMovementsAsync(
+            db, company, branch, keys, asOf, cancellationToken);
+
+        var rows = new List<PoDeliveryPerformanceLineRow>(spine.Count);
+        foreach (var s in spine)
+        {
+            var net = PoOrderCalc.ComputeNetReceived(s.RecvQty, s.ReturnQty);
+            var movements = movementsByKey.GetValueOrDefault((s.PoNo, s.PoRelNo, s.Line)) ?? [];
+            var walk = PoDeliveryPerformanceCalc.WalkReceipts(s.PoPurQty, s.EtaDate, movements);
+            var status = PoDeliveryPerformanceCalc.ResolveStatus(
+                s.PoPurQty, s.BalanceQty, net, s.EtaDate, walk.FullyReceivedDate, asOf);
+
+            if (!PoDeliveryPerformanceCalc.MatchesPreset(
+                    prepared.WorkbenchPreset,
+                    s.PoPurQty,
+                    s.BalanceQty,
+                    net,
+                    s.EtaDate,
+                    walk.FullyReceivedDate,
+                    asOf))
+            {
+                continue;
+            }
+
+            if (!PoDeliveryPerformanceCalc.MatchesStatusFilter(prepared.Status, status))
+            {
+                continue;
+            }
+
+            rows.Add(new PoDeliveryPerformanceLineRow
+            {
+                SuppCode = s.VendCode,
+                SuppName = s.VendName,
+                PoNo = s.PoNo,
+                PoRelNo = s.PoRelNo,
+                PoDate = s.PoDate,
+                Line = s.Line,
+                ICode = s.ICode,
+                IDesc = s.IDesc,
+                Buyer = s.Buyer,
+                ToWarehouse = s.ToWarehouse,
+                PoPurQty = s.PoPurQty,
+                NetReceivedQty = net,
+                BalanceQty = s.BalanceQty,
+                EtaDate = s.EtaDate,
+                FirstGrnDate = walk.FirstGrnDate,
+                LastGrnDate = walk.LastGrnDate,
+                FullyReceivedDate = walk.FullyReceivedDate,
+                DaysLate = PoDeliveryPerformanceCalc.ComputeOpenDaysLate(s.BalanceQty, s.EtaDate, asOf),
+                CompletionDaysLate = PoDeliveryPerformanceCalc.ComputeCompletionDaysLate(
+                    status, walk.FullyReceivedDate, s.EtaDate),
+                DeliveryStatus = status,
+                OnTimeReceivedQty = walk.OnTimeReceivedQty,
+                LateReceivedQty = walk.LateReceivedQty,
+                GrBatchCount = walk.GrBatchCount,
+                SingleBatchNo = walk.SingleBatchNo
+            });
+        }
+
+        return rows
+            .OrderByDescending(x => x.PoDate)
+            .ThenByDescending(x => x.PoNo)
+            .ThenBy(x => x.Line)
+            .ToList();
+    }
+
+    private static async Task<List<DeliverySpineRow>> LoadDeliveryPerformanceSpineAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        PoInquiryQuery prepared,
+        CancellationToken cancellationToken)
+    {
         var maxRel =
             from o in db.PoOrders.AsNoTracking()
             where o.CompanyCode == company && o.BranchCode == branch
@@ -836,8 +1030,7 @@ public sealed partial class PoPurchaseInquiryService
                   && h.BranchCode == branch
                   && h.Status != PoOrderStatuses.Cancelled
                   && line.EtaDate != null
-                  && line.RecvDate != null
-                  && line.RecvQty > 0m
+                  && line.PoPurQty > 0m
             select new { h, line };
 
         lines = ApplyNullableDate(lines, x => x.h.PoDate, prepared);
@@ -846,55 +1039,151 @@ public sealed partial class PoPurchaseInquiryService
         lines = ApplyText(lines, x => x.line.ICode, prepared.ItemCode);
         lines = ApplyText(lines, x => x.line.ToWarehouse, prepared.Warehouse);
 
-        var evaluated = await lines
-            .Select(x => new
+        return await lines
+            .Select(x => new DeliverySpineRow
             {
-                x.h.VendCode,
-                x.h.VendName,
-                x.h.PoNo,
-                x.line.PoPurQty,
-                x.line.RecvQty,
-                Eta = x.line.EtaDate!.Value,
-                Recv = x.line.RecvDate!.Value
+                PoNo = x.h.PoNo,
+                PoRelNo = x.h.PoRelNo,
+                PoDate = x.h.PoDate,
+                VendCode = x.h.VendCode,
+                VendName = x.h.VendName,
+                Buyer = x.h.Buyer,
+                Line = x.line.Line,
+                ICode = x.line.ICode,
+                IDesc = x.line.IDesc,
+                ToWarehouse = x.line.ToWarehouse,
+                PoPurQty = x.line.PoPurQty,
+                RecvQty = x.line.RecvQty,
+                ReturnQty = x.line.ReturnQty,
+                BalanceQty = x.line.BalanceQty,
+                EtaDate = x.line.EtaDate!.Value
             })
             .ToListAsync(cancellationToken);
+    }
 
-        var grouped = evaluated
-            .GroupBy(x => NormalizeKey(x.VendCode), StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// Posted GR/NG for the filtered PO keys, AsOf-clipped. Uses PoNo set join (not unbounded IN of composites).
+    /// </summary>
+    private async Task<Dictionary<(string PoNo, short Rel, short Line), List<PoDeliveryPerformanceCalc.ReceiptMovement>>>
+        LoadPostedDeliveryMovementsAsync(
+            AppDbContext db,
+            string company,
+            string branch,
+            List<(string PoNo, short Rel, short Line)> keys,
+            DateTime asOf,
+            CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<(string, short, short), List<PoDeliveryPerformanceCalc.ReceiptMovement>>();
+        if (keys.Count == 0)
+        {
+            return result;
+        }
+
+        var poNos = keys.Select(x => x.PoNo).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var asOfExclusive = asOf.Date.AddDays(1);
+
+        var raw = await (
+            from d in db.IvTrxBatchDetails.AsNoTracking()
+            join b in db.IvTrxBatches.AsNoTracking() on d.BatchId equals b.Id
+            where d.CompanyCode == company
+                  && d.BranchCode == branch
+                  && GoodsReceiptTrxTypes.Contains(d.TrxType)
+                  && b.BatchStatus == IvBatchStatuses.Posted
+                  && d.PoNo != null
+                  && poNos.Contains(d.PoNo)
+                  && b.TrxDtTime < asOfExclusive
+            select new
+            {
+                PoNo = d.PoNo!,
+                Rel = d.PoRelNo ?? (short)0,
+                Line = d.PoLineNo ?? (short)0,
+                b.BatchNo,
+                b.TrxDtTime,
+                d.TrxLineNo,
+                DetailId = d.Id,
+                Qty = d.ToPurQty ?? 0m
+            }).ToListAsync(cancellationToken);
+
+        var keySet = keys.ToHashSet();
+        foreach (var row in raw)
+        {
+            var key = (row.PoNo, row.Rel, row.Line);
+            if (!keySet.Contains(key))
+            {
+                continue;
+            }
+
+            if (!result.TryGetValue(key, out var list))
+            {
+                list = [];
+                result[key] = list;
+            }
+
+            list.Add(new PoDeliveryPerformanceCalc.ReceiptMovement(
+                row.BatchNo, row.TrxDtTime, row.TrxLineNo, row.DetailId, row.Qty));
+        }
+
+        return result;
+    }
+
+    private static List<PoDeliveryPerformanceRow> GroupDeliveryPerformanceBySupplier(
+        IReadOnlyList<PoDeliveryPerformanceLineRow> lines)
+    {
+        return lines
+            .GroupBy(x => NormalizeKey(x.SuppCode), StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
-                var onTime = g.Count(x => x.Recv.Date <= x.Eta.Date);
-                var lateLines = g.Where(x => x.Recv.Date > x.Eta.Date).ToList();
-                var late = lateLines.Count;
-                var daysLate = lateLines
-                    .Select(x => Math.Max(0, (x.Recv.Date - x.Eta.Date).Days))
+                var completed = g.Where(x => PoDeliveryPerformanceCalc.IsCompletedOtifStatus(x.DeliveryStatus)).ToList();
+                var onTime = completed.Count(x =>
+                    string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.Early, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.OnTime, StringComparison.OrdinalIgnoreCase));
+                var late = completed.Count(x =>
+                    string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.Late, StringComparison.OrdinalIgnoreCase));
+                var lateDays = completed
+                    .Where(x => x.CompletionDaysLate is > 0)
+                    .Select(x => x.CompletionDaysLate!.Value)
                     .ToList();
-                var name = g.Select(x => x.VendName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
-                           ?? g.First().VendName;
+                var name = g.Select(x => x.SuppName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+                           ?? g.First().SuppName;
                 return new PoDeliveryPerformanceRow
                 {
                     SuppCode = g.Key.Length == 0 ? null : g.Key,
                     SuppName = name,
                     PurchaseOrderCount = g.Select(x => x.PoNo).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                     PoLinesEvaluated = g.Count(),
+                    CompletedLines = completed.Count,
+                    PartialLines = g.Count(x =>
+                        string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.PartiallyReceived, StringComparison.OrdinalIgnoreCase)),
                     OrderedQty = g.Sum(x => x.PoPurQty),
-                    ReceivedQty = g.Sum(x => x.RecvQty),
+                    ReceivedQty = g.Sum(x => x.NetReceivedQty),
                     OnTimeLines = onTime,
                     LateLines = late,
-                    OnTimePct = (onTime + late) > 0
-                        ? (decimal)onTime / (onTime + late) * 100m
+                    OnTimePct = completed.Count > 0
+                        ? (decimal)onTime / completed.Count * 100m
                         : null,
-                    AvgDaysLate = daysLate.Count > 0 ? (decimal)daysLate.Average() : null,
-                    MaxDaysLate = daysLate.Count > 0 ? daysLate.Max() : null
+                    AvgDaysLate = lateDays.Count > 0 ? (decimal)lateDays.Average() : null,
+                    MaxDaysLate = lateDays.Count > 0 ? lateDays.Max() : null
                 };
             })
-            .OrderBy(x => x.SuppCode)
             .ToList();
+    }
 
-        var total = grouped.Count;
-        var pageRows = grouped.Skip(skip).Take(take).ToList();
-
-        return IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>.Ok(
-            new PoInquiryPage<PoDeliveryPerformanceRow> { Rows = pageRows, TotalCount = total });
+    private sealed class DeliverySpineRow
+    {
+        public string PoNo { get; init; } = string.Empty;
+        public short PoRelNo { get; init; }
+        public DateTime? PoDate { get; init; }
+        public string? VendCode { get; init; }
+        public string? VendName { get; init; }
+        public string? Buyer { get; init; }
+        public short Line { get; init; }
+        public string? ICode { get; init; }
+        public string? IDesc { get; init; }
+        public string? ToWarehouse { get; init; }
+        public decimal PoPurQty { get; init; }
+        public decimal RecvQty { get; init; }
+        public decimal ReturnQty { get; init; }
+        public decimal BalanceQty { get; init; }
+        public DateTime EtaDate { get; init; }
     }
 }

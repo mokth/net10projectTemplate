@@ -314,56 +314,261 @@ public class PoPurchaseInquiryPhase2Tests : IAsyncLifetime
     // ============================ Delivery ============================
 
     [Fact]
-    public async Task Delivery_OnTime_Late_And_ExcludesMissingDates()
+    public async Task Delivery_OnTime_Early_Late_Complete()
     {
         await SeedAsync(db =>
         {
             db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
             db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 10m, balance: 0m, recvQty: 10m,
-                etaDate: DateTime.Parse("2026-09-10"),
-                recvDate: DateTime.Parse("2026-09-10")));
+                etaDate: DateTime.Parse("2026-09-10")));
 
             db.PoOrders.Add(Po("PO2", "2026-09-02", PoOrderStatuses.Open, vend: "V1"));
             db.PoOrderDetails.Add(PoLine("PO2", 1, 1, 5m, balance: 0m, recvQty: 5m,
-                etaDate: DateTime.Parse("2026-09-10"),
-                recvDate: DateTime.Parse("2026-09-12")));
-
-            // Missing RecvDate — excluded
-            db.PoOrders.Add(Po("PO3", "2026-09-03", PoOrderStatuses.Open, vend: "V1"));
-            db.PoOrderDetails.Add(PoLine("PO3", 1, 1, 5m, balance: 5m, recvQty: 0m,
                 etaDate: DateTime.Parse("2026-09-10")));
+
+            db.PoOrders.Add(Po("PO3", "2026-09-03", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO3", 1, 1, 8m, balance: 0m, recvQty: 8m,
+                etaDate: DateTime.Parse("2026-09-10")));
+
+            var b1 = GrBatch(1001, "2026-09-10");
+            var b2 = GrBatch(1002, "2026-09-08");
+            var b3 = GrBatch(1003, "2026-09-12");
+            db.IvTrxBatches.AddRange(b1, b2, b3);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 1001, "PO1", 1, 1, 10m));
+            db.IvTrxBatchDetails.Add(GrLine(b2.Id, 1002, "PO2", 1, 1, 5m));
+            db.IvTrxBatchDetails.Add(GrLine(b3.Id, 1003, "PO3", 1, 1, 8m));
         });
 
-        var result = await CreateSut().GetSupplierDeliveryPerformanceAsync(
-            MenuCodes.PurchaseDeliveryPerformance, Range("2026-09-01", "2026-09-30"));
-        var row = Assert.Single(result.Data!.Rows);
-        Assert.Equal(2, row.PurchaseOrderCount);
-        Assert.Equal(2, row.PoLinesEvaluated);
-        Assert.Equal(1, row.OnTimeLines);
-        Assert.Equal(1, row.LateLines);
-        Assert.Equal(50m, row.OnTimePct);
-        Assert.Equal(2m, row.AvgDaysLate);
-        Assert.Equal(2, row.MaxDaysLate);
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.OnTimeCompleted;
+        q.AsOfDate = DateTime.Parse("2026-09-30");
+        var onTimePage = await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q);
+        Assert.Equal(2, onTimePage.Data!.TotalCount);
+
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.LateCompletion;
+        var latePage = await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q);
+        var late = Assert.Single(latePage.Data!.Rows);
+        Assert.Equal("PO3", late.PoNo);
+        Assert.Equal(PoDeliveryPerformanceStatuses.Late, late.DeliveryStatus);
+        Assert.Equal(2, late.CompletionDaysLate);
     }
 
     [Fact]
-    public async Task Delivery_UsesLatestRecvDate_PartialEarlyThenLate()
+    public async Task Delivery_PartialThenLateComplete_FullyReceivedAndDays()
     {
         await SeedAsync(db =>
         {
-            // ETA 10 Sep; persisted RecvDate is latest (20 Sep) → late
             db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
-            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 10m, balance: 0m, recvQty: 10m,
-                etaDate: DateTime.Parse("2026-09-10"),
-                recvDate: DateTime.Parse("2026-09-20")));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 0m, recvQty: 100m,
+                etaDate: DateTime.Parse("2026-09-10")));
+
+            var b1 = GrBatch(1, "2026-09-10");
+            var b2 = GrBatch(2, "2026-09-15");
+            var b3 = GrBatch(3, "2026-09-20");
+            db.IvTrxBatches.AddRange(b1, b2, b3);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 1, "PO1", 1, 1, 40m));
+            db.IvTrxBatchDetails.Add(GrLine(b2.Id, 2, "PO1", 1, 1, 30m));
+            db.IvTrxBatchDetails.Add(GrLine(b3.Id, 3, "PO1", 1, 1, 30m));
         });
 
-        var row = Assert.Single((await CreateSut().GetSupplierDeliveryPerformanceAsync(
-            MenuCodes.PurchaseDeliveryPerformance, Range("2026-09-01", "2026-09-30"))).Data!.Rows);
-        Assert.Equal(0, row.OnTimeLines);
-        Assert.Equal(1, row.LateLines);
-        Assert.Equal(10, row.MaxDaysLate);
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.LateCompletion;
+        q.AsOfDate = DateTime.Parse("2026-09-30");
+        var row = Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(DateTime.Parse("2026-09-20"), row.FullyReceivedDate);
+        Assert.Equal(10, row.CompletionDaysLate);
+        Assert.Equal(40m, row.OnTimeReceivedQty);
+        Assert.Equal(60m, row.LateReceivedQty);
     }
+
+    [Fact]
+    public async Task Delivery_PartialOpen_OverduePreset_And_StatusPartial()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 60m, recvQty: 40m,
+                etaDate: DateTime.Parse("2026-09-10")));
+            var b1 = GrBatch(10, "2026-09-10");
+            db.IvTrxBatches.Add(b1);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 10, "PO1", 1, 1, 40m));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.AsOfDate = DateTime.Parse("2026-09-20");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.Overdue;
+        var overdue = Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(PoDeliveryPerformanceStatuses.PartiallyReceived, overdue.DeliveryStatus);
+        Assert.Equal(10, overdue.DaysLate);
+
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.Partial;
+        Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+    }
+
+    [Fact]
+    public async Task Delivery_CancelledExcluded_And_LatestRevisionOnly()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Cancelled, rel: 1));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 10m, balance: 10m,
+                etaDate: DateTime.Parse("2026-09-05")));
+
+            db.PoOrders.Add(Po("PO2", "2026-09-01", PoOrderStatuses.Cancelled, rel: 1));
+            db.PoOrderDetails.Add(PoLine("PO2", 1, 1, 10m, balance: 0m, recvQty: 10m,
+                etaDate: DateTime.Parse("2026-09-05")));
+            db.PoOrders.Add(Po("PO2", "2026-09-02", PoOrderStatuses.Open, rel: 2));
+            db.PoOrderDetails.Add(PoLine("PO2", 2, 1, 10m, balance: 10m,
+                etaDate: DateTime.Parse("2026-09-10")));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
+        q.AsOfDate = DateTime.Parse("2026-09-15");
+        var rows = (await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows;
+        var row = Assert.Single(rows);
+        Assert.Equal("PO2", row.PoNo);
+        Assert.Equal(2, row.PoRelNo);
+    }
+
+    [Fact]
+    public async Task Delivery_AsOfFutureGr_ExceptionStatus_WithAllPreset()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 0m, recvQty: 100m,
+                etaDate: DateTime.Parse("2026-09-10")));
+            var b1 = GrBatch(50, "2026-09-15");
+            db.IvTrxBatches.Add(b1);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 50, "PO1", 1, 1, 100m));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.All;
+        q.AsOfDate = DateTime.Parse("2026-09-10");
+        q.Status = PoDeliveryPerformanceStatuses.Exception;
+        var row = Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(PoDeliveryPerformanceStatuses.Exception, row.DeliveryStatus);
+        Assert.Null(row.FullyReceivedDate);
+    }
+
+    [Fact]
+    public async Task Delivery_ReturnAfterFull_Reopens_KeepsHistoricalFullyReceived()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 20m, recvQty: 100m, returnQty: 20m,
+                etaDate: DateTime.Parse("2026-09-10")));
+            var b1 = GrBatch(70, "2026-09-01");
+            db.IvTrxBatches.Add(b1);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 70, "PO1", 1, 1, 100m));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.Partial;
+        q.AsOfDate = DateTime.Parse("2026-09-05");
+        var row = Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(PoDeliveryPerformanceStatuses.PartiallyReceived, row.DeliveryStatus);
+        Assert.Equal(DateTime.Parse("2026-09-01"), row.FullyReceivedDate);
+        Assert.Equal(80m, row.NetReceivedQty);
+    }
+
+    [Fact]
+    public async Task Delivery_Summary_OnTimePctNull_WhenNoCompleted_And_Consistency()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 60m, recvQty: 40m,
+                etaDate: DateTime.Parse("2026-09-10")));
+            var b1 = GrBatch(80, "2026-09-10");
+            db.IvTrxBatches.Add(b1);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 80, "PO1", 1, 1, 40m));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.Partial;
+        q.AsOfDate = DateTime.Parse("2026-09-20");
+
+        var lines = (await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows;
+        var summary = Assert.Single((await CreateSut().GetDeliveryPerformanceSummaryAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(0, summary.CompletedLines);
+        Assert.Null(summary.OnTimePct);
+        Assert.Equal(1, summary.PartialLines);
+        Assert.Equal(lines.Sum(x => x.NetReceivedQty), summary.ReceivedQty);
+    }
+
+    [Fact]
+    public async Task Delivery_OverReceipt_RemainingNeverNegative_InReceipts()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 100m, balance: 0m, recvQty: 120m,
+                etaDate: DateTime.Parse("2026-09-10")));
+            var b1 = GrBatch(90, "2026-09-08");
+            db.IvTrxBatches.Add(b1);
+            db.SaveChanges();
+            db.IvTrxBatchDetails.Add(GrLine(b1.Id, 90, "PO1", 1, 1, 120m));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.OnTimeCompleted;
+        q.AsOfDate = DateTime.Parse("2026-09-30");
+        var row = Assert.Single((await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.Rows);
+        Assert.Equal(100m, row.OnTimeReceivedQty);
+        Assert.Equal(120m, row.NetReceivedQty);
+
+        var receipts = (await CreateSut().GetDeliveryPerformanceReceiptsAsync(
+            MenuCodes.PurchaseDeliveryPerformance, "PO1", 1, 1, q.AsOfDate)).Data!;
+        Assert.Equal(0m, Assert.Single(receipts).RemainingQty);
+        Assert.Equal(120m, receipts[0].CumulativeQty);
+    }
+
+    [Fact]
+    public async Task Delivery_GateDenied()
+    {
+        var result = await CreateSut(canAccess: false).GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, Range("2026-09-01", "2026-09-30"));
+        Assert.False(result.Succeeded);
+    }
+
+    [Fact]
+    public async Task Delivery_ZeroPoPurQty_Excluded()
+    {
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("PO1", "2026-09-01", PoOrderStatuses.Open, vend: "V1"));
+            db.PoOrderDetails.Add(PoLine("PO1", 1, 1, 0m, balance: 0m,
+                etaDate: DateTime.Parse("2026-09-10")));
+        });
+
+        var q = Range("2026-09-01", "2026-09-30");
+        q.WorkbenchPreset = PoInquiryWorkbenchPresets.All;
+        q.AsOfDate = DateTime.Parse("2026-09-20");
+        Assert.Equal(0, (await CreateSut().GetDeliveryPerformanceLinesAsync(
+            MenuCodes.PurchaseDeliveryPerformance, q)).Data!.TotalCount);
+    }
+
 
     // ============================ helpers ============================
 
@@ -509,10 +714,16 @@ public class PoPurchaseInquiryPhase2Tests : IAsyncLifetime
         BatchNo = batchNo,
         TrxDtTime = DateTime.Parse(trxDate),
         TrxType = IvTrxTypes.GoodsReceive,
-        BatchStatus = "POSTED"
+        BatchStatus = IvBatchStatuses.Posted
     };
 
-    private static IvTrxBatchDetail GrLine(int batchId, int batchNo, string poNo, short rel, short line) => new()
+    private static IvTrxBatchDetail GrLine(
+        int batchId,
+        int batchNo,
+        string poNo,
+        short rel,
+        short line,
+        decimal qty = 1m) => new()
     {
         BatchId = batchId,
         CompanyCode = Company,
@@ -523,7 +734,7 @@ public class PoPurchaseInquiryPhase2Tests : IAsyncLifetime
         PoNo = poNo,
         PoRelNo = rel,
         PoLineNo = line,
-        ToPurQty = 1m,
+        ToPurQty = qty,
         ICode = "ITM1"
     };
 }

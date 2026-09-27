@@ -27,7 +27,31 @@
                 <p class="iv-eyebrow">Purchase · Inquiry</p>
                 <h1 class="iv-title">Supplier Delivery Performance</h1>
                 <div class="iv-chips">
-                    <span class="iv-chip">ETA-based; latest RecvDate; lines without ETA or RecvDate excluded</span>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.AllOpen)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.AllOpen))"
+                            title="Open PO lines (BalanceQty &gt; 0)">
+                        All open
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.Overdue)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.Overdue))"
+                            title="Open lines past ETA">
+                        Overdue
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.Partial)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.Partial))"
+                            title="Partially received open lines">
+                        Partially received
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.LateCompletion)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.LateCompletion))"
+                            title="Fully received after ETA">
+                        Late completion
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.OnTimeCompleted)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.OnTimeCompleted))"
+                            title="Completed on or before expected date">
+                        On time / Early
+                    </button>
                     @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
                     {
                         <span class="iv-chip">Branch: @ScopeBranchCode</span>
@@ -61,14 +85,14 @@
             else
             {
                 <div class="iv-list-desktop">
-                    <CommonDataGridEx T="PoDeliveryPerformanceRow"
-                                      Columns="@Columns"
+                    <CommonDataGridEx T="PoDeliveryPerformanceLineRow"
+                                      Columns="@LineColumns"
                                       Buttons="@Buttons"
                                       ActionButtons="@ActionButtons"
-                                      KeyName="@nameof(PoDeliveryPerformanceRow.SuppCode)"
-                                      GridKey="po-delivery-performance"
-                                      Title="Supplier delivery performance"
-                                      CustomDataSource="@DataSource"
+                                      KeyName="@nameof(PoDeliveryPerformanceLineRow.PoNo)"
+                                      GridKey="po-delivery-performance-lines"
+                                      Title="PO line delivery performance"
+                                      CustomDataSource="@LineDataSource"
                                       ShowToolbarText="true"
                                       ShowResetLayoutButton="true"
                                       UseBuiltInExport="false"
@@ -77,15 +101,58 @@
                                       ShowGroupPanel="false"
                                       allowSelect="false"
                                       OnGridInstance="@OnGridInstance"
-                                      OnButtonEventHandle="@OnButtonClick"
-                                      OnActionEventHandle="@OnActionClick" />
+                                      OnButtonEventHandle="@OnLineButtonClick"
+                                      OnActionEventHandle="@OnLineActionClick" />
+                </div>
+
+                @if (SelectedLine is not null)
+                {
+                    <div class="iv-chips" style="margin-top:0.75rem">
+                        <span class="iv-chip">@SelectedLine.PoNo / @SelectedLine.PoRelNo line @SelectedLine.Line</span>
+                        <span class="iv-chip">Status: @SelectedLine.DeliveryStatus</span>
+                        <span class="iv-chip">Outstanding: @SelectedLine.BalanceQty.ToString("N4")</span>
+                        @if (SelectedLine.DaysLate is int daysLate)
+                        {
+                            <span class="iv-chip">Days late: @daysLate</span>
+                        }
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="OPEN PO"
+                                  IconCssClass="fa-solid fa-up-right-from-square"
+                                  Click="@OpenSelectedPo" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="RECEIPTS"
+                                  IconCssClass="fa-solid fa-list"
+                                  Click="@OpenReceiptsAsync" />
+                    </div>
+                }
+
+                <h2 class="iv-subtitle" style="margin-top:1.5rem">Supplier summary</h2>
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PoDeliveryPerformanceRow"
+                                      Columns="@SummaryColumns"
+                                      Buttons="@SummaryButtons"
+                                      ActionButtons="@SummaryActionButtons"
+                                      KeyName="@nameof(PoDeliveryPerformanceRow.SuppCode)"
+                                      GridKey="po-delivery-performance-summary"
+                                      Title="Supplier delivery summary"
+                                      CustomDataSource="@SummaryDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnButtonEventHandle="@OnSummaryButtonClick"
+                                      OnActionEventHandle="@OnSummaryActionClick" />
                 </div>
             }
         </section>
 
         <p class="iv-subtitle">
-            On-time % uses only evaluated lines (both ETA and latest receipt date, RecvQty &gt; 0).
-            A partial early receipt with a later final receipt is classified by the latest RecvDate.
+            Complete-delivery OTIF uses posted GR/NG chronology clipped by AsOf.
+            Open/complete uses current PO quantities (BalanceQty / NetReceived).
+            Partial overdue lines show PARTIALLY_RECEIVED with Days late &gt; 0.
         </p>
     </div>
 
@@ -132,9 +199,19 @@
                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Delivery status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@DeliveryStatusOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatus"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
                 </DxFormLayout>
                 <p class="iv-popup-hint">
-                    Date filter applies to <strong>PO date</strong>. Empty field = all.
+                    Date filter applies to <strong>PO date</strong>. Preset and delivery status filters are ANDed.
+                    Empty field = all.
                 </p>
             </div>
             <div class="iv-popup-footer">
@@ -145,6 +222,54 @@
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="Apply"
                               Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@ReceiptPopupTitle"
+             CloseOnOutsideClick="true"
+             Width="900px"
+             CssClass="common-popup"
+             @bind-Visible="@ReceiptPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                @if (ReceiptLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else if (ReceiptRows.Count == 0)
+                {
+                    <p class="iv-subtitle">No posted GR/NG receipts on or before AsOf.</p>
+                }
+                else
+                {
+                    <DxGrid Data="@ReceiptRows" PageSize="20" ShowFilterRow="false">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.BatchNo)" Caption="GRN" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.TrxDtTime)" Caption="Date" DisplayFormat="dd/MM/yyyy" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.Qty)" Caption="Qty" DisplayFormat="n4" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.CumulativeQty)" Caption="Cumulative" DisplayFormat="n4" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.RemainingQty)" Caption="Remaining" DisplayFormat="n4" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.DaysVsEta)" Caption="Days vs ETA" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.OnTimeOrLate)" Caption="Vs ETA" Width="100px" />
+                        </Columns>
+                    </DxGrid>
+                }
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    @if (SelectedLine?.SingleBatchNo is int batchNo)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="OPEN GR"
+                                  Click="@(() => OpenSelectedGr(batchNo))" />
+                    }
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@(() => ReceiptPopupVisible = false)" />
                 </div>
             </div>
         </Content>

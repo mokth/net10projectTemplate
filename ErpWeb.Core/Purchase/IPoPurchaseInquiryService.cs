@@ -63,6 +63,21 @@ public interface IPoPurchaseInquiryService
     Task<IvMasterOperationResult<PoMatchingSummary>> GetPoMatchingSummaryAsync(
         string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceLineRow>>> GetDeliveryPerformanceLinesAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetDeliveryPerformanceSummaryAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>> GetDeliveryPerformanceReceiptsAsync(
+        string menuCode,
+        string poNo,
+        short poRelNo,
+        short line,
+        DateTime? asOfDate = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Compatibility alias — supplier summary from the same filtered line population.</summary>
     Task<IvMasterOperationResult<PoInquiryPage<PoDeliveryPerformanceRow>>> GetSupplierDeliveryPerformanceAsync(
         string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
 }

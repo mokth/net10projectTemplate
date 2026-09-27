@@ -61,6 +61,22 @@ public static class PoInquiryWorkbenchPresets
     public const string PriceMismatch = "PRICE_MISMATCH";
     public const string InvoicedNotReceived = "INVOICED_NOT_RECEIVED";
     public const string All = "ALL";
+
+    // Delivery Performance
+    public const string LateCompletion = "LATE_COMPLETION";
+    public const string OnTimeCompleted = "ON_TIME_COMPLETED";
+}
+
+/// <summary>Delivery Performance inquiry statuses (independent of <see cref="PoOrderStatuses"/>).</summary>
+public static class PoDeliveryPerformanceStatuses
+{
+    public const string NotDue = "NOT_DUE";
+    public const string Overdue = "OVERDUE";
+    public const string PartiallyReceived = "PARTIALLY_RECEIVED";
+    public const string Early = "EARLY";
+    public const string OnTime = "ON_TIME";
+    public const string Late = "LATE";
+    public const string Exception = "EXCEPTION";
 }
 
 /// <summary>Matching status values — exclusive priority order in the service.</summary>
@@ -377,13 +393,56 @@ public sealed class PoMatchingSummary
     public int InvoicedNotReceivedCount { get; set; }
 }
 
-/// <summary>Supplier-level ETA delivery performance (latest RecvDate vs EtaDate).</summary>
+/// <summary>PO-line delivery performance workbench row.</summary>
+public sealed class PoDeliveryPerformanceLineRow
+{
+    public string? SuppCode { get; set; }
+    public string? SuppName { get; set; }
+    public string PoNo { get; set; } = string.Empty;
+    public short PoRelNo { get; set; }
+    public DateTime? PoDate { get; set; }
+    public short Line { get; set; }
+    public string? ICode { get; set; }
+    public string? IDesc { get; set; }
+    public string? Buyer { get; set; }
+    public string? ToWarehouse { get; set; }
+    public decimal PoPurQty { get; set; }
+    public decimal NetReceivedQty { get; set; }
+    public decimal BalanceQty { get; set; }
+    public DateTime? EtaDate { get; set; }
+    public DateTime? FirstGrnDate { get; set; }
+    public DateTime? LastGrnDate { get; set; }
+    public DateTime? FullyReceivedDate { get; set; }
+    public int? DaysLate { get; set; }
+    public int? CompletionDaysLate { get; set; }
+    public string DeliveryStatus { get; set; } = string.Empty;
+    public decimal OnTimeReceivedQty { get; set; }
+    public decimal LateReceivedQty { get; set; }
+    public int GrBatchCount { get; set; }
+    public int? SingleBatchNo { get; set; }
+}
+
+/// <summary>Posted GR/NG receipt drill-down for a PO line (AsOf-clipped).</summary>
+public sealed class PoDeliveryPerformanceReceiptRow
+{
+    public int BatchNo { get; set; }
+    public DateTime TrxDtTime { get; set; }
+    public decimal Qty { get; set; }
+    public decimal CumulativeQty { get; set; }
+    public decimal RemainingQty { get; set; }
+    public int DaysVsEta { get; set; }
+    public string OnTimeOrLate { get; set; } = string.Empty;
+}
+
+/// <summary>Supplier-level delivery performance aggregated from filtered line rows.</summary>
 public sealed class PoDeliveryPerformanceRow
 {
     public string? SuppCode { get; set; }
     public string? SuppName { get; set; }
     public int PurchaseOrderCount { get; set; }
     public int PoLinesEvaluated { get; set; }
+    public int CompletedLines { get; set; }
+    public int PartialLines { get; set; }
     public decimal OrderedQty { get; set; }
     public decimal ReceivedQty { get; set; }
     public int OnTimeLines { get; set; }

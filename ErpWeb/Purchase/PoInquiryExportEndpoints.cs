@@ -33,7 +33,8 @@ public static class PoInquiryExportEndpoints
         endpoints.MapGet("/purchase/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/matching/export", ExportMatchingAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceLinesAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/delivery-performance/summary/export", ExportDeliveryPerformanceSummaryAsync).RequireAuthorization();
         return endpoints;
     }
 
@@ -495,12 +496,17 @@ public static class PoInquiryExportEndpoints
         return Csv(rows, "PoMatching");
     }
 
-    private static async Task<IResult> ExportDeliveryPerformanceAsync(
+    private static async Task<IResult> ExportDeliveryPerformanceLinesAsync(
         [AsParameters] PoInquiryQuery query,
         [FromServices] IPoPurchaseInquiryService inquiry,
         CancellationToken cancellationToken)
     {
-        var result = await inquiry.GetSupplierDeliveryPerformanceAsync(
+        if (string.IsNullOrWhiteSpace(query.WorkbenchPreset))
+        {
+            query.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
+        }
+
+        var result = await inquiry.GetDeliveryPerformanceLinesAsync(
             MenuCodes.PurchaseDeliveryPerformance, ForExport(query), cancellationToken);
         if (!result.Succeeded)
         {
@@ -517,8 +523,71 @@ public static class PoInquiryExportEndpoints
         {
             new[]
             {
-                "Supplier", "Name", "Purchase orders", "PO lines evaluated", "Ordered qty", "Received qty",
-                "On-time lines", "Late lines", "On-time %", "Avg days late", "Max days late"
+                "Supplier", "Name", "PO no.", "Rev", "PO date", "Line", "Item", "Description",
+                "PO qty", "Received", "Outstanding", "Expected", "First GRN", "Last GRN", "Fully received",
+                "Days late", "Completion days late", "Delivery status", "On-time qty", "Late qty",
+                "Buyer", "Warehouse"
+            }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.SuppCode ?? string.Empty,
+            x.SuppName ?? string.Empty,
+            x.PoNo,
+            x.PoRelNo.ToString(CultureInfo.InvariantCulture),
+            x.PoDate is DateTime poDate ? Date(poDate) : string.Empty,
+            x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty,
+            Qty(x.PoPurQty),
+            Qty(x.NetReceivedQty),
+            Qty(x.BalanceQty),
+            x.EtaDate is DateTime eta ? Date(eta) : string.Empty,
+            x.FirstGrnDate is DateTime first ? Date(first) : string.Empty,
+            x.LastGrnDate is DateTime last ? Date(last) : string.Empty,
+            x.FullyReceivedDate is DateTime fully ? Date(fully) : string.Empty,
+            x.DaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            x.CompletionDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            x.DeliveryStatus,
+            Qty(x.OnTimeReceivedQty),
+            Qty(x.LateReceivedQty),
+            x.Buyer ?? string.Empty,
+            x.ToWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "PoDeliveryPerformanceLines");
+    }
+
+    private static async Task<IResult> ExportDeliveryPerformanceSummaryAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(query.WorkbenchPreset))
+        {
+            query.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
+        }
+
+        var result = await inquiry.GetDeliveryPerformanceSummaryAsync(
+            MenuCodes.PurchaseDeliveryPerformance, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "Supplier", "Name", "Purchase orders", "PO lines", "Completed", "Partial",
+                "Ordered qty", "Received qty", "On-time lines", "Late lines", "On-time %",
+                "Avg days late", "Max days late"
             }
         };
         rows.AddRange(page.Rows.Select(x => new[]
@@ -527,6 +596,8 @@ public static class PoInquiryExportEndpoints
             x.SuppName ?? string.Empty,
             x.PurchaseOrderCount.ToString(CultureInfo.InvariantCulture),
             x.PoLinesEvaluated.ToString(CultureInfo.InvariantCulture),
+            x.CompletedLines.ToString(CultureInfo.InvariantCulture),
+            x.PartialLines.ToString(CultureInfo.InvariantCulture),
             Qty(x.OrderedQty),
             Qty(x.ReceivedQty),
             x.OnTimeLines.ToString(CultureInfo.InvariantCulture),
@@ -536,7 +607,7 @@ public static class PoInquiryExportEndpoints
             x.MaxDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty
         }));
 
-        return Csv(rows, "PoDeliveryPerformance");
+        return Csv(rows, "PoDeliveryPerformanceSummary");
     }
 
     private static PoInquiryQuery ForExport(PoInquiryQuery query)
