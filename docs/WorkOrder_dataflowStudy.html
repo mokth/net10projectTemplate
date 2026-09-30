@@ -1,0 +1,2808 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>WorkOrder_dataflowStudy.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="work-order-creation-from-product-definition">Work Order Creation from Product Definition</h1>
+<h2 id="objective">Objective</h2>
+<p>Please study how my old ERP creates a <strong>Production Work Order</strong> from the existing <strong>Product Definition</strong>.</p>
+<p>I want to migrate the same core concept, data flow, and business logic into my new ERP, but the implementation should be reviewed and enhanced where necessary so that it is suitable for a modern production/manufacturing ERP.</p>
+<p>Do not simply copy the old code blindly.</p>
+<p>First understand:</p>
+<ol>
+<li>How the Product Definition acts as the production template.</li>
+<li>How its data is copied into a Work Order.</li>
+<li>How the relationships between Work Center, Process, BOM, Machine, and Labour are preserved.</li>
+<li>How the Work Order becomes an independent production snapshot after creation.</li>
+<li>How scheduling dates should later be calculated.</li>
+</ol>
+<hr>
+<h1 id="1-work-order-creation-trigger">1. Work Order Creation Trigger</h1>
+<p>During <strong>Work Order Entry</strong>, the user selects a <code>ProductCode</code>.</p>
+<p>Example:</p>
+<pre class="hljs"><code><div>ProductCode = FG001
+</div></code></pre>
+<p>The system must use the selected <code>ProductCode</code> to locate the corresponding Product Definition.</p>
+<p>Conceptually:</p>
+<pre class="hljs"><code><div>Work Order Entry
+      |
+      v
+Select ProductCode
+      |
+      v
+Find Product Definition
+      |
+      +---- Not Found
+      |       -&gt; Block creation / show validation message
+      |
+      +---- Found
+              |
+              v
+      Load complete Product Definition structure
+              |
+              v
+      Copy Product Definition into Work Order tables
+              |
+              v
+      Calculate Work Order scheduling/timing
+</div></code></pre>
+<hr>
+<h1 id="2-product-definition-to-work-order-table-mapping">2. Product Definition to Work Order Table Mapping</h1>
+<p>When a Product Definition is found, the system copies the relevant records into the corresponding Work Order / Production Schedule tables.</p>
+<table>
+<thead>
+<tr>
+<th>Product Definition Table</th>
+<th>Work Order Table</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[dbo].[PrDefMas]</code></td>
+<td><code>[dbo].[PrSchMas]</code></td>
+</tr>
+<tr>
+<td><code>[dbo].[PrDefWCenter]</code></td>
+<td><code>[dbo].[PrSchWCenter]</code></td>
+</tr>
+<tr>
+<td><code>[dbo].[PrDefProcess]</code></td>
+<td><code>[dbo].[PrSchProcess]</code></td>
+</tr>
+<tr>
+<td><code>[dbo].[PrDefBOM]</code></td>
+<td><code>[dbo].[PrSchBOM]</code></td>
+</tr>
+<tr>
+<td><code>[dbo].[PrDefMachine]</code></td>
+<td><code>[dbo].[PrSchMachine]</code></td>
+</tr>
+<tr>
+<td><code>[dbo].[PrDefLabour]</code></td>
+<td><code>[dbo].[PrSchLabour]</code></td>
+</tr>
+</tbody>
+</table>
+<p>The Work Order tables should therefore represent a <strong>snapshot of the Product Definition at the time the Work Order is created</strong>.</p>
+<hr>
+<h1 id="3-important-snapshot-principle">3. Important Snapshot Principle</h1>
+<p>The Product Definition is the master/template.</p>
+<p>The Work Order is a transactional production document.</p>
+<p>After the Product Definition has been copied into the Work Order, the Work Order should normally become independent from later changes to the Product Definition.</p>
+<p>Example:</p>
+<pre class="hljs"><code><div>01-Oct
+Product Definition FG001
+BOM:
+- RM001 Qty 2
+- RM002 Qty 1
+
+02-Oct
+WO0001 created
+WO0001 receives:
+- RM001 Qty 2
+- RM002 Qty 1
+
+05-Oct
+Product Definition FG001 changed:
+- RM001 Qty 2.5
+- RM003 Qty 1
+</div></code></pre>
+<p>Existing:</p>
+<pre class="hljs"><code><div>WO0001
+</div></code></pre>
+<p>should normally remain based on the definition that existed on <code>02-Oct</code>.</p>
+<p>A new Work Order created after <code>05-Oct</code> should use the revised definition.</p>
+<p>This is important for:</p>
+<ul>
+<li>production history;</li>
+<li>costing;</li>
+<li>material traceability;</li>
+<li>audit;</li>
+<li>variance analysis;</li>
+<li>reproducibility of old Work Orders.</li>
+</ul>
+<p>Please verify whether the existing old ERP follows this behavior.</p>
+<hr>
+<h1 id="4-hierarchical-structure-that-must-be-preserved">4. Hierarchical Structure That Must Be Preserved</h1>
+<p>The copied records are not six unrelated tables.</p>
+<p>They form one production structure.</p>
+<p>Conceptually:</p>
+<pre class="hljs"><code><div>PrDefMas
+   |
+   +-- PrDefWCenter
+          |
+          +-- PrDefProcess
+          |      |
+          |      +-- PrDefMachine
+          |      |
+          |      +-- PrDefLabour
+          |
+          +-- PrDefBOM
+</div></code></pre>
+<p>When copied into the Work Order:</p>
+<pre class="hljs"><code><div>PrSchMas
+   |
+   +-- PrSchWCenter
+          |
+          +-- PrSchProcess
+          |      |
+          |      +-- PrSchMachine
+          |      |
+          |      +-- PrSchLabour
+          |
+          +-- PrSchBOM
+</div></code></pre>
+<p>All parent-child relationships must remain correct after copying.</p>
+<p>Do not merely copy records based only on <code>ProductCode</code>.</p>
+<p>Investigate how the old system links:</p>
+<ul>
+<li>Product Definition;</li>
+<li>Work Center;</li>
+<li>Process;</li>
+<li>BOM;</li>
+<li>Machine;</li>
+<li>Labour.</li>
+</ul>
+<p>Identify all important:</p>
+<ul>
+<li>primary keys;</li>
+<li>foreign keys;</li>
+<li>sequence numbers;</li>
+<li>Work Center references;</li>
+<li>Process references;</li>
+<li>machine references;</li>
+<li>BOM references;</li>
+<li>labour references.</li>
+</ul>
+<hr>
+<h1 id="5-expected-work-order-creation-flow">5. Expected Work Order Creation Flow</h1>
+<p>The expected high-level process is approximately:</p>
+<pre class="hljs"><code><div>1. User creates new Work Order.
+
+2. User selects ProductCode.
+
+3. System retrieves PrDefMas.
+
+4. System retrieves all related:
+   - PrDefWCenter
+   - PrDefProcess
+   - PrDefBOM
+   - PrDefMachine
+   - PrDefLabour
+
+5. Validate Product Definition.
+
+6. Create PrSchMas.
+
+7. Copy Work Centers:
+   PrDefWCenter
+       -&gt;
+   PrSchWCenter
+
+8. Copy Processes:
+   PrDefProcess
+       -&gt;
+   PrSchProcess
+
+9. Copy BOM:
+   PrDefBOM
+       -&gt;
+   PrSchBOM
+
+10. Copy Machines:
+    PrDefMachine
+        -&gt;
+    PrSchMachine
+
+11. Copy Labour:
+    PrDefLabour
+        -&gt;
+    PrSchLabour
+
+12. Maintain all new Work Order parent/child IDs and relationships.
+
+13. Apply Work Order quantity to quantities or requirements that need scaling.
+
+14. Calculate production scheduling dates.
+
+15. Save the complete Work Order atomically.
+</div></code></pre>
+<hr>
+<h1 id="6-work-order-quantity">6. Work Order Quantity</h1>
+<p>Please investigate how the old ERP uses the Work Order production quantity.</p>
+<p>For example:</p>
+<pre class="hljs"><code><div>Product Definition standard quantity = 1 FG
+
+BOM:
+RM001 = 2
+RM002 = 0.5
+
+Work Order Qty = 100
+</div></code></pre>
+<p>Expected requirement may become:</p>
+<pre class="hljs"><code><div>RM001 = 200
+RM002 = 50
+</div></code></pre>
+<p>However, do not assume every field should simply be multiplied by Work Order Qty.</p>
+<p>Determine whether the Product Definition supports concepts such as:</p>
+<ul>
+<li>standard production quantity;</li>
+<li>batch size;</li>
+<li>yield;</li>
+<li>scrap/wastage;</li>
+<li>pack size;</li>
+<li>BOM quantity per batch;</li>
+<li>BOM quantity per finished unit;</li>
+<li>fixed quantity;</li>
+<li>variable quantity.</li>
+</ul>
+<p>Document the exact scaling rule.</p>
+<hr>
+<h1 id="7-scheduling-date-fields">7. Scheduling Date Fields</h1>
+<p>When the Work Order is first generated, several production scheduling dates must eventually be calculated.</p>
+<p>Relevant fields include:</p>
+<h2 id="machine">Machine</h2>
+<pre class="hljs"><code><div>[dbo].[PrSchMachine].[StartDate]
+[dbo].[PrSchMachine].[CompleteDate]
+</div></code></pre>
+<h2 id="process">Process</h2>
+<pre class="hljs"><code><div>[dbo].[PrSchProcess].[StartDate]
+[dbo].[PrSchProcess].[EndDate]
+</div></code></pre>
+<h2 id="work-center">Work Center</h2>
+<pre class="hljs"><code><div>[dbo].[PrSchWCenter].[StartDate]
+[dbo].[PrSchWCenter].[CompleteDate]
+</div></code></pre>
+<h2 id="work-order-header">Work Order Header</h2>
+<pre class="hljs"><code><div>[dbo].[PrSchMas].[StartDate]
+[dbo].[PrSchMas].[CompletedDate]
+</div></code></pre>
+<p>These dates are used to determine:</p>
+<blockquote>
+<p>How long the Work Order requires to produce the required Finished Goods quantity.</p>
+</blockquote>
+<hr>
+<h1 id="8-do-not-treat-the-date-fields-as-simple-copy-fields">8. Do Not Treat the Date Fields as Simple Copy Fields</h1>
+<p>These scheduling dates should <strong>not simply be copied from Product Definition</strong>.</p>
+<p>They are calculated based on production rules.</p>
+<p>The calculation logic will be studied separately.</p>
+<p>Likely inputs may include:</p>
+<pre class="hljs"><code><div>Work Order Qty
+       |
+       v
+Process / Work Center sequence
+       |
+       v
+Machine cycle time
+       |
+       +-- Setup time
+       +-- Run time
+       +-- Queue time
+       +-- Transfer time
+       +-- Other production time
+       |
+       v
+Machine Start / Complete
+       |
+       v
+Process Start / End
+       |
+       v
+Work Center Start / Complete
+       |
+       v
+Work Order Start / Completed
+</div></code></pre>
+<p>Do not invent the formulas.</p>
+<p>Locate and document the actual formula from the old ERP first.</p>
+<hr>
+<h1 id="9-sequence-and-parallel-production-must-be-preserved">9. Sequence and Parallel Production Must Be Preserved</h1>
+<p>My Product Definition supports production sequencing.</p>
+<p>For example:</p>
+<pre class="hljs"><code><div>FG001
+
+Work Center WC1 - Sequence 1
+Work Center WC2 - Sequence 2
+Work Center WC3 - Sequence 3
+</div></code></pre>
+<p>This means:</p>
+<pre class="hljs"><code><div>WC1
+ |
+ v
+WC2
+ |
+ v
+WC3
+</div></code></pre>
+<p>WC2 normally starts after WC1 is completed.</p>
+<p>However, when Work Centers have the same sequence:</p>
+<pre class="hljs"><code><div>WC1 - Sequence 1
+WC2 - Sequence 1
+WC3 - Sequence 2
+</div></code></pre>
+<p>the intention is approximately:</p>
+<pre class="hljs"><code><div>       +--&gt; WC1 --+
+Start--|          |--&gt; WC3
+       +--&gt; WC2 --+
+</div></code></pre>
+<p>WC1 and WC2 may operate in parallel.</p>
+<p>WC3 starts only when its required preceding work is completed.</p>
+<p>The same concept may also exist at Process level.</p>
+<p>Please study the old implementation rather than assuming the exact dependency rule.</p>
+<hr>
+<h1 id="10-final-process-and-work-center-output">10. Final Process and Work Center Output</h1>
+<p>The Product Definition can also define an intermediate or final output.</p>
+<p>Example:</p>
+<pre class="hljs"><code><div>FG001
+
+WC1
+Output = WIP001
+
+WC2
+Output = WIP002
+
+WC3
+Input:
+- WIP001
+- WIP002
+
+Output = FG001
+</div></code></pre>
+<p>Therefore, when creating the Work Order, ensure that the copied structure retains enough information to understand:</p>
+<ul>
+<li>Work Center output item;</li>
+<li>WIP item;</li>
+<li>Finished Goods item;</li>
+<li>BOM dependencies;</li>
+<li>Process sequence;</li>
+<li>final process;</li>
+<li>upstream/downstream dependency.</li>
+</ul>
+<hr>
+<h1 id="11-validation-before-work-order-creation">11. Validation Before Work Order Creation</h1>
+<p>Please identify and recommend validation rules.</p>
+<p>At minimum investigate:</p>
+<pre class="hljs"><code><div>Product Definition exists
+Product Definition is active
+At least one Work Center exists
+Process sequence is valid
+Work Center sequence is valid
+Final process is defined correctly
+BOM items exist
+Machine references are valid
+Labour references are valid
+Output/WIP items exist
+UOM is valid
+No broken parent-child references exist
+</div></code></pre>
+<p>Also detect impossible production definitions such as:</p>
+<pre class="hljs"><code><div>WC1 depends on WC2
+WC2 depends on WC1
+</div></code></pre>
+<p>or other circular dependencies.</p>
+<hr>
+<h1 id="12-transaction-safety">12. Transaction Safety</h1>
+<p>Creation of the Work Order should be atomic.</p>
+<p>For example:</p>
+<pre class="hljs"><code><div>BEGIN TRANSACTION
+
+Create PrSchMas
+Create PrSchWCenter
+Create PrSchProcess
+Create PrSchBOM
+Create PrSchMachine
+Create PrSchLabour
+
+Calculate / initialize required values
+
+COMMIT
+</div></code></pre>
+<p>If anything fails:</p>
+<pre class="hljs"><code><div>ROLLBACK
+</div></code></pre>
+<p>The system must not leave an incomplete Work Order such as:</p>
+<pre class="hljs"><code><div>PrSchMas exists
+PrSchWCenter exists
+PrSchProcess missing
+PrSchBOM partially inserted
+</div></code></pre>
+<hr>
+<h1 id="13-preserve-source-definition-information">13. Preserve Source Definition Information</h1>
+<p>Please assess whether the new ERP should store source information such as:</p>
+<pre class="hljs"><code><div>ProductDefinitionId
+ProductDefinitionVersion
+ProductDefinitionRevision
+CopiedDateTime
+</div></code></pre>
+<p>on the Work Order.</p>
+<p>This would allow the system to identify:</p>
+<blockquote>
+<p>Which Product Definition / revision was used when this Work Order was created?</p>
+</blockquote>
+<p>If the current database does not have versioning, recommend a practical design.</p>
+<hr>
+<h1 id="14-do-not-automatically-refresh-existing-work-orders">14. Do Not Automatically Refresh Existing Work Orders</h1>
+<p>After the Work Order has been created, changing the Product Definition should not silently rewrite the Work Order.</p>
+<p>If a feature such as:</p>
+<pre class="hljs"><code><div>Refresh from Product Definition
+</div></code></pre>
+<p>is considered, it must be an explicit controlled operation.</p>
+<p>Please analyze carefully what should happen if:</p>
+<ul>
+<li>Work Order is still Draft;</li>
+<li>materials have already been reserved;</li>
+<li>materials have already been issued;</li>
+<li>production has started;</li>
+<li>a Process is completed;</li>
+<li>WIP exists;</li>
+<li>Finished Goods have been received;</li>
+<li>accounting/costing transactions exist.</li>
+</ul>
+<p>The safest rule may be:</p>
+<pre class="hljs"><code><div>Draft WO
+    -&gt; refresh may be allowed with validation.
+
+Released / In Progress WO
+    -&gt; definition refresh should normally be prohibited or tightly controlled.
+
+Completed WO
+    -&gt; never refresh.
+</div></code></pre>
+<p>Review this against the old ERP behavior.</p>
+<hr>
+<h1 id="15-separate-definition-quantities-from-actual-production">15. Separate Definition Quantities from Actual Production</h1>
+<p>When copying the Product Definition, distinguish between:</p>
+<pre class="hljs"><code><div>Standard / Planned
+</div></code></pre>
+<p>and:</p>
+<pre class="hljs"><code><div>Actual
+</div></code></pre>
+<p>Example:</p>
+<pre class="hljs"><code><div>Standard Material Qty = 100 KG
+Actual Issued Qty     = 103 KG
+
+Standard Machine Time = 5 Hours
+Actual Machine Time   = 5.8 Hours
+
+Standard Labour       = 10 Hours
+Actual Labour         = 12 Hours
+</div></code></pre>
+<p>The Product Definition supplies the standard/planned values.</p>
+<p>Actual values should come from production execution.</p>
+<p>This is important later for:</p>
+<ul>
+<li>material variance;</li>
+<li>machine efficiency;</li>
+<li>labour efficiency;</li>
+<li>production costing;</li>
+<li>yield;</li>
+<li>scrap analysis.</li>
+</ul>
+<hr>
+<h1 id="16-required-analysis-of-the-old-erp">16. Required Analysis of the Old ERP</h1>
+<p>Please inspect the existing ASP.NET WebForms production system and determine exactly:</p>
+<h3 id="a-work-order-entry">A. Work Order Entry</h3>
+<p>Find:</p>
+<ul>
+<li>Work Order entry page;</li>
+<li>ProductCode selection event;</li>
+<li>Save / Create logic;</li>
+<li>services/business classes involved;</li>
+<li>stored procedures involved;</li>
+<li>SQL statements involved.</li>
+</ul>
+<h3 id="b-product-definition-loading">B. Product Definition Loading</h3>
+<p>Determine:</p>
+<ul>
+<li>how <code>PrDefMas</code> is located;</li>
+<li>how child records are loaded;</li>
+<li>what keys connect the tables;</li>
+<li>whether data is loaded recursively or by queries.</li>
+</ul>
+<h3 id="c-copy-logic">C. Copy Logic</h3>
+<p>Determine exactly how these mappings work:</p>
+<pre class="hljs"><code><div>PrDefMas      -&gt; PrSchMas
+PrDefWCenter  -&gt; PrSchWCenter
+PrDefProcess  -&gt; PrSchProcess
+PrDefBOM      -&gt; PrSchBOM
+PrDefMachine  -&gt; PrSchMachine
+PrDefLabour   -&gt; PrSchLabour
+</div></code></pre>
+<p>For every field, classify it as:</p>
+<pre class="hljs"><code><div>COPY
+CALCULATE
+GENERATE
+DEFAULT
+DO NOT COPY
+</div></code></pre>
+<p>Produce a mapping table such as:</p>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PrDefMas</td>
+<td>ProdCode</td>
+<td>PrSchMas</td>
+<td>ProdCode</td>
+<td>COPY</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>StdQty</td>
+<td>PrSchBOM</td>
+<td>RequiredQty</td>
+<td>CALCULATE</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>CycleTime</td>
+<td>PrSchMachine</td>
+<td>CycleTime</td>
+<td>COPY</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>WorkOrderNo</td>
+<td>GENERATE</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Status</td>
+<td>DEFAULT</td>
+</tr>
+</tbody>
+</table>
+<p>Do this for all important fields.</p>
+<hr>
+<h1 id="17-analyze-scheduling-logic-separately">17. Analyze Scheduling Logic Separately</h1>
+<p>Locate all old ERP logic responsible for calculating:</p>
+<pre class="hljs"><code><div>PrSchMachine.StartDate
+PrSchMachine.CompleteDate
+
+PrSchProcess.StartDate
+PrSchProcess.EndDate
+
+PrSchWCenter.StartDate
+PrSchWCenter.CompleteDate
+
+PrSchMas.StartDate
+PrSchMas.CompletedDate
+</div></code></pre>
+<p>Document:</p>
+<ul>
+<li>formulas;</li>
+<li>execution sequence;</li>
+<li>dependencies;</li>
+<li>quantity calculations;</li>
+<li>machine timing;</li>
+<li>process timing;</li>
+<li>Work Center timing;</li>
+<li>parallel processing;</li>
+<li>sequential processing;</li>
+<li>setup time;</li>
+<li>cycle time;</li>
+<li>labour impact;</li>
+<li>working calendar;</li>
+<li>working hours;</li>
+<li>breaks;</li>
+<li>holidays;</li>
+<li>machine capacity;</li>
+<li>rounding rules.</li>
+</ul>
+<p>If some of these features do not exist in the old ERP, state that clearly.</p>
+<p>Do not invent them as if they already exist.</p>
+<p>Instead, classify recommendations as:</p>
+<pre class="hljs"><code><div>OLD ERP BEHAVIOR
+NEW ERP ENHANCEMENT
+</div></code></pre>
+<hr>
+<h1 id="18-proposed-new-erp-architecture">18. Proposed New ERP Architecture</h1>
+<p>After understanding the old implementation, recommend how to implement the same concept cleanly in the new Blazor ERP.</p>
+<p>Prefer separating responsibilities such as:</p>
+<pre class="hljs"><code><div>WorkOrderCreationService
+        |
+        +-- ProductDefinitionLoader
+        |
+        +-- WorkOrderSnapshotBuilder
+        |
+        +-- WorkOrderQuantityCalculator
+        |
+        +-- ProductionScheduleCalculator
+        |
+        +-- WorkOrderValidator
+</div></code></pre>
+<p>Example flow:</p>
+<pre class="hljs"><code><div>CreateWorkOrderAsync()
+      |
+      +-- Validate Product
+      |
+      +-- Load Product Definition
+      |
+      +-- Validate Definition
+      |
+      +-- Create Snapshot
+      |
+      +-- Scale Quantities
+      |
+      +-- Build Relationships
+      |
+      +-- Calculate Schedule
+      |
+      +-- Save Transaction
+</div></code></pre>
+<p>Do not force this exact architecture if the current project already has a better established pattern.</p>
+<p>Follow the existing project architecture where practical.</p>
+<hr>
+<h1 id="19-idempotency--duplicate-protection">19. Idempotency / Duplicate Protection</h1>
+<p>Investigate how the system prevents the Product Definition from accidentally being copied twice.</p>
+<p>For example, if the user:</p>
+<pre class="hljs"><code><div>Select FG001
+Save
+Edit Work Order
+Save again
+</div></code></pre>
+<p>the second save must not create duplicate:</p>
+<pre class="hljs"><code><div>Work Centers
+Processes
+BOM rows
+Machines
+Labour rows
+</div></code></pre>
+<p>Determine the correct behavior.</p>
+<hr>
+<h1 id="20-expected-deliverable">20. Expected Deliverable</h1>
+<p>Before implementing anything, produce a detailed analysis and implementation plan containing:</p>
+<h2 id="section-1--existing-old-erp-behavior">Section 1 — Existing Old ERP Behavior</h2>
+<p>Document the exact current workflow.</p>
+<h2 id="section-2--database-relationships">Section 2 — Database Relationships</h2>
+<p>Show the relationships among all <code>PrDef*</code> and <code>PrSch*</code> tables.</p>
+<h2 id="section-3--field-mapping">Section 3 — Field Mapping</h2>
+<p>Complete source-to-target mapping.</p>
+<h2 id="section-4--quantity-scaling-rules">Section 4 — Quantity Scaling Rules</h2>
+<p>Explain how Work Order Qty affects BOM, machine, labour, and process values.</p>
+<h2 id="section-5--scheduling-logic">Section 5 — Scheduling Logic</h2>
+<p>Explain how all Start/Complete dates are calculated.</p>
+<h2 id="section-6--sequence-and-parallel-processing">Section 6 — Sequence and Parallel Processing</h2>
+<p>Explain how Work Center and Process sequences behave.</p>
+<h2 id="section-7--wip--output-flow">Section 7 — WIP / Output Flow</h2>
+<p>Explain intermediate WIP and final FG production.</p>
+<h2 id="section-8--problems-in-the-old-design">Section 8 — Problems in the Old Design</h2>
+<p>Identify technical debt, unsafe assumptions, duplicated logic, or missing validation.</p>
+<h2 id="section-9--recommended-enhancements">Section 9 — Recommended Enhancements</h2>
+<p>Clearly separate enhancements from existing behavior.</p>
+<h2 id="section-10--new-erp-design">Section 10 — New ERP Design</h2>
+<p>Provide:</p>
+<ul>
+<li>entities;</li>
+<li>DB changes;</li>
+<li>services;</li>
+<li>methods;</li>
+<li>transaction boundaries;</li>
+<li>validation;</li>
+<li>scheduling design.</li>
+</ul>
+<h2 id="section-11--implementation-plan">Section 11 — Implementation Plan</h2>
+<p>Provide an ordered implementation plan that an AI coding agent can execute safely.</p>
+<hr>
+<h1 id="important-rules">Important Rules</h1>
+<ol>
+<li>
+<p><strong>Do not start coding immediately.</strong></p>
+</li>
+<li>
+<p>Study the existing implementation first.</p>
+</li>
+<li>
+<p>Do not guess production rules when the old ERP already contains the answer.</p>
+</li>
+<li>
+<p>Distinguish clearly between:</p>
+<ul>
+<li>existing behavior;</li>
+<li>inferred behavior;</li>
+<li>recommended enhancement.</li>
+</ul>
+</li>
+<li>
+<p>Preserve historical Work Order data.</p>
+</li>
+<li>
+<p>Treat the Work Order as a snapshot of the Product Definition.</p>
+</li>
+<li>
+<p>Preserve all parent-child relationships during copying.</p>
+</li>
+<li>
+<p>Work Order creation must be transactional.</p>
+</li>
+<li>
+<p>Scheduling calculations should be separated from simple data-copy logic.</p>
+</li>
+<li>
+<p>Do not redesign existing production concepts unless there is a clear technical or business reason.</p>
+</li>
+<li>
+<p>Any proposed enhancement must explain:</p>
+<ul>
+<li>why it is required;</li>
+<li>what problem it solves;</li>
+<li>database impact;</li>
+<li>compatibility impact;</li>
+<li>migration impact.</li>
+</ul>
+</li>
+</ol>
+<p>The final goal is:</p>
+<blockquote>
+<p>Preserve the proven production concepts from the old ERP, while redesigning the implementation so the new ERP has a maintainable, auditable, extensible Work Order creation and scheduling architecture.</p>
+</blockquote>
+<hr>
+<h1 id="verified-analysis--field-mapping-from-workorderaspxcs">VERIFIED ANALYSIS — Field Mapping (from WorkOrder.aspx.cs)</h1>
+<blockquote>
+<p>Source of truth: <code>ProductionPlan/ProdPlan/WorkOrder.aspx.cs</code><br>
+Key methods: <code>GetProDefMas</code>, <code>ProcessNewWithTime</code>, <code>AddMasterSchNew</code>, <code>AddUpdateMasterSch</code>, <code>Save</code> / <code>UpdateTableSave</code><br>
+Persist adapters: <code>ERPClasses/Classes/CAdapter.cs</code> (<code>SetPrSchMas</code>, <code>SetPrSchWCenter</code>, <code>SetPrSchProcess</code>, <code>SetPrSchBom</code>, <code>SetPrSchMachine</code>, <code>SetPrSchLabour</code>)<br>
+Verified: 2026-03-29 — no assumed formulas.</p>
+</blockquote>
+<h2 id="rule-legend">Rule legend</h2>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>COPY</strong></td>
+<td>Value taken as-is from Product Definition (or UI entry that mirrors Def)</td>
+</tr>
+<tr>
+<td><strong>CALCULATE</strong></td>
+<td>Derived from Def fields + Work Order qty / batch / calendar</td>
+</tr>
+<tr>
+<td><strong>GENERATE</strong></td>
+<td>System-generated (numbering, identity keys)</td>
+</tr>
+<tr>
+<td><strong>DEFAULT</strong></td>
+<td>Fixed/system default at create time</td>
+</tr>
+<tr>
+<td><strong>ENTRY</strong></td>
+<td>User / Delivery Request / screen input (not from PrDef structure)</td>
+</tr>
+<tr>
+<td><strong>DO NOT COPY</strong></td>
+<td>Exists on Def but is not written to WO</td>
+</tr>
+<tr>
+<td><strong>WO ONLY</strong></td>
+<td>Exists only on Work Order / schedule tables</td>
+</tr>
+<tr>
+<td><strong>EXECUTION</strong></td>
+<td>Filled later by production posting (not at WO create)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="load-filter-at-first-create-getprodefmas">Load filter at first create (<code>GetProDefMas</code>)</h2>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Filter applied when loading into session</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PrDefMas</code></td>
+<td><code>ICode = ProductCode</code></td>
+</tr>
+<tr>
+<td><code>PrDefWCenter</code></td>
+<td>All rows for <code>ProdCode</code></td>
+</tr>
+<tr>
+<td><code>PrDefProcess</code></td>
+<td>All rows for <code>ProdCode</code> (joined to WC)</td>
+</tr>
+<tr>
+<td><code>PrDefBOM</code></td>
+<td><strong><code>BomDefault = 1</code> only</strong></td>
+</tr>
+<tr>
+<td><code>PrDefMachine</code></td>
+<td><strong><code>MacDefault = 1</code> only</strong></td>
+</tr>
+<tr>
+<td><code>PrDefLabour</code></td>
+<td>All rows for <code>ProdCode</code></td>
+</tr>
+</tbody>
+</table>
+<p>Non-default BOM / machine rows on Product Definition are <strong>not</strong> auto-copied. After Process, the user may still change / add alternate BOM or machine on the Work Order grids (shortage / machine down).</p>
+<hr>
+<h2 id="a-prdefmas--prschmas">A. PrDefMas → PrSchMas</h2>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td><code>&quot;AUTO&quot;</code> until Save → <code>getScheduleNo</code> / <code>UpdateScheduleNo</code> (prefix from Def.Prefix or <code>&quot;SC&quot;</code>)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td>New = <code>1</code> (<code>txtRel</code>)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Status</td>
+<td>ENTRY / DEFAULT</td>
+<td>UI <code>ddlStatus</code>, NewMode default <code>&quot;RELEASE&quot;</code></td>
+</tr>
+<tr>
+<td>N/A / SaDeliveryRequest</td>
+<td>DRNo</td>
+<td>PrSchMas</td>
+<td>DRNo</td>
+<td>ENTRY</td>
+<td>From selected Delivery Request(s); empty if product-only path</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>ICode</td>
+<td>PrSchMas</td>
+<td>ICode</td>
+<td>COPY</td>
+<td>Product / FG code</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>IDesc</td>
+<td>PrSchMas</td>
+<td>IDesc</td>
+<td>COPY</td>
+<td>May be overwritten by UI</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>StdBatchSize</td>
+<td>PrSchMas</td>
+<td>StdBatchSize</td>
+<td>COPY</td>
+<td>Shown as <code>txtSize</code>; used in qty scaling</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>ScheQty</td>
+<td>ENTRY</td>
+<td>Work Order qty (<code>txtSchQty</code>); from DR outstanding when DR path</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>StdUOM</td>
+<td>PrSchMas</td>
+<td>StdUOM</td>
+<td>COPY</td>
+<td>Validated vs <code>IvMas.StdUOM</code> before Process</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Active</td>
+<td>DEFAULT</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>StartDate</td>
+<td>CALCULATE</td>
+<td>After Process: Min(<code>PrSchWCenter.StartDate</code>); also UI <code>txtStartDate</code></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>CompletedDate</td>
+<td>CALCULATE</td>
+<td>After Process: Max(<code>PrSchWCenter.CompleteDate</code>); also UI <code>txtCompDate</code></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>TransactionDate</td>
+<td>ENTRY</td>
+<td>UI <code>txtTransactionDate</code> (numbering year/month)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Created</td>
+<td>DEFAULT</td>
+<td><code>DateTime.Now</code> on new</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Updated</td>
+<td>DEFAULT</td>
+<td><code>DateTime.Now</code> on Save</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>UserID</td>
+<td>DEFAULT</td>
+<td>Login user on create</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>UpdatedUID</td>
+<td>DEFAULT</td>
+<td>Login user on Save</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>ConsignQty</td>
+<td>ENTRY</td>
+<td>UI / DR</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>DesireQty</td>
+<td>ENTRY</td>
+<td>UI</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>DeliveryQty</td>
+<td>ENTRY</td>
+<td>UI / DR outstanding</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>Remark</td>
+<td>PrSchMas</td>
+<td>Remarks</td>
+<td>COPY / ENTRY</td>
+<td>Copied from Def unless UI takes DR remark (<code>chkProdDefRmrk</code>)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>StartFromStartDate</td>
+<td>ENTRY</td>
+<td>UI <code>chkStartfr</code> — forward vs backward schedule</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>FinalIssue</td>
+<td>EXECUTION / DEFAULT</td>
+<td>Not set in create Process path; used later by issue posting</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMas</td>
+<td>Release</td>
+<td>DEFAULT</td>
+<td>Adapter supports field; create path sets RelNo primarily</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>Prefix</td>
+<td>N/A (session / txtPrefix)</td>
+<td>—</td>
+<td>COPY (indirect)</td>
+<td>Used only for WO numbering prefix, not stored as PrSchMas column</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>Active</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>Def Active not written to PrSchMas.Active (WO sets Active=1 itself)</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>TotalTime</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>Not used in WO create</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>ActPrdCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>Not mapped in WorkOrder create</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>DRNo</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>Def DRNo not used; WO DRNo comes from entry</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>CompCode / BranchCode / LocCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>Multi-company columns on Def children; not copied into PrSch* create</td>
+</tr>
+<tr>
+<td>PrDefMas</td>
+<td>Created / Updated / UserID / UpdatedUID</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td>WO uses its own audit fields</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="b-prdefwcenter--prschwcenter">B. PrDefWCenter → PrSchWCenter</h2>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td>Same as header (<code>AUTO</code> → assigned number)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td>Same as header</td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>ProdCode</td>
+<td>PrSchWCenter</td>
+<td>ProdCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>WCCode</td>
+<td>PrSchWCenter</td>
+<td>WCCode</td>
+<td>COPY</td>
+<td>PK part</td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>ICode</td>
+<td>PrSchWCenter</td>
+<td>ICode</td>
+<td>COPY</td>
+<td>WC output item (WIP/FG); children use this as <code>WCICode</code></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>IDesc</td>
+<td>PrSchWCenter</td>
+<td>IDesc</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>Class</td>
+<td>PrSchWCenter</td>
+<td>Class</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>SeqNo</td>
+<td>PrSchWCenter</td>
+<td>SeqNo</td>
+<td>COPY</td>
+<td>Same SeqNo = parallel WC scheduling group</td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>StdPackSize</td>
+<td>PrSchWCenter</td>
+<td>StdPackSize</td>
+<td>CALCULATE</td>
+<td><code>Def.StdPackSize / PrDefMas.StdBatchSize</code></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>StdUOM</td>
+<td>PrSchWCenter</td>
+<td>StdUOM</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>ScheQty</td>
+<td>CALCULATE</td>
+<td><code>txtSchQty * PrSchWCenter.StdPackSize</code> (after ratio above)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>StartDate</td>
+<td>CALCULATE</td>
+<td>From default machines under this WC (<code>MacDefault=1</code>)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>CompleteDate</td>
+<td>CALCULATE</td>
+<td>From default machines under this WC</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchWCenter</td>
+<td>Completed</td>
+<td>EXECUTION / DEFAULT</td>
+<td>Not set true at create; production marks later</td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>SCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>CompCode / BranchCode / LocCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Qty identity check:</strong></p>
+<pre class="hljs"><code><div>PrSchWCenter.StdPackSize = PrDefWCenter.StdPackSize / StdBatchSize
+PrSchWCenter.ScheQty     = ScheQty * PrSchWCenter.StdPackSize
+                         = ScheQty * PrDefWCenter.StdPackSize / StdBatchSize
+</div></code></pre>
+<hr>
+<h2 id="c-prdefprocess--prschprocess">C. PrDefProcess → PrSchProcess</h2>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchProcess</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchProcess</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>ProdCode</td>
+<td>PrSchProcess</td>
+<td>ProdCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>WCCode</td>
+<td>PrSchProcess</td>
+<td>WCCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>WCICode</td>
+<td>PrSchProcess</td>
+<td>WCICode</td>
+<td>COPY</td>
+<td>= parent WC.ICode</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>ProcessCode</td>
+<td>PrSchProcess</td>
+<td>ProcessCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>SeqNo</td>
+<td>PrSchProcess</td>
+<td>SeqNo</td>
+<td>COPY</td>
+<td>Same SeqNo = parallel processes within WC</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>SetupLostQty</td>
+<td>PrSchProcess</td>
+<td>SetupLostQty</td>
+<td>COPY</td>
+<td>Not scaled by ScheQty</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>OperationLostQty</td>
+<td>PrSchProcess</td>
+<td>OperationLostQty</td>
+<td>COPY</td>
+<td>Not scaled by ScheQty</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>FinalProcess</td>
+<td>PrSchProcess</td>
+<td>FinalProcess</td>
+<td>COPY</td>
+<td>Bit</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>Remark</td>
+<td>PrSchProcess</td>
+<td>Remark</td>
+<td>COPY</td>
+<td>Added 06-Jun-2023</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchProcess</td>
+<td>StartDate</td>
+<td>CALCULATE</td>
+<td>From <code>MacDefault=1</code> machines of this process</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchProcess</td>
+<td>EndDate</td>
+<td>CALCULATE</td>
+<td>From <code>MacDefault=1</code> machines of this process</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchProcess</td>
+<td>Completed</td>
+<td>EXECUTION / DEFAULT</td>
+<td>Not set at create</td>
+</tr>
+<tr>
+<td>(session only)</td>
+<td>WSeqNo</td>
+<td>—</td>
+<td>—</td>
+<td>WO ONLY (transient)</td>
+<td>Work Center SeqNo held in session for sort; <strong>not</strong> a PrSchProcess DB column</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>SCode / CompCode / BranchCode / LocCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Stock processes (<code>PrProcess.Stock = true</code> for WC+Process) may skip machine requirement / date fill.</p>
+<hr>
+<h2 id="d-prdefbom--prschbom">D. PrDefBOM → PrSchBOM</h2>
+<p><strong>First create load:</strong> only <code>BomDefault = 1</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchBOM</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchBOM</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>ProdCode</td>
+<td>PrSchBOM</td>
+<td>ProdCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>WCCode</td>
+<td>PrSchBOM</td>
+<td>WCCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>WCICode</td>
+<td>PrSchBOM</td>
+<td>WCICode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>ProcessCode</td>
+<td>PrSchBOM</td>
+<td>ProcessCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>ICode</td>
+<td>PrSchBOM</td>
+<td>ICode</td>
+<td>COPY</td>
+<td>Component / RM / WIP item</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>IName</td>
+<td>PrSchBOM</td>
+<td>IName</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>StdQty</td>
+<td>PrSchBOM</td>
+<td>StdQty</td>
+<td>CALCULATE</td>
+<td>See formula below (scaled requirement)</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>StdUOM</td>
+<td>PrSchBOM</td>
+<td>StdUOM</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>Warehouse</td>
+<td>PrSchBOM</td>
+<td>Warehouse</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>BomDefault</td>
+<td>PrSchBOM</td>
+<td>BomDefault</td>
+<td>COPY</td>
+<td>First create always from Def defaults (=1)</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>WIPBomDefault</td>
+<td>PrSchBOM</td>
+<td>WIPBomDefault</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>tolerance</td>
+<td>PrSchBOM</td>
+<td>tolerance</td>
+<td>COPY</td>
+<td>% stored; <strong>not</strong> added into StdQty (removed 2-Sep-2022)</td>
+</tr>
+<tr>
+<td>(session only)</td>
+<td>WSeqNo / PSeqNo</td>
+<td>—</td>
+<td>—</td>
+<td>WO ONLY (transient)</td>
+<td>Sort helpers; not DB columns</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>CompCode / BranchCode / LocCode / levelID / UID</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>BOM quantity formula (verified):</strong></p>
+<pre class="hljs"><code><div>PrSchBOM.StdQty = Round(
+    PrDefBOM.StdQty / PrDefWCenter.StdPackSize * PrSchWCenter.ScheQty
+  , 4)
+
+# Equivalent:
+PrSchBOM.StdQty = Round(PrDefBOM.StdQty * ScheQty / StdBatchSize, 4)
+</div></code></pre>
+<p><strong>After Process (WO override):</strong> grid insert/update may add alternate materials, change <code>StdQty</code>, toggle <code>BomDefault</code>. Save requires: if any row has <code>BomDefault&lt;&gt;1</code>, same WC+WCICode+Process must still have ≥1 <code>BomDefault=1</code> (<code>IsBomDefaultisTick</code>).</p>
+<hr>
+<h2 id="e-prdefmachine--prschmachine">E. PrDefMachine → PrSchMachine</h2>
+<p><strong>First create load:</strong> only <code>MacDefault = 1</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMachine</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMachine</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>ProdCode</td>
+<td>PrSchMachine</td>
+<td>ProdCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>WCCode</td>
+<td>PrSchMachine</td>
+<td>WCCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>WCICode</td>
+<td>PrSchMachine</td>
+<td>WCICode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>ProcessCode</td>
+<td>PrSchMachine</td>
+<td>ProcessCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>MachineCode</td>
+<td>PrSchMachine</td>
+<td>MachineCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>MachineName</td>
+<td>PrSchMachine</td>
+<td>MachineName</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>CycleTime</td>
+<td>PrSchMachine</td>
+<td>CycleTime</td>
+<td>CALCULATE</td>
+<td>Def stored in <strong>seconds</strong>; WO stores <strong>minutes</strong>. See formula</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>ConversionTime</td>
+<td>PrSchMachine</td>
+<td>ConversionTime</td>
+<td>CALCULATE</td>
+<td>Def seconds → WO minutes (<code>/ 60</code>) for default machines</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>StartupTime</td>
+<td>PrSchMachine</td>
+<td>StartupTime</td>
+<td>CALCULATE</td>
+<td>Def seconds → WO minutes (<code>/ 60</code>)</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>QueueTime</td>
+<td>PrSchMachine</td>
+<td>QueueTime</td>
+<td>CALCULATE</td>
+<td>Def seconds → WO minutes (<code>/ 60</code>)</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>SeqNo</td>
+<td>PrSchMachine</td>
+<td>SeqNo</td>
+<td>COPY</td>
+<td>Same SeqNo = parallel machines; qty split by count</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>MacDefault</td>
+<td>PrSchMachine</td>
+<td>MacDefault</td>
+<td>COPY</td>
+<td>Only defaults drive schedule dates</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMachine</td>
+<td>StartDate</td>
+<td>CALCULATE</td>
+<td>Via shift calendar / preventive / shift group (<code>MacDefault=1</code> only)</td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchMachine</td>
+<td>CompleteDate</td>
+<td>CALCULATE</td>
+<td>Same</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>CompCode / BranchCode / LocCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Default machine CycleTime (minutes) — verified:</strong></p>
+<pre class="hljs"><code><div>CycleTime_min = (
+    CycleTime_sec / PrDefWCenter.StdPackSize
+    * (PrSchWCenter.ScheQty / macCount_sameSeq)
+) / 60
+</div></code></pre>
+<p>Scheduling minutes used before calendar walk also include Conversion + Startup + Queue (seconds), then convert to minutes for day walk.</p>
+<p><strong>Non-default machine path</strong> (<code>MacDefault=0</code> in <code>ProcessNewWithTime</code>): exists in code but on <strong>first</strong> create those rows are not in session (filtered at load). Becomes relevant after WO edits + re-process from SCH snapshot (<code>copyDatatoProductDefination</code>). Non-default insert does not set Start/Complete dates.</p>
+<p><strong>Unit note:</strong> <code>copyDatatoProductDefination</code> multiplies WO minutes × 60 when copying SCH → Def-shaped session for re-process (round-trip).</p>
+<hr>
+<h2 id="f-prdeflabour--prschlabour">F. PrDefLabour → PrSchLabour</h2>
+<table>
+<thead>
+<tr>
+<th>Source Table</th>
+<th>Source Field</th>
+<th>Target Table</th>
+<th>Target Field</th>
+<th>Rule</th>
+<th>Notes (verified)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchLabour</td>
+<td>ScheCode</td>
+<td>GENERATE</td>
+<td></td>
+</tr>
+<tr>
+<td>N/A</td>
+<td>N/A</td>
+<td>PrSchLabour</td>
+<td>RelNo</td>
+<td>DEFAULT</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>ProdCode</td>
+<td>PrSchLabour</td>
+<td>ProdCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>WCCode</td>
+<td>PrSchLabour</td>
+<td>WCCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>WCICode</td>
+<td>PrSchLabour</td>
+<td>WCICode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>ProcessCode</td>
+<td>PrSchLabour</td>
+<td>ProcessCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>MachineCode</td>
+<td>PrSchLabour</td>
+<td>MachineCode</td>
+<td>COPY</td>
+<td>Linked under machine being processed</td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>LabourCode</td>
+<td>PrSchLabour</td>
+<td>LabourCode</td>
+<td>COPY</td>
+<td></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>LabourCost</td>
+<td>PrSchLabour</td>
+<td>LabourCost</td>
+<td>CALCULATE</td>
+<td><code>Def.LabourCost * txtSchQty</code></td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>CompCode / BranchCode / LocCode</td>
+<td>—</td>
+<td>—</td>
+<td>DO NOT COPY</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Labour is copied for machines present in the process loop (default machines always; non-default only if those machine rows exist in session).</p>
+<hr>
+<h2 id="g-work-orderonly--related-tables-at-save">G. Work Order–only / related tables at Save</h2>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Field / purpose</th>
+<th>Rule</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PrSchMacMain</td>
+<td>ScheCode, RelNo, ProdCode, MachineCode, Status, ScheQty, MacDefault, …</td>
+<td>GENERATE / COPY from SCH machines</td>
+<td>Built in <code>SetPrSchMacMainRecord</code> at Save</td>
+</tr>
+<tr>
+<td>PrSchDR</td>
+<td>ScheCode, RelNo, DeliveryNo, RevNo, ProdCode, OrderQty, …</td>
+<td>ENTRY</td>
+<td>Links WO to Delivery Request</td>
+</tr>
+<tr>
+<td>PrScheduleNum / AdSmNumDate</td>
+<td>Year, Month, Seq, Prefix</td>
+<td>GENERATE</td>
+<td>Numbering</td>
+</tr>
+<tr>
+<td>(session) <code>*_DEL</code> tables</td>
+<td>deleted SCH children</td>
+<td>WO ONLY</td>
+<td>Applied inside Save transaction before inserts</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="h-quantity-scaling-summary-all-entities">H. Quantity scaling summary (all entities)</h2>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Scaled by ScheQty?</th>
+<th>Formula / behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PrSchMas.ScheQty</td>
+<td>ENTRY</td>
+<td>User / DR</td>
+</tr>
+<tr>
+<td>PrSchWCenter.ScheQty</td>
+<td>Yes</td>
+<td><code>ScheQty * (Def.StdPackSize / StdBatchSize)</code></td>
+</tr>
+<tr>
+<td>PrSchBOM.StdQty</td>
+<td>Yes</td>
+<td><code>Def.StdQty * ScheQty / StdBatchSize</code> (via pack-size intermediate)</td>
+</tr>
+<tr>
+<td>PrSchMachine times</td>
+<td>Yes</td>
+<td>Cycle scaled by ScheQty &amp; pack size; split by parallel machine count</td>
+</tr>
+<tr>
+<td>PrSchLabour.LabourCost</td>
+<td>Yes</td>
+<td><code>Def.LabourCost * ScheQty</code></td>
+</tr>
+<tr>
+<td>SetupLostQty / OperationLostQty</td>
+<td>No</td>
+<td>COPY as-is</td>
+</tr>
+<tr>
+<td>tolerance</td>
+<td>No (flag only)</td>
+<td>COPY %; not applied into StdQty</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="i-scheduling-date-calculation--critical-processnewwithtime">I. Scheduling date calculation — CRITICAL (<code>ProcessNewWithTime</code>)</h2>
+<blockquote>
+<p><strong>Source of truth:</strong> <code>ProductionPlan/ProdPlan/WorkOrder.aspx.cs</code> → <code>ProcessNewWithTime()</code><br>
+<strong>UI page:</strong> <code>ERP/ProdPlan/WorkOrder.aspx</code> (same code-behind <code>ProductionPlan.ProdPlan.WorkOrder</code>)<br>
+<strong>Triggered by:</strong> PROCESS button (<code>ProcessWorkOrder</code>) and RE-PROCESS button (<code>ReProcess</code>)<br>
+<strong>Do not invent formulas.</strong> Port this exact logic. Dates are <strong>never copied</strong> from Product Definition.</p>
+</blockquote>
+<h3 id="i1-who-calls-it">I.1 Who calls it</h3>
+<table>
+<thead>
+<tr>
+<th>UI action</th>
+<th>Callback</th>
+<th>Path before <code>ProcessNewWithTime</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PROCESS</strong> (mode NEW)</td>
+<td><code>PROCESS:</code> → <code>ProcessWorkOrder()</code></td>
+<td>Uses session loaded from Product Definition</td>
+</tr>
+<tr>
+<td><strong>PROCESS</strong> (mode PROCESS, click again)</td>
+<td>same</td>
+<td><code>GetProdDefProcessTable()</code> then <code>copyDatatoProductDefination()</code> (SCH → def session), then schedule from <strong>current WO edits</strong></td>
+</tr>
+<tr>
+<td><strong>RE-PROCESS</strong></td>
+<td><code>REPROCESS:</code> → <code>ReProcess()</code></td>
+<td>Reloads Product Definition via <code>GetProdDefProcessTable()</code>, then schedules fresh from <strong>Def</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Both buttons end in the <strong>same</strong> date engine: <code>ProcessNewWithTime()</code>.</p>
+<p>Required UI inputs before Process/ReProcess:</p>
+<ul>
+<li><code>txtSchQty</code> &gt; 0</li>
+<li><code>txtSize</code> (StdBatchSize)</li>
+<li><code>txtCompDate</code> always required (validated even in forward mode)</li>
+<li>If <code>chkStartfr</code> (START FROM START DATE) checked → <code>txtStartDate</code> required</li>
+</ul>
+<hr>
+<h3 id="i2-two-modes-forward-vs-backward">I.2 Two modes: Forward vs Backward</h3>
+<p>Controlled by UI checkbox <strong><code>chkStartfr</code></strong> → saved as <code>PrSchMas.StartFromStartDate</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th><code>chkStartfr</code></th>
+<th>Anchor variable <code>compDate</code></th>
+<th>Calendar walk</th>
+<th>SeqNo sort order</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Forward</strong></td>
+<td>Checked</td>
+<td><code>txtStartDate.Date</code></td>
+<td>Add working minutes</td>
+<td>WC / Process / Machine SeqNo <strong>Ascending</strong></td>
+</tr>
+<tr>
+<td><strong>Backward</strong></td>
+<td>Unchecked</td>
+<td><code>txtCompDate.Date</code></td>
+<td>Subtract working minutes</td>
+<td>WC / Process / Machine SeqNo <strong>Descending</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Initialisation (exact):</p>
+<pre class="hljs"><code><div>compDate    = txtCompDate.Date
+IF chkStartfr.Checked THEN
+    compDate = txtStartDate.Date
+END IF
+macCompDate = compDate
+maxD        = compDate
+</div></code></pre>
+<p><code>compDate</code> is the <strong>shared anchor</strong> that advances after each Machine SeqNo group (see I.7).<br>
+<code>macCompDate</code> is the <strong>cursor</strong> that moves day-by-day while consuming one machine’s required minutes.</p>
+<hr>
+<h3 id="i3-prerequisites--hard-stops">I.3 Prerequisites / hard stops</h3>
+<p>Before any date is written:</p>
+<ol>
+<li>Every default machine for the product year must exist in <code>PrShiftCalendar</code> (<code>CheckMachineAvailability</code>).</li>
+<li>At least one Work Center in session.</li>
+<li>For each non-stock process: at least one <code>MacDefault=1</code> machine.</li>
+<li>For each machine being scheduled: <code>PrShiftCalendar</code> rows exist; every calendar day touched while walking must exist.</li>
+<li>Shift group loaded: <code>PrShiftGroupBL.GetShitGroupInfo()</code> → <code>TotalWorkingMinPerDay</code>, <code>TotalMinPerShift</code>, ordered <code>Shifts</code>.</li>
+</ol>
+<p>Stock process exception: <code>PrProcess</code> where <code>Work_Centre=WC</code> and <code>Process_Cd=Process</code> and <code>Stock=true</code> may skip machine requirement / date fill for that process (<code>checkStockProcess</code>).</p>
+<hr>
+<h3 id="i4-nested-loop-order-structure-traversal">I.4 Nested loop order (structure traversal)</h3>
+<pre class="hljs"><code><div>FOR EACH distinct WC.SeqNo   (Asc if forward, Desc if backward)
+  FOR EACH Work Center with that SeqNo
+    Create PrSchWCenter row (qty scaled; dates filled later)
+
+    FOR EACH distinct Process.SeqNo in this WC  (Asc/Desc same rule)
+      FOR EACH Process with that SeqNo
+        Create PrSchProcess row (dates filled later)
+        Create PrSchBOM rows (qty scaled; no dates)
+
+        FOR EACH distinct Machine.SeqNo where MacDefault=1  (Asc/Desc same rule)
+          FOR EACH default machine with that SeqNo   ← PARALLEL (same SeqNo)
+            Compute required minutes
+            Walk calendar → set Machine StartDate / CompleteDate
+          END
+          Advance shared anchor `compDate` to the SLOWEST machine of this SeqNo
+        END
+
+        Optionally add MacDefault=0 machines (NO Start/Complete dates)
+        Roll Process StartDate / EndDate from MacDefault=1 machines
+      END
+    END
+
+    Roll Work Center StartDate / CompleteDate from MacDefault=1 machines
+  END
+END
+
+Header: StartDate = Min(all WC.StartDate)
+        CompletedDate = Max(all WC.CompleteDate)
+Update txtStartDate / txtCompDate
+</div></code></pre>
+<p><strong>Sequence vs parallel (critical):</strong></p>
+<ul>
+<li><strong>Same SeqNo</strong> at a level → treated as parallel (share same anchor; qty may be split).</li>
+<li><strong>Next SeqNo</strong> → waits for the slowest parallel item of the previous SeqNo (anchor advances).</li>
+</ul>
+<p>Applies at Machine SeqNo (explicitly), and Process/WC SeqNo via outer sort order + advancing <code>compDate</code>.</p>
+<hr>
+<h3 id="i5-required-machine-minutes-before-calendar">I.5 Required machine minutes (before calendar)</h3>
+<p>Product Definition machine times are treated as <strong>seconds</strong>.<br>
+Work Order stores Cycle/Conversion/Startup/Queue as <strong>minutes</strong>.</p>
+<p>First, WC qty (already computed when WC row is built):</p>
+<pre class="hljs"><code><div>PrSchWCenter.StdPackSize = PrDefWCenter.StdPackSize / StdBatchSize
+PrSchWCenter.ScheQty     = ScheQty * PrSchWCenter.StdPackSize
+</div></code></pre>
+<p>For each <strong>default</strong> machine in a Machine SeqNo group (<code>macCount = number of MacDefault=1 machines with that SeqNo</code>):</p>
+<pre class="hljs"><code><div># Exact code (seconds), then convert to minutes for the walk:
+minMac_seconds =
+      (CycleTime_sec / PrDefWCenter.StdPackSize)
+    * (PrSchWCenter.ScheQty / macCount)
+    + ConversionTime_sec
+    + StartupTime_sec
+    + QueueTime_sec
+
+minMac_minutes = Round(minMac_seconds / 60)     # Int64 after Math.Round
+</div></code></pre>
+<p>Values written to <code>PrSchMachine</code> (minutes):</p>
+<pre class="hljs"><code><div>CycleTime      = (CycleTime_sec / StdPackSize * (ScheQty / macCount)) / 60
+ConversionTime = ConversionTime_sec / 60
+StartupTime    = StartupTime_sec / 60
+QueueTime      = QueueTime_sec / 60
+</div></code></pre>
+<p><strong>Non-default machines (<code>MacDefault=0</code>):</strong></p>
+<ul>
+<li>Not loaded on first create from Def (filtered).</li>
+<li>If present in session: CycleTime scaled <strong>without</strong> <code>/ macCount</code>; Conversion/Startup/Queue copied as-is (no <code>/60</code> in that branch).</li>
+<li><strong>No StartDate / CompleteDate</strong> assigned. They do <strong>not</strong> drive schedule.</li>
+</ul>
+<hr>
+<h3 id="i6-calendar-walk--exact-per-machine-algorithm">I.6 Calendar walk — exact per-machine algorithm</h3>
+<p>For one default machine, after <code>minMac_minutes</code> is known:</p>
+<pre class="hljs"><code><div>macCompDate = compDate          # reset to current shared anchor (parallel machines share this)
+Load PrShiftCalendar WHERE MachineCode = this machine
+Load PrPreventive   WHERE Machine_Cd  = this machine
+                      (column down_min = DATEDIFF(minute, Start_Tm, End_Tm))
+
+isFirstday = true
+
+WHILE minMac &gt; 0:
+
+  # Calendar day must exist
+  IF no PrShiftCalendar row for date(macCompDate) THEN ERROR and abort
+
+  IF Date_Cd = &#x27;W&#x27; on that day:          # working day
+      # Preventive downtime: ADD minutes back onto remaining work
+      IF PrPreventive has Down_Dt = that day THEN
+          minMac = minMac + down_min
+      END IF
+
+      TotalWorkingMinPerDay = shiftgroup.TotalWorkingMinPerDay
+      IF isFirstday THEN
+          isFirstday = false
+          workingTime = GetFirstDayTotalDelayWorkingTime(shiftGrp, macCompDate)
+          IF workingTime &gt; 0 THEN
+              TotalWorkingMinPerDay = workingTime   # remaining minutes from anchor clock time
+          END IF
+      END IF
+
+      IF minMac &lt; TotalWorkingMinPerDay:
+          # Fits (partially) within this day → walk shifts
+          IF forward (chkStartfr):
+              Optionally reverse shift list order for forward placement
+              FOR EACH shift in shiftgroup.Shifts:
+                  IF remaining work fits in this shift:
+                      CalTimeWithInDay(macCompDate, minMac, shift)  
+                      # adds minutes; jumps over break windows Break_Tm1..5
+                  ELSE:
+                      # consume one shift worth, may roll to next day shift start
+                      advance macCompDate by TotalMinPerShift (or to day end then next early start)
+                      minMac -= shiftworkingMin
+                  END IF
+              END FOR
+          ELSE (backward):
+              FOR EACH shift:
+                  IF remaining fits in shift:
+                      macCompDate = macCompDate.AddMinutes(-minMac)
+                      minMac adjusted
+                  ELSE:
+                      macCompDate = macCompDate.AddMinutes(-TotalMinPerShift)
+                      minMac -= shiftworkingMin
+                  END IF
+              END FOR
+          END IF
+
+      ELSE:
+          # Needs one or more full working days
+          minMac = minMac - TotalWorkingMinPerDay
+          macCompDate = same calendar day at first shift Start_Tm
+          IF forward THEN macCompDate = macCompDate.AddDays(+1)
+          ELSE           macCompDate = macCompDate.AddDays(-1)
+          END IF
+      END IF
+
+  ELSE:   # non-working day (holiday / rest)
+      macCompDate = first shift Start_Tm of that day
+      IF forward THEN macCompDate.AddDays(+1) ELSE macCompDate.AddDays(-1)
+  END IF
+
+END WHILE
+
+# Snap final cursor onto a working day if landed on non-working
+WHILE macCompDate is not Date_Cd=&#x27;W&#x27;:
+    IF forward THEN +1 day ELSE -1 day
+END WHILE
+</div></code></pre>
+<h4 id="first-day-remaining-capacity-getfirstdaytotaldelayworkingtime--getactualworkingtime">First-day remaining capacity (<code>GetFirstDayTotalDelayWorkingTime</code> / <code>GetActualWorkingTime</code>)</h4>
+<p>On the first working day of a machine walk, available minutes are <strong>not</strong> always a full day. From the first shift of the group:</p>
+<pre class="hljs"><code><div>workintime = End_Tm.TimeOfDay - startFrom.TimeOfDay   (minutes)
+subtract break durations whose Break_To is still at/after startFrom.TimeOfDay
+return workintime
+</div></code></pre>
+<p>So if the user anchors at mid-shift, only the <strong>remaining</strong> portion of that day is usable first.</p>
+<h4 id="in-day-breaks-caltimewithinday--forward-only-when-fitting-in-a-shift">In-day breaks (<code>CalTimeWithInDay</code>) — forward only when fitting in a shift</h4>
+<p>If adding <code>minMac</code> would cross a break start (<code>Break_Tm1From</code> … <code>Break_Tm5From</code>):</p>
+<ol>
+<li>Advance <code>macCompDate</code> to the break start.</li>
+<li>Skip the break duration (<code>Break_To - Break_From</code>).</li>
+<li>Reduce remaining <code>minMac</code> by the work minutes already consumed before the break.</li>
+<li>Continue for remaining breaks / remaining minutes.</li>
+</ol>
+<hr>
+<h3 id="i7-assign-machine-start--complete-exact">I.7 Assign Machine Start / Complete (exact)</h3>
+<p>After the while-loop finishes for one machine:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th><code>PrSchMachine.StartDate</code></th>
+<th><code>PrSchMachine.CompleteDate</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Forward</strong> (<code>chkStartfr</code>)</td>
+<td><code>compDate</code> (anchor <strong>before</strong> this machine’s walk)</td>
+<td><code>macCompDate</code> (cursor <strong>after</strong> walk)</td>
+</tr>
+<tr>
+<td><strong>Backward</strong></td>
+<td><code>macCompDate</code> (cursor after walk)</td>
+<td><code>compDate</code> (anchor before walk)</td>
+</tr>
+</tbody>
+</table>
+<p>Then, after <strong>all machines in the same Machine SeqNo</strong> are written:</p>
+<pre class="hljs"><code><div>Among those MacDefault=1 machines in this SeqNo:
+  score = CycleTime + ConversionTime + StartupTime + QueueTime   (minutes on SCH row)
+
+Pick the machine with the MAXIMUM score.
+IF forward:
+    compDate = that machine&#x27;s CompleteDate     # next SeqNo starts when slowest finishes
+ELSE:
+    compDate = that machine&#x27;s StartDate        # next SeqNo ends when slowest must start (backward)
+END IF
+</div></code></pre>
+<p>This is how <strong>parallel machines (same SeqNo)</strong> share one start, and <strong>sequential SeqNo</strong> chains after the slowest.</p>
+<hr>
+<h3 id="i8-roll-up-process--work-center--header">I.8 Roll-up: Process → Work Center → Header</h3>
+<h4 id="process-prschprocess--from-its-macdefault1-machines-only">Process (<code>PrSchProcess</code>) — from its <code>MacDefault=1</code> machines only</h4>
+<pre class="hljs"><code><div># Backward default path builds maxD = Max(CompleteDate)
+# Forward then rebuilds maxD = Max(StartDate)   [code overwrites]
+
+IF forward:
+    Process.StartDate = maxD          # Max of machine StartDates
+    Process.EndDate   = macCompDate   # cursor after last machine SeqNo of this process
+ELSE:
+    Process.StartDate = macCompDate
+    Process.EndDate   = maxD          # Max of machine CompleteDates
+END IF
+</div></code></pre>
+<p>Stock process: dates may be left unset (no machine error).</p>
+<h4 id="work-center-prschwcenter--from-all-macdefault1-machines-under-that-wc">Work Center (<code>PrSchWCenter</code>) — from all <code>MacDefault=1</code> machines under that WC</h4>
+<pre class="hljs"><code><div># First maxD = Max(CompleteDate) of WC machines
+# If forward: maxD is replaced with Min(StartDate) of WC machines  (Compute Min)
+
+IF forward:
+    WC.StartDate    = maxD            # Min machine StartDate
+    WC.CompleteDate = macCompDate
+ELSE:
+    WC.StartDate    = macCompDate
+    WC.CompleteDate = maxD            # Max machine CompleteDate
+END IF
+</div></code></pre>
+<h4 id="work-order-header-prschmas--ui">Work Order header (<code>PrSchMas</code> + UI)</h4>
+<p>After all WC rows:</p>
+<pre class="hljs"><code><div>txtStartDate  = Min(PrSchWCenter.StartDate)
+txtCompDate   = Max(PrSchWCenter.CompleteDate)
+
+PrSchMas.StartDate     = txtStartDate
+PrSchMas.CompletedDate = txtCompDate
+PrSchMas.StartFromStartDate = chkStartfr
+</div></code></pre>
+<p>Via <code>AddMasterSchNew()</code> / later <code>AddUpdateMasterSch()</code> on Save.</p>
+<hr>
+<h3 id="i9-roll-up-diagram">I.9 Roll-up diagram</h3>
+<pre class="hljs"><code><div>                    ┌── Mac A (SeqNo=1) ──┐
+Anchor ─────────────┤                     ├──► advance anchor to SLOWEST
+                    └── Mac B (SeqNo=1) ──┘
+                              │
+                    ┌── Mac C (SeqNo=2) ──► next SeqNo uses new anchor
+                              │
+                    Process Start / End
+                              │
+                    Work Center Start / Complete
+                              │
+                    Work Order Start / Completed
+                    = Min(WC.Start), Max(WC.Complete)
+</div></code></pre>
+<hr>
+<h3 id="i10-worked-example-forward--verified-formulas">I.10 Worked example (forward — verified formulas)</h3>
+<p>Assumptions:</p>
+<ul>
+<li><code>chkStartfr = true</code>, <code>txtStartDate = 2026-04-01 08:00</code></li>
+<li><code>StdBatchSize = 100</code>, <code>ScheQty = 100</code></li>
+<li>One WC, one Process, one default machine, <code>StdPackSize = 100</code></li>
+<li><code>CycleTime = 36000</code> sec (10 hours), Conversion=Startup=Queue=0</li>
+<li>One shift, 480 working minutes/day, no breaks, no preventive</li>
+<li>Anchor is already at shift start → first-day capacity = 480</li>
+</ul>
+<pre class="hljs"><code><div>WC.StdPackSize = 100/100 = 1
+WC.ScheQty     = 100 * 1 = 100
+
+minMac_seconds = (36000/100)* (100/1) + 0 = 36000
+minMac_minutes = Round(36000/60) = 600
+
+Day 1 (W): consume 480 → remaining 120 → jump to Day2 08:00
+Day 2 (W): add 120 minutes → macCompDate = 2026-04-02 10:00
+
+Machine.StartDate    = 2026-04-01 08:00   (anchor)
+Machine.CompleteDate = 2026-04-02 10:00
+Process / WC / Header follow the same range.
+</div></code></pre>
+<p>Backward example (same times): fix <code>txtCompDate = 2026-04-02 10:00</code>, walk earlier → <code>StartDate</code> becomes <code>2026-04-01 08:00</code>.</p>
+<hr>
+<h3 id="i11-tables-involved-in-scheduling">I.11 Tables involved in scheduling</h3>
+<table>
+<thead>
+<tr>
+<th>Table / source</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PrDefMachine</code> / session</td>
+<td>Cycle, Conversion, Startup, Queue (seconds); SeqNo; MacDefault</td>
+</tr>
+<tr>
+<td><code>PrDefWCenter</code></td>
+<td>StdPackSize, SeqNo</td>
+</tr>
+<tr>
+<td><code>PrDefMas</code></td>
+<td>StdBatchSize</td>
+</tr>
+<tr>
+<td>UI</td>
+<td>ScheQty, StartDate, CompDate, chkStartfr</td>
+</tr>
+<tr>
+<td><code>PrShiftGroup</code> + <code>PrShift</code></td>
+<td>Shifts, breaks, TotalWorkingMinPerDay, TotalMinPerShift</td>
+</tr>
+<tr>
+<td><code>PrShiftCalendar</code></td>
+<td>Per machine per day; <code>Date_Cd='W'</code> = working</td>
+</tr>
+<tr>
+<td><code>PrPreventive</code></td>
+<td>Extra downtime minutes on a day</td>
+</tr>
+<tr>
+<td><code>PrProcess.Stock</code></td>
+<td>Skip machine requirement for stock processes</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h3 id="i12-what-is-not-in-the-live-path">I.12 What is NOT in the live path</h3>
+<ul>
+<li><code>WorkScheduleHelper.Process(...)</code> exists in comments (~line 3722) but is <strong>commented out</strong>. Live dates come only from the inline calendar walk above.</li>
+<li>Non-default machines do <strong>not</strong> affect Start/Complete.</li>
+<li>Labour does <strong>not</strong> affect dates.</li>
+<li>BOM does <strong>not</strong> affect dates.</li>
+<li>Tolerance does <strong>not</strong> affect dates.</li>
+</ul>
+<hr>
+<h3 id="i13-porting-rules-blazor--must-preserve">I.13 Porting rules (Blazor) — must preserve</h3>
+<ol>
+<li>Separate <strong>required minutes</strong> from <strong>calendar placement</strong>.</li>
+<li>Support <strong>forward</strong> and <strong>backward</strong> from one flag + one user anchor.</li>
+<li>Only <strong><code>MacDefault=1</code></strong> machines schedule.</li>
+<li><strong>Same Machine SeqNo</strong> = parallel (shared anchor, qty split); next SeqNo waits for slowest.</li>
+<li>Honor <strong>working calendar</strong>, <strong>shift minutes</strong>, <strong>breaks</strong>, <strong>preventive</strong>, <strong>first-day remaining capacity</strong>.</li>
+<li>Final header = Min WC Start / Max WC Complete.</li>
+<li>Do not silently invent 24×7 continuous time unless product owners redesign the model.</li>
+</ol>
+<hr>
+<h2 id="j-snapshot--default--override-behavior-verified">J. Snapshot / default / override behavior (verified)</h2>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Select Product</td>
+<td>Load Def → session (<code>BomDefault=1</code>, <code>MacDefault=1</code> only for BOM/Machine)</td>
+</tr>
+<tr>
+<td>Process</td>
+<td>Build SCH session snapshot + scale qty + calculate dates</td>
+</tr>
+<tr>
+<td>Edit BOM/Machine on WO</td>
+<td>Allowed after Process (alternate material / machine)</td>
+</tr>
+<tr>
+<td>Save</td>
+<td>Persist SCH; independent of later PrDef changes</td>
+</tr>
+<tr>
+<td>ReProcess</td>
+<td>Reloads <strong>current</strong> PrDef again and rebuilds (can wipe WO overrides)</td>
+</tr>
+<tr>
+<td>Process again while mode=Process</td>
+<td>Uses current SCH via <code>copyDatatoProductDefination</code>, then re-schedules</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="k-primary-keys-to-preserve-when-porting">K. Primary keys to preserve when porting</h2>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PrDefMas</td>
+<td>ICode</td>
+</tr>
+<tr>
+<td>PrDefWCenter</td>
+<td>ProdCode, WCCode, ICode</td>
+</tr>
+<tr>
+<td>PrDefProcess</td>
+<td>ProdCode, WCCode, WCICode, ProcessCode</td>
+</tr>
+<tr>
+<td>PrDefBOM</td>
+<td>ProdCode, WCCode, WCICode, ProcessCode, ICode</td>
+</tr>
+<tr>
+<td>PrDefMachine</td>
+<td>ProdCode, WCCode, WCICode, ProcessCode, MachineCode</td>
+</tr>
+<tr>
+<td>PrDefLabour</td>
+<td>ProdCode, WCCode, WCICode, ProcessCode, MachineCode, LabourCode</td>
+</tr>
+<tr>
+<td>PrSchMas</td>
+<td>ScheCode, RelNo</td>
+</tr>
+<tr>
+<td>PrSchWCenter</td>
+<td>ScheCode, RelNo, ProdCode, WCCode, ICode</td>
+</tr>
+<tr>
+<td>PrSchProcess</td>
+<td>ScheCode, RelNo, ProdCode, WCCode, WCICode, ProcessCode</td>
+</tr>
+<tr>
+<td>PrSchBOM</td>
+<td>ScheCode, RelNo, ProdCode, WCCode, WCICode, ProcessCode, ICode</td>
+</tr>
+<tr>
+<td>PrSchMachine</td>
+<td>ScheCode, RelNo, ProdCode, WCCode, WCICode, ProcessCode, MachineCode</td>
+</tr>
+<tr>
+<td>PrSchLabour</td>
+<td>ScheCode, RelNo, ProdCode, WCCode, WCICode, ProcessCode, MachineCode, LabourCode</td>
+</tr>
+</tbody>
+</table>
+<p>Parent link for WO children: <code>ScheCode + RelNo</code> → <code>PrSchMas</code>. Structure link: <code>WCCode + WCICode (+ ProcessCode)</code> mirrors Product Definition.</p>
+
+</body>
+</html>

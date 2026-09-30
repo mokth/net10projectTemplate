@@ -1,6 +1,8 @@
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Planning;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +41,7 @@ public class AppDbContext : DbContext
     public DbSet<MsUom> MsUoms => Set<MsUom>();
     public DbSet<MsLhdnUom> MsLhdnUoms => Set<MsLhdnUom>();
     public DbSet<IvStockMaster> IvStockMasters => Set<IvStockMaster>();
+    public DbSet<IvItemUomConversion> IvItemUomConversions => Set<IvItemUomConversion>();
     public DbSet<IvLot> IvLots => Set<IvLot>();
     public DbSet<IvBalLoc> IvBalLocs => Set<IvBalLoc>();
     public DbSet<IvTrxBatch> IvTrxBatches => Set<IvTrxBatch>();
@@ -119,6 +122,52 @@ public class AppDbContext : DbContext
     public DbSet<PoAttachFile> PoAttachFiles => Set<PoAttachFile>();
     public DbSet<PoPrAttachFile> PoPrAttachFiles => Set<PoPrAttachFile>();
     public DbSet<PoDesc> PoDescs => Set<PoDesc>();
+
+    public DbSet<PrBomHdr> PrBomHdrs => Set<PrBomHdr>();
+    public DbSet<PrDefBOM> PrDefBOMs => Set<PrDefBOM>();
+    public DbSet<PrBomOperation> PrBomOperations => Set<PrBomOperation>();
+    public DbSet<PrBomRouteStep> PrBomRouteSteps => Set<PrBomRouteStep>();
+    public DbSet<PrBomMachineOption> PrBomMachineOptions => Set<PrBomMachineOption>();
+    public DbSet<PrBomLabourStandard> PrBomLabourStandards => Set<PrBomLabourStandard>();
+    public DbSet<PrBomLabourRequirement> PrBomLabourRequirements => Set<PrBomLabourRequirement>();
+    public DbSet<PrBomMaterialBranchDefault> PrBomMaterialBranchDefaults => Set<PrBomMaterialBranchDefault>();
+    public DbSet<PrDefMa> PrDefMas => Set<PrDefMa>();
+    public DbSet<PrDefMachine> PrDefMachines => Set<PrDefMachine>();
+    public DbSet<PrDefProcess> PrDefProcesses => Set<PrDefProcess>();
+    public DbSet<PrDefWcenter> PrDefWcenters => Set<PrDefWcenter>();
+    public DbSet<PrCalendar> PrCalendars => Set<PrCalendar>();
+    public DbSet<PrHoliday> PrHolidays => Set<PrHoliday>();
+    public DbSet<PrMachine> PrMachines => Set<PrMachine>();
+    public DbSet<PrMacMaintenance> PrMacMaintenances => Set<PrMacMaintenance>();
+    public DbSet<PrMacMaintenanceImage> PrMacMaintenanceImages => Set<PrMacMaintenanceImage>();
+    public DbSet<PrMacSeq> PrMacSeqs => Set<PrMacSeq>();
+    public DbSet<PrOperator> PrOperators => Set<PrOperator>();
+    public DbSet<PrPreventive> PrPreventives => Set<PrPreventive>();
+    public DbSet<PrProcess> PrProcesses => Set<PrProcess>();
+    public DbSet<PrShift> PrShifts => Set<PrShift>();
+    public DbSet<PrShiftCalendar> PrShiftCalendars => Set<PrShiftCalendar>();
+    public DbSet<PrShiftGroup> PrShiftGroups => Set<PrShiftGroup>();
+    public DbSet<PrShiftIcon> PrShiftIcons => Set<PrShiftIcon>();
+    public DbSet<PrWorkCentre> PrWorkCentres => Set<PrWorkCentre>();
+    public DbSet<PrWorkPefix> PrWorkPefixes => Set<PrWorkPefix>();
+    public DbSet<PrSchMa> PrSchMas => Set<PrSchMa>();
+    public DbSet<PrSchBom> PrSchBoms => Set<PrSchBom>();
+    public DbSet<PrSchLabour> PrSchLabours => Set<PrSchLabour>();
+    public DbSet<PrSchMachine> PrSchMachines => Set<PrSchMachine>();
+    public DbSet<PrSchProcess> PrSchProcesses => Set<PrSchProcess>();
+    public DbSet<PrSchWcenter> PrSchWcenters => Set<PrSchWcenter>();
+
+    public DbSet<ProductionWorkOrder> ProductionWorkOrders => Set<ProductionWorkOrder>();
+    public DbSet<ProductionWorkOrderRouteStep> ProductionWorkOrderRouteSteps => Set<ProductionWorkOrderRouteStep>();
+    public DbSet<ProductionWorkOrderMaterial> ProductionWorkOrderMaterials => Set<ProductionWorkOrderMaterial>();
+    public DbSet<ProductionWorkOrderOperation> ProductionWorkOrderOperations => Set<ProductionWorkOrderOperation>();
+    public DbSet<ProductionWorkOrderMachine> ProductionWorkOrderMachines => Set<ProductionWorkOrderMachine>();
+    public DbSet<ProductionWorkOrderLabour> ProductionWorkOrderLabours => Set<ProductionWorkOrderLabour>();
+    public DbSet<ProductionWorkOrderResource> ProductionWorkOrderResources => Set<ProductionWorkOrderResource>();
+    public DbSet<ProductionAuditEvent> ProductionAuditEvents => Set<ProductionAuditEvent>();
+    public DbSet<ProductionChangeOrder> ProductionChangeOrders => Set<ProductionChangeOrder>();
+    public DbSet<ProductionChangeOrderLine> ProductionChangeOrderLines => Set<ProductionChangeOrderLine>();
+    public DbSet<ProductionPostingLink> ProductionPostingLinks => Set<ProductionPostingLink>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

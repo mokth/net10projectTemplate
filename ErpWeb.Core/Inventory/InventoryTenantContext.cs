@@ -1,6 +1,7 @@
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 
@@ -169,6 +170,18 @@ internal static class InventoryLeftoverSite
     }
 
     public static void Apply(IvCustPrice entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(PrDefBOM entity, InventoryTenantScope writeScope)
+    {
+        entity.BranchCode = writeScope.BranchCode;
+        entity.LocationCode = writeScope.LocationCode;
+    }
+
+    public static void Apply(PrBomHdr entity, InventoryTenantScope writeScope)
     {
         entity.BranchCode = writeScope.BranchCode;
         entity.LocationCode = writeScope.LocationCode;

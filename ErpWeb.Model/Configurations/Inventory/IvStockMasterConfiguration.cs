@@ -15,6 +15,7 @@ public class IvStockMasterConfiguration : IEntityTypeConfiguration<IvStockMaster
         builder.Property(e => e.ICode).HasColumnName("ICode").HasMaxLength(30).IsRequired();
         builder.Property(e => e.IDesc).HasColumnName("IDesc").HasMaxLength(200);
         builder.Property(e => e.IType).HasColumnName("IType").HasMaxLength(20);
+        builder.Property(e => e.MfgType).HasMaxLength(10).HasDefaultValue("BUY").ValueGeneratedNever();
         builder.Property(e => e.IClassCode).HasColumnName("IClass").HasMaxLength(30);
         builder.Property(e => e.ISubClassCode).HasColumnName("ISubclass").HasMaxLength(30);
         builder.Property(e => e.StdUom).HasColumnName("StdUOM").HasMaxLength(10);

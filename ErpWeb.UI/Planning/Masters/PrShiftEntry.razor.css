@@ -1,0 +1,42 @@
+.shift-breaks {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.shift-breaks__row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(7rem, 1fr) auto minmax(7rem, 1fr);
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    max-width: 36rem;
+}
+
+.shift-breaks__label {
+    font-size: 0.85rem;
+    color: var(--bs-secondary-color, #6c757d);
+    white-space: nowrap;
+}
+
+.shift-breaks__to {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.shift-breaks__input {
+    width: 100%;
+    min-width: 0;
+}
+
+@media (max-width: 576px) {
+    .shift-breaks__row {
+        grid-template-columns: 1fr;
+        max-width: none;
+    }
+
+    .shift-breaks__to {
+        display: none;
+    }
+}

@@ -1,0 +1,490 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using ErpWeb.Model.Entities.Planning;
+using ErpWeb.Model.Entities.Production;
+
+namespace ErpWeb.Core.Production;
+
+/// <summary>
+/// A single canonicalized value in a snapshot/source hasher payload. Values are normalized by
+/// <see cref="CanonicalHashWriter"/>, so callers pass raw domain values and never pre-format.
+/// </summary>
+public sealed class CanonicalHashWriter
+{
+    private readonly StringBuilder _sb = new();
+
+    public void Add(int value) => Add((long)value);
+
+    public void Add(long value) => Append(value.ToString(CultureInfo.InvariantCulture));
+
+    public void Add(long? value) => Append(value?.ToString(CultureInfo.InvariantCulture));
+
+    public void Add(int? value) => Append(value?.ToString(CultureInfo.InvariantCulture));
+
+    /// <summary>
+    /// Numbers are written with a fixed round-trip format so 1m, 1.0m and 1.0000m hash alike and
+    /// no culture can change the separator.
+    /// </summary>
+    public void Add(decimal value) => Append(value.ToString("0.############################", CultureInfo.InvariantCulture));
+
+    public void Add(decimal? value) => Append(value?.ToString("0.############################", CultureInfo.InvariantCulture));
+
+    public void Add(bool value) => Append(value ? "1" : "0");
+
+    public void Add(Guid value) => Append(value.ToString("D"));
+
+    public void Add(Guid? value) => Append(value?.ToString("D"));
+
+    public void Add(string? value) => Append(value);
+
+    /// <summary>Date-only values hash on the calendar day; time-of-day is dropped intentionally.</summary>
+    public void AddDate(DateTime value) => Append(value.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+    public void AddDate(DateTime? value) => Append(value?.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+    /// <summary>Timestamps hash on the round-trip instant because plant-local time-of-day matters.</summary>
+    public void AddTimestamp(DateTime value) => Append(value.ToString("O", CultureInfo.InvariantCulture));
+
+    public void AddTimestamp(DateTime? value) => Append(value?.ToString("O", CultureInfo.InvariantCulture));
+
+    /// <summary>Starts a new ordered section; the marker cannot be produced by a value.</summary>
+    public void Section(string name)
+    {
+        _sb.Append('\u001F').Append(name).Append('\u001F');
+    }
+
+    /// <summary>Records how many items follow, so two different groupings cannot collide.</summary>
+    public void Count(int count) => Append(count.ToString(CultureInfo.InvariantCulture));
+
+    public string ComputeHash()
+    {
+        var bytes = Encoding.UTF8.GetBytes(_sb.ToString());
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    /// <summary>
+    /// Length-prefixing keeps the serialization unambiguous even when a value contains the
+    /// separator, a colon, or a newline.
+    /// </summary>
+    private void Append(string? text)
+    {
+        var value = text ?? string.Empty;
+        _sb.Append(value.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(value);
+    }
+}
+
+/// <summary>
+/// Canonical hashers for the version-2 Work Order snapshot and for the Product Definition
+/// revision payload it was built from (plan §4.2).
+/// <para>
+/// Both hashers are pure functions of their input graph. They never read a clock, never read the
+/// database, and never depend on collection ordering: callers hand over an unordered graph and the
+/// hasher orders it by stable authored keys. That is what makes a stored hash a usable staleness
+/// token instead of a coincidence.
+/// </para>
+/// </summary>
+public static class WorkOrderSnapshotHasher
+{
+    /// <summary>
+    /// Hash of the complete manufacturing snapshot plus its planned schedule
+    /// (<see cref="ProductionSnapshotHashVersions.Current"/>).
+    /// </summary>
+    public static string ComputeSnapshotHash(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+
+        var w = new CanonicalHashWriter();
+        w.Section("HEADER");
+
+        // Identity that changes the meaning of the snapshot. The work order number is deliberately
+        // excluded: renumbering or re-importing the same plan must not invalidate the snapshot.
+        w.Add(workOrder.CompanyCode);
+        w.Add(workOrder.BranchCode);
+        w.Add(workOrder.ProductCode);
+        w.Add(workOrder.OutputUom);
+        w.Add(workOrder.SourceBomHdrId);
+        w.Add(workOrder.SourceBomVersion);
+        w.Add(workOrder.BomBaseQty);
+        w.Add(workOrder.BomBaseUom);
+        w.Add(workOrder.PlannedQty);
+        w.AddDate(workOrder.DefinitionEffectiveDate);
+        w.AddDate(workOrder.SourceEffectiveFrom);
+        w.AddTimestamp(workOrder.ScheduleAnchorDateTime);
+        w.AddTimestamp(workOrder.PlannedStartDateTime);
+        w.AddTimestamp(workOrder.PlannedCompletionDateTime);
+        w.Add(workOrder.SchedulingDirection);
+        w.Add(workOrder.SourceType);
+        w.Add(workOrder.SourceReference);
+        w.Add(workOrder.Remark);
+
+        w.Section("ROUTESTEPS");
+        var routeSteps = workOrder.RouteSteps
+            .OrderBy(x => x.StageSequence)
+            .ThenBy(x => x.SourceRouteStepKey)
+            .ToList();
+        w.Count(routeSteps.Count);
+
+        foreach (var step in routeSteps)
+        {
+            w.Add(step.StageSequence);
+            w.Add(step.SourceRouteStepId);
+            w.Add(step.SourceRouteStepKey);
+            w.Add(step.WorkCentreCode);
+            w.Add(step.WorkCentreDescription);
+            w.Add(step.OutputItemCode);
+            w.Add(step.OutputItemDescription);
+            w.Add(step.OutputBaseQty);
+            w.Add(step.PlannedQty);
+            w.Add(step.OutputUom);
+            w.AddTimestamp(step.PlannedStartDateTime);
+            w.AddTimestamp(step.PlannedCompletionDateTime);
+
+            var operations = step.Operations
+                .OrderBy(x => x.ProcessSequence)
+                .ThenBy(x => x.SourceOperationKey)
+                .ToList();
+            w.Count(operations.Count);
+
+            foreach (var operation in operations)
+            {
+                AddOperation(w, operation);
+            }
+        }
+
+        w.Section("MATERIALS");
+        var materials = workOrder.Materials
+            .OrderBy(x => x.MaterialSequence)
+            .ThenBy(x => x.ComponentCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(materials.Count);
+
+        foreach (var material in materials)
+        {
+            w.Add(material.MaterialSequence);
+            w.Add(material.LineNo);
+            w.Add(material.SourceBomHdrId);
+            w.Add(material.SourceBomVersion);
+            w.Add(material.SourceBomLineId);
+            w.Add(material.SourceMaterialKey);
+            w.Add(material.ParentProductCode);
+            w.Add(material.BomPath);
+            w.Add(material.ComponentCode);
+            w.Add(material.ComponentDescription);
+            w.Add(material.MfgType);
+            w.Add(material.ComponentQtyPerParent);
+            w.Add(material.StandardUom);
+            w.Add(material.BomOutputQty);
+            w.Add(material.BomOutputUom);
+            w.Add(material.ScrapPercent);
+            w.Add(material.Tolerance);
+            w.Add(material.IssueMethod);
+            w.Add(material.SupplySource);
+            w.Add(material.RequiredQty);
+            w.Add(material.RequiredUom);
+            w.Add(material.RequiredBaseQty);
+            w.Add(material.BaseUom);
+            w.Add(material.ConversionFactorToBase);
+            w.Add(material.WarehouseCode);
+            w.Add(material.LocationCode);
+
+            // Only definition-derived references are hashed. ProWorkOrderMaterial.ProducingRouteStepID
+            // and WorkOrderOperationID are database-generated surrogates: a freshly built snapshot
+            // does not have them yet and a reloaded one does, so including them would make the hash
+            // change on save and turn the stored token into a false staleness alarm. The link is
+            // expressed through the referenced row's own stable identity instead, which is equally
+            // discriminating.
+            w.Add(material.ProducingRouteStep?.SourceRouteStepId);
+            w.Add(material.ProducingRouteStep?.SourceRouteStepKey);
+            w.Add(material.ProducingRouteStep?.StageSequence);
+            w.Add(material.ProducingRouteStep?.OutputItemCode);
+            w.Add(material.WorkOrderOperation?.SourceOperationId);
+            w.Add(material.WorkOrderOperation?.SourceOperationKey);
+            w.Add(material.WorkOrderOperation?.ProcessSequence);
+        }
+
+        return w.ComputeHash();
+    }
+
+    private static void AddOperation(CanonicalHashWriter w, ProductionWorkOrderOperation operation)
+    {
+        w.Add(operation.SourceOperationId);
+        w.Add(operation.SourceOperationKey);
+        w.Add(operation.ProcessSequence);
+        w.Add(operation.ProcessType);
+        w.Add(operation.OperationCode);
+        w.Add(operation.WorkCentreCode);
+        w.Add(operation.IsFinalOperation);
+        w.Add(operation.StandardDurationMinutes);
+        w.Add(operation.PlannedInputQty);
+        w.Add(operation.PlannedInputUom);
+        w.Add(operation.PlannedOutputQty);
+        w.Add(operation.PlannedOutputUom);
+        w.Add(operation.CalendarSourceType);
+        w.Add(operation.CalendarSourceId);
+        w.AddTimestamp(operation.CalendarSourceLastModified);
+        w.Add(operation.ScheduleSourceHash);
+        w.AddTimestamp(operation.CalendarHorizonStart);
+        w.AddTimestamp(operation.CalendarHorizonEnd);
+        w.AddTimestamp(operation.PlannedStartDateTime);
+        w.AddTimestamp(operation.PlannedCompletionDateTime);
+
+        var machines = operation.Machines
+            .OrderBy(x => x.Priority)
+            .ThenBy(x => x.MachineCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(machines.Count);
+
+        foreach (var machine in machines)
+        {
+            // IsSelected/IsDefault are authored selection state; the derived cycle numbers below
+            // are computed outputs. Including both means a quantity change and a machine change
+            // are both detected without either one masking the other.
+            w.Add(machine.SourceMachineOptionId);
+            w.Add(machine.SourceMachineKey);
+            w.Add(machine.MachineCode);
+            w.Add(machine.MachineDescription);
+            w.Add(machine.Priority);
+            w.Add(machine.IsDefault);
+            w.Add(machine.IsSelected);
+            w.Add(machine.ParallelMachineCount);
+            w.Add(machine.CycleQuantityMode);
+            w.Add(machine.CycleSeconds);
+            w.Add(machine.OutputPerCycle);
+            w.Add(machine.OutputPerCycleUom);
+            w.Add(machine.ConversionSeconds);
+            w.Add(machine.SetupSeconds);
+            w.Add(machine.QueueSeconds);
+            w.Add(machine.RequiredMachineOutputQty);
+            w.Add(machine.RequiredMachineOutputUom);
+            w.Add(machine.PlannedCycleCount);
+            w.Add(machine.PlannedCycleSlots);
+            w.Add(machine.PlannedRunMinutes);
+            w.AddTimestamp(machine.PlannedStartDateTime);
+            w.AddTimestamp(machine.PlannedCompletionDateTime);
+            w.Add(machine.MachineRatePerHour);
+            w.Add(machine.CalendarSourceId);
+            w.AddTimestamp(machine.CalendarSourceLastModified);
+            w.Add(machine.ScheduleSourceHash);
+            w.AddTimestamp(machine.CalendarHorizonStart);
+            w.AddTimestamp(machine.CalendarHorizonEnd);
+
+            var machineLabours = machine.Labours
+                .OrderBy(x => x.LabourCode, StringComparer.Ordinal)
+                .ToList();
+            w.Count(machineLabours.Count);
+            foreach (var labour in machineLabours)
+            {
+                AddLabour(w, labour);
+            }
+        }
+
+        // The owning collection is the discriminator, never MachineID/OperationID: those are
+        // database-generated surrogates that are still null on a freshly built graph but populated
+        // after a reload, so filtering on them would make the hash depend on whether the aggregate
+        // had been saved yet. Machine-owned labour is hashed under its machine and operation-level
+        // labour here, matching the two disjoint collections the model exposes.
+        var operationLabours = operation.Labours
+            .OrderBy(x => x.LabourCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(operationLabours.Count);
+        foreach (var labour in operationLabours)
+        {
+            AddLabour(w, labour);
+        }
+    }
+
+    private static void AddLabour(CanonicalHashWriter w, ProductionWorkOrderLabour labour)
+    {
+        w.Add(labour.SourceLabourId);
+        w.Add(labour.SourceLabourKey);
+        w.Add(labour.LabourCode);
+        w.Add(labour.LabourDescription);
+        w.Add(labour.PlannedUnits);
+        w.Add(labour.PlannedMinutes);
+        w.Add(labour.RateBasis);
+        w.Add(labour.Rate);
+        w.Add(labour.ContributesToPlan);
+        w.Add(labour.PlannedAmount);
+    }
+
+    /// <summary>
+    /// Hash of the exact Product Definition payload used to build a snapshot
+    /// (<c>DefinitionSourceHashVersion = 1</c>).
+    /// <para>
+    /// Deliberately excludes volatile audit metadata (created/modified stamps, <c>RowVersion</c>,
+    /// descriptions that cannot reach the snapshot, and validation bookkeeping). Including those
+    /// would make Refresh report a "changed definition" every time someone re-saved an untouched
+    /// revision.
+    /// </para>
+    /// </summary>
+    public static string ComputeDefinitionSourceHash(PrBomHdr revision)
+    {
+        ArgumentNullException.ThrowIfNull(revision);
+
+        var w = new CanonicalHashWriter();
+        w.Section("REVISION");
+
+        // Revision identity and effective bounds: the same content under a different revision is a
+        // different source, because the work order records which revision it came from.
+        w.Add(revision.CompanyCode);
+        w.Add(revision.ProdCode);
+        w.Add(revision.Version);
+        w.Add(revision.Status);
+        w.AddDate(revision.EffectiveFrom);
+        w.AddDate(revision.EffectiveTo);
+        w.Add(revision.BaseQty);
+        w.Add(revision.BaseUom);
+        w.Add(revision.Prefix);
+
+        w.Section("ROUTESTEPS");
+        var routeSteps = revision.RouteSteps
+            .OrderBy(x => x.StageSequence)
+            .ThenBy(x => x.WorkCentreCode, StringComparer.Ordinal)
+            .ThenBy(x => x.OutputItemCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(routeSteps.Count);
+
+        foreach (var step in routeSteps)
+        {
+            w.Add(step.RouteStepKey);
+            w.Add(step.StageSequence);
+            w.Add(step.WorkCentreCode);
+            w.Add(step.OutputItemCode);
+            w.Add(step.OutputType);
+            w.Add(step.StandardOutputQty);
+            w.Add(step.OutputUom);
+            w.Add(step.YieldPercent);
+
+            // Operations are read from the route step's own collection: the revision loader
+            // populates it, and reading one authoritative path keeps the hash stable no matter
+            // whether the caller's graph was materialized with keys or from an unsaved draft.
+            var operations = step.Operations
+                .OrderBy(x => x.ProcessSequence)
+                .ThenBy(x => x.OperationCode, StringComparer.Ordinal)
+                .ToList();
+            w.Count(operations.Count);
+
+            foreach (var operation in operations)
+            {
+                AddDefinitionOperation(w, operation);
+            }
+        }
+
+        // Operations that belong to no route step still reach the snapshot, so they still
+        // invalidate the definition hash.
+        w.Section("UNOWNEDOPERATIONS");
+        var unownedOperations = revision.Operations
+            .Where(x => x.RouteStepId is null && x.RouteStep is null)
+            .OrderBy(x => x.ProcessSequence)
+            .ThenBy(x => x.OperationCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(unownedOperations.Count);
+        foreach (var operation in unownedOperations)
+        {
+            AddDefinitionOperation(w, operation);
+        }
+
+        // Lines that are not owned by an operation still reach the snapshot, so they must still
+        // invalidate the definition hash.
+        w.Section("UNOWNEDMATERIALS");
+        var unowned = revision.Lines
+            .Where(x => x.OperationId is null)
+            .OrderBy(x => x.SeqNo)
+            .ThenBy(x => x.ICode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(unowned.Count);
+        foreach (var material in unowned)
+        {
+            AddDefinitionMaterial(w, material);
+        }
+
+        return w.ComputeHash();
+    }
+
+    private static void AddDefinitionOperation(CanonicalHashWriter w, PrBomOperation operation)
+    {
+        w.Add(operation.OperationKey);
+        w.Add(operation.OperationCode);
+        w.Add(operation.ProcessSequence);
+        w.Add(operation.ProcessType);
+        w.Add(operation.StandardDurationMinutes);
+        w.Add(operation.IsFinalOperation);
+        w.Add(operation.WorkCentreCode);
+        w.Add(operation.OutputItemCode);
+        w.Add(operation.OutputBaseQty);
+        w.Add(operation.OutputUom);
+        w.Add(operation.SetupLossQty);
+        w.Add(operation.OperationLossQty);
+
+        var machines = operation.Machines
+            .OrderBy(x => x.Priority)
+            .ThenBy(x => x.MachineCode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(machines.Count);
+
+        foreach (var machine in machines)
+        {
+            w.Add(machine.MachineCode);
+            w.Add(machine.Priority);
+            w.Add(machine.IsPrimary);
+            w.Add(machine.ParallelMachineCount);
+            w.Add(machine.CycleSeconds);
+            w.Add(machine.OutputPerCycle);
+            w.Add(machine.ConversionSeconds);
+            w.Add(machine.SetupSeconds);
+            w.Add(machine.QueueSeconds);
+            w.Add(machine.MachineRatePerHour);
+
+            var machineLabours = machine.Labours
+                .OrderBy(x => x.LabourCode, StringComparer.Ordinal)
+                .ToList();
+            w.Count(machineLabours.Count);
+            foreach (var labour in machineLabours)
+            {
+                w.Add(labour.LabourCode);
+                w.Add(labour.CostPerOutputUnit);
+            }
+        }
+
+        var labourRequirements = operation.LabourRequirements
+            .OrderBy(x => x.LabourCode, StringComparer.Ordinal)
+            .ThenBy(x => x.MachineOptionId)
+            .ToList();
+        w.Count(labourRequirements.Count);
+        foreach (var requirement in labourRequirements)
+        {
+            w.Add(requirement.LabourCode);
+            w.Add(requirement.RequiredHeadcount);
+            w.Add(requirement.SetupMinutes);
+            w.Add(requirement.RunMinutes);
+            w.Add(requirement.CostRate);
+            w.Add(requirement.CostBasis);
+            w.Add(requirement.MachineOptionId);
+        }
+
+        var materials = operation.Materials
+            .OrderBy(x => x.SeqNo)
+            .ThenBy(x => x.ICode, StringComparer.Ordinal)
+            .ToList();
+        w.Count(materials.Count);
+        foreach (var material in materials)
+        {
+            AddDefinitionMaterial(w, material);
+        }
+    }
+
+    private static void AddDefinitionMaterial(CanonicalHashWriter w, PrDefBOM material)
+    {
+        w.Add(material.ICode);
+        w.Add(material.SeqNo);
+        w.Add(material.StdQty);
+        w.Add(material.StdUom);
+        w.Add(material.ScrapPercent);
+        w.Add(material.Tolerance);
+        w.Add(material.IssueMethod);
+        w.Add(material.SupplySource);
+        w.Add(material.Warehouse);
+        w.Add(material.ProducingRouteStepId);
+    }
+}

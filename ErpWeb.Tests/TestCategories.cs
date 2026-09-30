@@ -49,6 +49,9 @@ public static class TestCategories
     /// <summary>All inventory: masters, receipts, issues, transfers, returns, adjustments, postings.</summary>
     public const string Inventory = "Inventory";
 
+    /// <summary>Planning masters (product definition / BOM) and future production planning.</summary>
+    public const string Planning = "Planning";
+
     /// <summary>Menu definition, deployment parity and navigation chrome.</summary>
     public const string Menus = "Menus";
 

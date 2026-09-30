@@ -245,8 +245,46 @@
     </Menu>
   </Menu>
 
+  <!-- ─── Planning ──────────────────────────────────────────────── -->
+  <Menu Code="PLANNING" Name="Planning" SortOrder="5" Icon="fa-solid fa-calendar-days">
+    <Menu Code="PLN_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
+      <Menu Code="PLN_PRODUCT_DEF" Name="Product Definition" Route="/planning/product-definitions" SortOrder="1"
+            Icon="fa-solid fa-diagram-project" />
+      <Menu Code="PLN_WC_HIERARCHY" Name="WC / Process / Machine" Route="/planning/hierarchy" SortOrder="2"
+            Icon="fa-solid fa-sitemap" />
+      <Menu Code="PLN_WORK_CENTRE" Name="Work Centres" Route="/planning/work-centres" SortOrder="3"
+            Icon="fa-solid fa-industry" />
+      <Menu Code="PLN_WORK_PROCESS" Name="Processes" Route="/planning/processes" SortOrder="4"
+            Icon="fa-solid fa-gears" />
+      <Menu Code="PLN_WORK_MACHINE" Name="Machines" Route="/planning/machines" SortOrder="5"
+            Icon="fa-solid fa-robot" />
+      <Menu Code="PLN_SHIFT" Name="Shifts" Route="/planning/shifts" SortOrder="6"
+            Icon="fa-solid fa-clock" />
+      <Menu Code="PLN_SHIFT_GROUP" Name="Shift Groups" Route="/planning/shift-groups" SortOrder="7"
+            Icon="fa-solid fa-layer-group" />
+      <Menu Code="PLN_COMPANY_CAL" Name="Company Calendar" Route="/planning/company-calendar" SortOrder="8"
+            Icon="fa-solid fa-calendar" />
+      <Menu Code="PLN_MAC_SHIFT_CAL" Name="Machine Shift Calendar" Route="/planning/machine-calendars" SortOrder="9"
+            Icon="fa-solid fa-calendar-days" />
+      <Menu Code="PLN_OPERATOR" Name="Operators" Route="/planning/operators" SortOrder="10"
+            Icon="fa-solid fa-user-gear" />
+      <Menu Code="PLN_WORK_PREFIX" Name="Work Prefixes" Route="/planning/work-prefixes" SortOrder="11"
+            Icon="fa-solid fa-hashtag" />
+      <Menu Code="PLN_MAC_SEQ" Name="Machine Sequence" Route="/planning/machine-sequences" SortOrder="12"
+            Icon="fa-solid fa-list-ol" />
+      <Menu Code="PLN_MAC_PREVENTIVE" Name="Machine Preventive" Route="/planning/machine-preventive" SortOrder="13"
+            Icon="fa-solid fa-wrench" />
+      <Menu Code="PLN_IMPORT_PRDDEF" Name="Import Product Definition" Route="/planning/import-product-def" SortOrder="14"
+            Icon="fa-solid fa-file-excel" />
+    </Menu>
+    <Menu Code="PLN_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-industry">
+      <Menu Code="PLN_WORK_ORDER" Name="Work Orders" Route="/planning/work-orders" SortOrder="1"
+            Icon="fa-solid fa-clipboard-list" />
+    </Menu>
+  </Menu>
+
   <!-- ─── Security / Administration ─────────────────────────────── -->
-  <Menu Code="SECURITY" Name="Administration" SortOrder="5" Icon="fa-solid fa-shield-halved">
+  <Menu Code="SECURITY" Name="Administration" SortOrder="6" Icon="fa-solid fa-shield-halved">
     <Menu Code="ADMIN" Name="Administration" SortOrder="1" Icon="fa-solid fa-gears">
       <!-- Demos kept in XML for dev/test; gated out of production navigation elsewhere -->
       <Menu Code="ADMIN_DEMO" Name="Admin Demo" Route="/admin-demo" SortOrder="0"

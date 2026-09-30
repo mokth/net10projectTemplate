@@ -1,0 +1,216 @@
+@page "/planning/shifts/{ShiftCd?}"
+@inherits PageBase
+@inject IPrShiftService ShiftService
+@inject NavigationManager Nav
+
+<PageTitle>Shift Entry</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.PlanningShift">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="iv-toast @(_ok ? "iv-toast--ok" : "iv-toast--err")" role="status">
+            <span>@_message</span>
+            <button type="button" class="iv-toast__close" @onclick="(() => _message = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-clock"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">@(_vm.IsNew ? "New Shift" : _vm.ShiftCd)</h1>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <header class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <h2 class="iv-card__title mb-0">WORK SHIFT</h2>
+            <div class="iv-toolbar-row mb-0">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk" Click="@SaveAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CANCEL" IconCssClass="fa-solid fa-arrow-left" Click="@(() => Nav.NavigateTo("/planning/shifts"))" />
+            </div>
+        </header>
+
+        <DxFormLayout SizeMode="SizeMode.Small" CssClass="shift-entry-form">
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Shift Code" ColSpanMd="4">
+                <Template>
+                    <DxTextBox @bind-Text="@_vm.ShiftCd" maxlength="10" ReadOnly="@(!_vm.IsNew)" InputCssClass="required-field code-style" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="6" BeginRow="true">
+                <Template>
+                    <DxTextBox @bind-Text="@_vm.ShiftDes" maxlength="30" InputCssClass="required-field" />
+                </Template>
+            </DxFormLayoutItem>
+
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Time" ColSpanMd="3" BeginRow="true">
+                <Template>
+                    <DxTextBox @bind-Text="@_startText" NullText="HH:mm" InputCssClass="required-field code-style" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Time" ColSpanMd="3">
+                <Template>
+                    <DxTextBox @bind-Text="@_endText" NullText="HH:mm" InputCssClass="required-field code-style" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption=" " ColSpanMd="6">
+                <Template>
+                    <small class="text-muted">24-hour format (e.g. 08:00, 17:30). Overnight End &lt; Start is allowed.</small>
+                </Template>
+            </DxFormLayoutItem>
+
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Breaks" ColSpanMd="12" BeginRow="true">
+                <Template>
+                    <p class="text-muted mb-2 small">Leave blank for unused. Use HH:mm. Midnight 00:00 is valid when both From and To are filled.</p>
+                    <div class="shift-breaks">
+                        @for (var i = 0; i < 5; i++)
+                        {
+                            var idx = i;
+                            <div class="shift-breaks__row">
+                                <span class="shift-breaks__label code-style">Break @(idx + 1)</span>
+                                <DxTextBox Text="@_breakFrom[idx]"
+                                           TextChanged="@(v => _breakFrom[idx] = v)"
+                                           NullText="From HH:mm"
+                                           CssClass="shift-breaks__input"
+                                           InputCssClass="code-style" />
+                                <span class="shift-breaks__to">TO</span>
+                                <DxTextBox Text="@_breakTo[idx]"
+                                           TextChanged="@(v => _breakTo[idx] = v)"
+                                           NullText="To HH:mm"
+                                           CssClass="shift-breaks__input"
+                                           InputCssClass="code-style" />
+                            </div>
+                        }
+                    </div>
+                </Template>
+            </DxFormLayoutItem>
+
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Total Working" ColSpanMd="3" BeginRow="true">
+                <Template>
+                    <DxSpinEdit @bind-Value="@_totalHours" ReadOnly="true" MinValue="0" MaxValue="24" CssClass="w-100" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption="Minutes" ColSpanMd="3">
+                <Template>
+                    <DxSpinEdit @bind-Value="@_totalMinutesPart" ReadOnly="true" MinValue="0" MaxValue="59" CssClass="w-100" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem CaptionCssClass="code-style" Caption=" " ColSpanMd="6">
+                <Template>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="GET TOTAL" IconCssClass="fa-solid fa-calculator" Click="@GetTotal" />
+                </Template>
+            </DxFormLayoutItem>
+        </DxFormLayout>
+    </section>
+</div>
+</MenuAuthorize>
+
+@code {
+    [Parameter] public string? ShiftCd { get; set; }
+    private PrShiftEditVm _vm = new() { IsNew = true };
+    private string _startText = "08:00", _endText = "17:00";
+    private readonly string?[] _breakFrom = new string?[5];
+    private readonly string?[] _breakTo = new string?[5];
+    private int _totalHours;
+    private int _totalMinutesPart;
+    private string? _message; private bool _ok;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.IsNullOrWhiteSpace(ShiftCd) || ShiftCd.Equals("new", StringComparison.OrdinalIgnoreCase))
+        {
+            _vm = new PrShiftEditVm { IsNew = true };
+            return;
+        }
+        var r = await ShiftService.GetAsync(ShiftCd);
+        if (!r.Succeeded || r.Value is null) { _ok = false; _message = r.Message; return; }
+        _vm = r.Value;
+        _startText = _vm.Start.ToString("HH:mm");
+        _endText = _vm.End.ToString("HH:mm");
+        SetBreak(0, _vm.Break1); SetBreak(1, _vm.Break2); SetBreak(2, _vm.Break3); SetBreak(3, _vm.Break4); SetBreak(4, _vm.Break5);
+        GetTotal();
+    }
+
+    private void SetBreak(int i, ShiftTimeCalculator.BreakPair p)
+    {
+        _breakFrom[i] = p.Start?.ToString("HH:mm");
+        _breakTo[i] = p.End?.ToString("HH:mm");
+    }
+
+    private static bool TryParseTime(string? text, out TimeOnly time)
+    {
+        time = default;
+        return !string.IsNullOrWhiteSpace(text) && TimeOnly.TryParse(text, out time);
+    }
+
+    private bool TryBuildVmTimes(out string? error)
+    {
+        error = null;
+        if (!TryParseTime(_startText, out var start) || !TryParseTime(_endText, out var end))
+        {
+            error = "Invalid start/end time.";
+            return false;
+        }
+        if (start == end)
+        {
+            error = "Shift start and end times must differ.";
+            return false;
+        }
+        _vm.Start = start;
+        _vm.End = end;
+        _vm.Break1 = ParsePair(0); _vm.Break2 = ParsePair(1); _vm.Break3 = ParsePair(2); _vm.Break4 = ParsePair(3); _vm.Break5 = ParsePair(4);
+        return true;
+    }
+
+    private void GetTotal()
+    {
+        if (!TryBuildVmTimes(out var err))
+        {
+            _ok = false; _message = err;
+            return;
+        }
+        var breaks = new[] { _vm.Break1, _vm.Break2, _vm.Break3, _vm.Break4, _vm.Break5 };
+        for (var i = 0; i < breaks.Length; i++)
+        {
+            var be = ShiftTimeCalculator.ValidateBreakPair(breaks[i], i + 1);
+            if (be is not null) { _ok = false; _message = be; return; }
+        }
+        try
+        {
+            var net = ShiftTimeCalculator.ComputeNetMinutes(_vm.Start, _vm.End, breaks);
+            _totalHours = net / 60;
+            _totalMinutesPart = net % 60;
+            _message = null;
+            _ok = true;
+        }
+        catch (ArgumentException ex)
+        {
+            _ok = false;
+            _message = ex.Message;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!TryBuildVmTimes(out var err))
+        {
+            _ok = false; _message = err;
+            return;
+        }
+        GetTotal();
+        if (!_ok && !string.IsNullOrWhiteSpace(_message))
+            return;
+        var r = await ShiftService.SaveAsync(_vm);
+        _ok = r.Succeeded; _message = r.Message;
+        if (r.Succeeded) Nav.NavigateTo("/planning/shifts");
+    }
+
+    private ShiftTimeCalculator.BreakPair ParsePair(int i)
+    {
+        var hasFrom = TryParseTime(_breakFrom[i], out var f);
+        var hasTo = TryParseTime(_breakTo[i], out var t);
+        if (!hasFrom && !hasTo) return default;
+        if (hasFrom && hasTo) return new ShiftTimeCalculator.BreakPair(f, t);
+        return new ShiftTimeCalculator.BreakPair(hasFrom ? f : null, hasTo ? t : null);
+    }
+}

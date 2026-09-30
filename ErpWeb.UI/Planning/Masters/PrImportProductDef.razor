@@ -1,0 +1,82 @@
+@page "/planning/import-product-def"
+@inherits PageBase
+@inject IPrDefImportService ImportService
+
+<PageTitle>Import Product Definition</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.PlanningImportPrdDef">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="iv-toast @(_ok ? "iv-toast--ok" : "iv-toast--err")" role="status">
+            <span>@_message</span>
+            <button type="button" class="iv-toast__close" @onclick="(() => _message = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-file-import"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">Import Product Definition</h1>
+        </div>
+    </header>
+    <section class="iv-card">
+        <p class="text-muted mb-2">ClosedXML · template @PrDefImportService.TemplateVersion · formulas rejected on keys · numeric literals only. BOM sheet is validated but persisted via Product Definition multilevel BOM.</p>
+        <div class="iv-toolbar-row mb-2">
+            <InputFile OnChange="OnFile" accept=".xlsx" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="PREVIEW" Click="@PreviewAsync" Enabled="@(_fileBytes is not null)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="COMMIT" Click="@CommitAsync" Enabled="@(_preview?.IsValid == true)" />
+        </div>
+        @if (_preview is not null)
+        {
+            <p class="mt-3">Valid: @_preview.IsValid · Affected ICodes: @string.Join(", ", _preview.AffectedICodes)</p>
+            <DxGrid Data="@_preview.Rows.Where(r => r.Status=="Error").Take(200)" PageSize="50">
+                <Columns>
+                    <DxGridDataColumn FieldName="@nameof(PrDefImportPreviewRow.Sheet)" Width="100px" />
+                    <DxGridDataColumn FieldName="@nameof(PrDefImportPreviewRow.RowNumber)" Caption="Row" Width="70px" />
+                    <DxGridDataColumn FieldName="@nameof(PrDefImportPreviewRow.FieldName)" Width="120px" />
+                    <DxGridDataColumn FieldName="@nameof(PrDefImportPreviewRow.FormulaDetected)" Caption="Formula?" Width="90px" />
+                    <DxGridDataColumn FieldName="@nameof(PrDefImportPreviewRow.Error)" />
+                </Columns>
+            </DxGrid>
+        }
+    </section>
+</div>
+</MenuAuthorize>
+@code {
+    private byte[]? _fileBytes;
+    private string? _fileName;
+    private PrDefImportPreview? _preview;
+    private string? _message; private bool _ok;
+
+    private async Task OnFile(InputFileChangeEventArgs e)
+    {
+        await using var stream = e.File.OpenReadStream(PrDefImportService.MaxFileBytes);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        _fileBytes = ms.ToArray();
+        _fileName = e.File.Name;
+        _preview = null;
+    }
+
+    private async Task PreviewAsync()
+    {
+        if (_fileBytes is null) return;
+        await using var ms = new MemoryStream(_fileBytes);
+        var r = await ImportService.PreviewAsync(ms, _fileName ?? "import.xlsx");
+        _ok = r.Succeeded; _message = r.Message;
+        _preview = r.Value;
+        if (r.Succeeded && _preview is not null && !_preview.IsValid)
+        {
+            _ok = false;
+            _message = "Preview has validation errors.";
+        }
+    }
+
+    private async Task CommitAsync()
+    {
+        if (_fileBytes is null) return;
+        await using var ms = new MemoryStream(_fileBytes);
+        var r = await ImportService.CommitAsync(ms, _fileName ?? "import.xlsx");
+        _ok = r.Succeeded; _message = r.Message;
+    }
+}

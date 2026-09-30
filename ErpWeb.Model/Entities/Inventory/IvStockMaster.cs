@@ -6,6 +6,10 @@ public class IvStockMaster
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
     public string? IType { get; set; }
+
+    /// <summary>BUY | MAKE | PHANTOM — manufacturing procurement policy (not IvType FG/RM).</summary>
+    public string MfgType { get; set; } = "BUY";
+
     public string? IClassCode { get; set; }
     public string? ISubClassCode { get; set; }
     public string? StdUom { get; set; }
@@ -43,4 +47,5 @@ public class IvStockMaster
 
     public ICollection<IvBalLoc> Balances { get; set; } = new List<IvBalLoc>();
     public ICollection<IvLot> Lots { get; set; } = new List<IvLot>();
+    public ICollection<IvItemUomConversion> UomConversions { get; set; } = new List<IvItemUomConversion>();
 }

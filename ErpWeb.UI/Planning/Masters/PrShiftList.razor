@@ -1,0 +1,57 @@
+@page "/planning/shifts"
+@inherits PrRefListPageBase<PrShiftListRow>
+
+<PageTitle>Shifts</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningShift">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !ConfirmDeleteVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="@HeroIconClass"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">@HeroTitle</h1>
+        </div>
+    </header>
+
+    @if (IsLoading) { <p>Loading shifts…</p> }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(PrShiftListRow.ShiftCd)"
+                      GridKey="pln-shift-list"
+                      Title="Shifts"
+                      T="PrShiftListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style" HeaderText="Confirm Delete" CloseOnOutsideClick="false" Width="420px" CssClass="common-popup" @bind-Visible="@ConfirmDeleteVisible">
+        <Content>
+            <p>@ConfirmDeleteMessage</p>
+            <div class="iv-popup-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="@(IsSubmitting ? "Deleting…" : "Delete")" Click="@ConfirmDeleteAsync" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CloseConfirmDelete" Enabled="@(!IsSubmitting)" />
+            </div>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

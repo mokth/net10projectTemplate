@@ -228,6 +228,26 @@ public static class MenuCodes
     public const string PurchaseMatching = "PO_MATCHING";
     public const string PurchaseDeliveryPerformance = "PO_DELIVERY_PERF";
 
+    public const string Planning = "PLANNING";
+    public const string PlanningMaster = "PLN_MASTER";
+    public const string PlanningProductDef = "PLN_PRODUCT_DEF";
+    public const string PlanningWorkCentre = "PLN_WORK_CENTRE";
+    public const string PlanningWorkProcess = "PLN_WORK_PROCESS";
+    public const string PlanningWorkMachine = "PLN_WORK_MACHINE";
+    public const string PlanningWcHierarchy = "PLN_WC_HIERARCHY";
+    public const string PlanningShift = "PLN_SHIFT";
+    public const string PlanningShiftGroup = "PLN_SHIFT_GROUP";
+    public const string PlanningCompanyCal = "PLN_COMPANY_CAL";
+    public const string PlanningMacShiftCal = "PLN_MAC_SHIFT_CAL";
+    public const string PlanningOperator = "PLN_OPERATOR";
+    public const string PlanningWorkPrefix = "PLN_WORK_PREFIX";
+    public const string PlanningMacSeq = "PLN_MAC_SEQ";
+    public const string PlanningMacPreventive = "PLN_MAC_PREVENTIVE";
+    public const string PlanningImportPrdDef = "PLN_IMPORT_PRDDEF";
+    public const string PlanningTransactions = "PLN_TRANSACTIONS";
+    public const string PlanningWorkOrder = "PLN_WORK_ORDER";
+
+
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

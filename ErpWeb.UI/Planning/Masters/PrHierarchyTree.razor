@@ -1,0 +1,118 @@
+@page "/planning/hierarchy"
+@inherits PageBase
+@inject IPrHierarchyService HierarchyService
+
+<PageTitle>WC / Process / Machine</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.PlanningWcHierarchy">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@_status</span>
+            <button type="button" class="iv-toast__close" @onclick="(() => _status = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@_error</span>
+            <button type="button" class="iv-toast__close" @onclick="(() => _error = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-sitemap"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">WC / Process / Machine</h1>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <div class="iv-toolbar-row mb-2">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="NEW WC" IconCssClass="fas fa-plus" Click="@AddWc" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk" Click="@SaveAsync" Enabled="@(_pending.Count > 0)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="REFRESH" IconCssClass="fa-solid fa-rotate" Click="@LoadAsync" />
+        </div>
+        <DxTreeList Data="@_nodes" KeyFieldName="@nameof(HierarchyNodeVm.NodeId)" ParentKeyFieldName="@nameof(HierarchyNodeVm.ParentNodeId)">
+            <Columns>
+                <DxGridDataColumn FieldName="@nameof(HierarchyNodeVm.Code)" Caption="Code" Width="140px" />
+                <DxGridDataColumn FieldName="@nameof(HierarchyNodeVm.Description)" Caption="Description" />
+                <DxGridDataColumn FieldName="@nameof(HierarchyNodeVm.NodeType)" Caption="Type" Width="120px" />
+                <DxGridDataColumn FieldName="@nameof(HierarchyNodeVm.Sequence)" Caption="Seq" Width="70px" />
+            </Columns>
+        </DxTreeList>
+        @if (_pending.Count > 0)
+        {
+            <p class="text-muted mt-2">Pending changes: @_pending.Count (saved as a single transaction).</p>
+        }
+        <div class="mt-3 d-flex gap-2 flex-wrap">
+            <DxTextBox @bind-Text="@_newCode" NullText="Code" CssClass="w-auto" />
+            <DxTextBox @bind-Text="@_newDesc" NullText="Description" CssClass="w-auto" />
+            <DxTextBox @bind-Text="@_parentCode" NullText="Parent (WC or Process)" CssClass="w-auto" />
+            <DxButton Text="Queue Process" Click="@QueueProcess" />
+            <DxButton Text="Queue Machine" Click="@QueueMachine" />
+        </div>
+    </section>
+</div>
+</MenuAuthorize>
+@code {
+    private List<HierarchyNodeVm> _nodes = [];
+    private List<HierarchyNodeEditDto> _pending = [];
+    private string? _status, _error;
+    private string? _newCode, _newDesc, _parentCode;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var result = await HierarchyService.LoadTreeAsync();
+        if (!result.Succeeded) { _error = result.Message; return; }
+        _nodes = result.Value!.ToList();
+        _pending.Clear();
+        _status = null; _error = null;
+    }
+
+    private void AddWc()
+    {
+        if (string.IsNullOrWhiteSpace(_newCode)) return;
+        _pending.Add(new HierarchyNodeEditDto {
+            ClientNodeId = Guid.NewGuid().ToString("N"),
+            NodeType = HierarchyNodeType.WorkCentre,
+            ChangeKind = HierarchyChangeKind.Added,
+            Code = _newCode, Description = _newDesc
+        });
+        _status = $"Queued WC {_newCode}";
+    }
+
+    private void QueueProcess()
+    {
+        if (string.IsNullOrWhiteSpace(_newCode) || string.IsNullOrWhiteSpace(_parentCode)) return;
+        _pending.Add(new HierarchyNodeEditDto {
+            ClientNodeId = Guid.NewGuid().ToString("N"),
+            NodeType = HierarchyNodeType.Process,
+            ChangeKind = HierarchyChangeKind.Added,
+            Code = _newCode, ParentCode = _parentCode, Description = _newDesc, Sequence = 10
+        });
+        _status = $"Queued Process {_newCode}";
+    }
+
+    private void QueueMachine()
+    {
+        if (string.IsNullOrWhiteSpace(_newCode) || string.IsNullOrWhiteSpace(_parentCode)) return;
+        _pending.Add(new HierarchyNodeEditDto {
+            ClientNodeId = Guid.NewGuid().ToString("N"),
+            NodeType = HierarchyNodeType.Machine,
+            ChangeKind = HierarchyChangeKind.Added,
+            Code = _newCode, ParentCode = _parentCode, Description = _newDesc
+        });
+        _status = $"Queued Machine {_newCode}";
+    }
+
+    private async Task SaveAsync()
+    {
+        var result = await HierarchyService.SaveAsync(new HierarchySaveRequest { Changes = _pending });
+        if (result.Succeeded) { _status = result.Message ?? "Saved."; await LoadAsync(); }
+        else _error = result.Message;
+    }
+}

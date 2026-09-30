@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>proddef-datatable.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="product-definition--database-linking--column-usage">Product Definition — Database Linking &amp; Column Usage</h1>
+<p>Source of truth used for this note:</p>
+<ul>
+<li>Designer mapping: <code>ERPClasses/BL/ErpDataClasses.dbml</code></li>
+<li>Save adapters: <code>ERPClasses/Classes/CAdapter.cs</code>, <code>ProductionPlan/BL/CAdapter.cs</code></li>
+<li>Read BL: <code>ERPClasses/BL/ProdDefBL.cs</code></li>
+<li>Editor page: <code>ProductionPlan/ProdPlan/ProdDefination.aspx.cs</code></li>
+</ul>
+<p>Scope: the six current definition tables</p>
+<ul>
+<li><code>PrDefMas</code></li>
+<li><code>PrDefWCenter</code></li>
+<li><code>PrDefProcess</code></li>
+<li><code>PrDefBOM</code></li>
+<li><code>PrDefMachine</code></li>
+<li><code>PrDefLabour</code></li>
+</ul>
+<hr>
+<h2 id="1-relationship-overview">1. Relationship overview</h2>
+<pre><code class="language-mermaid"><div class="mermaid">erDiagram
+    IvMas ||--o| PrDefMas : "ICode = ICode"
+    PrDefMas ||--o{ PrDefWCenter : "ICode = ProdCode"
+    PrDefWCenter ||--o{ PrDefProcess : "ProdCode+WCCode+ICode(=WCICode)"
+    PrDefProcess ||--o{ PrDefBOM : "ProdCode+WCCode+WCICode+ProcessCode"
+    PrDefProcess ||--o{ PrDefMachine : "ProdCode+WCCode+WCICode+ProcessCode"
+    PrDefMachine ||--o{ PrDefLabour : "ProdCode+WCCode+WCICode+ProcessCode+MachineCode"
+</div></code></pre>
+<p>There is <strong>one physical FK</strong> declared in the designer (<code>PrDefMas.ICode -&gt; child.ProdCode</code>,
+<code>DeleteRule=CASCADE</code>), repeated for WCenter, Process, Machine and Labour. The deeper links
+(WCenter -&gt; Process -&gt; BOM/Machine -&gt; Labour) are <strong>not</strong> DB FK constraints — they are logical
+links implemented by application joins on composite keys.</p>
+<hr>
+<h2 id="2-the-join-keys-the-important-part">2. The join keys (the important part)</h2>
+<table>
+<thead>
+<tr>
+<th>Link</th>
+<th>Join condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Item -&gt; header</td>
+<td><code>IvMas.ICode = PrDefMas.ICode</code></td>
+</tr>
+<tr>
+<td>Header -&gt; route</td>
+<td><code>PrDefMas.ICode = PrDefWCenter.ProdCode</code></td>
+</tr>
+<tr>
+<td>Route -&gt; operation</td>
+<td><code>PrDefWCenter.ProdCode = PrDefProcess.ProdCode</code> <strong>AND</strong> <code>PrDefWCenter.WCCode = PrDefProcess.WCCode</code> <strong>AND</strong> <code>PrDefWCenter.ICode = PrDefProcess.WCICode</code></td>
+</tr>
+<tr>
+<td>Operation -&gt; material</td>
+<td><code>PrDefProcess.ProdCode/WCCode/WCICode/ProcessCode = PrDefBOM.&lt;same 4&gt;</code></td>
+</tr>
+<tr>
+<td>Operation -&gt; machine</td>
+<td><code>PrDefProcess.ProdCode/WCCode/WCICode/ProcessCode = PrDefMachine.&lt;same 4&gt;</code></td>
+</tr>
+<tr>
+<td>Machine -&gt; labour</td>
+<td><code>PrDefMachine.ProdCode/WCCode/WCICode/ProcessCode/MachineCode = PrDefLabour.&lt;same 5&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>The single most-missed detail: <strong>the work-center's <code>ICode</code> is propagated to children as <code>WCICode</code></strong>.
+That is:</p>
+<pre class="hljs"><code><div>PrDefWCenter.ICode
+    = PrDefProcess.WCICode
+    = PrDefBOM.WCICode
+    = PrDefMachine.WCICode
+    = PrDefLabour.WCICode
+</div></code></pre>
+<p>It is the <em>output / intermediate item</em> produced by that route node, not display text — the whole
+chain depends on this rename.</p>
+<p>Confirmed from <code>ProdDefBL.GetPrDefProcessV2</code> / <code>GetPrDefBOmV2</code> / <code>GetPrDefMachineV2</code>
+(<code>ERPClasses/BL/ProdDefBL.cs:19-96</code>):</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">from</span> PrDefProcess p
+<span class="hljs-keyword">left</span> <span class="hljs-keyword">join</span> PrDefWCenter w
+     <span class="hljs-keyword">on</span> p.ProdCode <span class="hljs-operator">=</span> w.ProdCode <span class="hljs-keyword">and</span> p.WCCode <span class="hljs-operator">=</span> w.WCCode <span class="hljs-keyword">and</span> p.WCICode <span class="hljs-operator">=</span> w.ICode
+</div></code></pre>
+<hr>
+<h2 id="3-table-by-table-key--column-usage">3. Table-by-table: key + column usage</h2>
+<h3 id="prdefmas--definition-header-1-row-per-product"><code>PrDefMas</code> — definition header (1 row per product)</h3>
+<p><strong>PK:</strong> <code>ICode</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ICode</code></td>
+<td>Product/item code; links to <code>IvMas.ICode</code> and to all children via <code>ProdCode</code></td>
+</tr>
+<tr>
+<td><code>IDesc</code></td>
+<td>Item description (copied from <code>IvMas</code>)</td>
+</tr>
+<tr>
+<td><code>StdBatchSize</code></td>
+<td><strong>Output base batch</strong> — drives <code>CentreQty = WOQty x CentrePackSize / StdBatchSize</code> and the BOM formula</td>
+</tr>
+<tr>
+<td><code>StdUOM</code></td>
+<td>Unit of measure</td>
+</tr>
+<tr>
+<td><code>Active</code></td>
+<td><code>1</code> = definition activated; set <code>0</code> when saved without BOM/machine setup (<code>SetActiveStatus</code>)</td>
+</tr>
+<tr>
+<td><code>TotalTime</code></td>
+<td>Cached total route time</td>
+</tr>
+<tr>
+<td><code>Prefix</code></td>
+<td>Work-order number prefix (added 2017, not in DBML)</td>
+</tr>
+<tr>
+<td><code>Remark</code>, <code>DRNo</code>, <code>ActPrdCode</code></td>
+<td>Free remark / delivery-request linkage / actual product code (drift: not all in DBML)</td>
+</tr>
+<tr>
+<td><code>Created</code>, <code>Updated</code>, <code>UserID</code>, <code>UpdatedUID</code></td>
+<td>Audit stamps</td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Tenant scope — <strong>written but generally not used to filter reads</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefwcenter--route-node--work-centre-step"><code>PrDefWCenter</code> — route node / work centre step</h3>
+<p><strong>PK:</strong> <code>(ProdCode, WCCode, ICode)</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>FK -&gt; <code>PrDefMas.ICode</code> (the definition this route belongs to)</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>Work-centre code -&gt; <code>PrWorkCentre</code></td>
+</tr>
+<tr>
+<td><code>ICode</code></td>
+<td><strong>Output/intermediate item</strong> for this centre; echoed as <code>WCICode</code> in all child tables</td>
+</tr>
+<tr>
+<td><code>IDesc</code>, <code>Class</code>, <code>StdUOM</code></td>
+<td>Cached item description / item class / UOM</td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Route stage order — the sequencing driver for scheduling (ascending = forward, descending = back-schedule)</td>
+</tr>
+<tr>
+<td><code>StdPackSize</code></td>
+<td>Pack/batch size for this centre; <code>NormalizedCentrePack = StdPackSize / PrDefMas.StdBatchSize</code></td>
+</tr>
+<tr>
+<td><code>SCode</code></td>
+<td>Subcontract / supplier code</td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Scope columns</td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefprocess--operation-under-a-route-node"><code>PrDefProcess</code> — operation under a route node</h3>
+<p><strong>PK:</strong> <code>(ProdCode, WCCode, WCICode, ProcessCode)</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code>, <code>WCCode</code></td>
+<td>Link up to <code>PrDefWCenter</code></td>
+</tr>
+<tr>
+<td><code>WCICode</code></td>
+<td>Equals <code>PrDefWCenter.ICode</code> (the output item)</td>
+</tr>
+<tr>
+<td><code>ProcessCode</code></td>
+<td>Operation code -&gt; <code>PrProcess</code></td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Operation order inside the centre</td>
+</tr>
+<tr>
+<td><code>SetupLostQty</code>, <code>OperationLostQty</code></td>
+<td>Scrap/loss quantities for setup and run</td>
+</tr>
+<tr>
+<td><code>FinalProcess</code></td>
+<td>Marks the operation that completes the centre (validation requires &gt;=1 per work centre)</td>
+</tr>
+<tr>
+<td><code>SCode</code></td>
+<td>Subcontract/supplier code</td>
+</tr>
+<tr>
+<td><code>Remark</code></td>
+<td>Operation remark (drift: exists in table/adapter, missing from DBML)</td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Scope columns</td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefbom--material-attached-to-an-operation"><code>PrDefBOM</code> — material attached to an operation</h3>
+<p><strong>PK:</strong> <code>(ProdCode, WCCode, WCICode, ProcessCode, ICode)</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code>, <code>WCCode</code>, <code>WCICode</code>, <code>ProcessCode</code></td>
+<td>Link to <code>PrDefProcess</code></td>
+</tr>
+<tr>
+<td><code>ICode</code></td>
+<td>Component item code -&gt; <code>IvMas.ICode</code></td>
+</tr>
+<tr>
+<td><code>IName</code></td>
+<td>Component description (cached)</td>
+</tr>
+<tr>
+<td><code>StdQty</code></td>
+<td>Component qty per base batch; consumed as <code>round(StdQty / CentreStdPackSize x CentreQty, 4)</code></td>
+</tr>
+<tr>
+<td><code>StdUOM</code></td>
+<td>Component UOM</td>
+</tr>
+<tr>
+<td><code>Warehouse</code></td>
+<td>Default issue warehouse</td>
+</tr>
+<tr>
+<td><code>BomDefault</code></td>
+<td>Primary BOM line flag</td>
+</tr>
+<tr>
+<td><code>WIPBomDefault</code></td>
+<td>WIP-component default flag</td>
+</tr>
+<tr>
+<td><code>tolerance</code>, <code>levelID</code></td>
+<td>Qty tolerance % / multi-level tree level (drift: not in DBML)</td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Scope columns</td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefmachine--machineresource-option-for-an-operation"><code>PrDefMachine</code> — machine/resource option for an operation</h3>
+<p><strong>PK:</strong> <code>(ProdCode, WCCode, WCICode, ProcessCode, MachineCode)</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The 4 operation columns</td>
+<td>Link to <code>PrDefProcess</code></td>
+</tr>
+<tr>
+<td><code>MachineCode</code> / <code>MachineName</code></td>
+<td>Machine -&gt; <code>PrMachine</code> / cached name</td>
+</tr>
+<tr>
+<td><code>CycleTime</code></td>
+<td>Seconds per cycle; basis of run-time calc</td>
+</tr>
+<tr>
+<td><code>ConversionTime</code>, <code>StartupTime</code>, <code>QueueTime</code></td>
+<td>Additional time components in the machine-time formula</td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Machine group/sequence; default machines in the same sequence run in parallel</td>
+</tr>
+<tr>
+<td><code>MacDefault</code></td>
+<td>Marks the default/selected machine</td>
+</tr>
+<tr>
+<td><code>CycleTimeInvd</code>, <code>CycleTimeCal</code>, <code>NoMachine</code></td>
+<td>Extension columns present in some forks (drift vs DBML)</td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Scope columns</td>
+</tr>
+</tbody>
+</table>
+<p>Formula (confirmed in the WO generator):</p>
+<pre class="hljs"><code><div>MachineSeconds =
+      CycleTime / CentreStdPackSize
+      x (CentreQty / countOfDefaultMachinesInSameSeq)
+    + ConversionTime
+    + StartupTime
+    + QueueTime
+</div></code></pre>
+<h3 id="prdeflabour--labour-standard-for-a-machine"><code>PrDefLabour</code> — labour standard for a machine</h3>
+<p><strong>PK:</strong> <code>(ProdCode, WCCode, WCICode, ProcessCode, MachineCode, LabourCode)</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The 5 machine columns</td>
+<td>Link to <code>PrDefMachine</code></td>
+</tr>
+<tr>
+<td><code>LabourCode</code></td>
+<td>Labour/operator code -&gt; <code>PrOperator</code></td>
+</tr>
+<tr>
+<td><code>LabourCost</code></td>
+<td>Cost per output unit; <code>WorkOrderLabourCost = LabourCost x WorkOrderQty</code></td>
+</tr>
+<tr>
+<td><code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code></td>
+<td>Scope columns</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-things-to-watch-out-for">4. Things to watch out for</h2>
+<ul>
+<li><strong>Only the header FK is real.</strong> The DB cascade is <code>PrDefMas -&gt; (WCenter/Process/Machine/Labour)</code>.
+Everything below that is application-enforced; deleting a work centre/process in the UI manually
+cascades to Process/BOM/Machine (see <code>DeleteProcess</code>, <code>DeleteBOM</code> in <code>ProdDefination.aspx.cs</code>).</li>
+<li><strong><code>WCICode</code> vs <code>ICode</code>.</strong> In <code>PrDefWCenter</code> the column is <code>ICode</code>; in every child table the same
+value is stored as <code>WCICode</code>. A join that mixes them will silently return nothing.</li>
+<li><strong>Tenant columns don't isolate.</strong> <code>CompCode</code>, <code>BranchCode</code>, <code>LocCode</code> are written on save, but
+<code>ProdDefBL</code> reads filter only by <code>ProdCode</code>/<code>ICode</code>.</li>
+<li><strong>Designer drift.</strong> <code>ErpDataClasses.dbml</code> omits columns the runtime uses:
+<code>PrDefMas.Prefix/DRNo/ActPrdCode</code>, <code>PrDefProcess.Remark</code>, <code>PrDefBOM.tolerance/levelID</code>, and the
+<code>PrDefMachine</code> extension columns. Also <code>PrDefWCenter.IDesc</code> is 60 in DBML but 200 in the actual
+table. Treat the live schema (or the adapters) as authoritative.</li>
+<li><strong><code>inner join</code> vs <code>left join</code> bug.</strong> The original <code>GetPrDefProcess/BOm/Machine</code> used <code>inner join</code>
+on <code>PrDefWCenter</code>, so orphaned child rows existed in the DB but never showed in the UI. That was
+fixed by the <code>V2</code> methods switching to <code>left join</code> (<code>ProdDefBL.cs</code>, tasks 250509052379 /
+250318072325 / 250724074010).</li>
+</ul>
+<hr>
+<h2 id="5-column-dictionaries-as-declared-in-dbml">5. Column dictionaries (as declared in DBML)</h2>
+<h3 id="prdefmas">PrDefMas</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>IDesc</code></td>
+<td>NVarChar(200)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdBatchSize</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdUOM</code></td>
+<td>NVarChar(5)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Active</code></td>
+<td>Bit</td>
+<td></td>
+</tr>
+<tr>
+<td><code>TotalTime</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Created</code></td>
+<td>DateTime</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Updated</code></td>
+<td>DateTime</td>
+<td></td>
+</tr>
+<tr>
+<td><code>UserID</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>UpdatedUID</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Remark</code></td>
+<td>NVarChar(1000)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefwcenter">PrDefWCenter</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>IDesc</code></td>
+<td>NVarChar(60)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Class</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdPackSize</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdUOM</code></td>
+<td>NVarChar(5)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SCode</code></td>
+<td>NVarChar(20)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefprocess">PrDefProcess</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ProcessCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SetupLostQty</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>OperationLostQty</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>FinalProcess</code></td>
+<td>Bit</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SCode</code></td>
+<td>NVarChar(20)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefbom">PrDefBOM</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ProcessCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>IName</code></td>
+<td>NVarChar(200)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdQty</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StdUOM</code></td>
+<td>NVarChar(5)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Warehouse</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BomDefault</code></td>
+<td>Bit</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>WIPBomDefault</code></td>
+<td>Bit</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdefmachine">PrDefMachine</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ProcessCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>MachineCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>MachineName</code></td>
+<td>NVarChar(30)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CycleTime</code></td>
+<td>Float NOT NULL</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ConversionTime</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>StartupTime</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>QueueTime</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SeqNo</code></td>
+<td>Int</td>
+<td></td>
+</tr>
+<tr>
+<td><code>MacDefault</code></td>
+<td>Bit</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prdeflabour">PrDefLabour</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>DbType</th>
+<th>PK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProdCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCCode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>WCICode</code></td>
+<td>NVarChar(20) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>ProcessCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>MachineCode</code></td>
+<td>NVarChar(10) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>LabourCode</code></td>
+<td>NVarChar(50) NOT NULL</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>LabourCost</code></td>
+<td>Float</td>
+<td></td>
+</tr>
+<tr>
+<td><code>CompCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BranchCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>LocCode</code></td>
+<td>NVarChar(10)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-related-tables-for-context">6. Related tables (for context)</h2>
+<ul>
+<li>Revision family: <code>PrDefRevMas</code>, <code>PrDefRevWCenter</code>, <code>PrDefRevProcess</code>, <code>PrDefRevBOM</code>,
+<code>PrDefRevMachine</code>, <code>PrDefRevLabour</code> — mirror the six live tables plus <code>Revision</code>.</li>
+<li>Work-order snapshot family: <code>PrSchMas</code>, <code>PrSchWCenter</code>, <code>PrSchProcess</code>, <code>PrSchBOM</code>,
+<code>PrSchMachine</code>, <code>PrSchLabour</code> — expanded per-WO copy with calculated quantities and dates.</li>
+<li>Attachment: <code>PrdDefAttach</code> — identity <code>UID</code>, keyed by <code>ProdCode</code> + <code>Revision</code>.</li>
+</ul>
+<p>See <code>product-definition-legacy-analysis.md</code> (sections B and C) and
+<code>product-definition-target-design.md</code> for the full narrative, downstream consumers and the
+modernisation target model.</p>
+
+</body>
+</html>

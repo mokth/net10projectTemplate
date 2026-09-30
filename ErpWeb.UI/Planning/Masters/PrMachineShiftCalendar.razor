@@ -1,0 +1,291 @@
+@page "/planning/machine-calendars"
+@inherits PageBase
+@using ErpWeb.Model.Entities.Planning
+@using ErpWeb.UI.Planning.Components
+@inject IPrShiftCalendarService MacCalService
+@inject IPrMachineService MachineService
+@inject IPrShiftGroupService GroupService
+@inject IPrShiftGroupPlanningService GroupPlanning
+@inject IPrHolidayService HolidayService
+
+<PageTitle>Machine Shift Calendar</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMacShiftCal">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="iv-toast @(_ok ? "iv-toast--ok" : "iv-toast--err")" role="status">
+            <span>@_message</span>
+            <button type="button" class="iv-toast__close" @onclick="(() => _message = null)" aria-label="Dismiss">×</button>
+        </div>
+    }
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-check"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">Machine Calendar</h1>
+        </div>
+    </header>
+    <section class="iv-card">
+        <div class="iv-toolbar-row mb-2 flex-wrap gap-2">
+            <DxComboBox Data="@_machines" @bind-Value="@_machineCd" TextFieldName="MachineCd" ValueFieldName="MachineCd" NullText="Machine" />
+            <DxSpinEdit @bind-Value="@_year" MinValue="2000" MaxValue="2100" />
+            <DxComboBox Data="@_groups" @bind-Value="@_selectedGroupCd" TextFieldName="ShfGrpCd" ValueFieldName="ShfGrpCd" NullText="Work shift group" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="LOAD" Click="@LoadAsync" Enabled="@(!_busy)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="GENERATE" Click="@GenerateAsync" Enabled="@(!_busy)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" Click="@SaveAsync" Enabled="@(!_busy)" />
+            <DxTextBox @bind-Text="@_copyTarget" NullText="Copy to machine" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="COPY" Click="@PreviewCopyAsync" Enabled="@(!_busy)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="COPY ALL" Click="@CopyAllAsync" Enabled="@(!_busy)" />
+            @if (_copyPreviewRows > 0)
+            {
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="OVERWRITE" Click="@(() => CopyAsync(overwrite: true))" Enabled="@(!_busy)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CANCEL" Click="@CancelCopy" />
+            }
+        </div>
+        <div class="mb-2">
+            <span class="me-2">Paint:</span>
+            <label class="me-2"><input type="radio" name="mpaint" checked="@(_paintMode == "O")" @onchange="@(() => _paintMode = "O")" /> Off</label>
+            <label><input type="radio" name="mpaint" checked="@(_paintMode == "W")" @onchange="@(() => _paintMode = "W")" /> Work</label>
+        </div>
+        <div class="mb-2">
+            <div class="mb-1"><strong>Off weekdays</strong></div>
+            @foreach (DayOfWeek d in Enum.GetValues<DayOfWeek>())
+            {
+                var day = d;
+                <label class="me-2">
+                    <input type="checkbox" checked="@_offWeekdays.Contains(day)" @onchange="@(e => ToggleOff(day, (bool)(e.Value ?? false)))" />
+                    @day.ToString()[..3]
+                </label>
+            }
+        </div>
+        <div class="mb-2">
+            <div class="mb-1"><strong>Work weekdays</strong> (uses selected shift group)</div>
+            @foreach (DayOfWeek d in Enum.GetValues<DayOfWeek>())
+            {
+                var day = d;
+                <label class="me-2">
+                    <input type="checkbox" checked="@_workWeekdays.Contains(day)" @onchange="@(e => ToggleWork(day, (bool)(e.Value ?? false)))" />
+                    @day.ToString()[..3]
+                </label>
+            }
+        </div>
+        <div class="d-flex flex-wrap gap-2 mb-2">
+            @foreach (var g in _groups)
+            {
+                <span class="badge" style="background:@NormalizeColor(g.ShiftColor); color:#fff;">@g.ShfGrpCd</span>
+            }
+        </div>
+        @if (_busy) { <p class="text-muted">Saving…</p> }
+        <PlanningYearCalendar Year="@_year"
+                              DayCodes="@_dayCodes"
+                              Holidays="@_holidayMap"
+                              ShiftColors="@_shiftColors"
+                              PaintMode="@_paintMode"
+                              Dirty="@_dirty"
+                              DayPainted="@OnDayPainted" />
+        <p class="text-muted mt-2">Fingerprint: @_fingerprint</p>
+        @if (_copyPreviewRows > 0)
+        {
+            <p class="text-warning mt-2">Target @_copyTarget already has @_copyPreviewRows row(s) for @_year. Choose Overwrite or Cancel.</p>
+        }
+    </section>
+</div>
+</MenuAuthorize>
+@code {
+    private List<PrMachine> _machines = [];
+    private List<PrShiftGroup> _groups = [];
+    private string? _machineCd, _copyTarget, _selectedGroupCd;
+    private int _year = DateTime.Today.Year;
+    private List<MachineCalendarDayVm> _days = [];
+    private Dictionary<DateOnly, string> _dayCodes = new();
+    private Dictionary<DateOnly, string> _shiftColors = new();
+    private Dictionary<DateOnly, string> _holidayMap = new();
+    private string _fingerprint = "";
+    private string? _message; private bool _ok;
+    private int _copyPreviewRows;
+    private bool _dirty, _busy;
+    private string _paintMode = "O";
+    private readonly HashSet<DayOfWeek> _offWeekdays = new() { DayOfWeek.Saturday, DayOfWeek.Sunday };
+    private readonly HashSet<DayOfWeek> _workWeekdays = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var m = await MachineService.ListAsync();
+        if (m.Succeeded) _machines = m.Value!.ToList();
+        var g = await GroupService.ListGroupsAsync();
+        if (g.Succeeded) _groups = g.Value!.GroupBy(x => x.ShfGrpCd).Select(x => x.First()).ToList();
+        var h = await HolidayService.ListAsync(_year);
+        if (h.Succeeded)
+        {
+            _holidayMap = h.Value!
+                .Where(x => x.DateOff is not null)
+                .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
+                .ToDictionary(x => x.Key, x => x.First().Description ?? "Holiday");
+        }
+    }
+
+    private void ToggleOff(DayOfWeek day, bool on)
+    {
+        if (on) { _offWeekdays.Add(day); _workWeekdays.Remove(day); }
+        else _offWeekdays.Remove(day);
+    }
+
+    private void ToggleWork(DayOfWeek day, bool on)
+    {
+        if (on) { _workWeekdays.Add(day); _offWeekdays.Remove(day); }
+        else _workWeekdays.Remove(day);
+    }
+
+    private void SyncMaps()
+    {
+        _dayCodes = _days.ToDictionary(d => DateOnly.FromDateTime(d.Date), d => d.DateCd == "O" ? "O" : "W");
+        var colorByGroup = _groups
+            .GroupBy(g => g.ShfGrpCd, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => NormalizeColor(g.First().ShiftColor), StringComparer.OrdinalIgnoreCase);
+        _shiftColors = _days
+            .Where(d => d.DateCd == "W" && !string.IsNullOrWhiteSpace(d.ShfGrpCd))
+            .ToDictionary(
+                d => DateOnly.FromDateTime(d.Date),
+                d => colorByGroup.GetValueOrDefault(d.ShfGrpCd!, "#c5d4c8"));
+    }
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_machineCd)) return;
+        var r = await MacCalService.LoadYearAsync(_machineCd, _year);
+        if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
+        _days = r.Value.Days.ToList();
+        _fingerprint = r.Value.Fingerprint;
+        SyncMaps();
+        _message = null;
+        _copyPreviewRows = 0;
+        _dirty = false;
+    }
+
+    private Task OnDayPainted((DateOnly Date, string DateCd) paint)
+    {
+        var existing = _days.FirstOrDefault(d => DateOnly.FromDateTime(d.Date) == paint.Date);
+        var shf = paint.DateCd == "W" ? _selectedGroupCd : null;
+        if (existing is null)
+        {
+            _days.Add(new MachineCalendarDayVm
+            {
+                Date = paint.Date.ToDateTime(TimeOnly.MinValue),
+                DateCd = paint.DateCd,
+                ShfGrpCd = shf
+            });
+        }
+        else
+        {
+            existing.DateCd = paint.DateCd;
+            existing.ShfGrpCd = shf;
+        }
+        SyncMaps();
+        _dirty = true;
+        return Task.CompletedTask;
+    }
+
+    private async Task GenerateAsync()
+    {
+        var holidays = _holidayMap.Keys.ToHashSet();
+        string? defaultGrp = null;
+        if (MachineCalendarGenerator.RequiresDefaultGroup(_offWeekdays, _workWeekdays))
+        {
+            var def = await GroupPlanning.GetDefaultGroupAsync();
+            if (!def.Succeeded || def.Value is null)
+            {
+                _ok = false;
+                _message = def.Message ?? "Default shift group is required for fallback weekdays.";
+                return;
+            }
+            defaultGrp = def.Value.ShiftGroupCode;
+        }
+
+        var gen = MachineCalendarGenerator.Generate(new MachineCalendarGenerator.GenerateRequest
+        {
+            Year = _year,
+            OffWeekdays = _offWeekdays,
+            WorkWeekdays = _workWeekdays,
+            SelectedShiftGroupCd = _selectedGroupCd,
+            DefaultShiftGroupCd = defaultGrp,
+            HolidayDates = holidays
+        });
+        if (!gen.Succeeded || gen.Value is null)
+        {
+            _ok = false;
+            _message = gen.Message;
+            return;
+        }
+
+        _days = gen.Value.ToList();
+        SyncMaps();
+        _dirty = true;
+        _ok = true;
+        _message = "Generated draft calendar (not saved).";
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_machineCd)) return;
+        foreach (var d in _days)
+        {
+            if (d.DateCd == "O") d.ShfGrpCd = null;
+        }
+        _busy = true;
+        try
+        {
+            var r = await MacCalService.SaveYearAsync(_machineCd, _year, _days, _fingerprint);
+            _ok = r.Succeeded; _message = r.Message;
+            if (r.Succeeded && r.Value is not null)
+            {
+                _fingerprint = r.Value.NewFingerprint;
+                await LoadAsync();
+            }
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task PreviewCopyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_machineCd) || string.IsNullOrWhiteSpace(_copyTarget)) return;
+        var target = await MacCalService.LoadYearAsync(_copyTarget, _year);
+        if (!target.Succeeded) { _ok = false; _message = target.Message; return; }
+        _copyPreviewRows = target.Value.Days.Count;
+        if (_copyPreviewRows == 0) { await CopyAsync(overwrite: false); return; }
+        _ok = false;
+        _message = $"Target has {_copyPreviewRows} day(s). Confirm overwrite or cancel.";
+    }
+
+    private async Task CopyAsync(bool overwrite)
+    {
+        if (string.IsNullOrWhiteSpace(_machineCd) || string.IsNullOrWhiteSpace(_copyTarget)) return;
+        var r = await MacCalService.CopyYearAsync(_machineCd, _copyTarget, _year, overwrite);
+        _ok = r.Succeeded; _message = r.Message;
+        if (r.Succeeded) _copyPreviewRows = 0;
+    }
+
+    private async Task CopyAllAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_machineCd)) return;
+        var r = await MacCalService.CopyYearToAllAsync(_machineCd, _year, overwrite: false);
+        if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
+        var summary = r.Value!;
+        _ok = true;
+        _message = summary.Skipped > 0
+            ? $"Copy ALL: copied {summary.Copied}, skipped {summary.Skipped} (already have year)."
+            : $"Copy ALL: copied {summary.Copied} machine(s).";
+    }
+
+    private void CancelCopy()
+    {
+        _copyPreviewRows = 0;
+        _message = "Copy cancelled.";
+        _ok = true;
+    }
+
+    private static string NormalizeColor(string? c)
+    {
+        if (string.IsNullOrWhiteSpace(c)) return "#6c757d";
+        return c.StartsWith('#') ? c : "#" + c;
+    }
+}

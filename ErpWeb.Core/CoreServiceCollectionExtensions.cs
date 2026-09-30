@@ -1,23 +1,16 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
-
+using ErpWeb.Core.Planning;
+using ErpWeb.Core.Production;
 using ErpWeb.Core.Sales;
-
 using ErpWeb.Core.Purchase;
-
 using ErpWeb.Core.Menus;
-
 using ErpWeb.Core.Numbering;
-
 using ErpWeb.Core.Security;
-
 using ErpWeb.Core.Services;
-
 using Microsoft.Extensions.Configuration;
-
 using Microsoft.Extensions.DependencyInjection;
-
 using Microsoft.Extensions.Options;
 
 
@@ -171,6 +164,46 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaDocFlowQuery, SaDocFlowQuery>();
 
         services.AddScoped<IIvStockMasterService, IvStockMasterService>();
+        // Single owner of item UOM conversion (Production Work Order Enhancement Plan §5.5).
+        services.AddScoped<IUomConversionService, IvUomConversionService>();
+
+
+        services.AddScoped<IPrProductDefService, PrProductDefService>();
+        services.AddScoped<BomExplosionService>();
+        services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
+        services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
+        // Version-2 snapshot quantity contract (plan §7.3).
+        services.AddScoped<IWorkOrderQuantityCalculator, WorkOrderQuantityCalculator>();
+        services.AddScoped<IWorkOrderReadinessValidator, WorkOrderReadinessValidator>();
+        // Resolves the exact Product Definition revision for snapshot creation (plan §7.2).
+        services.AddScoped<IProductDefinitionSnapshotLoader, ProductDefinitionSnapshotLoader>();
+        // Builds the version-2 snapshot graph from the resolved revision (plan §7.1–§7.4).
+        services.AddScoped<IWorkOrderSnapshotBuilder, WorkOrderSnapshotBuilder>();
+        services.AddScoped<IWorkOrderCalendarProvider, WorkOrderCalendarProvider>();
+        services.AddScoped<IWorkOrderScheduleCalculator, WorkOrderScheduleCalculator>();
+        services.Configure<ProductionWorkOrderOptions>(
+            configuration.GetSection(ProductionWorkOrderOptions.SectionName));
+        services.AddScoped<IProductionCalendarScheduleDataLoader, ProductionCalendarScheduleDataLoader>();
+
+        services.AddScoped<IPlanningMasterAccess, PlanningMasterAccess>();
+        services.AddScoped<IPlanningDependencyChecker, PlanningDependencyChecker>();
+        services.AddScoped<IPrWorkCentreService, PrWorkCentreService>();
+        services.AddScoped<IPrProcessService, PrProcessService>();
+        services.AddScoped<IPrMachineService, PrMachineService>();
+        services.AddScoped<IPrHierarchyService, PrHierarchyService>();
+        services.AddScoped<IPrShiftService, PrShiftService>();
+        services.AddScoped<IPrShiftGroupService, PrShiftGroupService>();
+        services.AddScoped<IPrShiftGroupPlanningService, PrShiftGroupPlanningService>();
+        services.AddScoped<IPrCalendarService, PrCalendarService>();
+        services.AddScoped<IPrShiftCalendarService, PrShiftCalendarService>();
+        services.AddScoped<IPrHolidayService, PrHolidayService>();
+        services.AddHttpClient(nameof(CalendarificHolidayClient));
+        services.AddScoped<ICalendarificHolidayClient, CalendarificHolidayClient>();
+        services.AddScoped<IPrOperatorService, PrOperatorService>();
+        services.AddScoped<IPrWorkPrefixService, PrWorkPrefixService>();
+        services.AddScoped<IPrMacSeqService, PrMacSeqService>();
+        services.AddScoped<IPrPreventiveService, PrPreventiveService>();
+        services.AddScoped<IPrDefImportService, PrDefImportService>();
 
         services.AddScoped<IIvInventoryRefService, IvInventoryRefService>();
 

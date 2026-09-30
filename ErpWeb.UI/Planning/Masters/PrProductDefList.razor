@@ -1,0 +1,187 @@
+@page "/planning/product-definitions"
+@inherits PageBase
+@using ErpWeb.Core.Planning
+@using ErpWeb.UI.Inventory.Lookups
+
+<PageTitle>Product Definition</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningProductDef">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-diagram-project"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning</p>
+                <h1 class="iv-title">Product Definition</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>BOMs</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search product code or description…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PrProductDefListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(PrProductDefListRow.ProdCode)"
+                                      GridKey="pln-product-def-list"
+                                      Title="Product Definitions"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No product definitions match the current filters.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
+                        {
+                            <button type="button" class="iv-compact-row" @onclick="@(() => OpenView(row.ProdCode))">
+                                <div class="iv-compact-row__title">
+                                    <span class="code-style">@row.ProdCode</span>
+                                    <span>@row.ProdDesc</span>
+                                </div>
+                                <div class="iv-compact-row__meta">
+                                    <span>@row.BomItemCount components</span>
+                                    <span>@(row.IsActive ? "Active" : "Inactive")</span>
+                                </div>
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </section>
+
+        <DxPopup HeaderText="Filter product definitions"
+                 CloseOnOutsideClick="false"
+                 Width="520px"
+                 CssClass="common-popup"
+                 @bind-Visible="@FilterPopupVisible">
+            <Content>
+                <div class="iv-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Product code" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftProdCode" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Product description" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftProdDesc" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Component code" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftComponentCode" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Component description" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftComponentDesc" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="12">
+                            <Template>
+                                <IvCodeComboBox Data="@Warehouses" @bind-Value="@DraftWarehouse" NullText="Any warehouse" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Active" ColSpanMd="12">
+                            <Template>
+                                <DxComboBox Data="@ActiveFilterOptions"
+                                            TextFieldName="@nameof(ActiveFilterOption.Name)"
+                                            ValueFieldName="@nameof(ActiveFilterOption.Key)"
+                                            @bind-Value="@DraftActiveKey"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+            </Content>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Confirm delete"
+                 @bind-Visible="@ConfirmVisible"
+                 CloseOnOutsideClick="false"
+                 Width="420px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">@ConfirmMessage</p>
+                <p class="text-muted small mb-0">This removes the BOM definition only. Stock Master items are not deleted.</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ConfirmVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Delete" Click="@ConfirmDeleteAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

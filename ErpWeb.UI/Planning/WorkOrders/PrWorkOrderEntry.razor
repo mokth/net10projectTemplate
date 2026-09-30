@@ -1,0 +1,529 @@
+@page "/planning/work-orders/{Mode:regex(^(new|edit|view)$)}"
+@page "/planning/work-orders/{Mode:regex(^(new|edit|view)$)}/{WorkOrderNo}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningWorkOrder">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-industry"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Production Work Order</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    @if (!string.IsNullOrWhiteSpace(CurrentWorkOrderNo))
+                    {
+                        <span class="iv-chip code-style">@CurrentWorkOrderNo</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Request.ProductCode))
+                    {
+                        <span class="iv-chip code-style">@Request.ProductCode</span>
+                    }
+                    <span class="iv-chip">@CurrentStatus</span>
+                    @if (CurrentBomVersion is int version)
+                    {
+                        <span class="iv-chip">BOM V@version</span>
+                    }
+                    @if (CurrentSnapshotRevision is int revision)
+                    {
+                        <span class="iv-chip">Snapshot @revision</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Planned Qty</span>
+                <strong>@Request.PlannedQty.ToString("N4")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card pwo-commandbar">
+            <div class="pwo-commandbar__left">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="BACK"
+                          IconCssClass="fa-solid fa-arrow-left"
+                          Click="@BackToList" />
+                @if (CanOpenEdit)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="EDIT DRAFT"
+                              IconCssClass="fa-regular fa-pen-to-square"
+                              Click="@OpenEdit" />
+                }
+            </div>
+            <div class="pwo-commandbar__right">
+                @if (CanEditFields)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="PROCESS PREVIEW"
+                              IconCssClass="fa-solid fa-gears"
+                              Click="@ProcessPreviewAsync"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="SAVE DRAFT"
+                              IconCssClass="fa-regular fa-floppy-disk"
+                              Click="@SaveDraftAsync"
+                              Enabled="@(!IsSubmitting)" />
+                    @if (IsCurrentSnapshot)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="RECALCULATE"
+                                  IconCssClass="fa-solid fa-calendar-days"
+                                  Click="@RecalculateScheduleAsync"
+                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="REFRESH DEFINITION"
+                                  IconCssClass="fa-solid fa-rotate"
+                                  Click="@OpenRefreshAsync"
+                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                    }
+                }
+                @if (CanReleaseAction)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Success"
+                              Text="RELEASE"
+                              IconCssClass="fa-solid fa-paper-plane"
+                              Click="@(() => ReleaseConfirmVisible = true)"
+                              Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanCancelAction)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="CANCEL DRAFT"
+                              IconCssClass="fa-solid fa-ban"
+                              Click="@OpenCancelPopup"
+                              Enabled="@(!IsSubmitting)" />
+                }
+            </div>
+        </section>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="iv-card">
+                <header class="pwo-section-head">
+                    <div>
+                        <h2 class="iv-card__title mb-0">Order and snapshot inputs</h2>
+                        <p class="pwo-section-note mb-0">Process Preview is informational. Save recalculates the snapshot on the server.</p>
+                    </div>
+                    <span class="pwo-snapshot-state">@SnapshotState</span>
+                </header>
+
+                <div class="pwo-form-grid">
+                    <div class="iv-field pwo-span-2">
+                        <label class="iv-field__label code-style">Product</label>
+                        <IvStockMasterPicker ICode="@Request.ProductCode"
+                                             ICodeChanged="OnProductCodeChanged"
+                                             Selected="OnProductSelectedAsync"
+                                             Enabled="@CanEditFields"
+                                             InputCssClass="required-field code-style" />
+                        @FieldError("ProductCode")
+                    </div>
+                    <div class="iv-field pwo-span-2">
+                        <label class="iv-field__label">Product description</label>
+                        <DxTextBox Text="@CurrentProductDescription" ReadOnly="true" NullText="From Stock Master / snapshot" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Planned quantity</label>
+                        <DxSpinEdit @bind-Value="@Request.PlannedQty"
+                                    MinValue="0.0001m"
+                                    DisplayFormat="n4"
+                                    ShowSpinButtons="false"
+                                    ReadOnly="@(!CanEditFields)" />
+                        @FieldError("PlannedQty")
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Output UOM</label>
+                        <DxTextBox Text="@CurrentOutputUom" ReadOnly="true" InputCssClass="code-style" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">BOM as-of date</label>
+                        <DxDateEdit @bind-Date="@Request.SnapshotAsOfDate" ReadOnly="@(!CanEditFields)" />
+                        @FieldError("SnapshotAsOfDate")
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Schedule direction</label>
+                        <DxComboBox Data="@DirectionOptions"
+                                    TextFieldName="@nameof(Option.Name)"
+                                    ValueFieldName="@nameof(Option.Key)"
+                                    @bind-Value="@Request.SchedulingDirection"
+                                    Enabled="@CanEditFields" />
+                        @FieldError("SchedulingDirection")
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Planned start</label>
+                        <DxDateEdit @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditFields)" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Planned completion</label>
+                        <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditFields)" />
+                        @FieldError("PlannedCompletionDate")
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Source type</label>
+                        <DxComboBox Data="@SourceOptions"
+                                    TextFieldName="@nameof(Option.Name)"
+                                    ValueFieldName="@nameof(Option.Key)"
+                                    @bind-Value="@Request.SourceType"
+                                    Enabled="@CanEditFields" />
+                    </div>
+                    <div class="iv-field pwo-span-2">
+                        <label class="iv-field__label">Source reference</label>
+                        <DxTextBox @bind-Text="@Request.SourceReference"
+                                   ReadOnly="@(!CanEditFields)"
+                                   NullText="Optional manual demand reference" />
+                        @FieldError("SourceReference")
+                    </div>
+                    <div class="iv-field pwo-span-all">
+                        <label class="iv-field__label">Remark</label>
+                        <DxMemo @bind-Text="@Request.Remark" Rows="3" ReadOnly="@(!CanEditFields)" NullText="Optional production note" />
+                        @FieldError("Remark")
+                    </div>
+                </div>
+            </section>
+
+            @if (SnapshotWarnings.Count > 0)
+            {
+                <section class="iv-card pwo-warning-card">
+                    <h2 class="iv-card__title">Snapshot notices</h2>
+                    <ul class="mb-0">
+                        @foreach (var warning in SnapshotWarnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            <section class="pwo-kpis" aria-label="Work Order overview">
+                @Kpi("Planned", Request.PlannedQty.ToString("n4"), CurrentOutputUom)
+                @Kpi("Good", GoodQty.ToString("n4"), CurrentOutputUom)
+                @Kpi("Remaining", RemainingQty.ToString("n4"), CurrentOutputUom)
+                @Kpi("Material issue", "Gated", "WO_EXECUTION_NOT_APPROVED")
+                @Kpi("Production", "Gated", "Posted facts are not active")
+                @Kpi("Current WIP", "Gated", "Execution gate pending")
+                @Kpi("FG received", "Gated", "No FG posting")
+                @Kpi("Shortage", "Gated", "Reservation policy pending")
+            </section>
+
+            <section class="iv-card pwo-tabs">
+                <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                    <DxTabPage Text="OVERVIEW">
+                        <div class="pwo-overview-grid">
+                            @Detail("Work Order", CurrentWorkOrderNo)
+                            @Detail("Status", CurrentStatus)
+                            @Detail("Product", Request.ProductCode)
+                            @Detail("BOM revision", CurrentBomVersion?.ToString())
+                            @Detail("BOM base", BomBaseLabel)
+                            @Detail("Effective date", CurrentSnapshotDate?.ToString("dd MMM yyyy"))
+                            @Detail("Snapshot", SnapshotFormatLabel)
+                            @Detail("Snapshot revision", DetailModel?.SnapshotRevision.ToString())
+                            @Detail("Direction", Request.SchedulingDirection)
+                            @Detail("Schedule", $"{Request.PlannedStartDate:dd MMM yyyy HH:mm} → {Request.PlannedCompletionDate:dd MMM yyyy HH:mm}")
+                            @Detail("Source", SourceLabel)
+                            @Detail("Remark", string.IsNullOrWhiteSpace(Request.Remark) ? "—" : Request.Remark)
+                            @Detail("Snapshot hash", ShortSnapshotHash)
+                            @Detail("Created", CreatedLabel)
+                            @Detail("Updated", UpdatedLabel)
+                            @Detail("Released", ReleasedLabel)
+                        </div>
+                    </DxTabPage>
+                    <DxTabPage Text="ROUTE">
+                        @if (RouteRows.Count == 0)
+                        {
+                            <p class="pwo-empty">Route steps appear after a version-2 Draft is saved.</p>
+                        }
+                        else
+                        {
+                            <p class="pwo-empty">Equal stage sequences run in parallel. Select a work center to filter operations.</p>
+                            <DxGrid Data="@RouteRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
+                                    FocusedRowEnabled="true" FocusedRowChanged="OnRouteFocused">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.StageSequence)" Caption="Stage" Width="70px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.WorkCentreCode)" Caption="Work Center" Width="130px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputItemCode)" Caption="Output" Width="130px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedQty)" Caption="Planned" DisplayFormat="n4" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputUom)" Caption="UOM" Width="70px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn Caption="Duration" Width="100px">
+                                        <CellDisplayTemplate>
+                                            @DurationLabel(((ProductionWorkOrderRouteStepVm)context.DataItem).PlannedStartDateTime, ((ProductionWorkOrderRouteStepVm)context.DataItem).PlannedCompletionDateTime)
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                    <DxTabPage Text="OPERATIONS">
+                        @if (VisibleOperationRows.Count == 0)
+                        {
+                            <div class="pwo-empty-state">
+                                <i class="fa-solid fa-route" aria-hidden="true"></i>
+                                <strong>No routing snapshot</strong>
+                                <span>No process rows for this product, or Process Preview has not been run yet.</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="pwo-empty">Select a process to filter materials. Machines and labour list every process in the current route scope.</p>
+                            <DxGrid Data="@VisibleOperationRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
+                                    FocusedRowEnabled="true" FocusedRowChanged="OnOperationFocused">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.ProcessSequence)" Caption="Process" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationCode)" Caption="Code" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationDescription)" Caption="Description" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.ProcessType)" Caption="Type" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.IsFinalOperation)" Caption="Final" Width="70px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedInputQty)" Caption="Input" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedInputUom)" Caption="In UOM" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedOutputQty)" Caption="Output" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedOutputUom)" Caption="Out UOM" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.StandardDurationMinutes)" Caption="Duration min" DisplayFormat="n4" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedStartDate)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedCompletionDate)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.SetupLossQty)" Caption="Setup loss" DisplayFormat="n4" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationLossQty)" Caption="Op loss" DisplayFormat="n4" Width="90px" />
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                    <DxTabPage Text="MATERIALS">
+                        @if (VisibleMaterialRows.Count == 0)
+                        {
+                            <p class="pwo-empty">Run Process Preview to inspect material requirements.</p>
+                        }
+                        else
+                        {
+                            <DxGrid Data="@VisibleMaterialRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.MaterialSequence)" Caption="#" Width="55px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentCode)" Caption="Component" Width="130px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentDescription)" Caption="Description" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ConsumingOperationCode)" Caption="Process" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentQtyPerParent)" Caption="Std Qty" DisplayFormat="n4" Width="95px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.StandardUom)" Caption="Std UOM" Width="85px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredQty)" Caption="Required" DisplayFormat="n4" Width="105px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredUom)" Caption="UOM" Width="70px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredBaseQty)" Caption="Base Qty" DisplayFormat="n4" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.BaseUom)" Caption="Base UOM" Width="85px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ScrapPercent)" Caption="Scrap %" DisplayFormat="n4" Width="95px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.Tolerance)" Caption="Tolerance %" DisplayFormat="n4" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.IssueMethod)" Caption="Issue" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.SupplySource)" Caption="Supply" Width="140px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.WarehouseCode)" Caption="Warehouse" Width="100px" />
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                    <DxTabPage Text="MACHINES">
+                        @if (VisibleMachineRows.Count == 0)
+                        {
+                            <p class="pwo-empty">Machine options appear on machine-based operations.</p>
+                        }
+                        else
+                        {
+                            <DxGrid Data="@VisibleMachineRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.OperationCode)" Caption="Process" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.Priority)" Caption="Priority" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.MachineCode)" Caption="Machine" Width="120px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.IsDefault)" Caption="Default" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.IsSelected)" Caption="Selected" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.ParallelMachineCount)" Caption="Parallel" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.CycleQuantityMode)" Caption="Cycle mode" Width="120px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.CycleSeconds)" Caption="Cycle sec" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.OutputPerCycle)" Caption="Per cycle" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.OutputPerCycleUom)" Caption="Cycle UOM" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.RequiredMachineOutputQty)" Caption="Required" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.RequiredMachineOutputUom)" Caption="Req UOM" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedCycleCount)" Caption="Cycles" DisplayFormat="n4" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedCycleSlots)" Caption="Slots" DisplayFormat="n4" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedRunMinutes)" Caption="Run min" DisplayFormat="n4" Width="80px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.SetupSeconds)" Caption="Setup sec" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.ConversionSeconds)" Caption="Conv sec" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.QueueSeconds)" Caption="Queue sec" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                    <DxTabPage Text="LABOUR">
+                        @if (VisibleLabourRows.Count == 0)
+                        {
+                            <p class="pwo-empty">Labour standards appear after a version-2 Draft is saved.</p>
+                        }
+                        else
+                        {
+                            <DxGrid Data="@VisibleLabourRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.OperationCode)" Caption="Process" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.MachineCode)" Caption="Machine" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourCode)" Caption="Labour" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourDescription)" Caption="Description" />
+                                    <DxGridDataColumn Caption="Units" Width="90px">
+                                        <CellDisplayTemplate>
+                                            @OptionalQty(((ProductionWorkOrderLabourVm)context.DataItem).PlannedUnits)
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                    <DxGridDataColumn Caption="Minutes" Width="90px">
+                                        <CellDisplayTemplate>
+                                            @OptionalQty(((ProductionWorkOrderLabourVm)context.DataItem).PlannedMinutes)
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.RateBasis)" Caption="Rate basis" Width="140px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.Rate)" Caption="Rate" DisplayFormat="n4" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.ContributesToPlan)" Caption="Contributes" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.PlannedAmount)" Caption="Amount" DisplayFormat="n4" Width="100px" />
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                    <DxTabPage Text="EXECUTION GATE">
+                        <div class="pwo-gate-grid">
+                            @Gate("Reservation / allocation", "Pending approved competition and priority policy")
+                            @Gate("Material issue / return", "Pending atomic inventory posting adapter")
+                            @Gate("WIP and operation completion", "Pending quantity and transfer contract")
+                            @Gate("Finished goods", "Pending WIP and cost-conservation contract")
+                            @Gate("Costs and variances", "Pending valuation, approval and future GL mapping")
+                        </div>
+                    </DxTabPage>
+                    <DxTabPage Text="AUDIT">
+                        @if (AuditRows.Count == 0)
+                        {
+                            <p class="pwo-empty">Audit events appear after the Draft is saved.</p>
+                        }
+                        else
+                        {
+                            <DxGrid Data="@AuditRows" PageSize="20" TextWrapEnabled="true" CssClass="w-100">
+                                <Columns>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.OccurredDate)" Caption="Date" DisplayFormat="dd MMM yyyy HH:mm:ss" Width="170px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.EventType)" Caption="Event" Width="155px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.FromStatus)" Caption="From" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ToStatus)" Caption="To" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.SnapshotRevision)" Caption="Snapshot" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ActorUserId)" Caption="User" Width="90px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.Reason)" Caption="Reason" />
+                                </Columns>
+                            </DxGrid>
+                        }
+                    </DxTabPage>
+                </DxTabs>
+            </section>
+        }
+
+        <DxPopup HeaderText="Release Work Order"
+                 @bind-Visible="@ReleaseConfirmVisible"
+                 CloseOnOutsideClick="false"
+                 Width="460px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">Release @CurrentWorkOrderNo for execution?</p>
+                <p class="text-muted small mb-0">The product, BOM revision, schedule and snapshot lines become read-only. This action does not post inventory.</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => ReleaseConfirmVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Release" Click="@ReleaseAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Cancel Draft Work Order"
+                 @bind-Visible="@CancelConfirmVisible"
+                 CloseOnOutsideClick="false"
+                 Width="480px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">Cancel @CurrentWorkOrderNo?</p>
+                <div class="iv-field">
+                    <label class="iv-field__label">Reason</label>
+                    <DxMemo @bind-Text="@CancellationReason" Rows="3" NullText="Required cancellation reason" />
+                    @FieldError("CancellationReason")
+                </div>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => CancelConfirmVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Draft" Click="@CancelDraftAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Work Order changed"
+                 @bind-Visible="@ConcurrencyVisible"
+                 CloseOnOutsideClick="false"
+                 Width="460px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">Another user or process changed this Work Order. Reload the latest saved version before continuing.</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload latest" Click="@ReloadLatestAsync" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Refresh from Product Definition"
+                 @bind-Visible="@RefreshVisible"
+                 CloseOnOutsideClick="false"
+                 Width="520px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">This replaces the Draft snapshot. Released orders are never refreshed.</p>
+                @if (RefreshPreviewModel is not null)
+                {
+                    <p class="text-muted small">Added @RefreshPreviewModel.Added.Count, removed @RefreshPreviewModel.Removed.Count, changed @RefreshPreviewModel.Changed.Count.</p>
+                }
+                <input class="form-control" @bind="RefreshReason" placeholder="Reason" />
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => RefreshVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Confirm refresh" Click="@ConfirmRefreshAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Discard changes?"
+                 @bind-Visible="@ConfirmDiscardVisible"
+                 CloseOnOutsideClick="false"
+                 Width="440px">
+            <BodyContentTemplate>
+                <p class="iv-confirm__copy">You have unprocessed or unsaved Work Order changes. Discard them and return to the list?</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>
+
