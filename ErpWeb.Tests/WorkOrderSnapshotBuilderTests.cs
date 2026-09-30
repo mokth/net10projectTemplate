@@ -650,4 +650,19 @@ public sealed class WorkOrderSnapshotBuilderTests : IAsyncLifetime
             request.PlannedCompletionDateTime,
             result.WorkOrder!.ScheduleAnchorDateTime);
     }
+
+    [Fact]
+    public async Task Explicit_schedule_anchor_is_preserved_instead_of_derived_from_result_dates()
+    {
+        var request = Request();
+        request.SchedulingDirection = ProductionSchedulingDirections.Backward;
+        request.PlannedStartDateTime = new DateTime(2026, 7, 21, 9, 0, 0);
+        request.PlannedCompletionDateTime = new DateTime(2026, 7, 24, 16, 0, 0);
+        request.ScheduleAnchorDateTime = new DateTime(2026, 7, 25).AddTicks(-1);
+        await PersistAsync(Revision());
+
+        var result = await _builder.BuildAsync(request);
+
+        Assert.Equal(request.ScheduleAnchorDateTime, result.WorkOrder!.ScheduleAnchorDateTime);
+    }
 }

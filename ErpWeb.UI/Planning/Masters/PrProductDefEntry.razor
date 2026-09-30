@@ -587,6 +587,12 @@
                                             <label class="iv-field__label">Default</label>
                                             <DxCheckBox @bind-Checked="@LineBomDefault" AllowIndeterminateState="false" />
                                         </div>
+                                        <div class="iv-field pdf-field-code">
+                                            <label class="iv-field__label code-style">Alternate group</label>
+                                            <DxTextBox @bind-Text="@LineAlternateGroupCode"
+                                                       NullText="Defaults to item code"
+                                                       InputCssClass="code-style" />
+                                        </div>
                                         <div class="iv-field pdf-field-qty">
                                             <label class="iv-field__label">Tolerance</label>
                                             <DxSpinEdit @bind-Value="@LineTolerance" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />

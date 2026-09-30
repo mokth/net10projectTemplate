@@ -31,6 +31,12 @@ public class ProductionWorkOrderMaterial
     public long? SourceOperationId { get; set; }
 
     /// <summary>
+    /// Frozen <c>PrDefBOM.AlternateGroupCode</c> from the source revision. Null on legacy snapshots
+    /// or when the source line was never grouped.
+    /// </summary>
+    public string? AlternateGroupCode { get; set; }
+
+    /// <summary>
     /// Legacy line number. Superseded by <see cref="MaterialSequence"/>; retained so version-1
     /// rows keep their identity.
     /// </summary>

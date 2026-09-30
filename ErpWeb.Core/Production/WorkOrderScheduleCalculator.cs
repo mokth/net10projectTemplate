@@ -311,6 +311,7 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
             machine.ScheduleSourceHash = hash;
             operation.CalendarSourceType = ProductionCalendarSourceTypes.Machine;
             operation.CalendarSourceId = slice.SourceId;
+            operation.CalendarSourceLastModified = slice.LastModified;
             operation.CalendarHorizonStart = machine.CalendarHorizonStart;
             operation.CalendarHorizonEnd = machine.CalendarHorizonEnd;
             operation.ScheduleSourceHash = hash;

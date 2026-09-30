@@ -22,7 +22,8 @@ public sealed partial class ProductionWorkOrderService
         }
 
         var scope = auth.Scope!;
-        var built = await BuildCurrentSnapshotAsync(scope, request, snapshotRevision: 1, cancellationToken);
+        var built = await BuildCurrentSnapshotAsync(
+            scope, request, snapshotRevision: 1, explicitScheduleAnchor: null, cancellationToken);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
@@ -91,9 +92,21 @@ public sealed partial class ProductionWorkOrderService
             var direction = string.IsNullOrWhiteSpace(request.SchedulingDirection)
                 ? entity.SchedulingDirection
                 : Normalize(request.SchedulingDirection);
+            if (!ProductionSchedulingDirections.IsKnown(direction))
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "Schedule direction must be FORWARD or BACKWARD.");
+            }
             var anchor = request.ScheduleAnchorDateTime ?? entity.ScheduleAnchorDateTime;
             var scheduleChanged = !string.Equals(entity.SchedulingDirection, direction, StringComparison.Ordinal)
                 || entity.ScheduleAnchorDateTime != anchor;
+
+            if (qtyChanged || scheduleChanged)
+            {
+                await WorkOrderSchedulingLock.AcquireAsync(
+                    db, auth.Scope!.CompanyCode, exclusive: false, cancellationToken);
+            }
 
             entity.PlannedQty = request.PlannedQty;
             entity.RemainingQty = request.PlannedQty;
@@ -134,6 +147,13 @@ public sealed partial class ProductionWorkOrderService
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SchedulingSourceBusy + ": " + ex.Message);
         }
         catch (WorkOrderCommandException ex)
         {
@@ -228,7 +248,8 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can refresh from its Product Definition.");
         }
 
-        var built = await BuildCurrentSnapshotAsync(auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision, cancellationToken);
+        var built = await BuildCurrentSnapshotAsync(
+            auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderRefreshPreview>.Fail(
@@ -270,7 +291,8 @@ public sealed partial class ProductionWorkOrderService
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
             var built = await BuildCurrentSnapshotAsync(
-                auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision + 1, cancellationToken);
+                auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision + 1,
+                entity.ScheduleAnchorDateTime, cancellationToken);
             if (built.WorkOrder is null)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -331,6 +353,336 @@ public sealed partial class ProductionWorkOrderService
             }
 
             return await FinishCurrentReleaseAsync(db, tx, entity, scope, request, cancellationToken);
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SchedulingSourceBusy + ": " + ex.Message);
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return Concurrency<ProductionWorkOrderDetail>();
+        }
+    }
+
+    public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SelectDraftMachineAsync(
+        ProductionWorkOrderMachineSelectRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request ??= new ProductionWorkOrderMachineSelectRequest();
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(auth.Error.Value.Code, auth.Error.Value.Message);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, auth.Scope!.CompanyCode, exclusive: false, cancellationToken);
+            var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            RequireCurrentSnapshot(entity);
+            RequireSnapshotFingerprint(entity, request.SnapshotRevision, request.SnapshotHash);
+
+            var operation = entity.Operations.FirstOrDefault(o => o.Uid == request.WorkOrderOperationId)
+                ?? entity.RouteSteps.SelectMany(s => s.Operations).FirstOrDefault(o => o.Uid == request.WorkOrderOperationId);
+            if (operation is null)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "The requested Work Order operation was not found on this Draft.");
+            }
+
+            var target = operation.Machines.FirstOrDefault(m => m.Uid == request.WorkOrderMachineId);
+            if (target is null)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "The requested machine does not belong to that operation.");
+            }
+
+            if (target.IsSelected)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+            }
+
+            var previous = operation.Machines.FirstOrDefault(m => m.IsSelected);
+            foreach (var machine in operation.Machines.Where(m => m.IsSelected))
+            {
+                machine.IsSelected = false;
+                ClearMachineScheduleProvenance(machine);
+            }
+
+            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+
+            target.IsSelected = true;
+            SyncMachineLabourContribution(operation);
+            ClearOperationScheduleProvenance(operation);
+
+            var quantities = await _quantities.CalculateAsync(entity, cancellationToken);
+            if (!quantities.Succeeded)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.Validation, quantities.Summary);
+            }
+
+            var scheduled = await _scheduler.ScheduleAsync(entity, cancellationToken);
+            if (!scheduled.Succeeded)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    scheduled.FailureCode + ": " + scheduled.FailureMessage);
+            }
+
+            entity.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
+            entity.SnapshotRevision += 1;
+            var reason = string.IsNullOrWhiteSpace(request.Reason)
+                ? $"Selected machine {target.MachineCode} for operation {operation.OperationCode}"
+                    + (previous is null ? "." : $" (was {previous.MachineCode}).")
+                : request.Reason.Trim();
+            StampDraftAudit(entity, auth.Scope!, ProductionAuditEventTypes.MachineSelected, reason);
+            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SchedulingSourceBusy + ": " + ex.Message);
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return Concurrency<ProductionWorkOrderDetail>();
+        }
+    }
+
+    public async Task<IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>> GetDraftMaterialAlternatesAsync(
+        string workOrderNo,
+        long workOrderMaterialId,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
+                auth.Error.Value.Code, auth.Error.Value.Message);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await LoadAggregateAsync(db, auth.Scope!, Normalize(workOrderNo), tracking: false, cancellationToken);
+        if (entity is null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
+                IvMasterErrorCode.NotFound, "Work Order not found.");
+        }
+
+        if (!ProductionWorkOrderRules.CanEdit(entity.Status))
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
+                IvMasterErrorCode.Validation, "Only a Draft Work Order can change materials.");
+        }
+
+        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                + ": Refresh this legacy Draft from its Product Definition before editing it.");
+        }
+
+        var material = entity.Materials.FirstOrDefault(m => m.Uid == workOrderMaterialId);
+        if (material is null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
+                IvMasterErrorCode.NotFound, "The Work Order material was not found.");
+        }
+
+        var group = PrBomAlternateGroups.Normalize(material.AlternateGroupCode);
+        if (material.SourceBomHdrId is null
+            || material.SourceBomLineId is null
+            || material.SourceOperationId is null
+            || group is null)
+        {
+            return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Ok([]);
+        }
+
+        var candidates = await db.PrDefBOMs.AsNoTracking()
+            .Where(x => x.BomHdrId == material.SourceBomHdrId
+                        && x.OperationId == material.SourceOperationId
+                        && x.Uid != material.SourceBomLineId)
+            .OrderByDescending(x => x.BomDefault)
+            .ThenBy(x => x.SeqNo)
+            .ThenBy(x => x.ICode)
+            .ToListAsync(cancellationToken);
+
+        var alternates = candidates
+            .Where(x => string.Equals(
+                PrBomAlternateGroups.Normalize(x.AlternateGroupCode),
+                group,
+                StringComparison.Ordinal))
+            .Select(x => new ProductionWorkOrderMaterialAlternateVm
+            {
+                SourceBomLineId = x.Uid,
+                ComponentCode = x.ICode,
+                ComponentDescription = x.IName,
+                BomDefault = x.BomDefault,
+                AlternateGroupCode = PrBomAlternateGroups.Normalize(x.AlternateGroupCode),
+                ComponentQtyPerParent = x.StdQty,
+                StandardUom = x.StdUom,
+                SupplySource = x.SupplySource
+            })
+            .ToList();
+
+        return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Ok(alternates);
+    }
+
+    public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SubstituteDraftMaterialAsync(
+        ProductionWorkOrderMaterialSubstituteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request ??= new ProductionWorkOrderMaterialSubstituteRequest();
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(auth.Error.Value.Code, auth.Error.Value.Message);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, auth.Scope!.CompanyCode, exclusive: false, cancellationToken);
+            var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            RequireCurrentSnapshot(entity);
+            RequireSnapshotFingerprint(entity, request.SnapshotRevision, request.SnapshotHash);
+
+            var material = entity.Materials.FirstOrDefault(m => m.Uid == request.WorkOrderMaterialId);
+            if (material is null)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.NotFound, "The Work Order material was not found.");
+            }
+
+            var group = PrBomAlternateGroups.Normalize(material.AlternateGroupCode);
+            if (material.SourceBomHdrId is null
+                || material.SourceBomLineId is null
+                || material.SourceOperationId is null
+                || group is null)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "This material has no alternate group in the frozen Product Definition revision.");
+            }
+
+            var replacement = await db.PrDefBOMs.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Uid == request.ReplacementSourceBomLineId, cancellationToken);
+            if (replacement is null
+                || replacement.BomHdrId != material.SourceBomHdrId
+                || replacement.OperationId != material.SourceOperationId
+                || !string.Equals(PrBomAlternateGroups.Normalize(replacement.AlternateGroupCode), group, StringComparison.Ordinal))
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "The replacement must be another member of the same exact-source alternate group.");
+            }
+
+            if (replacement.Uid == material.SourceBomLineId)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+            }
+
+            var componentCode = (replacement.ICode ?? string.Empty).Trim().ToUpperInvariant();
+            var duplicate = entity.Materials.Any(m =>
+                m.Uid != material.Uid
+                && m.WorkOrderOperationId == material.WorkOrderOperationId
+                && string.Equals(m.ComponentCode, componentCode, StringComparison.OrdinalIgnoreCase));
+            if (duplicate)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    $"Component {componentCode} is already required on the same consuming operation.");
+            }
+
+            var revision = await db.PrBomHdrs.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Uid == material.SourceBomHdrId.Value, cancellationToken)
+                ?? throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    "The frozen Product Definition revision is missing.");
+
+            var itemCodes = new[] { componentCode };
+            var masters = await db.IvStockMasters.AsNoTracking()
+                .Where(i => i.CompanyCode == entity.CompanyCode && itemCodes.Contains(i.ICode))
+                .ToDictionaryAsync(
+                    i => i.ICode.Trim().ToUpperInvariant(),
+                    i => i,
+                    StringComparer.OrdinalIgnoreCase,
+                    cancellationToken);
+
+            var stepsBySourceId = entity.RouteSteps
+                .Where(s => s.SourceRouteStepId is not null)
+                .GroupBy(s => s.SourceRouteStepId!.Value)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            var errors = new List<WorkOrderCalculationError>();
+            var oldCode = material.ComponentCode;
+            WorkOrderSnapshotBuilder.ApplyDefinitionMaterial(
+                material,
+                revision,
+                replacement,
+                material.WorkOrderOperation,
+                masters,
+                stepsBySourceId,
+                errors);
+            if (errors.Count > 0)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    string.Join(" ", errors.Select(e => e.Code + ": " + e.Message)));
+            }
+
+            var quantities = await _quantities.CalculateAsync(entity, cancellationToken);
+            if (!quantities.Succeeded)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.Validation, quantities.Summary);
+            }
+
+            var scheduled = await _scheduler.ScheduleAsync(entity, cancellationToken);
+            if (!scheduled.Succeeded)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    scheduled.FailureCode + ": " + scheduled.FailureMessage);
+            }
+
+            entity.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
+            entity.SnapshotRevision += 1;
+            var reason = string.IsNullOrWhiteSpace(request.Reason)
+                ? $"Substituted material {oldCode} → {material.ComponentCode} in group {group}."
+                : request.Reason.Trim();
+            StampDraftAudit(entity, auth.Scope!, ProductionAuditEventTypes.MaterialSubstituted, reason);
+            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
         }
         catch (WorkOrderSchedulingLockException ex)
         {
@@ -465,6 +817,7 @@ public sealed partial class ProductionWorkOrderService
     private sealed class BuiltSnapshot
     {
         public ProductionWorkOrder? WorkOrder { get; init; }
+        public IReadOnlyList<string> Warnings { get; init; } = [];
         public string? Error { get; init; }
     }
 
@@ -472,6 +825,7 @@ public sealed partial class ProductionWorkOrderService
         InventoryTenantScope scope,
         ProductionWorkOrderDraftRequest request,
         int snapshotRevision,
+        DateTime? explicitScheduleAnchor,
         CancellationToken cancellationToken)
     {
         if (request.PlannedQty <= 0m)
@@ -482,6 +836,20 @@ public sealed partial class ProductionWorkOrderService
         var effective = request.SnapshotAsOfDate == default
             ? request.PlannedStartDate.Date
             : request.SnapshotAsOfDate.Date;
+        var direction = string.IsNullOrWhiteSpace(request.SchedulingDirection)
+            ? ProductionSchedulingDirections.Forward
+            : Normalize(request.SchedulingDirection);
+        if (!ProductionSchedulingDirections.IsKnown(direction))
+        {
+            return new BuiltSnapshot { Error = "Schedule direction must be FORWARD or BACKWARD." };
+        }
+
+        var plannerDate = string.Equals(direction, ProductionSchedulingDirections.Backward, StringComparison.Ordinal)
+            ? request.PlannedCompletionDate
+            : request.PlannedStartDate;
+        var anchor = explicitScheduleAnchor
+            ?? ProductionSchedulingDirections.NormalizePlannerDateAnchor(plannerDate, direction);
+
         var built = await _snapshotBuilder.BuildAsync(new WorkOrderSnapshotRequest
         {
             CompanyCode = scope.CompanyCode,
@@ -492,9 +860,8 @@ public sealed partial class ProductionWorkOrderService
             DefinitionEffectiveDate = effective,
             PlannedStartDateTime = request.PlannedStartDate,
             PlannedCompletionDateTime = request.PlannedCompletionDate,
-            SchedulingDirection = string.IsNullOrWhiteSpace(request.SchedulingDirection)
-                ? ProductionSchedulingDirections.Forward
-                : Normalize(request.SchedulingDirection),
+            ScheduleAnchorDateTime = anchor,
+            SchedulingDirection = direction,
             SourceType = string.IsNullOrWhiteSpace(request.SourceType) ? ProductionSourceTypes.Manual : Normalize(request.SourceType),
             SourceReference = TrimTo(request.SourceReference, SourceReferenceMax),
             Remark = TrimTo(request.Remark, RemarkMax),
@@ -506,18 +873,22 @@ public sealed partial class ProductionWorkOrderService
             var message = string.IsNullOrWhiteSpace(built.FailureCode)
                 ? built.FailureMessage
                 : built.FailureCode + ": " + built.FailureMessage;
-            return new BuiltSnapshot { Error = message };
+            return new BuiltSnapshot { Error = message, Warnings = built.Warnings };
         }
 
         var scheduled = await _scheduler.ScheduleAsync(built.WorkOrder, cancellationToken);
         if (!scheduled.Succeeded)
         {
-            return new BuiltSnapshot { Error = scheduled.FailureCode + ": " + scheduled.FailureMessage };
+            return new BuiltSnapshot
+            {
+                Error = scheduled.FailureCode + ": " + scheduled.FailureMessage,
+                Warnings = built.Warnings
+            };
         }
 
         built.WorkOrder.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(built.WorkOrder);
         built.WorkOrder.SnapshotHashVersion = ProductionSnapshotHashVersions.Current;
-        return new BuiltSnapshot { WorkOrder = built.WorkOrder };
+        return new BuiltSnapshot { WorkOrder = built.WorkOrder, Warnings = built.Warnings };
     }
 
     private async Task<ProductionWorkOrder> RequireDraftAsync(
@@ -689,6 +1060,75 @@ public sealed partial class ProductionWorkOrderService
             OccurredDate = now,
             ActorUserId = scope.UserId
         });
+    }
+
+    private static void RequireCurrentSnapshot(ProductionWorkOrder entity)
+    {
+        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                + ": Refresh this legacy Draft from its Product Definition before editing it.");
+        }
+    }
+
+    private static void RequireSnapshotFingerprint(ProductionWorkOrder entity, int snapshotRevision, string? snapshotHash)
+    {
+        if (entity.SnapshotRevision != snapshotRevision
+            || !string.Equals(entity.SnapshotHash, snapshotHash, StringComparison.Ordinal))
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Concurrency,
+                ProductionReadinessErrorCodes.SnapshotStale + ": The Draft changed after this preview. Reload it.");
+        }
+    }
+
+    private static void ClearMachineScheduleProvenance(ProductionWorkOrderMachine machine)
+    {
+        machine.PlannedStartDateTime = null;
+        machine.PlannedCompletionDateTime = null;
+        machine.CalendarSourceId = null;
+        machine.CalendarSourceLastModified = null;
+        machine.ScheduleSourceHash = null;
+        machine.CalendarHorizonStart = null;
+        machine.CalendarHorizonEnd = null;
+    }
+
+    private static void ClearOperationScheduleProvenance(ProductionWorkOrderOperation operation)
+    {
+        operation.CalendarSourceType = null;
+        operation.CalendarSourceId = null;
+        operation.CalendarSourceLastModified = null;
+        operation.ScheduleSourceHash = null;
+        operation.CalendarHorizonStart = null;
+        operation.CalendarHorizonEnd = null;
+        operation.PlannedStartDateTime = null;
+        operation.PlannedCompletionDateTime = null;
+    }
+
+    private static void SyncMachineLabourContribution(ProductionWorkOrderOperation operation)
+    {
+        foreach (var machine in operation.Machines)
+        {
+            foreach (var labour in machine.Labours)
+            {
+                labour.ContributesToPlan = machine.IsSelected;
+            }
+        }
+
+        foreach (var labour in operation.Labours)
+        {
+            if (labour.MachineId is long machineId)
+            {
+                var owner = operation.Machines.FirstOrDefault(m => m.Uid == machineId);
+                if (owner is not null
+                    && string.Equals(labour.RateBasis, ProductionLabourRateBases.PerOutputUnit, StringComparison.Ordinal))
+                {
+                    labour.ContributesToPlan = owner.IsSelected;
+                }
+            }
+        }
     }
 
     private static IvMasterOperationResult<T> Concurrency<T>() =>

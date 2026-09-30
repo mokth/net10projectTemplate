@@ -167,6 +167,7 @@ public static class WorkOrderSnapshotHasher
             w.Add(material.SourceBomVersion);
             w.Add(material.SourceBomLineId);
             w.Add(material.SourceMaterialKey);
+            w.Add(material.AlternateGroupCode);
             w.Add(material.ParentProductCode);
             w.Add(material.BomPath);
             w.Add(material.ComponentCode);
@@ -485,6 +486,8 @@ public static class WorkOrderSnapshotHasher
         w.Add(material.IssueMethod);
         w.Add(material.SupplySource);
         w.Add(material.Warehouse);
+        w.Add(material.BomDefault);
+        w.Add(material.AlternateGroupCode);
         w.Add(material.ProducingRouteStepId);
     }
 }

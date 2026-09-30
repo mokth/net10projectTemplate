@@ -56,6 +56,10 @@ public sealed class PrProductDefLineVm
     public decimal ScrapPercent { get; set; }
     public string? Warehouse { get; set; }
     public bool BomDefault { get; set; } = true;
+
+    /// <summary>Normalized alternate group (trim + uppercase). Required on new Product Definition saves.</summary>
+    public string? AlternateGroupCode { get; set; }
+
     public decimal Tolerance { get; set; }
     public string MfgType { get; set; } = "BUY";
 

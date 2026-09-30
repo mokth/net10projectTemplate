@@ -14,6 +14,7 @@
 :r $(ScriptRoot)\create-product-definition-routing.sql
 :r $(ScriptRoot)\alter-prdefbom-process-ownership.sql
 :r $(ScriptRoot)\alter-product-definition-phase1-foundation.sql
+:r $(ScriptRoot)\alter-bom-alternate-group.sql
 
 PRINT N'Product Definition Phase 1 deployment sequence completed.';
 GO

@@ -24,6 +24,7 @@ public sealed class WorkOrderSnapshotRequest
 
     public DateTime PlannedStartDateTime { get; set; }
     public DateTime PlannedCompletionDateTime { get; set; }
+    public DateTime? ScheduleAnchorDateTime { get; set; }
     public string SchedulingDirection { get; set; } = ProductionSchedulingDirections.Forward;
     public string SourceType { get; set; } = ProductionSourceTypes.Manual;
     public string? SourceReference { get; set; }
@@ -218,11 +219,11 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             }
         }
 
-        // Every definition line becomes exactly one material row. The consuming operation is
-        // resolved through a single rule, so a line can never be snapshotted twice or silently
-        // dropped, and it does not matter whether the caller's revision graph was materialized
-        // through navigations or through persisted foreign keys.
+        // Default requirement members only. Authored alternates remain on the Product Definition
+        // for StructuralTree / circular validation / Draft substitution, but must not become WO
+        // requirements or double-count in MRP / issue explosion.
         foreach (var sourceMaterial in revision.Lines
+                     .Where(m => m.BomDefault)
                      .OrderBy(m => m.SeqNo)
                      .ThenBy(m => m.ICode, StringComparer.Ordinal))
         {
@@ -350,9 +351,10 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             PlannedStartDateTime = request.PlannedStartDateTime,
             PlannedCompletionDateTime = request.PlannedCompletionDateTime,
             SchedulingDirection = request.SchedulingDirection,
-            ScheduleAnchorDateTime = request.SchedulingDirection == ProductionSchedulingDirections.Backward
-                ? request.PlannedCompletionDateTime
-                : request.PlannedStartDateTime,
+            ScheduleAnchorDateTime = request.ScheduleAnchorDateTime
+                ?? (request.SchedulingDirection == ProductionSchedulingDirections.Backward
+                    ? request.PlannedCompletionDateTime
+                    : request.PlannedStartDateTime),
 
             Status = ProductionWorkOrderStatuses.Draft,
             SourceType = request.SourceType,
@@ -554,10 +556,16 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
         }
     }
 
-    private static ProductionWorkOrderMaterial BuildMaterial(
+    /// <summary>
+    /// Maps Product Definition material source fields onto a Work Order material row. Derived
+    /// quantities (<see cref="ProductionWorkOrderMaterial.RequiredQty"/> etc.) stay with
+    /// <c>WorkOrderQuantityCalculator</c>.
+    /// </summary>
+    internal static void ApplyDefinitionMaterial(
+        ProductionWorkOrderMaterial material,
         PrBomHdr revision,
-        ProductionWorkOrderOperation? operation,
         PrDefBOM source,
+        ProductionWorkOrderOperation? operation,
         IReadOnlyDictionary<string, IvStockMaster> items,
         IReadOnlyDictionary<long, ProductionWorkOrderRouteStep> stepsBySourceId,
         List<WorkOrderCalculationError> errors)
@@ -576,36 +584,32 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             stepsBySourceId.TryGetValue(source.ProducingRouteStepId.Value, out producer);
         }
 
-        var material = new ProductionWorkOrderMaterial
-        {
-            SourceOperationId = operation?.SourceOperationId,
-            MaterialSequence = source.SeqNo,
-            LineNo = source.SeqNo,
-            SourceBomHdrId = revision.Uid,
-            SourceBomVersion = revision.Version,
-            SourceBomLineId = source.Uid == 0 ? null : source.Uid,
-            ParentProductCode = NormalizeCode(revision.ProdCode),
-            BomPath = string.Empty,
-            ComponentCode = componentCode,
-            ComponentDescription = source.IName ?? item?.IDesc,
-            MfgType = Normalize(item?.MfgType) ?? PrMfgTypes.Buy,
-
-            // ComponentQtyPerParent is expressed against the revision's own base quantity, which is
-            // why BomOutputQty/BomOutputUom must be the revision's base and not the route step's.
-            ComponentQtyPerParent = source.StdQty,
-            StandardUom = standardUom,
-            BomOutputQty = revision.BaseQty,
-            BomOutputUom = Normalize(revision.BaseUom),
-            ScrapPercent = source.ScrapPercent,
-            Tolerance = source.Tolerance,
-
-            IssueMethod = Normalize(source.IssueMethod) ?? PrMaterialIssueMethods.Manual,
-            SupplySource = supplySource,
-            RequiredUom = standardUom,
-            BaseUom = baseUom,
-            WarehouseCode = Normalize(source.Warehouse) ?? item?.DefWarehouse,
-            LocationCode = source.LocationCode ?? item?.DefLocation,
-        };
+        material.SourceOperationId = operation?.SourceOperationId ?? source.OperationId;
+        material.MaterialSequence = source.SeqNo;
+        material.LineNo = source.SeqNo;
+        material.SourceBomHdrId = revision.Uid;
+        material.SourceBomVersion = revision.Version;
+        material.SourceBomLineId = source.Uid == 0 ? null : source.Uid;
+        material.AlternateGroupCode = PrBomAlternateGroups.Normalize(source.AlternateGroupCode);
+        material.ParentProductCode = NormalizeCode(revision.ProdCode);
+        material.BomPath = string.Empty;
+        material.ComponentCode = componentCode;
+        material.ComponentDescription = source.IName ?? item?.IDesc;
+        material.MfgType = Normalize(item?.MfgType) ?? PrMfgTypes.Buy;
+        material.ComponentQtyPerParent = source.StdQty;
+        material.StandardUom = standardUom;
+        material.BomOutputQty = revision.BaseQty;
+        material.BomOutputUom = Normalize(revision.BaseUom);
+        material.ScrapPercent = source.ScrapPercent;
+        material.Tolerance = source.Tolerance;
+        material.IssueMethod = Normalize(source.IssueMethod) ?? PrMaterialIssueMethods.Manual;
+        material.SupplySource = supplySource;
+        material.RequiredUom = standardUom;
+        material.BaseUom = baseUom;
+        material.WarehouseCode = Normalize(source.Warehouse) ?? item?.DefWarehouse;
+        material.LocationCode = source.LocationCode ?? item?.DefLocation;
+        material.ProducingRouteStep = null;
+        material.ProducingRouteStepId = null;
 
         if (producer is not null)
         {
@@ -619,7 +623,18 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
                 + "Product Definition revision.",
                 $"PrWorkOrderMaterial/{componentCode}"));
         }
+    }
 
+    private static ProductionWorkOrderMaterial BuildMaterial(
+        PrBomHdr revision,
+        ProductionWorkOrderOperation? operation,
+        PrDefBOM source,
+        IReadOnlyDictionary<string, IvStockMaster> items,
+        IReadOnlyDictionary<long, ProductionWorkOrderRouteStep> stepsBySourceId,
+        List<WorkOrderCalculationError> errors)
+    {
+        var material = new ProductionWorkOrderMaterial();
+        ApplyDefinitionMaterial(material, revision, source, operation, items, stepsBySourceId, errors);
         return material;
     }
 

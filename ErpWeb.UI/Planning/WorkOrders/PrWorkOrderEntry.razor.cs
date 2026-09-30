@@ -30,8 +30,12 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool ReleaseConfirmVisible;
     protected bool CancelConfirmVisible;
     protected bool RefreshVisible;
+    protected bool MaterialChangeVisible;
     protected string RefreshReason = string.Empty;
     protected ProductionWorkOrderRefreshPreview? RefreshPreviewModel;
+    protected ProductionWorkOrderMaterialVm? MaterialChangeSource;
+    protected IReadOnlyList<ProductionWorkOrderMaterialAlternateVm> MaterialAlternates { get; set; } = [];
+    protected long? SelectedAlternateBomLineId;
     protected bool ConfirmDiscardVisible;
     protected bool ConcurrencyVisible;
     protected bool CanAdd;
@@ -39,6 +43,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanRelease;
     protected bool CanCancel;
     protected int ActiveTabIndex;
+    protected bool InputsExpanded = true;
     protected long? FocusedRouteUid { get; set; }
     protected long? FocusedOperationUid { get; set; }
     protected string? StatusMessage;
@@ -50,8 +55,8 @@ public partial class PrWorkOrderEntry : PageBase
 
     protected IReadOnlyList<Option> DirectionOptions { get; } =
     [
-        new(ProductionSchedulingDirections.Forward, "Forward"),
-        new(ProductionSchedulingDirections.Backward, "Backward")
+        new(ProductionSchedulingDirections.Forward, "From start"),
+        new(ProductionSchedulingDirections.Backward, "From end")
     ];
 
     protected IReadOnlyList<Option> SourceOptions { get; } =
@@ -72,6 +77,8 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsCurrentSnapshot =>
         DetailModel?.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current;
     protected bool CanCancelAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft } && CanCancel;
+    protected bool IsBackwardSchedule => string.Equals(
+        Request.SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.Ordinal);
 
     protected string PageHeading => IsNewMode ? "New Work Order"
         : IsEditMode ? "Edit Work Order"
@@ -126,6 +133,8 @@ public partial class PrWorkOrderEntry : PageBase
             return warnings;
         }
     }
+    protected IReadOnlyList<ProductionWorkOrderRouteStepVm> RouteRows =>
+        PreviewModel?.RouteSteps ?? DetailModel?.RouteSteps ?? [];
     protected IReadOnlyList<ProductionWorkOrderMaterialVm> MaterialRows =>
         PreviewModel?.Materials ?? DetailModel?.Materials ?? [];
     protected IReadOnlyList<ProductionWorkOrderOperationVm> OperationRows =>
@@ -180,7 +189,6 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
     protected IReadOnlyList<ProductionAuditEventVm> AuditRows => DetailModel?.AuditEvents ?? [];
-    protected IReadOnlyList<ProductionWorkOrderRouteStepVm> RouteRows => DetailModel?.RouteSteps ?? [];
     protected decimal GoodQty => DetailModel?.GoodQty ?? 0m;
     protected decimal RemainingQty => DetailModel?.RemainingQty ?? Request.PlannedQty;
     protected string SnapshotFormatLabel => DetailModel is null
@@ -188,6 +196,7 @@ public partial class PrWorkOrderEntry : PageBase
         : DetailModel.IsLegacySnapshot
             ? $"Legacy v{DetailModel.SnapshotFormatVersion}"
             : $"v{DetailModel.SnapshotFormatVersion}";
+    protected string DirectionLabel => IsBackwardSchedule ? "From end" : "From start";
 
     protected void OnRouteFocused(GridFocusedRowChangedEventArgs args)
     {
@@ -348,10 +357,13 @@ public partial class PrWorkOrderEntry : PageBase
 
             PreviewModel = result.Data;
             Request.PlannedQty = result.Data.PlannedQty;
+            Request.PlannedStartDate = result.Data.PlannedStartDate;
+            Request.PlannedCompletionDate = result.Data.PlannedCompletionDate;
+            Request.SchedulingDirection = result.Data.SchedulingDirection;
             _previewInputFingerprint = InputFingerprint();
             _selectedProductDescription = result.Data.ProductDescription;
             _selectedProductUom = result.Data.OutputUom;
-            StatusMessage = $"Preview calculated from BOM V{result.Data.SourceBomVersion}. Save Draft will recalculate it server-side.";
+            StatusMessage = $"Preview calculated from Product Definition V{result.Data.SourceBomVersion} using the current Work Order quantity and scheduling rules.";
             ActiveTabIndex = 1;
         }
         finally
@@ -376,7 +388,7 @@ public partial class PrWorkOrderEntry : PageBase
                         WorkOrderNo = DetailModel!.WorkOrderNo,
                         PlannedQty = Request.PlannedQty,
                         SchedulingDirection = Request.SchedulingDirection,
-                        ScheduleAnchorDateTime = DetailModel.ScheduleAnchorDateTime ?? Request.PlannedStartDate,
+                        ScheduleAnchorDateTime = GetRequestedScheduleAnchor(),
                         SourceReference = Request.SourceReference,
                         Remark = Request.Remark,
                         RowVersion = DetailModel.RowVersion
@@ -498,6 +510,139 @@ public partial class PrWorkOrderEntry : PageBase
             ApplyDetail(result.Data);
             RefreshVisible = false;
             StatusMessage = $"Draft {result.Data.WorkOrderNo} refreshed from its Product Definition.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected bool CanSelectMachine(ProductionWorkOrderMachineVm machine) =>
+        CanEditFields
+        && IsCurrentSnapshot
+        && !machine.IsSelected
+        && DetailModel is not null
+        && !IsSubmitting;
+
+    protected async Task SelectMachineAsync(ProductionWorkOrderMachineVm machine)
+    {
+        if (DetailModel is null || !CanSelectMachine(machine))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.SelectDraftMachineAsync(new ProductionWorkOrderMachineSelectRequest
+            {
+                WorkOrderNo = DetailModel.WorkOrderNo,
+                RowVersion = DetailModel.RowVersion,
+                SnapshotRevision = DetailModel.SnapshotRevision,
+                SnapshotHash = DetailModel.SnapshotHash,
+                WorkOrderOperationId = machine.WorkOrderOperationId,
+                WorkOrderMachineId = machine.Uid
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            var focusedOperation = FocusedOperationUid;
+            var focusedRoute = FocusedRouteUid;
+            ApplyDetail(result.Data);
+            PreviewModel = null;
+            FocusedOperationUid = focusedOperation;
+            FocusedRouteUid = focusedRoute;
+            StatusMessage = $"Selected machine {machine.MachineCode} for process {machine.OperationCode}.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected bool CanChangeMaterial(ProductionWorkOrderMaterialVm material) =>
+        CanEditFields
+        && IsCurrentSnapshot
+        && DetailModel is not null
+        && !string.IsNullOrWhiteSpace(material.AlternateGroupCode)
+        && !IsSubmitting;
+
+    protected async Task OpenMaterialChangeAsync(ProductionWorkOrderMaterialVm material)
+    {
+        if (DetailModel is null || !CanChangeMaterial(material))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.GetDraftMaterialAlternatesAsync(DetailModel.WorkOrderNo, material.Uid);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            MaterialChangeSource = material;
+            MaterialAlternates = result.Data;
+            SelectedAlternateBomLineId = result.Data.FirstOrDefault()?.SourceBomLineId;
+            MaterialChangeVisible = true;
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task ConfirmMaterialChangeAsync()
+    {
+        if (DetailModel is null || MaterialChangeSource is null || SelectedAlternateBomLineId is not > 0)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var oldCode = MaterialChangeSource.ComponentCode;
+            var result = await WorkOrders.SubstituteDraftMaterialAsync(new ProductionWorkOrderMaterialSubstituteRequest
+            {
+                WorkOrderNo = DetailModel.WorkOrderNo,
+                RowVersion = DetailModel.RowVersion,
+                SnapshotRevision = DetailModel.SnapshotRevision,
+                SnapshotHash = DetailModel.SnapshotHash,
+                WorkOrderMaterialId = MaterialChangeSource.Uid,
+                ReplacementSourceBomLineId = SelectedAlternateBomLineId.Value
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            var focusedOperation = FocusedOperationUid;
+            var focusedRoute = FocusedRouteUid;
+            ApplyDetail(result.Data);
+            PreviewModel = null;
+            MaterialChangeVisible = false;
+            FocusedOperationUid = focusedOperation;
+            FocusedRouteUid = focusedRoute;
+            var replacement = result.Data.Materials.FirstOrDefault(m => m.Uid == MaterialChangeSource.Uid)
+                ?? result.Data.Materials.FirstOrDefault(m =>
+                    string.Equals(m.AlternateGroupCode, MaterialChangeSource.AlternateGroupCode, StringComparison.Ordinal));
+            StatusMessage = replacement is null
+                ? $"Material {oldCode} changed."
+                : $"Material {oldCode} → {replacement.ComponentCode}.";
+            MaterialChangeSource = null;
+            MaterialAlternates = [];
+            SelectedAlternateBomLineId = null;
         }
         finally
         {
@@ -681,6 +826,15 @@ public partial class PrWorkOrderEntry : PageBase
         Request.RowVersion = DetailModel?.RowVersion;
     }
 
+    private DateTime GetRequestedScheduleAnchor()
+    {
+        var plannerDate = IsBackwardSchedule
+            ? Request.PlannedCompletionDate
+            : Request.PlannedStartDate;
+        return ProductionSchedulingDirections.NormalizePlannerDateAnchor(
+            plannerDate, Request.SchedulingDirection);
+    }
+
     private void ApplyDetail(ProductionWorkOrderDetail detail)
     {
         DetailModel = detail;
@@ -742,9 +896,9 @@ public partial class PrWorkOrderEntry : PageBase
         (Request.ProductCode ?? string.Empty).Trim().ToUpperInvariant(),
         IvQty.Round(Request.PlannedQty).ToString("0.0000", CultureInfo.InvariantCulture),
         Request.SnapshotAsOfDate.Date.Ticks.ToString(CultureInfo.InvariantCulture),
-        Request.PlannedStartDate.Date.Ticks.ToString(CultureInfo.InvariantCulture),
-        Request.PlannedCompletionDate.Date.Ticks.ToString(CultureInfo.InvariantCulture),
         (Request.SchedulingDirection ?? string.Empty).Trim().ToUpperInvariant(),
+        (IsBackwardSchedule ? Request.PlannedCompletionDate : Request.PlannedStartDate)
+            .Date.Ticks.ToString(CultureInfo.InvariantCulture),
         (Request.SourceType ?? string.Empty).Trim().ToUpperInvariant(),
         (Request.SourceReference ?? string.Empty).Trim(),
         (Request.Remark ?? string.Empty).Trim());

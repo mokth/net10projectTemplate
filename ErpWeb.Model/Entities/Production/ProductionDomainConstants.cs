@@ -19,6 +19,15 @@ public static class ProductionSchedulingDirections
     public const string Backward = "BACKWARD";
 
     public static bool IsKnown(string? value) => value is Forward or Backward;
+
+    /// <summary>
+    /// Converts a date-only planner input into a neutral scheduling boundary. Resource-specific
+    /// calendars remain responsible for snapping this boundary to a usable interval.
+    /// </summary>
+    public static DateTime NormalizePlannerDateAnchor(DateTime date, string? direction) =>
+        string.Equals(direction, Backward, StringComparison.Ordinal)
+            ? date.Date.AddDays(1).AddTicks(-1)
+            : date.Date;
 }
 
 public static class ProductionSourceTypes
@@ -41,6 +50,8 @@ public static class ProductionAuditEventTypes
     public const string ChangeOrderApproved = "CHANGE_ORDER_APPROVED";
     public const string Refreshed = "REFRESHED";
     public const string ScheduleRecalculated = "SCHEDULE_RECALCULATED";
+    public const string MachineSelected = "MACHINE_SELECTED";
+    public const string MaterialSubstituted = "MATERIAL_SUBSTITUTED";
 }
 
 public static class ProductionChangeOrderStatuses

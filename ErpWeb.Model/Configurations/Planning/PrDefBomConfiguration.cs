@@ -25,6 +25,7 @@ public class PrDefBomConfiguration : IEntityTypeConfiguration<PrDefBOM>
         builder.Property(e => e.ScrapPercent).HasPrecision(18, 4).HasDefaultValue(0m).ValueGeneratedNever();
         builder.Property(e => e.Warehouse).HasMaxLength(20);
         builder.Property(e => e.BomDefault).HasDefaultValue(true).ValueGeneratedNever();
+        builder.Property(e => e.AlternateGroupCode).HasMaxLength(30);
         builder.Property(e => e.WipBomDefault).HasColumnName("WIPBomDefault").HasDefaultValue(false).ValueGeneratedNever();
         builder.Property(e => e.Tolerance).HasPrecision(18, 4);
         builder.Property(e => e.IssueMethod).HasMaxLength(20).IsRequired()
@@ -61,6 +62,13 @@ public class PrDefBomConfiguration : IEntityTypeConfiguration<PrDefBOM>
 
         builder.HasIndex(e => e.ProducingRouteStepId)
             .HasDatabaseName("IX_PrDefBOM_ProducingRouteStepID");
+
+        // Defense-in-depth: at most one default per (header, operation, group). Application
+        // validation still requires at least one default; legacy null groups are excluded.
+        builder.HasIndex(e => new { e.BomHdrId, e.OperationId, e.AlternateGroupCode })
+            .IsUnique()
+            .HasFilter("[BomDefault] = 1 AND [OperationId] IS NOT NULL AND [AlternateGroupCode] IS NOT NULL")
+            .HasDatabaseName("UX_PrDefBOM_OneDefaultPerGroup");
 
         builder.HasOne(e => e.Operation)
             .WithMany(e => e.Materials)

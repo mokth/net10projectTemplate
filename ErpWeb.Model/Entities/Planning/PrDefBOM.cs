@@ -50,6 +50,13 @@ public class PrDefBOM
 
     public bool BomDefault { get; set; } = true;
 
+    /// <summary>
+    /// Normalized alternate group identity (trim + uppercase, max 30). Same
+    /// <c>(OperationKey, AlternateGroupCode)</c> may carry one default and zero or more alternates.
+    /// Null on legacy non-default rows that were never explicitly grouped.
+    /// </summary>
+    public string? AlternateGroupCode { get; set; }
+
     /// <summary>Legacy WIP flag — persist only; not exposed in UI.</summary>
     public bool WipBomDefault { get; set; }
 
@@ -111,4 +118,19 @@ public static class PrMaterialSupplySources
 
     public static IReadOnlyList<string> All { get; } =
         [Purchased, InternalRouteWip, SeparateProductDefinition, ExternalSupply];
+}
+
+/// <summary>Normalization helpers for <see cref="PrDefBOM.AlternateGroupCode"/>.</summary>
+public static class PrBomAlternateGroups
+{
+    public const int MaxLength = 30;
+
+    public static string? Normalize(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim().ToUpperInvariant();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public static bool IsValidLength(string? normalized) =>
+        normalized is null || normalized.Length <= MaxLength;
 }

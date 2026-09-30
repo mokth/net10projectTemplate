@@ -80,6 +80,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Process_preview_uses_active_bom_and_does_not_persist()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
 
         var result = await sut.ProcessPreviewAsync(Request(10m));
@@ -94,10 +95,12 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(3, material.SourceBomVersion);
         Assert.Equal(5m, material.BomOutputQty);
         Assert.Equal("PCS", material.BomOutputUom);
-        Assert.Equal(4.4m, material.RequiredQty);
+        Assert.Equal(0.88m, material.RequiredQty);
         Assert.Equal(0.25m, material.Tolerance);
-        Assert.Empty(preview.Operations);
-        Assert.NotEmpty(preview.Warnings);
+        Assert.Single(preview.RouteSteps);
+        Assert.Single(preview.Operations);
+        Assert.Equal(new DateTime(2026, 10, 1), preview.ScheduleAnchorDateTime);
+        Assert.Equal(ProductionSchedulingDirections.Forward, preview.SchedulingDirection);
 
         await using var db = await _factory.CreateDbContextAsync();
         Assert.False(await db.ProductionWorkOrders.AnyAsync());
@@ -117,7 +120,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 ProcessCd = "MIX", ProcessDes = "Mix", WorkCentre = "WC01", CompCode = "DEMO"
             });
             var header = await db.PrBomHdrs.SingleAsync(x => x.ProdCode == "FG001");
-            header.Operations.Add(new PrBomOperation
+            var seededOperation = new PrBomOperation
             {
                 CompanyCode = "DEMO",
                 WorkCentreCode = "WC01",
@@ -154,7 +157,22 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                         ]
                     }
                 ]
+            };
+            header.RouteSteps.Add(new PrBomRouteStep
+            {
+                CompanyCode = "DEMO",
+                WorkCentreCode = "WC01",
+                StageSequence = 10,
+                OutputItemCode = "FG001",
+                OutputType = PrRouteOutputTypes.FinishedGoods,
+                StandardOutputQty = 1m,
+                OutputUom = "PCS",
+                RowVersion = [1],
+                Operations = { seededOperation }
             });
+            header.Operations.Add(seededOperation);
+            var material = await db.PrDefBOMs.SingleAsync(x => x.BomHdrId == header.Uid);
+            material.Operation = seededOperation;
             await db.SaveChangesAsync();
         }
 
@@ -165,14 +183,306 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal("WC01", operation.WorkCentreCode);
         Assert.Equal("MIX", operation.OperationCode);
         Assert.True(operation.IsFinalOperation);
-        Assert.Equal(10m, operation.PlannedQty);
-        var machine = Assert.Single(operation.Resources, x => x.ResourceType == "MACHINE");
-        Assert.Equal(1m, machine.SetupMinutes);
-        Assert.Equal(1m, machine.RunMinutes);
-        Assert.Equal(0.5m, machine.QueueMinutes);
-        var labour = Assert.Single(operation.Resources, x => x.ResourceType == "LABOUR");
+        Assert.Equal(2m, operation.PlannedOutputQty);
+        var machine = Assert.Single(operation.Machines);
+        Assert.Equal(60m, machine.SetupSeconds);
+        Assert.Equal(1m, machine.PlannedRunMinutes);
+        Assert.Equal(30m, machine.QueueSeconds);
+        var labour = Assert.Single(machine.Labours);
         Assert.Equal(2m, labour.Rate);
-        Assert.Equal(20m, labour.PlannedAmount);
+        Assert.Equal(4m, labour.PlannedAmount);
+        Assert.Single(preview.Data.RouteSteps);
+    }
+
+    [Fact]
+    public async Task Preview_and_create_use_the_same_current_snapshot_pipeline()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var request = Request(10m);
+
+        var preview = await sut.ProcessPreviewAsync(request);
+        var created = await sut.CreateDraftAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(created.Succeeded, created.Message);
+        Assert.Equal(preview.Data!.SourceBomHdrId, created.Data!.SourceBomHdrId);
+        Assert.Equal(preview.Data.SourceBomVersion, created.Data.SourceBomVersion);
+        Assert.Equal(preview.Data.ScheduleAnchorDateTime, created.Data.ScheduleAnchorDateTime);
+        Assert.Equal(preview.Data.PlannedStartDate, created.Data.PlannedStartDate);
+        Assert.Equal(preview.Data.PlannedCompletionDate, created.Data.PlannedCompletionDate);
+        Assert.Equal(preview.Data.SnapshotHash, created.Data.SnapshotHash);
+        Assert.Equal(
+            preview.Data.Materials.Select(x => (x.ComponentCode, x.RequiredQty)),
+            created.Data.Materials.Select(x => (x.ComponentCode, x.RequiredQty)));
+        Assert.Equal(
+            preview.Data.Operations.Select(x => (x.OperationCode, x.PlannedStartDate, x.PlannedCompletionDate)),
+            created.Data.Operations.Select(x => (x.OperationCode, x.PlannedStartDate, x.PlannedCompletionDate)));
+    }
+
+    [Fact]
+    public async Task Refresh_definition_preserves_the_stored_planner_anchor()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var request = Request(10m);
+        request.SchedulingDirection = ProductionSchedulingDirections.Backward;
+        request.PlannedCompletionDate = new DateTime(2026, 10, 3, 14, 30, 0);
+        var expectedAnchor = new DateTime(2026, 10, 4).AddTicks(-1);
+
+        var created = await sut.CreateDraftAsync(request);
+        Assert.True(created.Succeeded, created.Message);
+        Assert.Equal(expectedAnchor, created.Data!.ScheduleAnchorDateTime);
+
+        var preview = await sut.PreviewRefreshFromDefinitionAsync(created.Data.WorkOrderNo);
+        Assert.True(preview.Succeeded, preview.Message);
+
+        var refreshed = await sut.RefreshDraftFromDefinitionAsync(new ProductionWorkOrderRefreshConfirm
+        {
+            WorkOrderNo = created.Data.WorkOrderNo,
+            RowVersion = preview.Data!.RowVersion,
+            SourceProductDefinitionRevisionId = preview.Data.SourceProductDefinitionRevisionId ?? 0,
+            DefinitionSourceHashVersion = preview.Data.DefinitionSourceHashVersion,
+            DefinitionSourceHash = preview.Data.DefinitionSourceHash,
+            Reason = "Refresh anchor regression"
+        });
+
+        Assert.True(refreshed.Succeeded, refreshed.Message);
+        Assert.Equal(expectedAnchor, refreshed.Data!.ScheduleAnchorDateTime);
+    }
+
+    [Theory]
+    [InlineData(ProductionSchedulingDirections.Forward, 0, 0, 0, 0)]
+    [InlineData(ProductionSchedulingDirections.Backward, 23, 59, 59, 999)]
+    public void Planner_date_anchor_is_a_direction_aware_neutral_boundary(
+        string direction,
+        int hour,
+        int minute,
+        int second,
+        int millisecond)
+    {
+        var date = new DateTime(2026, 10, 3, 12, 34, 56);
+
+        var anchor = ProductionSchedulingDirections.NormalizePlannerDateAnchor(date, direction);
+
+        Assert.Equal(date.Date, anchor.Date);
+        Assert.Equal(hour, anchor.Hour);
+        Assert.Equal(minute, anchor.Minute);
+        Assert.Equal(second, anchor.Second);
+        Assert.Equal(millisecond, anchor.Millisecond);
+        if (direction == ProductionSchedulingDirections.Backward)
+        {
+            Assert.Equal(9_999, anchor.Ticks % TimeSpan.TicksPerMillisecond);
+        }
+    }
+
+    [Fact]
+    public async Task Select_draft_machine_flips_selection_and_preserves_anchor()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PrWorkCentres.Add(new PrWorkCentre
+            {
+                WrkCtrCd = "WC01", WrkCtrDes = "Mixing", CompCode = "DEMO"
+            });
+            var header = await db.PrBomHdrs.SingleAsync(x => x.ProdCode == "FG001");
+            var seededOperation = new PrBomOperation
+            {
+                CompanyCode = "DEMO",
+                WorkCentreCode = "WC01",
+                OutputItemCode = "FG001",
+                CentralSequence = 10,
+                OutputBaseQty = 5m,
+                OutputUom = "PCS",
+                OperationCode = "MIX",
+                ProcessSequence = 10,
+                ProcessType = PrProcessTypes.Machine,
+                IsFinalOperation = true,
+                RowVersion = [1],
+                Machines =
+                [
+                    new PrBomMachineOption
+                    {
+                        MachineCode = "MX01",
+                        IsPrimary = true,
+                        Priority = 1,
+                        CycleSeconds = 30m,
+                        OutputPerCycle = 1m,
+                        ParallelMachineCount = 1,
+                        RowVersion = [1]
+                    },
+                    new PrBomMachineOption
+                    {
+                        MachineCode = "MX02",
+                        IsPrimary = false,
+                        Priority = 2,
+                        CycleSeconds = 45m,
+                        OutputPerCycle = 1m,
+                        ParallelMachineCount = 1,
+                        RowVersion = [1]
+                    }
+                ]
+            };
+            header.RouteSteps.Add(new PrBomRouteStep
+            {
+                CompanyCode = "DEMO",
+                WorkCentreCode = "WC01",
+                StageSequence = 10,
+                OutputItemCode = "FG001",
+                OutputType = PrRouteOutputTypes.FinishedGoods,
+                StandardOutputQty = 1m,
+                OutputUom = "PCS",
+                RowVersion = [1],
+                Operations = { seededOperation }
+            });
+            header.Operations.Add(seededOperation);
+            var material = await db.PrDefBOMs.SingleAsync(x => x.BomHdrId == header.Uid);
+            material.Operation = seededOperation;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var operation = Assert.Single(created.Data!.Operations);
+        Assert.Equal(2, operation.Machines.Count);
+        var selected = Assert.Single(operation.Machines, m => m.IsSelected);
+        Assert.Equal("MX01", selected.MachineCode);
+        var alternate = Assert.Single(operation.Machines, m => !m.IsSelected);
+        var anchor = created.Data.ScheduleAnchorDateTime;
+
+        var switched = await sut.SelectDraftMachineAsync(new ProductionWorkOrderMachineSelectRequest
+        {
+            WorkOrderNo = created.Data.WorkOrderNo,
+            RowVersion = created.Data.RowVersion,
+            SnapshotRevision = created.Data.SnapshotRevision,
+            SnapshotHash = created.Data.SnapshotHash,
+            WorkOrderOperationId = alternate.WorkOrderOperationId,
+            WorkOrderMachineId = alternate.Uid
+        });
+
+        Assert.True(switched.Succeeded, switched.Message);
+        var after = Assert.Single(switched.Data!.Operations);
+        Assert.Equal("MX02", Assert.Single(after.Machines, m => m.IsSelected).MachineCode);
+        Assert.False(Assert.Single(after.Machines, m => m.MachineCode == "MX01").IsSelected);
+        Assert.Equal(anchor, switched.Data.ScheduleAnchorDateTime);
+        Assert.Equal(created.Data.SnapshotRevision + 1, switched.Data.SnapshotRevision);
+        Assert.Contains(switched.Data.AuditEvents, e => e.EventType == ProductionAuditEventTypes.MachineSelected);
+
+        var noop = await sut.SelectDraftMachineAsync(new ProductionWorkOrderMachineSelectRequest
+        {
+            WorkOrderNo = switched.Data.WorkOrderNo,
+            RowVersion = switched.Data.RowVersion,
+            SnapshotRevision = switched.Data.SnapshotRevision,
+            SnapshotHash = switched.Data.SnapshotHash,
+            WorkOrderOperationId = alternate.WorkOrderOperationId,
+            WorkOrderMachineId = Assert.Single(after.Machines, m => m.IsSelected).Uid
+        });
+        Assert.True(noop.Succeeded, noop.Message);
+        Assert.Equal(switched.Data.SnapshotRevision, noop.Data!.SnapshotRevision);
+    }
+
+    [Fact]
+    public async Task Substitute_draft_material_uses_exact_source_revision_alternate()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvStockMasters.Add(Stock("DEMO", "RM001A", "Alternate resin", "KG", PrMfgTypes.Buy));
+            var header = await db.PrBomHdrs.SingleAsync(x => x.ProdCode == "FG001");
+            var primary = await db.PrDefBOMs.SingleAsync(x => x.BomHdrId == header.Uid);
+            primary.BomDefault = true;
+            primary.AlternateGroupCode = "RESIN";
+            await SeedManualCurrentRouteAsync(db, header);
+            var operation = header.Operations.Single();
+            primary.Operation = operation;
+            db.PrDefBOMs.Add(new PrDefBOM
+            {
+                BomHdrId = header.Uid,
+                CompanyCode = "DEMO",
+                ProdCode = "FG001",
+                ICode = "RM001A",
+                IName = "Alternate resin",
+                StdQty = 2.5m,
+                StdUom = "KG",
+                SeqNo = 2,
+                ScrapPercent = 5m,
+                Warehouse = "WH01",
+                BomDefault = false,
+                AlternateGroupCode = "RESIN",
+                Operation = operation,
+                BranchCode = "HQ",
+                LocationCode = "SITE",
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var material = Assert.Single(created.Data!.Materials);
+        Assert.Equal("RM001", material.ComponentCode);
+        Assert.Equal("RESIN", material.AlternateGroupCode);
+        var anchor = created.Data.ScheduleAnchorDateTime;
+
+        var alternates = await sut.GetDraftMaterialAlternatesAsync(created.Data.WorkOrderNo, material.Uid);
+        Assert.True(alternates.Succeeded, alternates.Message);
+        var candidate = Assert.Single(alternates.Data!);
+        Assert.Equal("RM001A", candidate.ComponentCode);
+
+        var substituted = await sut.SubstituteDraftMaterialAsync(new ProductionWorkOrderMaterialSubstituteRequest
+        {
+            WorkOrderNo = created.Data.WorkOrderNo,
+            RowVersion = created.Data.RowVersion,
+            SnapshotRevision = created.Data.SnapshotRevision,
+            SnapshotHash = created.Data.SnapshotHash,
+            WorkOrderMaterialId = material.Uid,
+            ReplacementSourceBomLineId = candidate.SourceBomLineId
+        });
+
+        Assert.True(substituted.Succeeded, substituted.Message);
+        var replaced = Assert.Single(substituted.Data!.Materials);
+        Assert.Equal("RM001A", replaced.ComponentCode);
+        Assert.Equal("RESIN", replaced.AlternateGroupCode);
+        Assert.Equal(anchor, substituted.Data.ScheduleAnchorDateTime);
+        Assert.Equal(created.Data.SnapshotRevision + 1, substituted.Data.SnapshotRevision);
+        Assert.Contains(substituted.Data.AuditEvents, e => e.EventType == ProductionAuditEventTypes.MaterialSubstituted);
+    }
+
+    [Fact]
+    public async Task Snapshot_excludes_non_default_bom_alternates()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvStockMasters.Add(Stock("DEMO", "RM001A", "Alternate resin", "KG", PrMfgTypes.Buy));
+            var header = await db.PrBomHdrs.SingleAsync(x => x.ProdCode == "FG001");
+            var primary = await db.PrDefBOMs.SingleAsync(x => x.BomHdrId == header.Uid);
+            primary.BomDefault = true;
+            primary.AlternateGroupCode = "RESIN";
+            db.PrDefBOMs.Add(new PrDefBOM
+            {
+                BomHdrId = header.Uid,
+                CompanyCode = "DEMO",
+                ProdCode = "FG001",
+                ICode = "RM001A",
+                IName = "Alternate resin",
+                StdQty = 2.5m,
+                StdUom = "KG",
+                SeqNo = 2,
+                Warehouse = "WH01",
+                BomDefault = false,
+                AlternateGroupCode = "RESIN",
+                BranchCode = "HQ",
+                LocationCode = "SITE",
+                RowVersion = [1]
+            });
+            await SeedManualCurrentRouteAsync(db, header);
+            await db.SaveChangesAsync();
+        }
+
+        var preview = await CreateSut().ProcessPreviewAsync(Request(10m));
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.Equal("RM001", Assert.Single(preview.Data!.Materials).ComponentCode);
     }
 
     [Fact]
@@ -653,6 +963,66 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             new WorkOrderScheduleCalculator(new AlwaysOpenWorkOrderCalendarProvider()),
             new WorkOrderReadinessValidator(),
             Microsoft.Extensions.Options.Options.Create(new ProductionWorkOrderOptions { ReleaseEnabled = releaseEnabled }));
+    }
+
+    private async Task SeedManualCurrentRouteAsync(AppDbContext? db = null, PrBomHdr? header = null)
+    {
+        var ownsContext = db is null;
+        db ??= await _factory.CreateDbContextAsync();
+        try
+        {
+            header ??= await db.PrBomHdrs
+                .Include(x => x.Lines)
+                .Include(x => x.RouteSteps)
+                .Include(x => x.Operations)
+                .SingleAsync(x => x.ProdCode == "FG001");
+            if (header.RouteSteps.Count > 0)
+            {
+                return;
+            }
+
+            var operation = new PrBomOperation
+            {
+                CompanyCode = "DEMO",
+                WorkCentreCode = "WC01",
+                OutputItemCode = "FG001",
+                CentralSequence = 10,
+                OperationCode = "FIN",
+                ProcessSequence = 10,
+                ProcessType = PrProcessTypes.Manual,
+                StandardDurationMinutes = 30m,
+                IsFinalOperation = true,
+                OutputBaseQty = 5m,
+                OutputUom = "PCS",
+                RowVersion = [1]
+            };
+            header.RouteSteps.Add(new PrBomRouteStep
+            {
+                CompanyCode = "DEMO",
+                WorkCentreCode = "WC01",
+                StageSequence = 10,
+                OutputItemCode = "FG001",
+                OutputType = PrRouteOutputTypes.FinishedGoods,
+                StandardOutputQty = 1m,
+                OutputUom = "PCS",
+                RowVersion = [1],
+                Operations = { operation }
+            });
+            header.Operations.Add(operation);
+            foreach (var line in header.Lines.Where(l => l.Operation is null && l.OperationId is null))
+            {
+                line.Operation = operation;
+            }
+
+            await db.SaveChangesAsync();
+        }
+        finally
+        {
+            if (ownsContext)
+            {
+                await db.DisposeAsync();
+            }
+        }
     }
 
     private static ProductionWorkOrderDraftRequest Request(decimal quantity) => new()

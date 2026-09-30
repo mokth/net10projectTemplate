@@ -208,10 +208,11 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        ProductionWorkOrder? existing = null;
         if (!isNew)
         {
             var number = Normalize(request.WorkOrderNo);
-            var existing = await db.ProductionWorkOrders.AsNoTracking()
+            existing = await db.ProductionWorkOrders.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.CompanyCode == auth.Scope!.CompanyCode
                     && x.BranchCode == auth.Scope.BranchCode
                     && x.WorkOrderNo == number, cancellationToken);
@@ -229,10 +230,37 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             }
         }
 
-        var built = await BuildSnapshotAsync(db, auth.Scope!, request, cancellationToken);
-        return built.Succeeded && built.Data is not null
-            ? IvMasterOperationResult<ProductionWorkOrderPreview>.Ok(built.Data.Preview)
-            : CopyFailure<PreparedSnapshot, ProductionWorkOrderPreview>(built);
+        var built = await BuildCurrentSnapshotAsync(
+            auth.Scope!, request, existing?.SnapshotRevision ?? 1, explicitScheduleAnchor: null, cancellationToken);
+        if (built.WorkOrder is null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(
+                IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+        }
+
+        var detail = MapDetail(built.WorkOrder);
+        return IvMasterOperationResult<ProductionWorkOrderPreview>.Ok(new ProductionWorkOrderPreview
+        {
+            ProductCode = detail.ProductCode,
+            ProductDescription = detail.ProductDescription,
+            OutputUom = detail.OutputUom,
+            SourceBomHdrId = detail.SourceBomHdrId,
+            SourceBomVersion = detail.SourceBomVersion,
+            BomBaseQty = detail.BomBaseQty,
+            BomBaseUom = detail.BomBaseUom,
+            PlannedQty = detail.PlannedQty,
+            SnapshotAsOfDate = detail.SnapshotAsOfDate,
+            PlannedStartDate = detail.PlannedStartDate,
+            PlannedCompletionDate = detail.PlannedCompletionDate,
+            SchedulingDirection = detail.SchedulingDirection,
+            ScheduleAnchorDateTime = detail.ScheduleAnchorDateTime
+                ?? throw new InvalidOperationException("A current snapshot must have a schedule anchor."),
+            SnapshotHash = detail.SnapshotHash,
+            RouteSteps = detail.RouteSteps,
+            Materials = detail.Materials,
+            Operations = detail.Operations,
+            Warnings = built.Warnings
+        });
     }
 
     public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SaveDraftAsync(
@@ -1053,6 +1081,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         MaterialSequence = row.MaterialSequence,
         WorkOrderOperationId = row.WorkOrderOperationId,
         ConsumingOperationCode = row.WorkOrderOperation?.OperationCode,
+        AlternateGroupCode = row.AlternateGroupCode,
         IssueMethod = row.IssueMethod,
         SupplySource = row.SupplySource,
         RequiredBaseQty = row.RequiredBaseQty,
@@ -1148,6 +1177,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         string? operationCode = null) => new()
     {
         Uid = row.Uid,
+        WorkOrderOperationId = row.OperationId,
         OperationCode = operationCode ?? row.Operation?.OperationCode,
         Priority = row.Priority,
         MachineCode = row.MachineCode,

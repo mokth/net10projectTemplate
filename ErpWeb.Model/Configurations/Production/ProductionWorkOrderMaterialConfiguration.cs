@@ -30,6 +30,7 @@ public sealed class ProductionWorkOrderMaterialConfiguration : IEntityTypeConfig
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");
         builder.Property(x => x.SourceOperationId).HasColumnName("SourceOperationID");
+        builder.Property(x => x.AlternateGroupCode).HasMaxLength(30);
         builder.Property(x => x.LineNo);
         builder.Property(x => x.SourceBomHdrId).HasColumnName("SourceBomHdrID");
         builder.Property(x => x.SourceBomLineId).HasColumnName("SourceBomLineID");

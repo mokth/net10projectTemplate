@@ -82,6 +82,7 @@ public sealed class ProductionWorkOrderMaterialVm
     public int MaterialSequence { get; init; }
     public long? WorkOrderOperationId { get; init; }
     public string? ConsumingOperationCode { get; init; }
+    public string? AlternateGroupCode { get; init; }
     public string? StandardUom { get; init; }
     public string? IssueMethod { get; init; }
     public string? SupplySource { get; init; }
@@ -174,7 +175,12 @@ public sealed class ProductionWorkOrderPreview
     public string? BomBaseUom { get; init; }
     public decimal PlannedQty { get; init; }
     public DateTime SnapshotAsOfDate { get; init; }
+    public DateTime PlannedStartDate { get; init; }
+    public DateTime PlannedCompletionDate { get; init; }
+    public string SchedulingDirection { get; init; } = string.Empty;
+    public DateTime ScheduleAnchorDateTime { get; init; }
     public string SnapshotHash { get; init; } = string.Empty;
+    public IReadOnlyList<ProductionWorkOrderRouteStepVm> RouteSteps { get; init; } = [];
     public IReadOnlyList<ProductionWorkOrderMaterialVm> Materials { get; init; } = [];
     public IReadOnlyList<ProductionWorkOrderOperationVm> Operations { get; init; } = [];
     public IReadOnlyList<string> Warnings { get; init; } = [];
@@ -301,6 +307,7 @@ public sealed class ProductionWorkOrderRouteStepVm
 public sealed class ProductionWorkOrderMachineVm
 {
     public long Uid { get; init; }
+    public long WorkOrderOperationId { get; init; }
     public string? OperationCode { get; init; }
     public int Priority { get; init; }
     public string MachineCode { get; init; } = string.Empty;
@@ -390,6 +397,40 @@ public sealed class ProductionWorkOrderReleaseRequest
     public string SnapshotHash { get; set; } = string.Empty;
 }
 
+public sealed class ProductionWorkOrderMachineSelectRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[]? RowVersion { get; set; }
+    public int SnapshotRevision { get; set; }
+    public string SnapshotHash { get; set; } = string.Empty;
+    public long WorkOrderOperationId { get; set; }
+    public long WorkOrderMachineId { get; set; }
+    public string? Reason { get; set; }
+}
+
+public sealed class ProductionWorkOrderMaterialSubstituteRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[]? RowVersion { get; set; }
+    public int SnapshotRevision { get; set; }
+    public string SnapshotHash { get; set; } = string.Empty;
+    public long WorkOrderMaterialId { get; set; }
+    public long ReplacementSourceBomLineId { get; set; }
+    public string? Reason { get; set; }
+}
+
+public sealed class ProductionWorkOrderMaterialAlternateVm
+{
+    public long SourceBomLineId { get; init; }
+    public string ComponentCode { get; init; } = string.Empty;
+    public string? ComponentDescription { get; init; }
+    public bool BomDefault { get; init; }
+    public string? AlternateGroupCode { get; init; }
+    public decimal ComponentQtyPerParent { get; init; }
+    public string? StandardUom { get; init; }
+    public string SupplySource { get; init; } = string.Empty;
+}
+
 public interface IProductionWorkOrderService
 {
     Task<IvMasterOperationResult<ProductionWorkOrderListPage>> SearchAsync(
@@ -441,6 +482,19 @@ public interface IProductionWorkOrderService
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(
         ProductionWorkOrderReleaseRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SelectDraftMachineAsync(
+        ProductionWorkOrderMachineSelectRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>> GetDraftMaterialAlternatesAsync(
+        string workOrderNo,
+        long workOrderMaterialId,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SubstituteDraftMaterialAsync(
+        ProductionWorkOrderMaterialSubstituteRequest request,
         CancellationToken cancellationToken = default);
 }
 

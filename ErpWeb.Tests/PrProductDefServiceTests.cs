@@ -131,11 +131,13 @@ public class PrProductDefServiceTests : IAsyncLifetime
             [
                 new PrProductDefLineVm
                 {
-                    ICode = "RM001", StdQty = 0.2m, Warehouse = "WH01", BomDefault = true, Tolerance = 50m, SeqNo = 1
+                    ICode = "RM001", StdQty = 0.2m, Warehouse = "WH01", BomDefault = true,
+                    AlternateGroupCode = "RM001", Tolerance = 50m, SeqNo = 1
                 },
                 new PrProductDefLineVm
                 {
-                    ICode = "RM002", StdQty = 0.1m, Warehouse = "WH01", BomDefault = false, SeqNo = 2
+                    ICode = "RM002", StdQty = 0.1m, Warehouse = "WH01", BomDefault = false,
+                    AlternateGroupCode = "RM001", SeqNo = 2
                 }
             ]
         }, isNew: true, activate: false);

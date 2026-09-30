@@ -129,14 +129,23 @@
         {
             <section class="iv-card">
                 <header class="pwo-section-head">
-                    <div>
-                        <h2 class="iv-card__title mb-0">Order and snapshot inputs</h2>
-                        <p class="pwo-section-note mb-0">Process Preview is informational. Save recalculates the snapshot on the server.</p>
-                    </div>
+                    <button type="button"
+                            class="pwo-section-toggle"
+                            @onclick="@(() => InputsExpanded = !InputsExpanded)"
+                            aria-expanded="@InputsExpanded"
+                            aria-controls="pwo-input-body">
+                        <i class="fa-solid @(InputsExpanded ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i>
+                        <span>
+                            <strong>Order and snapshot inputs</strong>
+                            <small>Preview and Save use the same snapshot and scheduling rules.</small>
+                        </span>
+                    </button>
                     <span class="pwo-snapshot-state">@SnapshotState</span>
                 </header>
 
-                <div class="pwo-form-grid">
+                @if (InputsExpanded)
+                {
+                <div id="pwo-input-body" class="pwo-form-grid">
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label code-style">Product</label>
                         <IvStockMasterPicker ICode="@Request.ProductCode"
@@ -179,11 +188,11 @@
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Planned start</label>
-                        <DxDateEdit @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditFields)" />
+                        <DxDateEdit @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditFields || IsBackwardSchedule)" />
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Planned completion</label>
-                        <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditFields)" />
+                        <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditFields || !IsBackwardSchedule)" />
                         @FieldError("PlannedCompletionDate")
                     </div>
                     <div class="iv-field">
@@ -207,6 +216,7 @@
                         @FieldError("Remark")
                     </div>
                 </div>
+                }
             </section>
 
             @if (SnapshotWarnings.Count > 0)
@@ -226,39 +236,58 @@
                 @Kpi("Planned", Request.PlannedQty.ToString("n4"), CurrentOutputUom)
                 @Kpi("Good", GoodQty.ToString("n4"), CurrentOutputUom)
                 @Kpi("Remaining", RemainingQty.ToString("n4"), CurrentOutputUom)
-                @Kpi("Material issue", "Gated", "WO_EXECUTION_NOT_APPROVED")
-                @Kpi("Production", "Gated", "Posted facts are not active")
-                @Kpi("Current WIP", "Gated", "Execution gate pending")
-                @Kpi("FG received", "Gated", "No FG posting")
-                @Kpi("Shortage", "Gated", "Reservation policy pending")
+                @Kpi("Execution", "Gated", "Posting and reservation remain disabled")
             </section>
 
             <section class="iv-card pwo-tabs">
                 <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
                     <DxTabPage Text="OVERVIEW">
-                        <div class="pwo-overview-grid">
-                            @Detail("Work Order", CurrentWorkOrderNo)
-                            @Detail("Status", CurrentStatus)
-                            @Detail("Product", Request.ProductCode)
-                            @Detail("BOM revision", CurrentBomVersion?.ToString())
-                            @Detail("BOM base", BomBaseLabel)
-                            @Detail("Effective date", CurrentSnapshotDate?.ToString("dd MMM yyyy"))
-                            @Detail("Snapshot", SnapshotFormatLabel)
-                            @Detail("Snapshot revision", DetailModel?.SnapshotRevision.ToString())
-                            @Detail("Direction", Request.SchedulingDirection)
-                            @Detail("Schedule", $"{Request.PlannedStartDate:dd MMM yyyy HH:mm} → {Request.PlannedCompletionDate:dd MMM yyyy HH:mm}")
-                            @Detail("Source", SourceLabel)
-                            @Detail("Remark", string.IsNullOrWhiteSpace(Request.Remark) ? "—" : Request.Remark)
-                            @Detail("Snapshot hash", ShortSnapshotHash)
-                            @Detail("Created", CreatedLabel)
-                            @Detail("Updated", UpdatedLabel)
-                            @Detail("Released", ReleasedLabel)
+                        <div class="pwo-overview-sections">
+                            <section class="pwo-overview-section">
+                                <h3>Identity</h3>
+                                <div class="pwo-overview-grid">
+                                    @Detail("Work Order", CurrentWorkOrderNo)
+                                    @Detail("Product", Request.ProductCode)
+                                    @Detail("Output UOM", CurrentOutputUom)
+                                    @Detail("Status", CurrentStatus)
+                                    @Detail("Source", SourceLabel)
+                                    @Detail("Remark", string.IsNullOrWhiteSpace(Request.Remark) ? "—" : Request.Remark)
+                                </div>
+                            </section>
+                            <section class="pwo-overview-section">
+                                <h3>Product Definition / Snapshot</h3>
+                                <div class="pwo-overview-grid">
+                                    @Detail("Definition revision", CurrentBomVersion?.ToString())
+                                    @Detail("Snapshot revision", DetailModel?.SnapshotRevision.ToString())
+                                    @Detail("Snapshot date", CurrentSnapshotDate?.ToString("dd MMM yyyy"))
+                                    @Detail("BOM base", BomBaseLabel)
+                                    @Detail("Snapshot format", SnapshotFormatLabel)
+                                    @Detail("Snapshot hash", ShortSnapshotHash)
+                                </div>
+                            </section>
+                            <section class="pwo-overview-section">
+                                <h3>Schedule</h3>
+                                <div class="pwo-overview-grid">
+                                    @Detail("Direction", DirectionLabel)
+                                    @Detail("Schedule anchor", DetailModel?.ScheduleAnchorDateTime?.ToString("dd MMM yyyy HH:mm:ss"))
+                                    @Detail("Calculated start", Request.PlannedStartDate.ToString("dd MMM yyyy HH:mm"))
+                                    @Detail("Calculated completion", Request.PlannedCompletionDate.ToString("dd MMM yyyy HH:mm"))
+                                </div>
+                            </section>
+                            <section class="pwo-overview-section">
+                                <h3>Audit</h3>
+                                <div class="pwo-overview-grid">
+                                    @Detail("Created", CreatedLabel)
+                                    @Detail("Updated", UpdatedLabel)
+                                    @Detail("Released", ReleasedLabel)
+                                </div>
+                            </section>
                         </div>
                     </DxTabPage>
                     <DxTabPage Text="ROUTE">
                         @if (RouteRows.Count == 0)
                         {
-                            <p class="pwo-empty">Route steps appear after a version-2 Draft is saved.</p>
+                            <p class="pwo-empty">Route steps appear after Process Preview or after the Draft is saved.</p>
                         }
                         else
                         {
@@ -327,6 +356,7 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.MaterialSequence)" Caption="#" Width="55px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentCode)" Caption="Component" Width="130px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentDescription)" Caption="Description" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.AlternateGroupCode)" Caption="Group" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ConsumingOperationCode)" Caption="Process" Width="110px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentQtyPerParent)" Caption="Std Qty" DisplayFormat="n4" Width="95px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.StandardUom)" Caption="Std UOM" Width="85px" />
@@ -339,6 +369,17 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.IssueMethod)" Caption="Issue" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.SupplySource)" Caption="Supply" Width="140px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.WarehouseCode)" Caption="Warehouse" Width="100px" />
+                                    <DxGridDataColumn Caption="" Width="90px">
+                                        <CellDisplayTemplate>
+                                            @{
+                                                var material = (ProductionWorkOrderMaterialVm)context.DataItem;
+                                            }
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      Text="Change"
+                                                      Enabled="@CanChangeMaterial(material)"
+                                                      Click="@(() => OpenMaterialChangeAsync(material))" />
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
                                 </Columns>
                             </DxGrid>
                         }
@@ -372,6 +413,17 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.QueueSeconds)" Caption="Queue sec" DisplayFormat="n4" Width="90px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
+                                    <DxGridDataColumn Caption="" Width="90px">
+                                        <CellDisplayTemplate>
+                                            @{
+                                                var machine = (ProductionWorkOrderMachineVm)context.DataItem;
+                                            }
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      Text="Select"
+                                                      Enabled="@CanSelectMachine(machine)"
+                                                      Click="@(() => SelectMachineAsync(machine))" />
+                                        </CellDisplayTemplate>
+                                    </DxGridDataColumn>
                                 </Columns>
                             </DxGrid>
                         }
@@ -443,86 +495,131 @@
         <DxPopup HeaderText="Release Work Order"
                  @bind-Visible="@ReleaseConfirmVisible"
                  CloseOnOutsideClick="false"
-                 Width="460px">
-            <BodyContentTemplate>
+                 Width="460px"
+                 CssClass="common-popup">
+            <Content>
                 <p class="iv-confirm__copy">Release @CurrentWorkOrderNo for execution?</p>
                 <p class="text-muted small mb-0">The product, BOM revision, schedule and snapshot lines become read-only. This action does not post inventory.</p>
-            </BodyContentTemplate>
-            <FooterContentTemplate>
-                <div class="d-flex gap-2 justify-content-end w-100">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => ReleaseConfirmVisible = false)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Release" Click="@ReleaseAsync" Enabled="@(!IsSubmitting)" />
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => ReleaseConfirmVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Release" Click="@ReleaseAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
                 </div>
-            </FooterContentTemplate>
+            </Content>
         </DxPopup>
 
         <DxPopup HeaderText="Cancel Draft Work Order"
                  @bind-Visible="@CancelConfirmVisible"
                  CloseOnOutsideClick="false"
-                 Width="480px">
-            <BodyContentTemplate>
+                 Width="480px"
+                 CssClass="common-popup">
+            <Content>
                 <p class="iv-confirm__copy">Cancel @CurrentWorkOrderNo?</p>
                 <div class="iv-field">
                     <label class="iv-field__label">Reason</label>
                     <DxMemo @bind-Text="@CancellationReason" Rows="3" NullText="Required cancellation reason" />
                     @FieldError("CancellationReason")
                 </div>
-            </BodyContentTemplate>
-            <FooterContentTemplate>
-                <div class="d-flex gap-2 justify-content-end w-100">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => CancelConfirmVisible = false)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Draft" Click="@CancelDraftAsync" Enabled="@(!IsSubmitting)" />
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => CancelConfirmVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Draft" Click="@CancelDraftAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
                 </div>
-            </FooterContentTemplate>
+            </Content>
         </DxPopup>
 
         <DxPopup HeaderText="Work Order changed"
                  @bind-Visible="@ConcurrencyVisible"
                  CloseOnOutsideClick="false"
-                 Width="460px">
-            <BodyContentTemplate>
+                 Width="460px"
+                 CssClass="common-popup">
+            <Content>
                 <p class="iv-confirm__copy">Another user or process changed this Work Order. Reload the latest saved version before continuing.</p>
-            </BodyContentTemplate>
-            <FooterContentTemplate>
-                <div class="d-flex justify-content-end w-100">
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload latest" Click="@ReloadLatestAsync" />
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload latest" Click="@ReloadLatestAsync" />
+                    </div>
                 </div>
-            </FooterContentTemplate>
+            </Content>
         </DxPopup>
 
         <DxPopup HeaderText="Refresh from Product Definition"
                  @bind-Visible="@RefreshVisible"
                  CloseOnOutsideClick="false"
-                 Width="520px">
-            <BodyContentTemplate>
-                <p class="iv-confirm__copy">This replaces the Draft snapshot. Released orders are never refreshed.</p>
+                 Width="520px"
+                 CssClass="common-popup">
+            <Content>
+                <p class="iv-confirm__copy">Refreshing from Product Definition will reset Draft machine and material overrides to the current definition defaults. The Work Order scheduling anchor will be preserved and the schedule will be recalculated.</p>
                 @if (RefreshPreviewModel is not null)
                 {
                     <p class="text-muted small">Added @RefreshPreviewModel.Added.Count, removed @RefreshPreviewModel.Removed.Count, changed @RefreshPreviewModel.Changed.Count.</p>
                 }
                 <input class="form-control" @bind="RefreshReason" placeholder="Reason" />
-            </BodyContentTemplate>
-            <FooterContentTemplate>
-                <div class="d-flex gap-2 justify-content-end w-100">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => RefreshVisible = false)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Confirm refresh" Click="@ConfirmRefreshAsync" Enabled="@(!IsSubmitting)" />
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => RefreshVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Confirm refresh" Click="@ConfirmRefreshAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
                 </div>
-            </FooterContentTemplate>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Change material"
+                 @bind-Visible="@MaterialChangeVisible"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup">
+            <Content>
+                @if (MaterialChangeSource is not null)
+                {
+                    <p class="iv-confirm__copy">
+                        Change @MaterialChangeSource.ComponentCode
+                        @(string.IsNullOrWhiteSpace(MaterialChangeSource.AlternateGroupCode)
+                            ? ""
+                            : $" (group {MaterialChangeSource.AlternateGroupCode})")
+                        to another alternate from this Work Order's Product Definition revision.
+                    </p>
+                }
+                @if (MaterialAlternates.Count == 0)
+                {
+                    <p class="text-muted">No alternates are defined for this material group in the Work Order's Product Definition revision.</p>
+                }
+                else
+                {
+                    <DxComboBox Data="@MaterialAlternates"
+                                TextFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.ComponentCode)"
+                                ValueFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.SourceBomLineId)"
+                                @bind-Value="@SelectedAlternateBomLineId"
+                                NullText="Select alternate" />
+                }
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => MaterialChangeVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Apply"
+                                  Click="@ConfirmMaterialChangeAsync"
+                                  Enabled="@(!IsSubmitting && SelectedAlternateBomLineId is > 0)" />
+                    </div>
+                </div>
+            </Content>
         </DxPopup>
 
         <DxPopup HeaderText="Discard changes?"
                  @bind-Visible="@ConfirmDiscardVisible"
                  CloseOnOutsideClick="false"
-                 Width="440px">
-            <BodyContentTemplate>
+                 Width="440px"
+                 CssClass="common-popup">
+            <Content>
                 <p class="iv-confirm__copy">You have unprocessed or unsaved Work Order changes. Discard them and return to the list?</p>
-            </BodyContentTemplate>
-            <FooterContentTemplate>
-                <div class="d-flex gap-2 justify-content-end w-100">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
+                    </div>
                 </div>
-            </FooterContentTemplate>
+            </Content>
         </DxPopup>
     </div>
 </MenuAuthorize>

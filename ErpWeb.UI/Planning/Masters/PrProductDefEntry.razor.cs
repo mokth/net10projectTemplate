@@ -102,6 +102,7 @@ public partial class PrProductDefEntry : PageBase
     protected decimal LineScrapPercent { get; set; }
     protected string? LineWarehouse { get; set; }
     protected bool LineBomDefault { get; set; } = true;
+    protected string? LineAlternateGroupCode { get; set; }
     protected decimal LineTolerance { get; set; }
     protected string LineIssueMethod { get; set; } = PrMaterialIssueMethods.Manual;
     protected string LineSupplySource { get; set; } = PrMaterialSupplySources.Purchased;
@@ -629,6 +630,11 @@ public partial class PrProductDefEntry : PageBase
         LineItemDesc = row.IDesc;
         LineUom = row.StdUom;
         LineMfgType = PrMfgTypes.Buy;
+        if (string.IsNullOrWhiteSpace(LineAlternateGroupCode))
+        {
+            LineAlternateGroupCode = row.ICode;
+        }
+
         if (string.IsNullOrWhiteSpace(LineWarehouse)
             && !string.IsNullOrWhiteSpace(row.DefWarehouse)
             && Warehouses.Any(w => string.Equals(w.Code, row.DefWarehouse, StringComparison.OrdinalIgnoreCase)))
@@ -828,6 +834,7 @@ public partial class PrProductDefEntry : PageBase
         LineScrapPercent = line.ScrapPercent;
         LineWarehouse = line.Warehouse;
         LineBomDefault = line.BomDefault;
+        LineAlternateGroupCode = line.AlternateGroupCode ?? line.ICode;
         LineTolerance = line.Tolerance;
         LineIssueMethod = string.IsNullOrWhiteSpace(line.IssueMethod)
             ? PrMaterialIssueMethods.Manual
@@ -974,6 +981,9 @@ public partial class PrProductDefEntry : PageBase
                 target.ScrapPercent = LineScrapPercent;
                 target.Warehouse = LineWarehouse;
                 target.BomDefault = LineBomDefault;
+                target.AlternateGroupCode = string.IsNullOrWhiteSpace(LineAlternateGroupCode)
+                    ? LineItem
+                    : LineAlternateGroupCode.Trim().ToUpperInvariant();
                 target.Tolerance = LineTolerance;
                 target.MfgType = LineMfgType;
                 target.IssueMethod = LineIssueMethod;
@@ -1003,6 +1013,9 @@ public partial class PrProductDefEntry : PageBase
                 SeqNo = seq,
                 Warehouse = LineWarehouse,
                 BomDefault = LineBomDefault,
+                AlternateGroupCode = string.IsNullOrWhiteSpace(LineAlternateGroupCode)
+                    ? LineItem
+                    : LineAlternateGroupCode.Trim().ToUpperInvariant(),
                 Tolerance = LineTolerance,
                 MfgType = LineMfgType,
                 IssueMethod = LineIssueMethod,
@@ -1222,6 +1235,7 @@ public partial class PrProductDefEntry : PageBase
         LineScrapPercent = 0m;
         LineWarehouse = null;
         LineBomDefault = true;
+        LineAlternateGroupCode = null;
         LineTolerance = 0m;
         LineIssueMethod = PrMaterialIssueMethods.Manual;
         LineSupplySource = PrMaterialSupplySources.Purchased;
@@ -2047,6 +2061,7 @@ public partial class PrProductDefEntry : PageBase
                 x.ScrapPercent,
                 x.Warehouse,
                 x.BomDefault,
+                x.AlternateGroupCode,
                 x.Tolerance,
                 x.IssueMethod,
                 x.SupplySource,

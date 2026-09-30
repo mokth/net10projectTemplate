@@ -448,8 +448,9 @@ public sealed class PrProductDefService : IPrProductDefService
             cancellationToken);
 
         var seenComponents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var normalized = new List<(string ICode, string? IName, decimal StdQty, string? StdUom, int SeqNo, decimal ScrapPercent, string Warehouse, bool BomDefault, decimal Tolerance, bool WipBomDefault, Guid? OperationKey, string IssueMethod, string SupplySource, Guid? ProducingRouteStepKey)>();
+        var normalized = new List<(string ICode, string? IName, decimal StdQty, string? StdUom, int SeqNo, decimal ScrapPercent, string Warehouse, bool BomDefault, string? AlternateGroupCode, decimal Tolerance, bool WipBomDefault, Guid? OperationKey, string IssueMethod, string SupplySource, Guid? ProducingRouteStepKey)>();
         var operationKeys = normalizedOperations.Select(x => x.OperationKey).ToHashSet();
+        var defaultsByGroup = new Dictionary<string, int>(StringComparer.Ordinal);
         // Route steps that already exist for this revision. A material may only point at one of
         // these; a brand-new revision gains step keys after its first save.
         var persistedRouteSteps = existingHeader is null
@@ -562,6 +563,27 @@ public sealed class PrProductDefService : IPrProductDefService
                     $"{label}: a producing route step is only allowed for INTERNAL_ROUTE_WIP material.";
             }
 
+            var alternateGroup = PrBomAlternateGroups.Normalize(line.AlternateGroupCode);
+            if (alternateGroup is null)
+            {
+                // New saves always require an explicit group. Singleton defaults default to ICode.
+                alternateGroup = iCode.Length > 0 ? iCode : null;
+            }
+
+            if (alternateGroup is null || !PrBomAlternateGroups.IsValidLength(alternateGroup))
+            {
+                errors[$"Lines[{i}].AlternateGroupCode"] =
+                    $"{label}: alternate group is required (max {PrBomAlternateGroups.MaxLength} characters).";
+            }
+            else
+            {
+                var groupKey = $"{line.OperationKey}|{alternateGroup}";
+                if (line.BomDefault)
+                {
+                    defaultsByGroup[groupKey] = defaultsByGroup.GetValueOrDefault(groupKey) + 1;
+                }
+            }
+
             if (itemByCode.TryGetValue(iCode, out var item))
             {
                 bool wip = false;
@@ -585,7 +607,7 @@ public sealed class PrProductDefService : IPrProductDefService
                         $"{label}: no approved conversion from {authoredUom} to inventory UOM {inventoryUom} ({UomConversionFailureCodes.MissingConversion}).";
                 }
 
-                if (errors.Count == 0)
+                if (!errors.Keys.Any(k => k.StartsWith($"Lines[{i}].", StringComparison.Ordinal)))
                 {
                     normalized.Add((
                         iCode,
@@ -596,6 +618,7 @@ public sealed class PrProductDefService : IPrProductDefService
                         scrap,
                         warehouse,
                         line.BomDefault,
+                        alternateGroup,
                         tolerance,
                         wip,
                         line.OperationKey,
@@ -603,6 +626,28 @@ public sealed class PrProductDefService : IPrProductDefService
                         supplySource,
                         producingKey));
                 }
+            }
+        }
+
+        foreach (var line in normalized.Where(x => !x.BomDefault))
+        {
+            var groupKey = $"{line.OperationKey}|{line.AlternateGroupCode}";
+            if (defaultsByGroup.GetValueOrDefault(groupKey) != 1)
+            {
+                errors[nameof(model.Lines)] =
+                    $"Alternate group {line.AlternateGroupCode} must have exactly one default material.";
+                break;
+            }
+        }
+
+        foreach (var (groupKey, count) in defaultsByGroup)
+        {
+            if (count > 1)
+            {
+                var groupCode = groupKey.Contains('|') ? groupKey[(groupKey.IndexOf('|') + 1)..] : groupKey;
+                errors[nameof(model.Lines)] =
+                    $"Alternate group {groupCode} has more than one default material.";
+                break;
             }
         }
 
@@ -792,6 +837,7 @@ public sealed class PrProductDefService : IPrProductDefService
                     ScrapPercent = line.ScrapPercent,
                     Warehouse = line.Warehouse,
                     BomDefault = line.BomDefault,
+                    AlternateGroupCode = line.AlternateGroupCode,
                     WipBomDefault = line.WipBomDefault,
                     Tolerance = line.Tolerance,
                     IssueMethod = line.IssueMethod,
@@ -977,6 +1023,7 @@ public sealed class PrProductDefService : IPrProductDefService
                 ScrapPercent = line.ScrapPercent,
                 Warehouse = line.Warehouse,
                 BomDefault = line.BomDefault,
+                AlternateGroupCode = line.AlternateGroupCode,
                 WipBomDefault = line.WipBomDefault,
                 Tolerance = line.Tolerance,
                 IssueMethod = line.IssueMethod,
@@ -1914,6 +1961,7 @@ public sealed class PrProductDefService : IPrProductDefService
                 ScrapPercent = x.ScrapPercent,
                 Warehouse = x.Warehouse,
                 BomDefault = x.BomDefault,
+                AlternateGroupCode = x.AlternateGroupCode,
                 Tolerance = x.Tolerance,
                 IssueMethod = x.IssueMethod,
                 SupplySource = x.SupplySource,

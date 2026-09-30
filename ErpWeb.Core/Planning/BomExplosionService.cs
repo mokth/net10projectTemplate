@@ -284,6 +284,14 @@ public sealed class BomExplosionService : IBomExplosionService
 
         foreach (var line in lines.OrderBy(x => x.SeqNo).ThenBy(x => x.ICode))
         {
+            // Requirement modes exclude authored alternates so MRP / issue do not double-count.
+            // StructuralTree retains every authored line, including non-default alternates.
+            if (mode is BomExplosionMode.MaterialRequirement or BomExplosionMode.ProductionIssueRequirement
+                && !line.BomDefault)
+            {
+                continue;
+            }
+
             var childCode = Normalize(line.ICode);
             if (pathStack.Any(p => string.Equals(p, childCode, StringComparison.OrdinalIgnoreCase)))
             {
