@@ -1,0 +1,85 @@
+@namespace ErpWeb.UI.Planning.Components
+
+<div class="pwp" role="group" aria-label="@(Label ?? "Weekly pattern")">
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <div class="pwp__label">@Label</div>
+    }
+    <div class="pwp__days">
+        @foreach (var day in OrderedDays)
+        {
+            var isOff = OffDays.Contains(day);
+            var showingWork = Mode == WeekdayPatternMode.OffOnly
+                ? !isOff
+                : WorkDays.Contains(day) || !isOff;
+            <button type="button"
+                    class="pwp__day @(showingWork ? "pwp__day--work" : "pwp__day--off")"
+                    disabled="@Disabled"
+                    aria-pressed="@showingWork"
+                    aria-label="@($"{ShortName(day)}: {(showingWork ? "Work" : "Off")}")"
+                    @onclick="(() => ToggleAsync(day))">
+                <span class="pwp__day-name">@ShortName(day)</span>
+                <span class="pwp__day-state">@(showingWork ? "Work" : "Off")</span>
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    private static readonly DayOfWeek[] OrderedDays =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+        DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
+    ];
+
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public HashSet<DayOfWeek> WorkDays { get; set; } = new();
+    [Parameter] public HashSet<DayOfWeek> OffDays { get; set; } = new();
+    [Parameter] public WeekdayPatternMode Mode { get; set; } = WeekdayPatternMode.WorkAndOff;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<(DayOfWeek Day, bool IsWork)> DayToggled { get; set; }
+
+    private static string ShortName(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "Mon",
+        DayOfWeek.Tuesday => "Tue",
+        DayOfWeek.Wednesday => "Wed",
+        DayOfWeek.Thursday => "Thu",
+        DayOfWeek.Friday => "Fri",
+        DayOfWeek.Saturday => "Sat",
+        _ => "Sun"
+    };
+
+    private async Task ToggleAsync(DayOfWeek day)
+    {
+        if (Disabled) return;
+
+        bool nextIsWork;
+        if (Mode == WeekdayPatternMode.OffOnly)
+        {
+            var currentlyOff = OffDays.Contains(day);
+            nextIsWork = currentlyOff;
+            if (currentlyOff) OffDays.Remove(day);
+            else OffDays.Add(day);
+        }
+        else
+        {
+            var currentlyOff = OffDays.Contains(day);
+            var currentlyWork = WorkDays.Contains(day);
+            var showingWork = currentlyWork || !currentlyOff;
+            nextIsWork = !showingWork;
+            if (nextIsWork)
+            {
+                WorkDays.Add(day);
+                OffDays.Remove(day);
+            }
+            else
+            {
+                OffDays.Add(day);
+                WorkDays.Remove(day);
+            }
+        }
+
+        await DayToggled.InvokeAsync((day, nextIsWork));
+    }
+}

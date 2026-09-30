@@ -42,6 +42,7 @@ public partial class PrProductDefEntry : PageBase
     protected bool IsSubmitting;
     protected bool ConfirmDiscardVisible;
     protected bool ConcurrencyVisible;
+    protected bool HelpVisible;
     protected bool CanEdit;
     protected bool CanAdd;
     protected string? StatusMessage;
@@ -52,14 +53,15 @@ public partial class PrProductDefEntry : PageBase
         set
         {
             _activeTabIndex = value;
-            if (value is 2 or 3 or 4)
+            // Operations (1) also needs a centre; Materials/Machines/Labour reuse the same selection.
+            if (value is 1 or 2 or 3 or 4)
             {
                 EnsureBomProcessSelected();
                 if (value == 2)
                 {
                     RebuildProcessBomNodes();
                 }
-                else
+                else if (value is 3 or 4)
                 {
                     EnsureResourceSelection();
                 }
@@ -275,6 +277,11 @@ public partial class PrProductDefEntry : PageBase
     {
         if (SelectedOperation is not null && Model.Operations.Contains(SelectedOperation))
         {
+            if (!SelectedCentreKey.HasValue)
+            {
+                SelectedCentreKey = PrProductDefCentreProjection.CentreKey.From(SelectedOperation);
+            }
+
             return;
         }
 
@@ -289,6 +296,14 @@ public partial class PrProductDefEntry : PageBase
         if (SelectedOperation is not null)
         {
             SelectedCentreKey = PrProductDefCentreProjection.CentreKey.From(SelectedOperation);
+            return;
+        }
+
+        // No processes yet — still pick a centre so Operations shows the empty grid + editor.
+        if (!SelectedCentreKey.HasValue && CentreRows.Count > 0)
+        {
+            var firstCentre = CentreRows.FirstOrDefault(r => !r.IsPending) ?? CentreRows[0];
+            SelectedCentreKey = firstCentre.Key;
         }
     }
 

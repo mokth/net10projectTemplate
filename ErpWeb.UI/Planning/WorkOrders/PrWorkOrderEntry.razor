@@ -61,6 +61,10 @@
                           Text="BACK"
                           IconCssClass="fa-solid fa-arrow-left"
                           Click="@BackToList" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="HOW TO USE"
+                          IconCssClass="fa-solid fa-circle-question"
+                          Click="@(() => HelpVisible = true)" />
                 @if (CanOpenEdit)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -72,29 +76,32 @@
             <div class="pwo-commandbar__right">
                 @if (CanEditFields)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="PROCESS PREVIEW"
-                              IconCssClass="fa-solid fa-gears"
-                              Click="@ProcessPreviewAsync"
-                              Enabled="@(!IsSubmitting)" />
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="SAVE DRAFT"
                               IconCssClass="fa-regular fa-floppy-disk"
                               Click="@SaveDraftAsync"
                               Enabled="@(!IsSubmitting)" />
-                    @if (IsCurrentSnapshot)
-                    {
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="RECALCULATE"
-                                  IconCssClass="fa-solid fa-calendar-days"
-                                  Click="@RecalculateScheduleAsync"
-                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="REFRESH DEFINITION"
-                                  IconCssClass="fa-solid fa-rotate"
-                                  Click="@OpenRefreshAsync"
-                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
-                    }
+                    <DxDropDownButton Text="MORE"
+                                      RenderStyle="ButtonRenderStyle.Secondary"
+                                      IconCssClass="fa-solid fa-ellipsis"
+                                      Enabled="@(!IsSubmitting)">
+                        <Items>
+                            <DxDropDownButtonItem Text="CALCULATE PREVIEW"
+                                                  IconCssClass="fa-solid fa-gears"
+                                                  Click="@ProcessPreviewAsync"
+                                                  Enabled="@(!IsSubmitting)" />
+                            <DxDropDownButtonItem Text="RECALCULATE SCHEDULE"
+                                                  IconCssClass="fa-solid fa-calendar-days"
+                                                  Click="@RecalculateScheduleAsync"
+                                                  Visible="@IsCurrentSnapshot"
+                                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                            <DxDropDownButtonItem Text="REFRESH DEFINITION"
+                                                  IconCssClass="fa-solid fa-rotate"
+                                                  Click="@OpenRefreshAsync"
+                                                  Visible="@IsCurrentSnapshot"
+                                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                        </Items>
+                    </DxDropDownButton>
                 }
                 @if (CanReleaseAction)
                 {
@@ -137,7 +144,7 @@
                         <i class="fa-solid @(InputsExpanded ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i>
                         <span>
                             <strong>Order and snapshot inputs</strong>
-                            <small>Preview and Save use the same snapshot and scheduling rules.</small>
+                            <small>Save applies required recalculation. Use More → Calculate Preview to inspect the calculated route, materials and schedule before saving.</small>
                         </span>
                     </button>
                     <span class="pwo-snapshot-state">@SnapshotState</span>
@@ -240,7 +247,7 @@
             </section>
 
             <section class="iv-card pwo-tabs">
-                <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex">
+                <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex" RenderMode="TabsRenderMode.OnDemand">
                     <DxTabPage Text="OVERVIEW">
                         <div class="pwo-overview-sections">
                             <section class="pwo-overview-section">
@@ -287,7 +294,7 @@
                     <DxTabPage Text="ROUTE">
                         @if (RouteRows.Count == 0)
                         {
-                            <p class="pwo-empty">Route steps appear after Process Preview or after the Draft is saved.</p>
+                            <p class="pwo-empty">Route steps appear after Calculate Preview or after the Draft is saved.</p>
                         }
                         else
                         {
@@ -317,7 +324,7 @@
                             <div class="pwo-empty-state">
                                 <i class="fa-solid fa-route" aria-hidden="true"></i>
                                 <strong>No routing snapshot</strong>
-                                <span>No process rows for this product, or Process Preview has not been run yet.</span>
+                                <span>No process rows for this product, or Calculate Preview has not been run yet.</span>
                             </div>
                         }
                         else
@@ -347,7 +354,7 @@
                     <DxTabPage Text="MATERIALS">
                         @if (VisibleMaterialRows.Count == 0)
                         {
-                            <p class="pwo-empty">Run Process Preview to inspect material requirements.</p>
+                            <p class="pwo-empty">Run Calculate Preview to inspect material requirements.</p>
                         }
                         else
                         {
@@ -491,6 +498,62 @@
                 </DxTabs>
             </section>
         }
+
+        <DxPopup HeaderText="How to use Work Order Entry"
+                 @bind-Visible="@HelpVisible"
+                 CloseOnOutsideClick="true"
+                 Width="640px"
+                 CssClass="common-popup">
+            <Content>
+                <div class="pwo-help">
+                    <p class="pwo-help__intro">Available actions depend on the Work Order status and your permissions.</p>
+
+                    <section>
+                        <h3>1. Normal flow</h3>
+                        <ol>
+                            <li>Set product, planned quantity, and scheduling direction/date.</li>
+                            <li>Optional: More → Calculate Preview to inspect the calculated route, materials, and schedule without saving.</li>
+                            <li>Save Draft to create or update the Work Order.</li>
+                            <li>After the Draft is saved, adjust machine selection or material alternatives if required.</li>
+                            <li>Save any header changes before Release.</li>
+                            <li>Release the Work Order when it is ready for execution, or Cancel Draft if the Work Order should no longer proceed.</li>
+                        </ol>
+                    </section>
+
+                    <section>
+                        <h3>2. Buttons</h3>
+                        <dl class="pwo-help__actions">
+                            <dt>Save Draft</dt>
+                            <dd>Creates or updates the Draft and applies required recalculation.</dd>
+                            <dt>Release</dt>
+                            <dd>Approves the Draft for execution and makes its production snapshot read-only. Release does not post inventory. Hidden while inputs are unsaved.</dd>
+                            <dt>Cancel Draft</dt>
+                            <dd>Marks the Draft as Cancelled. A cancellation reason is required. Does not delete the Work Order.</dd>
+                            <dt>More → Calculate Preview</dt>
+                            <dd>Calculates route, materials, quantities, and schedule for inspection without saving.</dd>
+                            <dt>More → Recalculate Schedule</dt>
+                            <dd>Re-runs scheduling for a saved current-snapshot Draft.</dd>
+                            <dt>More → Refresh Definition</dt>
+                            <dd>Rebuilds the Draft from Product Definition, resets machine/material overrides to definition defaults, preserves the scheduling anchor, and recalculates the schedule.</dd>
+                        </dl>
+                    </section>
+
+                    <section>
+                        <h3>3. Tips</h3>
+                        <ul>
+                            <li>Unsaved input changes hide Release and disable Recalculate Schedule / Refresh Definition until the Draft is saved.</li>
+                            <li>Calculate Preview is inspection-only. Save Draft persists the Work Order and applies any required recalculation.</li>
+                            <li>After Release, the Work Order is read-only for this Draft-entry workflow.</li>
+                        </ul>
+                    </section>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Close" Click="@(() => HelpVisible = false)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
 
         <DxPopup HeaderText="Release Work Order"
                  @bind-Visible="@ReleaseConfirmVisible"

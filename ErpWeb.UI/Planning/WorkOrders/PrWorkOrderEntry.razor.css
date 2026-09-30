@@ -54,6 +54,49 @@
     white-space: nowrap;
 }
 
+.pwo-help {
+    display: grid;
+    gap: 16px;
+    max-height: min(70vh, 560px);
+    overflow-y: auto;
+}
+
+.pwo-help__intro {
+    color: var(--iv-muted);
+    font-size: .9rem;
+    margin: 0;
+}
+
+.pwo-help h3 {
+    font-size: .95rem;
+    margin: 0 0 8px;
+}
+
+.pwo-help ol,
+.pwo-help ul {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.pwo-help li + li {
+    margin-top: 4px;
+}
+
+.pwo-help__actions {
+    display: grid;
+    gap: 4px 12px;
+    grid-template-columns: minmax(9rem, max-content) 1fr;
+    margin: 0;
+}
+
+.pwo-help__actions dt {
+    font-weight: 600;
+}
+
+.pwo-help__actions dd {
+    margin: 0 0 8px;
+}
+
 .pwo-form-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

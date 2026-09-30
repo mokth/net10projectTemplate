@@ -1,17 +1,24 @@
 @namespace ErpWeb.UI.Planning.Components
 @using ErpWeb.Core.Planning
+@using System.Text
 
 <div class="pyc">
-    <div class="pyc-legend" aria-hidden="true">
-        <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--work"></i> Work</span>
-        <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--off"></i> Off</span>
-        <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--holiday"></i> Holiday</span>
-        <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--today"></i> Today</span>
-    </div>
-    <div class="pyc-summary">
-        Work @_work · Off @_off · Holiday @_holiday
-        @if (Dirty) { <span class="pyc-dirty">· unsaved</span> }
-    </div>
+    @if (ShowLegend)
+    {
+        <div class="pyc-legend" aria-hidden="true">
+            <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--work"></i> Work</span>
+            <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--off"></i> Off</span>
+            <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--holiday"></i> Holiday</span>
+            <span class="pyc-legend__item"><i class="pyc-swatch pyc-swatch--today"></i> Today</span>
+        </div>
+    }
+    @if (ShowSummary)
+    {
+        <div class="pyc-summary">
+            Work @_work · Off @_off · Holiday @_holiday
+            @if (Dirty) { <span class="pyc-dirty">· unsaved</span> }
+        </div>
+    }
     <div class="pyc-year" role="grid" aria-label="@($"Calendar {Year}")">
         @for (var m = 1; m <= 12; m++)
         {
@@ -43,7 +50,11 @@
                         var isToday = dt.Date == DateTime.Today;
                         var isOff = code == "O" || isHoliday;
                         var holidayName = isHoliday ? Holidays[key] : null;
-                        var aria = $"{dt:d MMMM yyyy}" + (isHoliday ? $", Holiday, {holidayName}, Off" : isOff ? ", Off" : ", Work");
+                        var shiftLabel = !isOff && ShiftLabels is not null
+                            ? ShiftLabels.GetValueOrDefault(key)
+                            : null;
+                        var tip = BuildTooltip(dt, isHoliday, holidayName, isOff, shiftLabel);
+                        var aria = tip.Replace('\n', ',');
                         var css = "pyc-day"
                             + (isHoliday ? " pyc-day--holiday" : isOff ? " pyc-day--off" : " pyc-day--work")
                             + (isToday ? " pyc-day--today" : "");
@@ -52,7 +63,7 @@
                                 class="@css"
                                 style="@(string.IsNullOrEmpty(color) || isOff ? null : $"--pyc-shift:{color}")"
                                 aria-label="@aria"
-                                title="@(holidayName ?? (isOff ? "Off" : "Work"))"
+                                title="@tip"
                                 disabled="@(ReadOnly || (isHoliday && PaintMode == "W"))"
                                 @onclick="(() => OnDayClick(key, isHoliday))">
                             <span class="pyc-day__n">@day</span>
@@ -77,9 +88,12 @@
     [Parameter] public IReadOnlyDictionary<DateOnly, string> DayCodes { get; set; } = new Dictionary<DateOnly, string>();
     [Parameter] public IReadOnlyDictionary<DateOnly, string> Holidays { get; set; } = new Dictionary<DateOnly, string>();
     [Parameter] public IReadOnlyDictionary<DateOnly, string> ShiftColors { get; set; } = new Dictionary<DateOnly, string>();
+    [Parameter] public IReadOnlyDictionary<DateOnly, string>? ShiftLabels { get; set; }
     [Parameter] public string PaintMode { get; set; } = "O"; // W or O
     [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public bool Dirty { get; set; }
+    [Parameter] public bool ShowSummary { get; set; } = true;
+    [Parameter] public bool ShowLegend { get; set; } = true;
     [Parameter] public EventCallback<(DateOnly Date, string DateCd)> DayPainted { get; set; }
 
     private int _work;
@@ -91,8 +105,30 @@
         _holiday = Holidays.Count;
         _off = DayCodes.Count(kv => kv.Value == "O" || Holidays.ContainsKey(kv.Key));
         _work = DayCodes.Count(kv => kv.Value == "W" && !Holidays.ContainsKey(kv.Key));
-        if (DayCodes.Count == 0 && DateTime.IsLeapYear(Year))
-        { /* summary stays zero until generated */ }
+    }
+
+    private static string BuildTooltip(DateTime dt, bool isHoliday, string? holidayName, bool isOff, string? shiftLabel)
+    {
+        var sb = new StringBuilder();
+        sb.Append(dt.ToString("dd MMM yyyy"));
+        if (isHoliday)
+        {
+            sb.Append('\n').Append(string.IsNullOrWhiteSpace(holidayName) ? "Holiday" : holidayName);
+            sb.Append("\nCompany Holiday · Off");
+        }
+        else if (isOff)
+        {
+            sb.Append("\nOff Day");
+        }
+        else
+        {
+            sb.Append("\nWorking Day");
+            if (!string.IsNullOrWhiteSpace(shiftLabel))
+            {
+                sb.Append('\n').Append(shiftLabel).Append(" Shift");
+            }
+        }
+        return sb.ToString();
     }
 
     private async Task OnDayClick(DateOnly date, bool isHoliday)

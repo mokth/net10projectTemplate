@@ -29,6 +29,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsSubmitting;
     protected bool ReleaseConfirmVisible;
     protected bool CancelConfirmVisible;
+    protected bool HelpVisible;
     protected bool RefreshVisible;
     protected bool MaterialChangeVisible;
     protected string RefreshReason = string.Empty;
@@ -120,14 +121,14 @@ public partial class PrWorkOrderEntry : PageBase
             {
                 return
                 [
-                    "Inputs changed after this preview. Run Process Preview again before relying on the displayed requirements.",
+                    "Inputs changed after this preview. Run Calculate Preview again before relying on the displayed requirements.",
                     .. warnings
                 ];
             }
 
             if (PreviewModel is null && HasUnsavedInputChanges)
             {
-                return ["Inputs differ from the saved snapshot. Process Preview or Save Draft to recalculate requirements."];
+                return ["Inputs differ from the saved snapshot. Use Calculate Preview to inspect the changes, or Save Draft to apply them."];
             }
 
             return warnings;

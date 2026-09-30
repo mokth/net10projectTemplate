@@ -1,11 +1,11 @@
 .pyc {
-  --pyc-work: #e8f0e9;
-  --pyc-off: #f3d6d6;
-  --pyc-holiday: #f0e2c8;
-  --pyc-today: #2f5d50;
-  --pyc-ink: #1c1c1c;
-  --pyc-muted: #6b6b6b;
-  --pyc-border: #d8d5ce;
+  --pyc-work: color-mix(in srgb, #dce9df 70%, var(--surface, #fff));
+  --pyc-off: color-mix(in srgb, #f3d6d6 75%, var(--surface, #fff));
+  --pyc-holiday: color-mix(in srgb, #f0e2c8 75%, var(--surface, #fff));
+  --pyc-today: var(--primary, #2563eb);
+  --pyc-ink: var(--iv-text, #1c1c1c);
+  --pyc-muted: var(--muted, #667085);
+  --pyc-border: var(--line, #d7dde5);
   font-family: inherit;
   color: var(--pyc-ink);
 }
@@ -14,7 +14,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 1.25rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.65rem;
   font-size: 0.85rem;
   color: var(--pyc-muted);
 }
@@ -26,7 +26,7 @@
   width: 0.85rem;
   height: 0.85rem;
   border: 1px solid var(--pyc-border);
-  border-radius: 2px;
+  border-radius: 3px;
 }
 .pyc-swatch--work { background: var(--pyc-work); }
 .pyc-swatch--off { background: var(--pyc-off); }
@@ -38,7 +38,7 @@
   color: var(--pyc-muted);
   margin-bottom: 0.75rem;
 }
-.pyc-dirty { color: #8a4b08; font-weight: 600; }
+.pyc-dirty { color: color-mix(in srgb, #b54708 85%, #000); font-weight: 600; }
 
 .pyc-year {
   display: grid;
@@ -55,15 +55,22 @@
 
 .pyc-month {
   border: 1px solid var(--pyc-border);
-  border-radius: 6px;
-  padding: 0.5rem 0.6rem 0.65rem;
-  background: #fbfaf7;
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem 0.7rem;
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 3%);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pyc-month:hover {
+  border-color: color-mix(in srgb, var(--primary, #2563eb) 22%, var(--pyc-border));
 }
 
 .pyc-month__title {
-  font-weight: 650;
-  font-size: 0.95rem;
-  margin-bottom: 0.35rem;
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin-bottom: 0.4rem;
+  color: var(--pyc-ink);
 }
 
 .pyc-weekdays,
@@ -84,13 +91,17 @@
   position: relative;
   appearance: none;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: 4px;
   min-height: 1.85rem;
   padding: 0;
   background: var(--pyc-work);
   cursor: pointer;
   font-size: 0.72rem;
   line-height: 1;
+  transition: box-shadow 100ms ease, transform 100ms ease;
+}
+.pyc-day:hover:not(:disabled) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary, #2563eb) 35%, transparent);
 }
 .pyc-day:disabled { cursor: not-allowed; opacity: 0.85; }
 .pyc-day:focus-visible { outline: 2px solid var(--pyc-today); outline-offset: 1px; }
@@ -105,5 +116,5 @@
   right: 1px;
   top: 0;
   font-size: 0.55rem;
-  color: #8a5a12;
+  color: color-mix(in srgb, #8a5a12 90%, #000);
 }

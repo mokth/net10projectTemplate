@@ -19,6 +19,60 @@
     pointer-events: none;
 }
 
+.pdf-help {
+    display: grid;
+    gap: 16px;
+    max-height: min(70vh, 560px);
+    overflow-y: auto;
+}
+
+.pdf-help h3 {
+    font-size: .95rem;
+    margin: 0 0 8px;
+}
+
+.pdf-help ol,
+.pdf-help ul {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.pdf-help li + li {
+    margin-top: 4px;
+}
+
+.pdf-help p {
+    margin: 0;
+}
+
+.pdf-help__example {
+    background: var(--iv-surface-muted, #f4f6f8);
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .82rem;
+    line-height: 1.45;
+    margin: 0;
+    overflow-x: auto;
+    padding: 10px 12px;
+    white-space: pre;
+}
+
+.pdf-help__actions {
+    display: grid;
+    gap: 4px 12px;
+    grid-template-columns: minmax(9rem, max-content) 1fr;
+    margin: 0;
+}
+
+.pdf-help__actions dt {
+    font-weight: 600;
+}
+
+.pdf-help__actions dd {
+    margin: 0 0 8px;
+}
+
 .pdf-overview-card,
 .pdf-workspace-card,
 .pdf-validation-card {

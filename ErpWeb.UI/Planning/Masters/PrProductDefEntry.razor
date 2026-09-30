@@ -160,6 +160,10 @@
                             </div>
                             <div class="pdf-editor__actions pdf-product-actions">
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="HOW TO USE"
+                                          IconCssClass="fa-solid fa-circle-question"
+                                          Click="@(() => HelpVisible = true)" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                                           Text="Preview BOM"
                                           IconCssClass="fa-solid fa-sitemap"
                                           Click="@GoExplodeAsync"
@@ -229,7 +233,7 @@
                             <li class="@(ActiveTabIndex == 4 ? "is-current" : null)"><span>5</span>Labour</li>
                         </ol>
                     </header>
-                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex" CssClass="pdf-tabs">
+                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex" CssClass="pdf-tabs" RenderMode="TabsRenderMode.OnDemand">
                         <DxTabPage Text="1 · ROUTE">
                             <div class="pdf-tab-body">
                                 @if (CentreRows.Count == 0)
@@ -944,6 +948,183 @@
                 </footer>
             </div>
         }
+
+        <DxPopup HeaderText="How to use Product Definition"
+                 @bind-Visible="@HelpVisible"
+                 CloseOnOutsideClick="true"
+                 Width="760px"
+                 CssClass="common-popup">
+            <Content>
+                <div class="pdf-help">
+                    <p>
+                        Product Definition is the manufacturing recipe for a product.
+                        It tells the system where the product is made, which processes are performed,
+                        which materials are consumed, which machine is used, and which labour is required.
+                    </p>
+                    <p>
+                        Recommended order:
+                        Product → Route / Work Center → Process → Materials → Machine → Labour → Activate
+                    </p>
+
+                    <section>
+                        <h3>1. Simple example</h3>
+                        <pre class="pdf-help__example">FG001
+  Cutting
+    Cut
+      RM001
+      Machine CUT01
+      Labour OP01
+  Assembly
+    Assemble
+      WIP001
+      RM002
+      Machine ASSY01
+      Labour OP02</pre>
+                        <p>
+                            Think of each Work Center as a production area, each Process as the job performed in that area,
+                            and the BOM as the materials needed by that job.
+                        </p>
+                    </section>
+
+                    <section>
+                        <h3>2. Product Definition status</h3>
+                        <dl class="pdf-help__actions">
+                            <dt>Draft</dt>
+                            <dd>Editable working definition. Save and continue preparing the recipe.</dd>
+                            <dt>Active</dt>
+                            <dd>Approved production definition used for normal production. An Active revision is read-only.</dd>
+                            <dt>New Version</dt>
+                            <dd>Create a new Draft when an Active recipe must change. This preserves the previous revision for production history.</dd>
+                        </dl>
+                        <p>Older revisions may become Superseded when a new revision is activated.</p>
+                    </section>
+
+                    <section>
+                        <h3>3. Route / Work Center</h3>
+                        <p>Work Center = where the work happens (Cutting, Mixing, Assembly, Packing).</p>
+                        <ul>
+                            <li>Stage Sequence = order of manufacturing stages. Lower numbers happen earlier.</li>
+                            <li>Output Item = WIP or finished item produced by the stage.</li>
+                            <li>Pack Size = normal quantity produced by this route stage.</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>4. Process</h3>
+                        <p>Process = what work is done inside the Work Center.</p>
+                        <ul>
+                            <li>Process Sequence = order inside the selected Work Center.</li>
+                            <li>Final Process = last Process for that route stage.</li>
+                            <li>Duration (min) = process time entered directly. Unit is minutes.</li>
+                            <li>Setup Lost / Op Lost = expected quantity lost during setup or operation.</li>
+                        </ul>
+                        <p>Some Processes may not consume extra material (for example, inspection).</p>
+                    </section>
+
+                    <section>
+                        <h3>5. Materials / BOM</h3>
+                        <p>BOM = materials consumed by the selected Process.</p>
+                        <ul>
+                            <li>Std Qty = material required for the Product Definition Standard Output Quantity.</li>
+                            <li>Example: Standard Output = 5 PCS and RM001 Std Qty = 1 KG means 1 KG is required to produce 5 PCS.</li>
+                            <li>Warehouse = preferred material source (not a guaranteed reservation warehouse).</li>
+                            <li>Scrap % = extra material allowance for expected waste.</li>
+                            <li>Supply Source = where the material comes from (normal stock or Internal Route WIP).</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>6. Alternate Materials</h3>
+                        <p>
+                            Materials with the same Alternate Group are interchangeable.
+                            One item is marked Default. The Default material is the normal material copied into the Work Order.
+                            Other materials in the same group remain available as substitutes when Work Order material substitution is allowed.
+                        </p>
+                        <pre class="pdf-help__example">ALT-STEEL
+  RM001 — Default
+  RM002 — Alternate
+  RM003 — Alternate</pre>
+                        <p>If Alternate Group is left blank, the page defaults it from the item code.</p>
+                    </section>
+
+                    <section>
+                        <h3>7. WIP from earlier route</h3>
+                        <p>
+                            Use Internal Route WIP when this Process consumes an item produced by an earlier route step.
+                            Then select Producing route step for the earlier Work Center that produces that WIP.
+                        </p>
+                        <p>Example: CUTTING produces WIP001, then ASSEMBLY consumes WIP001.</p>
+                    </section>
+
+                    <section>
+                        <h3>8. Machine</h3>
+                        <p>Machine = equipment used by the Process.</p>
+                        <ul>
+                            <li>Output / Cycle = units produced each machine cycle.</li>
+                            <li>Cycle (sec) = running time for one cycle. Unit is seconds.</li>
+                            <li>Setup (sec) = preparation time before production starts.</li>
+                            <li>Conversion (sec) = additional conversion time included in scheduling.</li>
+                            <li>Queue (sec) = expected waiting time before the machine can start.</li>
+                            <li>Parallel Machines = equivalent machine capacity that can run at the same time.</li>
+                            <li>Rate / Hour = machine cost/rate per hour where costing applies.</li>
+                        </ul>
+                        <p>Example: Output / Cycle = 5 and Cycle = 30 sec means the machine produces 5 pieces every 30 seconds.</p>
+                    </section>
+
+                    <section>
+                        <h3>9. Machine alternatives</h3>
+                        <p>
+                            Current Product Definition supports one assigned Machine per Process.
+                            To change the normal Machine, edit or replace the assigned Machine.
+                            Multiple legacy machine rows should be reduced to one Machine.
+                        </p>
+                    </section>
+
+                    <section>
+                        <h3>10. Labour</h3>
+                        <p>
+                            Labour = operator / labour category assigned to the Process Machine.
+                            Cost / Output = labour cost applied to each output unit.
+                            The current page supports one labour assignment per process-machine.
+                        </p>
+                    </section>
+
+                    <section>
+                        <h3>11. Save actions</h3>
+                        <dl class="pdf-help__actions">
+                            <dt>Preview BOM / Explode BOM</dt>
+                            <dd>Inspect the full material structure, including lower-level Make or Phantom items, before activating.</dd>
+                            <dt>SAVE DRAFT</dt>
+                            <dd>Save and continue editing while Route, Processes, Materials, Machine, or Labour setup is still being prepared.</dd>
+                            <dt>SAVE &amp; ACTIVATE</dt>
+                            <dd>Save and make the revision ready for normal production use. Activate only after Route, BOM, Machine, and Labour have been checked.</dd>
+                            <dt>NEW VERSION</dt>
+                            <dd>Create a new Draft revision when the manufacturing method changes and the previous definition must be preserved.</dd>
+                        </dl>
+                    </section>
+
+                    <section>
+                        <h3>12. Tips</h3>
+                        <ul>
+                            <li>Define Route before Processes.</li>
+                            <li>Define Processes before Materials / Machines.</li>
+                            <li>Materials belong to a Process.</li>
+                            <li>Machine belongs to a Process.</li>
+                            <li>Labour belongs to the Process Machine.</li>
+                            <li>Use Preview BOM to check the full material structure.</li>
+                            <li>Process direct Duration uses minutes.</li>
+                            <li>Machine timing uses seconds.</li>
+                            <li>Activate only after checking the full Route and BOM.</li>
+                        </ul>
+                    </section>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Close" Click="@(() => HelpVisible = false)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
 
         <DxPopup HeaderText="Discard changes?"
                  CloseOnOutsideClick="false"

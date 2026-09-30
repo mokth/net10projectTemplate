@@ -7,7 +7,7 @@
 
 <PageTitle>Company Calendar</PageTitle>
 <MenuAuthorize MenuCode="@MenuCodes.PlanningCompanyCal">
-<div class="iv-page">
+<div class="iv-page plcal">
     @if (!string.IsNullOrWhiteSpace(_message))
     {
         <div class="iv-toast @(_ok ? "iv-toast--ok" : "iv-toast--err")" role="status">
@@ -15,81 +15,297 @@
             <button type="button" class="iv-toast__close" @onclick="(() => _message = null)" aria-label="Dismiss">×</button>
         </div>
     }
-    <header class="iv-hero">
+
+    <header class="iv-hero iv-hero--compact">
         <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></div>
-        <div>
-            <p class="iv-eyebrow">Planning</p>
-            <h1 class="iv-title">Company Calendar @_year</h1>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Planning · Calendar</p>
+            <h1 class="iv-title">Company Calendar</h1>
+            <p class="iv-subtitle">Define company working days, weekly rest days and public holidays used as the planning baseline for machine calendars.</p>
+            <div class="iv-chips">
+                <span class="iv-chip">@_year</span>
+                <span class="iv-chip">@_workCount Working Days</span>
+                <span class="iv-chip"><i class="fa-solid fa-calendar-day" aria-hidden="true"></i> @_holidayCount Holidays</span>
+                @if (_dirty)
+                {
+                    <span class="iv-chip plcal-status plcal-status--dirty">Unsaved Changes</span>
+                }
+            </div>
         </div>
     </header>
-    <section class="iv-card">
-        <div class="iv-toolbar-row mb-2 flex-wrap gap-2 align-items-center">
-            <DxSpinEdit @bind-Value="@_year" MinValue="2000" MaxValue="2100" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="LOAD" Click="@TryLoadAsync" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="GENERATE" Click="@GenerateWeekdaysAsync" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE (MISSING)" Click="@(() => SaveAsync(CalendarRegenMode.GenerateMissingOnly))" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="SAVE (REGEN ALL)" Click="@ConfirmRegenAllAsync" Enabled="@(!_busy)" />
-            <span class="ms-2">Paint:</span>
-            <label class="me-2"><input type="radio" name="paint" checked="@(_paintMode == "O")" @onchange="@(() => _paintMode = "O")" /> Off</label>
-            <label><input type="radio" name="paint" checked="@(_paintMode == "W")" @onchange="@(() => _paintMode = "W")" /> Work</label>
+
+    <section class="iv-card plcal-setup">
+        <h2 class="iv-card__title">Calendar Setup</h2>
+        <div class="plcal-context__fields plcal-setup__fields">
+            <div class="iv-field plcal-field-year">
+                <label class="iv-field__label">Year</label>
+                <div class="plcal-year-row">
+                    <DxSpinEdit @bind-Value="@_year" MinValue="2000" MaxValue="2100" Enabled="@(!_busy)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="This year"
+                              Click="@SetCurrentYear"
+                              Enabled="@(!_busy && _year != DateTime.Today.Year)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Load Calendar"
+                              IconCssClass="fa-solid fa-folder-open"
+                              Click="@TryLoadAsync"
+                              Enabled="@(!_busy)" />
+                </div>
+            </div>
         </div>
-        <div class="mb-2">
-            <span class="me-2">Weekly offs:</span>
-            @foreach (DayOfWeek d in Enum.GetValues<DayOfWeek>())
-            {
-                var day = d;
-                <label class="me-2">
-                    <input type="checkbox" checked="@_offWeekdays.Contains(day)" @onchange="@(e => ToggleOff(day, (bool)(e.Value ?? false)))" />
-                    @day.ToString()[..3]
-                </label>
-            }
-            <span class="text-muted ms-2">(empty = 7-day working week)</span>
+
+        <PlanningWeekdayPattern Label="Standard Weekly Pattern"
+                                WorkDays="@_unusedWorkDays"
+                                OffDays="@_offWeekdays"
+                                Mode="WeekdayPatternMode.OffOnly"
+                                Disabled="@_busy"
+                                DayToggled="@OnWeekdayToggled" />
+        <p class="plcal-hint">Public holidays are automatically treated as Off days.</p>
+
+        <div class="plcal-setup__actions">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Generate Calendar"
+                      IconCssClass="fa-solid fa-wand-magic-sparkles"
+                      Click="@RequestGenerateAsync"
+                      Enabled="@(!_busy)" />
         </div>
-        @if (_busy)
-        {
-            <p class="text-muted">Saving and updating machine calendars…</p>
-        }
-        <PlanningYearCalendar Year="@_year"
-                              DayCodes="@_dayCodes"
-                              Holidays="@_holidayMap"
-                              PaintMode="@_paintMode"
-                              Dirty="@_dirty"
-                              DayPainted="@OnDayPainted" />
-        <p class="text-muted mt-2">Fingerprint: @_fingerprint · Holidays force Off on Generate/Save. Regen-all overwrites machine calendars for the year.</p>
     </section>
-    <section class="iv-card mt-3">
-        <h2 class="h5">Holidays @_year</h2>
-        <div class="row g-2 mb-2">
-            <div class="col-md-3"><DxDateEdit @bind-Date="@_holDate" /></div>
-            <div class="col-md-4"><DxTextBox @bind-Text="@_holDesc" NullText="Description" /></div>
-            <div class="col-md-2"><DxButton Text="Add Holiday" Click="@AddHolidayAsync" Enabled="@(!_busy)" /></div>
-            <div class="col-md-3"><DxButton Text="Fetch Calendarific (MY)" Click="@FetchCalendarificAsync" Enabled="@(_calendarificEnabled && !_busy)" /></div>
+
+    <section class="iv-card plcal-regen">
+        <div class="plcal-regen__body">
+            <div>
+                <h2 class="iv-card__title mb-0">Machine Calendar Update</h2>
+                <p class="plcal-hint mb-0">
+                    Saving keeps existing machine calendars. Use regenerate only when you want to replace machine-specific overrides for @_year.
+                </p>
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                      Text="Regenerate All Machine Calendars..."
+                      IconCssClass="fa-solid fa-arrows-rotate"
+                      Click="@OpenRegenConfirm"
+                      Enabled="@(!_busy)" />
         </div>
-        @if (_calendarificCandidates.Count > 0)
-        {
-            <div class="mb-2">
-                <p class="text-muted">Review Calendarific candidates before save:</p>
-                <DxGrid Data="@_calendarificCandidates" KeyFieldName="@nameof(CalendarificHolidayCandidate.DateOff)">
+    </section>
+
+    <div class="plcal-main">
+        <section class="iv-card plcal-workspace">
+            <div class="plcal-workspace__head">
+                <div>
+                    <h2 class="iv-card__title mb-0">Company Calendar @_year</h2>
+                    <p class="plcal-workspace__meta">Working calendar used as the baseline for machine calendars.</p>
+                </div>
+                @if (_dirty)
+                {
+                    <span class="plcal-status plcal-status--dirty"><i class="fa-solid fa-circle" aria-hidden="true"></i> Unsaved changes</span>
+                }
+            </div>
+
+            <div class="plcal-summary">
+                <div class="plcal-summary-item"><strong>@_workCount</strong><span>Working Days</span></div>
+                <div class="plcal-summary-item"><strong>@_offCount</strong><span>Off Days</span></div>
+                <div class="plcal-summary-item"><strong>@_holidayCount</strong><span>Holidays</span></div>
+                <div class="plcal-summary-item">
+                    <strong>@(_dirty ? "Unsaved" : "Saved")</strong>
+                    <span>Status</span>
+                </div>
+            </div>
+
+            <div class="plcal-editor-toolbar">
+                <div class="plcal-paint-mode" role="group" aria-label="Edit dates">
+                    <span class="plcal-paint-mode__label">Edit dates</span>
+                    <button type="button"
+                            class="plcal-paint-mode__btn @(_paintMode == "W" ? "is-active" : null)"
+                            disabled="@_busy"
+                            @onclick="@(() => _paintMode = "W")">
+                        <i class="fa-solid fa-briefcase" aria-hidden="true"></i>
+                        Working Day
+                    </button>
+                    <button type="button"
+                            class="plcal-paint-mode__btn @(_paintMode == "O" ? "is-active" : null)"
+                            disabled="@_busy"
+                            @onclick="@(() => _paintMode = "O")">
+                        <i class="fa-solid fa-mug-hot" aria-hidden="true"></i>
+                        Off Day
+                    </button>
+                </div>
+                <p class="plcal-hint mb-0">Click a date to apply the selected status.</p>
+            </div>
+
+            @if (_busy)
+            {
+                <p class="plcal-busy">@_busyMessage</p>
+            }
+
+            <PlanningYearCalendar Year="@_year"
+                                  DayCodes="@_dayCodes"
+                                  Holidays="@_holidayMap"
+                                  PaintMode="@_paintMode"
+                                  Dirty="@_dirty"
+                                  ShowSummary="false"
+                                  ShowLegend="true"
+                                  ReadOnly="@_busy"
+                                  DayPainted="@OnDayPainted" />
+
+            <div class="plcal-workspace__footer plcal-workspace__footer--stack">
+                <p class="plcal-hint mb-0">
+                    Saves the Company Calendar and creates machine calendars for machines that do not yet have one for the selected year.
+                </p>
+                <div class="plcal-workspace__footer-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Discard Changes"
+                              Click="@RequestDiscardAsync"
+                              Enabled="@(!_busy && _dirty)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Save Changes"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@(() => SaveAsync(CalendarRegenMode.GenerateMissingOnly))"
+                              Enabled="@(!_busy && _dirty)" />
+                </div>
+            </div>
+        </section>
+
+        <section class="iv-card plcal-holidays">
+            <div class="plcal-holidays__head">
+                <div>
+                    <h2 class="iv-card__title mb-0">Public Holidays</h2>
+                    <p class="plcal-workspace__meta">@_holidayCount Holidays in @_year</p>
+                </div>
+            </div>
+            <div class="plcal-holidays__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Add Holiday"
+                          IconCssClass="fa-solid fa-plus"
+                          Click="@(() => _addHolidayOpen = !_addHolidayOpen)"
+                          Enabled="@(!_busy)" />
+                @if (_calendarificEnabled)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Import Malaysia Holidays"
+                              IconCssClass="fa-solid fa-cloud-arrow-down"
+                              Click="@FetchCalendarificAsync"
+                              Enabled="@(!_busy)" />
+                }
+            </div>
+
+            @if (_addHolidayOpen)
+            {
+                <div class="plcal-holiday-form">
+                    <h3 class="plcal-advanced__subtitle">Add Holiday</h3>
+                    <div class="plcal-holiday-form__fields">
+                        <div class="iv-field">
+                            <label class="iv-field__label">Date</label>
+                            <DxDateEdit @bind-Date="@_holDate" Enabled="@(!_busy)" />
+                        </div>
+                        <div class="iv-field">
+                            <label class="iv-field__label">Holiday Name</label>
+                            <DxTextBox @bind-Text="@_holDesc" NullText="Holiday name" Enabled="@(!_busy)" />
+                        </div>
+                    </div>
+                    <div class="plcal-holiday-form__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => _addHolidayOpen = false)" Enabled="@(!_busy)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add Holiday" IconCssClass="fa-solid fa-calendar-day" Click="@AddHolidayAsync" Enabled="@(!_busy)" />
+                    </div>
+                </div>
+            }
+
+            @if (_calendarificCandidates.Count > 0)
+            {
+                <div class="plcal-import-panel">
+                    <h3 class="plcal-advanced__subtitle">Import Malaysia Public Holidays</h3>
+                    <p class="plcal-hint">
+                        @_calendarificCandidates.Count holidays were found for @_year. Review before importing.
+                    </p>
+                    <p class="plcal-hint plcal-hint--secondary">Holiday data provider: Calendarific</p>
+                    <DxGrid Data="@_calendarificCandidates" KeyFieldName="@nameof(CalendarificHolidayCandidate.DateOff)" CssClass="w-100">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.DateOff)" Caption="Date" DisplayFormat="dd MMM yyyy" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.Description)" Caption="Holiday" />
+                        </Columns>
+                    </DxGrid>
+                    <div class="plcal-holiday-form__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel Import" Click="@(() => _calendarificCandidates.Clear())" Enabled="@(!_busy)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@($"Import {_calendarificCandidates.Count}")"
+                                  IconCssClass="fa-solid fa-cloud-arrow-down"
+                                  Click="@PersistCandidatesAsync"
+                                  Enabled="@(!_busy)" />
+                    </div>
+                </div>
+            }
+
+            @if (_holidays.Count == 0)
+            {
+                <div class="plcal-empty">
+                    <i class="fa-solid fa-calendar-day" aria-hidden="true"></i>
+                    <strong>No public holidays for @_year</strong>
+                    <span>Add or import holidays to mark company off days.</span>
+                </div>
+            }
+            else
+            {
+                <DxGrid Data="@_holidays" KeyFieldName="@nameof(PrHoliday.Uid)"
+                        CssClass="w-100"
+                        DataItemDeleting="@(async e => { if (e.DataItem is PrHoliday h) await DeleteHolidayAsync(h.Uid); })">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.DateOff)" Caption="Date" DisplayFormat="dd MMM yyyy" Width="140px" />
-                        <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.Description)" Caption="Name" />
-                        <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.State)" Caption="State" Width="100px" />
+                        <DxGridCommandColumn Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(PrHoliday.DateOff)" Caption="Date" DisplayFormat="dd MMM yyyy" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(PrHoliday.Description)" Caption="Holiday" />
                     </Columns>
                 </DxGrid>
-                <DxButton Text="Persist reviewed holidays" Click="@PersistCandidatesAsync" CssClass="mt-2" Enabled="@(!_busy)" />
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Discard unsaved changes?"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@_discardVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                You have unsaved changes to the @_year Company Calendar.
+            </p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Editing" Click="@CancelDiscard" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="@_discardConfirmLabel" Click="@ConfirmDiscardAsync" />
+                </div>
             </div>
-        }
-        <DxGrid Data="@_holidays" KeyFieldName="@nameof(PrHoliday.Uid)"
-                DataItemDeleting="@(async e => { if (e.DataItem is PrHoliday h) await DeleteHolidayAsync(h.Uid); })">
-            <Columns>
-                <DxGridCommandColumn Width="80px" />
-                <DxGridDataColumn FieldName="@nameof(PrHoliday.DateOff)" Caption="Date" DisplayFormat="dd MMM yyyy" Width="140px" />
-                <DxGridDataColumn FieldName="@nameof(PrHoliday.Description)" Caption="Description" />
-            </Columns>
-        </DxGrid>
-    </section>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Regenerate all machine calendars?"
+             CloseOnOutsideClick="false"
+             Width="520px"
+             CssClass="common-popup"
+             @bind-Visible="@_regenVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                This will rebuild every machine's @_year calendar from the Company Calendar.
+            </p>
+            <p class="iv-confirm__copy">
+                The following machine-specific settings may be lost:
+            </p>
+            <ul class="plcal-confirm-list">
+                <li>manually changed working/off days</li>
+                <li>assigned shift groups</li>
+                <li>machine-specific calendar overrides</li>
+            </ul>
+            <p class="plcal-hint">Company Calendar: @_year</p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => _regenVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="Regenerate All"
+                              Click="@ConfirmRegenAllAsync"
+                              Enabled="@(!_busy)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
 </div>
 </MenuAuthorize>
+
 @code {
     private int _year = DateTime.Today.Year;
     private Dictionary<DateOnly, string> _dayCodes = new();
@@ -98,15 +314,27 @@
     private Dictionary<DateOnly, string> _holidayMap = new();
     private List<CalendarificHolidayCandidate> _calendarificCandidates = [];
     private string _fingerprint = "";
-    private string? _message; private bool _ok;
+    private string? _message;
+    private bool _ok;
     private DateTime _holDate = DateTime.Today;
     private string? _holDesc;
     private bool _calendarificEnabled;
-    private bool _regenConfirm;
     private bool _dirty;
     private bool _busy;
-    private string _paintMode = "O";
+    private string _busyMessage = "Working…";
+    private string _paintMode = "W";
     private readonly HashSet<DayOfWeek> _offWeekdays = new() { DayOfWeek.Saturday, DayOfWeek.Sunday };
+    private readonly HashSet<DayOfWeek> _unusedWorkDays = new();
+    private bool _addHolidayOpen;
+    private bool _discardVisible;
+    private bool _regenVisible;
+    private PendingAction _pendingAction = PendingAction.None;
+    private string _discardConfirmLabel = "Discard & Load";
+    private int _workCount;
+    private int _offCount;
+    private int _holidayCount;
+
+    private enum PendingAction { None, Load, Generate, DiscardReload }
 
     protected override async Task OnInitializedAsync()
     {
@@ -114,51 +342,101 @@
         await LoadAsync();
     }
 
-    private async Task TryLoadAsync()
+    private void SetCurrentYear() => _year = DateTime.Today.Year;
+
+    private Task OnWeekdayToggled((DayOfWeek Day, bool IsWork) _) => Task.CompletedTask;
+
+    private Task TryLoadAsync() => RequestGuardedAsync(PendingAction.Load, "Discard & Load");
+    private Task RequestGenerateAsync() => RequestGuardedAsync(PendingAction.Generate, "Discard & Generate");
+    private Task RequestDiscardAsync() => RequestGuardedAsync(PendingAction.DiscardReload, "Discard Changes");
+
+    private Task RequestGuardedAsync(PendingAction action, string confirmLabel)
     {
+        if (_busy) return Task.CompletedTask;
         if (_dirty)
         {
-            _ok = false;
-            _message = "You have unsaved changes. Generate/Save first, or click LOAD again to discard.";
-            if (_regenConfirm) { /* noop */ }
-            // second click path: clear dirty by forcing load if message already shown
-            if (_message?.Contains("discard") == true && !_dirty) { }
+            _pendingAction = action;
+            _discardConfirmLabel = confirmLabel;
+            _discardVisible = true;
+            return Task.CompletedTask;
         }
-        _dirty = false;
-        await LoadAsync();
+
+        return ExecutePendingAsync(action);
     }
 
-    private void ToggleOff(DayOfWeek day, bool on)
+    private void CancelDiscard()
     {
-        if (on) _offWeekdays.Add(day);
-        else _offWeekdays.Remove(day);
+        _discardVisible = false;
+        _pendingAction = PendingAction.None;
+    }
+
+    private async Task ConfirmDiscardAsync()
+    {
+        _discardVisible = false;
+        var action = _pendingAction;
+        _pendingAction = PendingAction.None;
+        _dirty = false;
+        await ExecutePendingAsync(action);
+    }
+
+    private async Task ExecutePendingAsync(PendingAction action)
+    {
+        switch (action)
+        {
+            case PendingAction.Load:
+            case PendingAction.DiscardReload:
+                await LoadAsync();
+                break;
+            case PendingAction.Generate:
+                await GenerateWeekdaysAsync();
+                break;
+        }
     }
 
     private async Task LoadAsync()
     {
-        var r = await CalendarService.LoadYearAsync(_year);
-        if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
-        _days = r.Value.Days.ToList();
-        _fingerprint = r.Value.Fingerprint;
-        SyncDayCodes();
-        var h = await HolidayService.ListAsync(_year);
-        if (h.Succeeded)
+        _busy = true;
+        _busyMessage = "Loading calendar...";
+        try
         {
-            _holidays = h.Value!.ToList();
-            _holidayMap = _holidays
-                .Where(x => x.DateOff is not null)
-                .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
-                .ToDictionary(g => g.Key, g => g.First().Description ?? "Holiday");
+            var r = await CalendarService.LoadYearAsync(_year);
+            if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
+            _days = r.Value.Days.ToList();
+            _fingerprint = r.Value.Fingerprint;
+            SyncDayCodes();
+            var h = await HolidayService.ListAsync(_year);
+            if (h.Succeeded && h.Value is not null)
+            {
+                _holidays = h.Value.ToList();
+                _holidayMap = _holidays
+                    .Where(x => x.DateOff is not null)
+                    .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
+                    .ToDictionary(g => g.Key, g => g.First().Description ?? "Holiday");
+            }
+            else
+            {
+                _holidays = [];
+                _holidayMap = new();
+            }
+            _message = null;
+            _calendarificCandidates.Clear();
+            _dirty = false;
+            RefreshSummary();
         }
-        _message = null;
-        _calendarificCandidates.Clear();
-        _regenConfirm = false;
-        _dirty = false;
+        finally { _busy = false; }
     }
 
     private void SyncDayCodes()
     {
         _dayCodes = _days.ToDictionary(d => DateOnly.FromDateTime(d.Date), d => d.DateCd == "O" ? "O" : "W");
+        RefreshSummary();
+    }
+
+    private void RefreshSummary()
+    {
+        _holidayCount = _holidayMap.Count;
+        _offCount = _dayCodes.Count(kv => kv.Value == "O" || _holidayMap.ContainsKey(kv.Key));
+        _workCount = _dayCodes.Count(kv => kv.Value == "W" && !_holidayMap.ContainsKey(kv.Key));
     }
 
     private Task OnDayPainted((DateOnly Date, string DateCd) paint)
@@ -179,49 +457,69 @@
 
     private async Task GenerateWeekdaysAsync()
     {
-        var holidayDates = _holidayMap.Keys.ToHashSet();
-        var generated = CompanyCalendarGenerator.Generate(new CompanyCalendarGenerator.GenerateRequest
+        _busy = true;
+        _busyMessage = "Generating calendar...";
+        try
         {
-            Year = _year,
-            WeeklyOffDays = _offWeekdays,
-            HolidayDates = holidayDates,
-            DayOverrides = _dayCodes.Where(kv => !_holidayMap.ContainsKey(kv.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value)
-        });
-        _days = generated.ToList();
-        SyncDayCodes();
-        _dirty = true;
-        _message = "Generated weekday template with holiday overlay (not saved).";
-        _ok = true;
-        await Task.CompletedTask;
+            // Ensure holidays match selected year before generate
+            var h = await HolidayService.ListAsync(_year);
+            if (h.Succeeded && h.Value is not null)
+            {
+                _holidays = h.Value.ToList();
+                _holidayMap = _holidays
+                    .Where(x => x.DateOff is not null)
+                    .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
+                    .ToDictionary(g => g.Key, g => g.First().Description ?? "Holiday");
+            }
+
+            var holidayDates = _holidayMap.Keys.ToHashSet();
+            var generated = CompanyCalendarGenerator.Generate(new CompanyCalendarGenerator.GenerateRequest
+            {
+                Year = _year,
+                WeeklyOffDays = _offWeekdays,
+                HolidayDates = holidayDates,
+                DayOverrides = _dayCodes.Where(kv => !_holidayMap.ContainsKey(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value)
+            });
+            _days = generated.ToList();
+            SyncDayCodes();
+            _dirty = true;
+            _message = "Calendar generated. Review the dates and click Save Changes when ready.";
+            _ok = true;
+        }
+        finally { _busy = false; }
     }
+
+    private void OpenRegenConfirm() => _regenVisible = true;
 
     private async Task ConfirmRegenAllAsync()
     {
-        if (!_regenConfirm)
-        {
-            _regenConfirm = true;
-            _ok = false;
-            _message = "Regenerate All will rebuild the selected year for every machine from the Company Calendar and default shift group. Existing machine-specific day and shift-group overrides for that year will be lost. Click again to confirm.";
-            return;
-        }
+        _regenVisible = false;
         await SaveAsync(CalendarRegenMode.RegenerateAll);
-        _regenConfirm = false;
     }
 
     private async Task SaveAsync(CalendarRegenMode mode)
     {
         _busy = true;
+        _busyMessage = mode == CalendarRegenMode.RegenerateAll
+            ? "Updating machine calendars..."
+            : "Saving calendar...";
         try
         {
             var r = await CalendarService.SaveYearAsync(_year, _days, _fingerprint, mode);
             _ok = r.Succeeded;
-            _message = r.Message;
-            if (r.Succeeded && r.Value is not null)
+            if (r.Succeeded)
             {
-                _fingerprint = r.Value.NewFingerprint;
+                _message = mode == CalendarRegenMode.RegenerateAll
+                    ? "Company Calendar saved and all machine calendars were regenerated."
+                    : "Company Calendar saved. Missing machine calendars were created where needed.";
+                _fingerprint = r.Value?.NewFingerprint ?? _fingerprint;
                 _dirty = false;
                 await LoadAsync();
+            }
+            else
+            {
+                _message = r.Message;
             }
         }
         finally { _busy = false; }
@@ -229,34 +527,83 @@
 
     private async Task AddHolidayAsync()
     {
-        var r = await HolidayService.UpsertAsync(new PrHoliday
+        if (string.IsNullOrWhiteSpace(_holDesc))
         {
-            DateOff = _holDate.Date,
-            Description = _holDesc,
-            Year = _holDate.Year
-        });
-        _ok = r.Succeeded; _message = r.Message;
-        if (r.Succeeded) await LoadAsync();
+            _ok = false;
+            _message = "Enter a holiday name.";
+            return;
+        }
+
+        _busy = true;
+        _busyMessage = "Saving holiday...";
+        try
+        {
+            var r = await HolidayService.UpsertAsync(new PrHoliday
+            {
+                DateOff = _holDate.Date,
+                Description = _holDesc,
+                Year = _holDate.Year
+            });
+            _ok = r.Succeeded;
+            _message = r.Succeeded ? "Holiday added." : r.Message;
+            if (r.Succeeded)
+            {
+                _addHolidayOpen = false;
+                _holDesc = null;
+                await LoadAsync();
+            }
+        }
+        finally { _busy = false; }
     }
 
     private async Task DeleteHolidayAsync(int uid)
     {
-        var r = await HolidayService.DeleteAsync(uid);
-        _ok = r.Succeeded; _message = r.Message;
-        if (r.Succeeded) await LoadAsync();
+        _busy = true;
+        _busyMessage = "Removing holiday...";
+        try
+        {
+            var r = await HolidayService.DeleteAsync(uid);
+            _ok = r.Succeeded;
+            _message = r.Succeeded ? "Holiday removed." : r.Message;
+            if (r.Succeeded) await LoadAsync();
+        }
+        finally { _busy = false; }
     }
 
     private async Task FetchCalendarificAsync()
     {
-        var r = await HolidayService.FetchCalendarificCandidatesAsync(_year, "MY");
-        _ok = r.Succeeded; _message = r.Message;
-        if (r.Succeeded) _calendarificCandidates = r.Value!.ToList();
+        _busy = true;
+        _busyMessage = "Importing holidays...";
+        try
+        {
+            var r = await HolidayService.FetchCalendarificCandidatesAsync(_year, "MY");
+            _ok = r.Succeeded;
+            _message = r.Succeeded
+                ? $"{r.Value!.Count} holidays were found for {_year}. Review them before importing."
+                : r.Message;
+            if (r.Succeeded) _calendarificCandidates = r.Value!.ToList();
+        }
+        finally { _busy = false; }
     }
 
     private async Task PersistCandidatesAsync()
     {
-        var r = await HolidayService.PersistCandidatesAsync(_calendarificCandidates);
-        _ok = r.Succeeded; _message = r.Message;
-        if (r.Succeeded) { _calendarificCandidates.Clear(); await LoadAsync(); }
+        _busy = true;
+        _busyMessage = "Importing holidays...";
+        try
+        {
+            var count = _calendarificCandidates.Count;
+            var r = await HolidayService.PersistCandidatesAsync(_calendarificCandidates);
+            _ok = r.Succeeded;
+            _message = r.Succeeded
+                ? $"{count} holidays were imported."
+                : r.Message;
+            if (r.Succeeded)
+            {
+                _calendarificCandidates.Clear();
+                await LoadAsync();
+            }
+        }
+        finally { _busy = false; }
     }
 }

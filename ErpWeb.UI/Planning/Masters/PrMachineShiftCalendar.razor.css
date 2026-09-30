@@ -1,0 +1,316 @@
+.plcal {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.plcal .iv-hero__copy {
+    min-width: 0;
+}
+
+.plcal .iv-hero__copy .iv-chips {
+    margin-top: 10px;
+}
+
+.plcal-hint {
+    margin: 6px 0 0;
+    color: var(--muted, #667085);
+    font-size: 0.82rem;
+}
+
+.plcal-advanced__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: stretch;
+}
+
+.plcal-context__fields {
+    display: grid;
+    grid-template-columns:
+        minmax(160px, 1.0fr)
+        minmax(168px, 0.6fr)
+        minmax(160px, 1.0fr)
+        auto;
+    gap: 12px;
+    align-items: start;
+}
+
+.plcal-context__fields > .iv-field {
+    min-width: 0;
+}
+
+.plcal-field-spacer {
+    visibility: hidden;
+    user-select: none;
+}
+
+.plcal-context__fields ::deep .dxbl-combobox,
+.plcal-context__fields ::deep .dxbl-spin-edit,
+.plcal-copy-panel ::deep .dxbl-combobox {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.plcal-year-row,
+.plcal-actions-row {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    align-items: center;
+    min-height: 32px;
+}
+
+.plcal-year-row ::deep .dxbl-spin-edit {
+    flex: 1 1 5rem;
+    min-width: 5rem;
+    width: auto;
+}
+
+.plcal-year-row ::deep .dxbl-button,
+.plcal-actions-row ::deep .dxbl-button,
+.plcal-copy-action ::deep .dxbl-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.plcal-context__actions .plcal-actions-row,
+.plcal-setup__actions,
+.plcal-workspace__footer {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    justify-content: flex-start;
+    align-items: center;
+}
+
+.plcal-setup {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.plcal-shift-legend__title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted, #667085);
+    margin-bottom: 6px;
+}
+
+.plcal-shift-legend__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+}
+
+.plcal-shift-legend__list li {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+}
+
+.plcal-shift-dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--line, #d7dde5);
+    flex: 0 0 auto;
+}
+
+.plcal-workspace__head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.plcal-workspace__meta {
+    margin: 4px 0 0;
+    color: var(--muted, #667085);
+    font-size: 0.86rem;
+}
+
+.plcal-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.plcal-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--iv-soft, #f2f4f7) 55%, var(--surface, #fff));
+}
+
+.plcal-summary-item strong {
+    font-size: 1.05rem;
+}
+
+.plcal-summary-item span {
+    font-size: 0.75rem;
+    color: var(--muted, #667085);
+}
+
+.plcal-editor-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.plcal-paint-mode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.plcal-paint-mode__label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted, #667085);
+    margin-right: 4px;
+}
+
+.plcal-paint-mode__btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line, #d7dde5);
+    background: var(--surface, #fff);
+    color: var(--iv-text, #1c1c1c);
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.plcal-paint-mode__btn.is-active {
+    border-color: var(--primary, #2563eb);
+    background: color-mix(in srgb, var(--primary, #2563eb) 12%, var(--surface, #fff));
+    color: var(--primary, #2563eb);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+}
+
+.plcal-paint-mode__btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.plcal-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 650;
+}
+
+.plcal-status--dirty {
+    color: #b54708;
+}
+
+.plcal-status--dirty i {
+    font-size: 0.45rem;
+}
+
+.plcal-busy {
+    color: var(--muted, #667085);
+    font-size: 0.86rem;
+    margin: 0 0 10px;
+}
+
+.plcal-workspace__footer {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line, #d7dde5);
+}
+
+.plcal-advanced__subtitle {
+    font-size: 0.95rem;
+    font-weight: 650;
+    margin: 0 0 6px;
+}
+
+.plcal-copy-panel {
+    padding: 12px;
+    border: 1px solid var(--line, #d7dde5);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--muted, #667085) 4%, var(--surface, #fff));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.plcal-copy-panel > .dxbl-button,
+.plcal-copy-panel > ::deep .dxbl-button {
+    margin-top: auto;
+    align-self: flex-start;
+}
+
+.plcal-copy-panel__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+}
+
+.plcal-copy-action {
+    align-self: start;
+}
+
+.plcal-confirm-meta {
+    display: grid;
+    gap: 8px;
+    margin: 12px 0 16px;
+}
+
+.plcal-confirm-meta > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 0.9rem;
+}
+
+.plcal-confirm-meta span {
+    color: var(--muted, #667085);
+}
+
+@media (max-width: 1100px) {
+    .plcal-context__fields {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .plcal-context__actions {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 900px) {
+    .plcal-advanced__grid,
+    .plcal-context__fields,
+    .plcal-copy-panel__row,
+    .plcal-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .plcal-year-row,
+    .plcal-actions-row,
+    .plcal-workspace__footer {
+        flex-wrap: wrap;
+    }
+}

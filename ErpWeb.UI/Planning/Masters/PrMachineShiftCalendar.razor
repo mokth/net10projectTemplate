@@ -10,7 +10,7 @@
 
 <PageTitle>Machine Shift Calendar</PageTitle>
 <MenuAuthorize MenuCode="@MenuCodes.PlanningMacShiftCal">
-<div class="iv-page">
+<div class="iv-page plcal">
     @if (!string.IsNullOrWhiteSpace(_message))
     {
         <div class="iv-toast @(_ok ? "iv-toast--ok" : "iv-toast--err")" role="status">
@@ -18,122 +18,380 @@
             <button type="button" class="iv-toast__close" @onclick="(() => _message = null)" aria-label="Dismiss">×</button>
         </div>
     }
-    <header class="iv-hero">
-        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-check"></i></div>
-        <div>
-            <p class="iv-eyebrow">Planning</p>
-            <h1 class="iv-title">Machine Calendar</h1>
+
+    <header class="iv-hero iv-hero--compact">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-gears"></i></div>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Planning · Machine Calendar</p>
+            <h1 class="iv-title">Machine Shift Calendar</h1>
+            <p class="iv-subtitle">Plan each machine's working days, off days and assigned shift group for the selected year.</p>
+            <div class="iv-chips">
+                @if (!string.IsNullOrWhiteSpace(_machineCd) && _loaded)
+                {
+                    <span class="iv-chip code-style">@_machineCd</span>
+                    <span class="iv-chip">@_year</span>
+                    <span class="iv-chip iv-chip--active">Loaded</span>
+                }
+                @if (_dirty)
+                {
+                    <span class="iv-chip plcal-status plcal-status--dirty">Unsaved Changes</span>
+                }
+            </div>
         </div>
     </header>
-    <section class="iv-card">
-        <div class="iv-toolbar-row mb-2 flex-wrap gap-2">
-            <DxComboBox Data="@_machines" @bind-Value="@_machineCd" TextFieldName="MachineCd" ValueFieldName="MachineCd" NullText="Machine" />
-            <DxSpinEdit @bind-Value="@_year" MinValue="2000" MaxValue="2100" />
-            <DxComboBox Data="@_groups" @bind-Value="@_selectedGroupCd" TextFieldName="ShfGrpCd" ValueFieldName="ShfGrpCd" NullText="Work shift group" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="LOAD" Click="@LoadAsync" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="GENERATE" Click="@GenerateAsync" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" Click="@SaveAsync" Enabled="@(!_busy)" />
-            <DxTextBox @bind-Text="@_copyTarget" NullText="Copy to machine" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="COPY" Click="@PreviewCopyAsync" Enabled="@(!_busy)" />
-            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="COPY ALL" Click="@CopyAllAsync" Enabled="@(!_busy)" />
-            @if (_copyPreviewRows > 0)
+
+    <section class="iv-card plcal-advanced">
+        <h2 class="iv-card__title">Advanced Actions</h2>
+        <div class="plcal-advanced__grid">
+            <div class="plcal-copy-panel">
+                <h3 class="plcal-advanced__subtitle">Copy This Calendar</h3>
+                <p class="plcal-hint">
+                    Source
+                    <strong class="code-style">@(string.IsNullOrWhiteSpace(_machineCd) ? "—" : _machineCd)</strong>
+                    · @_year
+                </p>
+                <div class="plcal-copy-panel__row">
+                    <div class="iv-field">
+                        <label class="iv-field__label">Copy To</label>
+                        <DxComboBox Data="@_copyMachineOptions"
+                                    @bind-Value="@_copyTarget"
+                                    TextFieldName="@nameof(MachineOption.Display)"
+                                    ValueFieldName="@nameof(MachineOption.Code)"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                    NullText="Select target machine"
+                                    Enabled="@(!_busy && !string.IsNullOrWhiteSpace(_machineCd))" />
+                    </div>
+                    <div class="iv-field plcal-copy-action">
+                        <label class="iv-field__label plcal-field-spacer" aria-hidden="true">&nbsp;</label>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Copy Calendar"
+                                  IconCssClass="fa-solid fa-copy"
+                                  Click="@PreviewCopyAsync"
+                                  Enabled="@(!_busy && !string.IsNullOrWhiteSpace(_machineCd) && !string.IsNullOrWhiteSpace(_copyTarget))" />
+                    </div>
+                </div>
+            </div>
+            <div class="plcal-copy-panel">
+                <h3 class="plcal-advanced__subtitle">Copy to Machines Without a Calendar</h3>
+                <p class="plcal-hint">
+                    Copy @(string.IsNullOrWhiteSpace(_machineCd) ? "this" : _machineCd)'s @_year calendar to machines that do not already have a calendar for this year.
+                </p>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Copy to Eligible Machines"
+                          IconCssClass="fa-solid fa-copy"
+                          Click="@CopyAllAsync"
+                          Enabled="@(!_busy && !string.IsNullOrWhiteSpace(_machineCd))" />
+            </div>
+        </div>
+    </section>
+
+    <section class="iv-card plcal-setup">
+        <h2 class="iv-card__title">Calendar Setup</h2>
+        <div class="plcal-context__fields">
+            <div class="iv-field">
+                <label class="iv-field__label">Machine</label>
+                <DxComboBox Data="@_machineOptions"
+                            @bind-Value="@_machineCd"
+                            TextFieldName="@nameof(MachineOption.Display)"
+                            ValueFieldName="@nameof(MachineOption.Code)"
+                            SearchMode="ListSearchMode.AutoSearch"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            NullText="Select machine"
+                            Enabled="@(!_busy)" />
+            </div>
+            <div class="iv-field plcal-field-year">
+                <label class="iv-field__label">Year</label>
+                <div class="plcal-year-row">
+                    <DxSpinEdit @bind-Value="@_year" MinValue="2000" MaxValue="2100" Enabled="@(!_busy)" />
+                    @* <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="This year"
+                              Click="@SetCurrentYear"
+                              Enabled="@(!_busy && _year != DateTime.Today.Year)" /> *@
+                </div>
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Shift Group</label>
+                <DxComboBox Data="@_groupOptions"
+                            @bind-Value="@_selectedGroupCd"
+                            TextFieldName="@nameof(GroupOption.Display)"
+                            ValueFieldName="@nameof(GroupOption.Code)"
+                            SearchMode="ListSearchMode.AutoSearch"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            NullText="Select shift group"
+                            Enabled="@(!_busy)" />
+            </div>
+            <div class="iv-field plcal-context__actions">
+                <label class="iv-field__label plcal-field-spacer" aria-hidden="true">&nbsp;</label>
+                <div class="plcal-actions-row">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Load Calendar"
+                              IconCssClass="fa-solid fa-folder-open"
+                              Click="@RequestLoadAsync"
+                              Enabled="@(!_busy && !string.IsNullOrWhiteSpace(_machineCd))" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Generate Calendar"
+                              IconCssClass="fa-solid fa-wand-magic-sparkles"
+                              Click="@RequestGenerateAsync"
+                              Enabled="@(!_busy && !string.IsNullOrWhiteSpace(_machineCd))" />
+                </div>
+            </div>
+        </div>
+        <p class="plcal-hint">The selected shift group is assigned to working days when you generate the calendar.</p>
+
+        <PlanningWeekdayPattern Label="Weekly Pattern"
+                                WorkDays="@_workWeekdays"
+                                OffDays="@_offWeekdays"
+                                Mode="WeekdayPatternMode.WorkAndOff"
+                                Disabled="@_busy"
+                                DayToggled="@OnWeekdayToggled" />
+
+        @if (_groups.Count > 0)
+        {
+            <div class="plcal-shift-legend">
+                <div class="plcal-shift-legend__title">Shift Groups</div>
+                <ul class="plcal-shift-legend__list">
+                    @foreach (var g in _groups)
+                    {
+                        <li>
+                            <span class="plcal-shift-dot" style="background:@NormalizeColor(g.ShiftColor)"></span>
+                            <strong class="code-style">@g.ShfGrpCd</strong>
+                            <span>@(string.IsNullOrWhiteSpace(g.ShfGrpDes) ? "—" : g.ShfGrpDes)</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+    </section>
+
+    <section class="iv-card plcal-workspace">
+        <div class="plcal-workspace__head">
+            <div>
+                <h2 class="iv-card__title mb-0">@_year Machine Calendar</h2>
+                <p class="plcal-workspace__meta">
+                    @if (!string.IsNullOrWhiteSpace(_machineCd))
+                    {
+                        <span class="code-style">@_machineCd</span>
+                        @if (!string.IsNullOrWhiteSpace(SelectedMachineDescription))
+                        {
+                            <span>· @SelectedMachineDescription</span>
+                        }
+                    }
+                    else
+                    {
+                        <span>Select a machine and load or generate a calendar.</span>
+                    }
+                </p>
+            </div>
+            @if (_dirty)
             {
-                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="OVERWRITE" Click="@(() => CopyAsync(overwrite: true))" Enabled="@(!_busy)" />
-                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CANCEL" Click="@CancelCopy" />
+                <span class="plcal-status plcal-status--dirty"><i class="fa-solid fa-circle" aria-hidden="true"></i> Unsaved changes</span>
             }
         </div>
-        <div class="mb-2">
-            <span class="me-2">Paint:</span>
-            <label class="me-2"><input type="radio" name="mpaint" checked="@(_paintMode == "O")" @onchange="@(() => _paintMode = "O")" /> Off</label>
-            <label><input type="radio" name="mpaint" checked="@(_paintMode == "W")" @onchange="@(() => _paintMode = "W")" /> Work</label>
+
+        <div class="plcal-summary">
+            <div class="plcal-summary-item"><strong>@_workCount</strong><span>Working</span></div>
+            <div class="plcal-summary-item"><strong>@_offCount</strong><span>Off</span></div>
+            <div class="plcal-summary-item"><strong>@_holidayCount</strong><span>Holidays</span></div>
+            <div class="plcal-summary-item">
+                <strong class="code-style">@(string.IsNullOrWhiteSpace(_selectedGroupCd) ? "—" : _selectedGroupCd)</strong>
+                <span>Selected Shift</span>
+            </div>
         </div>
-        <div class="mb-2">
-            <div class="mb-1"><strong>Off weekdays</strong></div>
-            @foreach (DayOfWeek d in Enum.GetValues<DayOfWeek>())
-            {
-                var day = d;
-                <label class="me-2">
-                    <input type="checkbox" checked="@_offWeekdays.Contains(day)" @onchange="@(e => ToggleOff(day, (bool)(e.Value ?? false)))" />
-                    @day.ToString()[..3]
-                </label>
-            }
+
+        <div class="plcal-editor-toolbar">
+            <div class="plcal-paint-mode" role="group" aria-label="Edit dates">
+                <span class="plcal-paint-mode__label">Edit dates</span>
+                <button type="button"
+                        class="plcal-paint-mode__btn @(_paintMode == "W" ? "is-active" : null)"
+                        disabled="@_busy"
+                        @onclick="@(() => _paintMode = "W")">
+                    <i class="fa-solid fa-briefcase" aria-hidden="true"></i>
+                    Working@(string.IsNullOrWhiteSpace(_selectedGroupCd) ? "" : $" · {_selectedGroupCd}")
+                </button>
+                <button type="button"
+                        class="plcal-paint-mode__btn @(_paintMode == "O" ? "is-active" : null)"
+                        disabled="@_busy"
+                        @onclick="@(() => _paintMode = "O")">
+                    <i class="fa-solid fa-mug-hot" aria-hidden="true"></i>
+                    Off
+                </button>
+            </div>
+            <p class="plcal-hint mb-0">Click dates in the calendar to apply the selected status.</p>
         </div>
-        <div class="mb-2">
-            <div class="mb-1"><strong>Work weekdays</strong> (uses selected shift group)</div>
-            @foreach (DayOfWeek d in Enum.GetValues<DayOfWeek>())
-            {
-                var day = d;
-                <label class="me-2">
-                    <input type="checkbox" checked="@_workWeekdays.Contains(day)" @onchange="@(e => ToggleWork(day, (bool)(e.Value ?? false)))" />
-                    @day.ToString()[..3]
-                </label>
-            }
-        </div>
-        <div class="d-flex flex-wrap gap-2 mb-2">
-            @foreach (var g in _groups)
-            {
-                <span class="badge" style="background:@NormalizeColor(g.ShiftColor); color:#fff;">@g.ShfGrpCd</span>
-            }
-        </div>
-        @if (_busy) { <p class="text-muted">Saving…</p> }
+
+        @if (_busy)
+        {
+            <p class="plcal-busy">@_busyMessage</p>
+        }
+
         <PlanningYearCalendar Year="@_year"
                               DayCodes="@_dayCodes"
                               Holidays="@_holidayMap"
                               ShiftColors="@_shiftColors"
+                              ShiftLabels="@_shiftLabels"
                               PaintMode="@_paintMode"
                               Dirty="@_dirty"
+                              ShowSummary="false"
+                              ShowLegend="true"
+                              ReadOnly="@(_busy || string.IsNullOrWhiteSpace(_machineCd))"
                               DayPainted="@OnDayPainted" />
-        <p class="text-muted mt-2">Fingerprint: @_fingerprint</p>
-        @if (_copyPreviewRows > 0)
-        {
-            <p class="text-warning mt-2">Target @_copyTarget already has @_copyPreviewRows row(s) for @_year. Choose Overwrite or Cancel.</p>
-        }
+
+        <div class="plcal-workspace__footer">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Discard Changes"
+                      Click="@RequestDiscardAsync"
+                      Enabled="@(!_busy && _dirty)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                      Text="Save Calendar"
+                      IconCssClass="fa-solid fa-floppy-disk"
+                      Click="@SaveAsync"
+                      Enabled="@(!_busy && _dirty && !string.IsNullOrWhiteSpace(_machineCd))" />
+        </div>
     </section>
+
+    <DxPopup HeaderText="Discard unsaved changes?"
+             CloseOnOutsideClick="false"
+             Width="420px"
+             CssClass="common-popup"
+             @bind-Visible="@_discardVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                You have unsaved changes to the @_year machine calendar
+                @if (!string.IsNullOrWhiteSpace(_machineCd))
+                {
+                    <text> for <span class="code-style">@_machineCd</span></text>
+                }
+                .
+            </p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Editing" Click="@CancelDiscard" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="@_discardConfirmLabel" Click="@ConfirmDiscardAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Replace existing machine calendar?"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@_copyOverwriteVisible">
+        <Content>
+            <p class="iv-confirm__copy">
+                <span class="code-style">@_copyTarget</span> already has a calendar for @_year.
+                Replacing it will remove its current working-day and shift assignments for this year.
+            </p>
+            <div class="plcal-confirm-meta">
+                <div><span>Source</span><strong class="code-style">@_machineCd</strong></div>
+                <div><span>Target</span><strong class="code-style">@_copyTarget</strong></div>
+                <div><span>Year</span><strong>@_year</strong></div>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelCopyOverwrite" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Replace Calendar" Click="@ConfirmCopyOverwriteAsync" Enabled="@(!_busy)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
 </div>
 </MenuAuthorize>
+
 @code {
+    private sealed record MachineOption(string Code, string Display);
+    private sealed record GroupOption(string Code, string Display);
+
     private List<PrMachine> _machines = [];
     private List<PrShiftGroup> _groups = [];
+    private List<MachineOption> _machineOptions = [];
+    private List<GroupOption> _groupOptions = [];
     private string? _machineCd, _copyTarget, _selectedGroupCd;
     private int _year = DateTime.Today.Year;
     private List<MachineCalendarDayVm> _days = [];
     private Dictionary<DateOnly, string> _dayCodes = new();
     private Dictionary<DateOnly, string> _shiftColors = new();
+    private Dictionary<DateOnly, string> _shiftLabels = new();
     private Dictionary<DateOnly, string> _holidayMap = new();
     private string _fingerprint = "";
-    private string? _message; private bool _ok;
-    private int _copyPreviewRows;
-    private bool _dirty, _busy;
-    private string _paintMode = "O";
+    private string? _message;
+    private bool _ok;
+    private bool _dirty, _busy, _loaded;
+    private string _busyMessage = "Working…";
+    private string _paintMode = "W";
     private readonly HashSet<DayOfWeek> _offWeekdays = new() { DayOfWeek.Saturday, DayOfWeek.Sunday };
-    private readonly HashSet<DayOfWeek> _workWeekdays = new();
+    private readonly HashSet<DayOfWeek> _workWeekdays = new()
+    {
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday
+    };
+
+    private bool _discardVisible;
+    private PendingAction _pendingAction = PendingAction.None;
+    private string _discardConfirmLabel = "Discard";
+    private bool _copyOverwriteVisible;
+
+    private int _workCount;
+    private int _offCount;
+    private int _holidayCount;
+
+    private enum PendingAction { None, Load, Generate, DiscardOnly }
+
+    private IEnumerable<MachineOption> _copyMachineOptions =>
+        _machineOptions.Where(m => !string.Equals(m.Code, _machineCd, StringComparison.OrdinalIgnoreCase));
+
+    private string? SelectedMachineDescription =>
+        _machines.FirstOrDefault(m => string.Equals(m.MachineCd, _machineCd, StringComparison.OrdinalIgnoreCase))?.MachineDes;
 
     protected override async Task OnInitializedAsync()
     {
         var m = await MachineService.ListAsync();
-        if (m.Succeeded) _machines = m.Value!.ToList();
-        var g = await GroupService.ListGroupsAsync();
-        if (g.Succeeded) _groups = g.Value!.GroupBy(x => x.ShfGrpCd).Select(x => x.First()).ToList();
-        var h = await HolidayService.ListAsync(_year);
-        if (h.Succeeded)
+        if (m.Succeeded)
         {
-            _holidayMap = h.Value!
-                .Where(x => x.DateOff is not null)
-                .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
-                .ToDictionary(x => x.Key, x => x.First().Description ?? "Holiday");
+            _machines = m.Value!.ToList();
+            _machineOptions = _machines
+                .OrderBy(x => x.MachineCd)
+                .Select(x => new MachineOption(x.MachineCd, FormatMachineDisplay(x.MachineCd, x.MachineDes)))
+                .ToList();
         }
+
+        var g = await GroupService.ListGroupsAsync();
+        if (g.Succeeded)
+        {
+            _groups = g.Value!.GroupBy(x => x.ShfGrpCd, StringComparer.OrdinalIgnoreCase).Select(x => x.First()).ToList();
+            _groupOptions = _groups
+                .OrderBy(x => x.ShfGrpCd)
+                .Select(x => new GroupOption(x.ShfGrpCd, FormatGroupDisplay(x.ShfGrpCd, x.ShfGrpDes)))
+                .ToList();
+            _selectedGroupCd ??= _groups.FirstOrDefault(x => x.DefaultGrp == true)?.ShfGrpCd
+                ?? _groups.FirstOrDefault()?.ShfGrpCd;
+        }
+
+        await LoadHolidaysAsync();
     }
 
-    private void ToggleOff(DayOfWeek day, bool on)
+    private void SetCurrentYear() => _year = DateTime.Today.Year;
+
+    private Task OnWeekdayToggled((DayOfWeek Day, bool IsWork) _)
     {
-        if (on) { _offWeekdays.Add(day); _workWeekdays.Remove(day); }
-        else _offWeekdays.Remove(day);
+        return Task.CompletedTask;
     }
 
-    private void ToggleWork(DayOfWeek day, bool on)
+    private async Task LoadHolidaysAsync()
     {
-        if (on) { _workWeekdays.Add(day); _offWeekdays.Remove(day); }
-        else _workWeekdays.Remove(day);
+        var h = await HolidayService.ListAsync(_year);
+        if (!h.Succeeded || h.Value is null)
+        {
+            _holidayMap = new();
+            RefreshSummary();
+            return;
+        }
+
+        _holidayMap = h.Value
+            .Where(x => x.DateOff is not null)
+            .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
+            .ToDictionary(x => x.Key, x => x.First().Description ?? "Holiday");
+        RefreshSummary();
     }
 
     private void SyncMaps()
@@ -147,19 +405,88 @@
             .ToDictionary(
                 d => DateOnly.FromDateTime(d.Date),
                 d => colorByGroup.GetValueOrDefault(d.ShfGrpCd!, "#c5d4c8"));
+        _shiftLabels = _days
+            .Where(d => d.DateCd == "W" && !string.IsNullOrWhiteSpace(d.ShfGrpCd))
+            .ToDictionary(
+                d => DateOnly.FromDateTime(d.Date),
+                d => d.ShfGrpCd!);
+        RefreshSummary();
+    }
+
+    private void RefreshSummary()
+    {
+        _holidayCount = _holidayMap.Count;
+        _offCount = _dayCodes.Count(kv => kv.Value == "O" || _holidayMap.ContainsKey(kv.Key));
+        _workCount = _dayCodes.Count(kv => kv.Value == "W" && !_holidayMap.ContainsKey(kv.Key));
+    }
+
+    private Task RequestLoadAsync() => RequestGuardedAsync(PendingAction.Load, "Discard & Load");
+    private Task RequestGenerateAsync() => RequestGuardedAsync(PendingAction.Generate, "Discard & Generate");
+    private Task RequestDiscardAsync() => RequestGuardedAsync(PendingAction.DiscardOnly, "Discard Changes");
+
+    private Task RequestGuardedAsync(PendingAction action, string confirmLabel)
+    {
+        if (_busy) return Task.CompletedTask;
+        if (_dirty)
+        {
+            _pendingAction = action;
+            _discardConfirmLabel = confirmLabel;
+            _discardVisible = true;
+            return Task.CompletedTask;
+        }
+
+        return ExecutePendingAsync(action);
+    }
+
+    private void CancelDiscard()
+    {
+        _discardVisible = false;
+        _pendingAction = PendingAction.None;
+    }
+
+    private async Task ConfirmDiscardAsync()
+    {
+        _discardVisible = false;
+        var action = _pendingAction;
+        _pendingAction = PendingAction.None;
+        _dirty = false;
+        await ExecutePendingAsync(action);
+    }
+
+    private async Task ExecutePendingAsync(PendingAction action)
+    {
+        switch (action)
+        {
+            case PendingAction.Load:
+                await LoadAsync();
+                break;
+            case PendingAction.Generate:
+                await GenerateAsync();
+                break;
+            case PendingAction.DiscardOnly:
+                await LoadAsync();
+                break;
+        }
     }
 
     private async Task LoadAsync()
     {
         if (string.IsNullOrWhiteSpace(_machineCd)) return;
-        var r = await MacCalService.LoadYearAsync(_machineCd, _year);
-        if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
-        _days = r.Value.Days.ToList();
-        _fingerprint = r.Value.Fingerprint;
-        SyncMaps();
-        _message = null;
-        _copyPreviewRows = 0;
-        _dirty = false;
+        _busy = true;
+        _busyMessage = "Loading calendar...";
+        try
+        {
+            await LoadHolidaysAsync();
+            var r = await MacCalService.LoadYearAsync(_machineCd, _year);
+            if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
+            _days = r.Value.Days.ToList();
+            _fingerprint = r.Value.Fingerprint;
+            SyncMaps();
+            _loaded = true;
+            _message = null;
+            _dirty = false;
+        }
+        finally { _busy = false; }
     }
 
     private Task OnDayPainted((DateOnly Date, string DateCd) paint)
@@ -187,41 +514,50 @@
 
     private async Task GenerateAsync()
     {
-        var holidays = _holidayMap.Keys.ToHashSet();
-        string? defaultGrp = null;
-        if (MachineCalendarGenerator.RequiresDefaultGroup(_offWeekdays, _workWeekdays))
+        if (string.IsNullOrWhiteSpace(_machineCd)) return;
+        _busy = true;
+        _busyMessage = "Generating calendar...";
+        try
         {
-            var def = await GroupPlanning.GetDefaultGroupAsync();
-            if (!def.Succeeded || def.Value is null)
+            await LoadHolidaysAsync();
+            var holidays = _holidayMap.Keys.ToHashSet();
+            string? defaultGrp = null;
+            if (MachineCalendarGenerator.RequiresDefaultGroup(_offWeekdays, _workWeekdays))
+            {
+                var def = await GroupPlanning.GetDefaultGroupAsync();
+                if (!def.Succeeded || def.Value is null)
+                {
+                    _ok = false;
+                    _message = def.Message ?? "Default shift group is required for fallback weekdays.";
+                    return;
+                }
+                defaultGrp = def.Value.ShiftGroupCode;
+            }
+
+            var gen = MachineCalendarGenerator.Generate(new MachineCalendarGenerator.GenerateRequest
+            {
+                Year = _year,
+                OffWeekdays = _offWeekdays,
+                WorkWeekdays = _workWeekdays,
+                SelectedShiftGroupCd = _selectedGroupCd,
+                DefaultShiftGroupCd = defaultGrp,
+                HolidayDates = holidays
+            });
+            if (!gen.Succeeded || gen.Value is null)
             {
                 _ok = false;
-                _message = def.Message ?? "Default shift group is required for fallback weekdays.";
+                _message = gen.Message;
                 return;
             }
-            defaultGrp = def.Value.ShiftGroupCode;
-        }
 
-        var gen = MachineCalendarGenerator.Generate(new MachineCalendarGenerator.GenerateRequest
-        {
-            Year = _year,
-            OffWeekdays = _offWeekdays,
-            WorkWeekdays = _workWeekdays,
-            SelectedShiftGroupCd = _selectedGroupCd,
-            DefaultShiftGroupCd = defaultGrp,
-            HolidayDates = holidays
-        });
-        if (!gen.Succeeded || gen.Value is null)
-        {
-            _ok = false;
-            _message = gen.Message;
-            return;
+            _days = gen.Value.ToList();
+            SyncMaps();
+            _loaded = true;
+            _dirty = true;
+            _ok = true;
+            _message = "Calendar generated. Review the dates and click Save Calendar when ready.";
         }
-
-        _days = gen.Value.ToList();
-        SyncMaps();
-        _dirty = true;
-        _ok = true;
-        _message = "Generated draft calendar (not saved).";
+        finally { _busy = false; }
     }
 
     private async Task SaveAsync()
@@ -232,10 +568,14 @@
             if (d.DateCd == "O") d.ShfGrpCd = null;
         }
         _busy = true;
+        _busyMessage = "Saving calendar...";
         try
         {
             var r = await MacCalService.SaveYearAsync(_machineCd, _year, _days, _fingerprint);
-            _ok = r.Succeeded; _message = r.Message;
+            _ok = r.Succeeded;
+            _message = r.Succeeded
+                ? "Calendar saved."
+                : r.Message;
             if (r.Succeeded && r.Value is not null)
             {
                 _fingerprint = r.Value.NewFingerprint;
@@ -250,38 +590,61 @@
         if (string.IsNullOrWhiteSpace(_machineCd) || string.IsNullOrWhiteSpace(_copyTarget)) return;
         var target = await MacCalService.LoadYearAsync(_copyTarget, _year);
         if (!target.Succeeded) { _ok = false; _message = target.Message; return; }
-        _copyPreviewRows = target.Value.Days.Count;
-        if (_copyPreviewRows == 0) { await CopyAsync(overwrite: false); return; }
-        _ok = false;
-        _message = $"Target has {_copyPreviewRows} day(s). Confirm overwrite or cancel.";
+        if (target.Value.Days.Count == 0)
+        {
+            await CopyAsync(overwrite: false);
+            return;
+        }
+        _copyOverwriteVisible = true;
+    }
+
+    private void CancelCopyOverwrite() => _copyOverwriteVisible = false;
+
+    private async Task ConfirmCopyOverwriteAsync()
+    {
+        _copyOverwriteVisible = false;
+        await CopyAsync(overwrite: true);
     }
 
     private async Task CopyAsync(bool overwrite)
     {
         if (string.IsNullOrWhiteSpace(_machineCd) || string.IsNullOrWhiteSpace(_copyTarget)) return;
-        var r = await MacCalService.CopyYearAsync(_machineCd, _copyTarget, _year, overwrite);
-        _ok = r.Succeeded; _message = r.Message;
-        if (r.Succeeded) _copyPreviewRows = 0;
+        _busy = true;
+        _busyMessage = "Copying calendar...";
+        try
+        {
+            var r = await MacCalService.CopyYearAsync(_machineCd, _copyTarget, _year, overwrite);
+            _ok = r.Succeeded;
+            _message = r.Succeeded
+                ? $"Calendar copied to {_copyTarget}."
+                : r.Message;
+        }
+        finally { _busy = false; }
     }
 
     private async Task CopyAllAsync()
     {
         if (string.IsNullOrWhiteSpace(_machineCd)) return;
-        var r = await MacCalService.CopyYearToAllAsync(_machineCd, _year, overwrite: false);
-        if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
-        var summary = r.Value!;
-        _ok = true;
-        _message = summary.Skipped > 0
-            ? $"Copy ALL: copied {summary.Copied}, skipped {summary.Skipped} (already have year)."
-            : $"Copy ALL: copied {summary.Copied} machine(s).";
+        _busy = true;
+        _busyMessage = "Copying to eligible machines...";
+        try
+        {
+            var r = await MacCalService.CopyYearToAllAsync(_machineCd, _year, overwrite: false);
+            if (!r.Succeeded) { _ok = false; _message = r.Message; return; }
+            var summary = r.Value!;
+            _ok = true;
+            _message = summary.Skipped > 0
+                ? $"Calendar copied to {summary.Copied} machines. {summary.Skipped} machines were skipped because they already have a {_year} calendar."
+                : $"Calendar copied to {summary.Copied} machines.";
+        }
+        finally { _busy = false; }
     }
 
-    private void CancelCopy()
-    {
-        _copyPreviewRows = 0;
-        _message = "Copy cancelled.";
-        _ok = true;
-    }
+    private static string FormatMachineDisplay(string code, string? des) =>
+        string.IsNullOrWhiteSpace(des) ? code : $"{code} — {des}";
+
+    private static string FormatGroupDisplay(string code, string? des) =>
+        string.IsNullOrWhiteSpace(des) ? code : $"{code} — {des}";
 
     private static string NormalizeColor(string? c)
     {
