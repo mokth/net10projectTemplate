@@ -17,6 +17,7 @@ public class PrShift
     public DateTime? BreakTm4To { get; set; }
     public DateTime? BreakTm5From { get; set; }
     public DateTime? BreakTm5To { get; set; }
+    public byte BreakStorageVersion { get; set; }
     public DateTime? OtStartTime { get; set; }
     public string? OverrideMrpPlan { get; set; }
     public DateTime? Created { get; set; }

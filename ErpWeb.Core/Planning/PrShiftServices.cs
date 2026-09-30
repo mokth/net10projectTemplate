@@ -14,11 +14,7 @@ public sealed class PrShiftEditVm
     public TimeOnly Start { get; set; }
     public TimeOnly End { get; set; }
     public TimeOnly? OtStart { get; set; }
-    public ShiftTimeCalculator.BreakPair Break1 { get; set; }
-    public ShiftTimeCalculator.BreakPair Break2 { get; set; }
-    public ShiftTimeCalculator.BreakPair Break3 { get; set; }
-    public ShiftTimeCalculator.BreakPair Break4 { get; set; }
-    public ShiftTimeCalculator.BreakPair Break5 { get; set; }
+    public List<ShiftTimeCalculator.BreakPair> Breaks { get; set; } = [];
     public string? OverrideMrpPlan { get; set; }
     public DateTime? OriginalUpdated { get; set; }
     public bool IsNew { get; set; }
@@ -84,10 +80,20 @@ public sealed class PrShiftService : IPrShiftService
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var e = await db.PrShifts.AsNoTracking().FirstOrDefaultAsync(x => x.ShiftCd == code && x.CompCode == scope.CompanyCode, ct);
         if (e is null) return PlanningServiceResult<PrShiftEditVm>.Fail(PlanningErrorCode.ValidationFailed, "Shift not found.");
+        var childRows = await db.PrShiftBreaks.AsNoTracking()
+            .Where(x => x.CompCode == scope.CompanyCode && x.ShiftCd == code)
+            .OrderBy(x => x.BreakSeq)
+            .ToListAsync(ct);
 
-        // Case A: null unused. Case C legacy midnight sentinel treated as unused for load compatibility.
-        static ShiftTimeCalculator.BreakPair Map(DateTime? f, DateTime? t) =>
-            ShiftTimeCalculator.FromLegacyPair(f, t, treatMidnightAsUnused: true);
+        IReadOnlyList<ShiftTimeCalculator.BreakPair> breaks;
+        try
+        {
+            breaks = PrShiftBreakMapper.ResolveBreaks(e, childRows);
+        }
+        catch (ArgumentException ex)
+        {
+            return PlanningServiceResult<PrShiftEditVm>.Fail(PlanningErrorCode.ValidationFailed, ex.Message);
+        }
 
         var vm = new PrShiftEditVm
         {
@@ -96,11 +102,7 @@ public sealed class PrShiftService : IPrShiftService
             Start = ShiftTimeCalculator.FromLegacyDateTime(e.StartTm) ?? default,
             End = ShiftTimeCalculator.FromLegacyDateTime(e.EndTm) ?? default,
             OtStart = ShiftTimeCalculator.FromLegacyDateTime(e.OtStartTime),
-            Break1 = Map(e.BreakTm1From, e.BreakTm1To),
-            Break2 = Map(e.BreakTm2From, e.BreakTm2To),
-            Break3 = Map(e.BreakTm3From, e.BreakTm3To),
-            Break4 = Map(e.BreakTm4From, e.BreakTm4To),
-            Break5 = Map(e.BreakTm5From, e.BreakTm5To),
+            Breaks = breaks.ToList(),
             OverrideMrpPlan = e.OverrideMrpPlan,
             OriginalUpdated = e.Updated,
             IsNew = false
@@ -119,15 +121,13 @@ public sealed class PrShiftService : IPrShiftService
         var err = PlanningInputValidation.ValidateCode(code);
         if (err is not null) return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err);
 
-        var breaks = new[] { vm.Break1, vm.Break2, vm.Break3, vm.Break4, vm.Break5 };
-        for (var i = 0; i < breaks.Length; i++)
-        {
-            var be = ShiftTimeCalculator.ValidateBreakPair(breaks[i], i + 1);
-            if (be is not null) return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, be);
-        }
-
+        IReadOnlyList<ShiftTimeCalculator.BreakPair> breaks;
         int net;
-        try { net = ShiftTimeCalculator.ComputeNetMinutes(vm.Start, vm.End, breaks); }
+        try
+        {
+            breaks = PrShiftBreakMapper.CanonicalizeForShift(vm.Start, vm.End, vm.Breaks);
+            net = ShiftTimeCalculator.ComputeNetMinutes(vm.Start, vm.End, breaks);
+        }
         catch (ArgumentException ex) { return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, ex.Message); }
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -155,19 +155,17 @@ public sealed class PrShiftService : IPrShiftService
             entity.StartTm = ShiftTimeCalculator.ToLegacyDateTime(vm.Start);
             entity.EndTm = ShiftTimeCalculator.ToLegacyDateTime(vm.End);
             entity.OtStartTime = ShiftTimeCalculator.ToLegacyDateTime(vm.OtStart) ?? DateTime.Today;
-            // Case A persistence: unused => null. Note: if SQL non-nullable, EF may need midnight sentinel — Case C restriction documented.
-            entity.BreakTm1From = ShiftTimeCalculator.ToLegacyDateTime(vm.Break1.Start);
-            entity.BreakTm1To = ShiftTimeCalculator.ToLegacyDateTime(vm.Break1.End);
-            entity.BreakTm2From = ShiftTimeCalculator.ToLegacyDateTime(vm.Break2.Start);
-            entity.BreakTm2To = ShiftTimeCalculator.ToLegacyDateTime(vm.Break2.End);
-            entity.BreakTm3From = ShiftTimeCalculator.ToLegacyDateTime(vm.Break3.Start);
-            entity.BreakTm3To = ShiftTimeCalculator.ToLegacyDateTime(vm.Break3.End);
-            entity.BreakTm4From = ShiftTimeCalculator.ToLegacyDateTime(vm.Break4.Start);
-            entity.BreakTm4To = ShiftTimeCalculator.ToLegacyDateTime(vm.Break4.End);
-            entity.BreakTm5From = ShiftTimeCalculator.ToLegacyDateTime(vm.Break5.Start);
-            entity.BreakTm5To = ShiftTimeCalculator.ToLegacyDateTime(vm.Break5.End);
+            PrShiftBreakMapper.PackToWideColumns(entity, breaks);
+            entity.BreakStorageVersion = 1;
             entity.OverrideMrpPlan = vm.OverrideMrpPlan;
             entity.TotalTime = ShiftTimeCalculator.EncodeTotalTime(net);
+
+            var existingBreaks = await db.PrShiftBreaks
+                .Where(x => x.CompCode == write.CompanyCode && x.ShiftCd == code)
+                .ToListAsync(ct);
+            db.PrShiftBreaks.RemoveRange(existingBreaks);
+            await db.SaveChangesAsync(ct);
+            db.PrShiftBreaks.AddRange(PrShiftBreakMapper.ToChildRows(entity, breaks, write.UserId));
 
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
@@ -191,9 +189,21 @@ public sealed class PrShiftService : IPrShiftService
             return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, "Shift is used by a shift group.");
         var e = await db.PrShifts.FirstOrDefaultAsync(x => x.ShiftCd == code && x.CompCode == write.CompanyCode, ct);
         if (e is null) return PlanningServiceResult.Ok();
-        db.PrShifts.Remove(e);
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Shift deleted.");
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var children = await db.PrShiftBreaks.Where(x => x.ShiftCd == code && x.CompCode == write.CompanyCode).ToListAsync(ct);
+            db.PrShiftBreaks.RemoveRange(children);
+            db.PrShifts.Remove(e);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Shift deleted.");
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 }
 
@@ -263,20 +273,22 @@ public sealed class PrShiftGroupService : IPrShiftGroupService
             .ToListAsync(ct);
         if (shifts.Count != selected.Count)
             return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "One or more shifts were not found.");
+        var childRows = await db.PrShiftBreaks.AsNoTracking()
+            .Where(x => x.CompCode == write.CompanyCode && selected.Contains(x.ShiftCd))
+            .ToListAsync(ct);
+        var childrenByShift = childRows
+            .GroupBy(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<PrShiftBreak>)x.OrderBy(b => b.BreakSeq).ToList(), StringComparer.OrdinalIgnoreCase);
 
         var intervals = new List<ShiftGroupValidator.ShiftInterval>();
         foreach (var s in shifts)
         {
             var start = ShiftTimeCalculator.FromLegacyDateTime(s.StartTm) ?? default;
             var end = ShiftTimeCalculator.FromLegacyDateTime(s.EndTm) ?? default;
-            var breaks = new[]
-            {
-                ShiftTimeCalculator.FromLegacyPair(s.BreakTm1From, s.BreakTm1To, true),
-                ShiftTimeCalculator.FromLegacyPair(s.BreakTm2From, s.BreakTm2To, true),
-                ShiftTimeCalculator.FromLegacyPair(s.BreakTm3From, s.BreakTm3To, true),
-                ShiftTimeCalculator.FromLegacyPair(s.BreakTm4From, s.BreakTm4To, true),
-                ShiftTimeCalculator.FromLegacyPair(s.BreakTm5From, s.BreakTm5To, true)
-            };
+            var breaks = childrenByShift.TryGetValue(s.ShiftCd, out var rows)
+                ? PrShiftBreakMapper.ResolveBreaks(s, rows)
+                : PrShiftBreakMapper.ResolveBreaks(s, []);
+            breaks = PrShiftBreakMapper.CanonicalizeForShift(start, end, breaks);
             int net;
             try { net = ShiftTimeCalculator.ComputeNetMinutes(start, end, breaks); }
             catch (ArgumentException ex) { return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, ex.Message); }

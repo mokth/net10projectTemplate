@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
@@ -68,6 +69,12 @@ public sealed class ProductionCalendarScheduleDataLoader : IProductionCalendarSc
                 .Where(x => x.CompCode == comp && shiftCds.Contains(x.ShiftCd))
                 .ToListAsync(ct);
             var shiftByCd = shifts.ToDictionary(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase);
+            var childRows = await db.PrShiftBreaks.AsNoTracking()
+                .Where(x => x.CompCode == comp && shiftCds.Contains(x.ShiftCd))
+                .ToListAsync(ct);
+            var childrenByShift = childRows
+                .GroupBy(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => (IReadOnlyList<PrShiftBreak>)x.OrderBy(b => b.BreakSeq).ToList(), StringComparer.OrdinalIgnoreCase);
 
             foreach (var g in groupRows.GroupBy(x => x.ShfGrpCd, StringComparer.OrdinalIgnoreCase))
             {
@@ -81,14 +88,9 @@ public sealed class ProductionCalendarScheduleDataLoader : IProductionCalendarSc
                         ShiftCd = s.ShiftCd,
                         Start = ShiftTimeCalculator.FromLegacyDateTime(s.StartTm) ?? default,
                         End = ShiftTimeCalculator.FromLegacyDateTime(s.EndTm) ?? default,
-                        Breaks =
-                        [
-                            ShiftTimeCalculator.FromLegacyPair(s.BreakTm1From, s.BreakTm1To, true),
-                            ShiftTimeCalculator.FromLegacyPair(s.BreakTm2From, s.BreakTm2To, true),
-                            ShiftTimeCalculator.FromLegacyPair(s.BreakTm3From, s.BreakTm3To, true),
-                            ShiftTimeCalculator.FromLegacyPair(s.BreakTm4From, s.BreakTm4To, true),
-                            ShiftTimeCalculator.FromLegacyPair(s.BreakTm5From, s.BreakTm5To, true)
-                        ]
+                        Breaks = childrenByShift.TryGetValue(s.ShiftCd, out var rows)
+                            ? PrShiftBreakMapper.ResolveBreaks(s, rows)
+                            : PrShiftBreakMapper.ResolveBreaks(s, [])
                     });
                 }
                 shiftGroups[g.Key] = new ShiftGroupSource

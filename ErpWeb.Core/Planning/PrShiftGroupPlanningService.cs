@@ -274,23 +274,25 @@ public sealed class PrShiftGroupPlanningService : IPrShiftGroupPlanningService
         var shifts = await db.PrShifts.AsNoTracking()
             .Where(x => shiftCds.Contains(x.ShiftCd) && x.CompCode == companyCode)
             .ToListAsync(ct);
+        var childRows = await db.PrShiftBreaks.AsNoTracking()
+            .Where(x => x.CompCode == companyCode && shiftCds.Contains(x.ShiftCd))
+            .ToListAsync(ct);
+        var childrenByShift = childRows
+            .GroupBy(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<PrShiftBreak>)x.OrderBy(b => b.BreakSeq).ToList(), StringComparer.OrdinalIgnoreCase);
 
         var defs = new List<ShiftDefinition>();
         foreach (var e in shifts.OrderBy(x => x.StartTm))
         {
             var start = ShiftTimeCalculator.FromLegacyDateTime(e.StartTm) ?? default;
             var end = ShiftTimeCalculator.FromLegacyDateTime(e.EndTm) ?? default;
-            var breaks = new[]
-            {
-                ShiftTimeCalculator.FromLegacyPair(e.BreakTm1From, e.BreakTm1To, true),
-                ShiftTimeCalculator.FromLegacyPair(e.BreakTm2From, e.BreakTm2To, true),
-                ShiftTimeCalculator.FromLegacyPair(e.BreakTm3From, e.BreakTm3To, true),
-                ShiftTimeCalculator.FromLegacyPair(e.BreakTm4From, e.BreakTm4To, true),
-                ShiftTimeCalculator.FromLegacyPair(e.BreakTm5From, e.BreakTm5To, true)
-            };
+            var breaks = childrenByShift.TryGetValue(e.ShiftCd, out var rows)
+                ? PrShiftBreakMapper.ResolveBreaks(e, rows)
+                : PrShiftBreakMapper.ResolveBreaks(e, []);
             int gross, net;
             try
             {
+                breaks = PrShiftBreakMapper.CanonicalizeForShift(start, end, breaks);
                 gross = ShiftTimeCalculator.ComputeGrossMinutes(start, end);
                 net = ShiftTimeCalculator.ComputeNetMinutes(start, end, breaks);
             }

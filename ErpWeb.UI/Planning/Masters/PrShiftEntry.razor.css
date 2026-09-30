@@ -4,12 +4,23 @@
     gap: 0.5rem;
 }
 
+.shift-breaks__toolbar {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.shift-breaks__empty {
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+}
+
 .shift-breaks__row {
     display: grid;
-    grid-template-columns: 5.5rem minmax(7rem, 1fr) auto minmax(7rem, 1fr);
+    grid-template-columns: 5.5rem minmax(7rem, 1fr) auto minmax(7rem, 1fr) auto;
     align-items: center;
     gap: 0.5rem 0.75rem;
-    max-width: 36rem;
+    max-width: 42rem;
 }
 
 .shift-breaks__label {
@@ -30,10 +41,18 @@
     min-width: 0;
 }
 
+.shift-breaks__remove {
+    min-width: 2.25rem;
+}
+
 @media (max-width: 576px) {
     .shift-breaks__row {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr auto;
         max-width: none;
+    }
+
+    .shift-breaks__label {
+        grid-column: 1 / -1;
     }
 
     .shift-breaks__to {

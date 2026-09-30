@@ -25,6 +25,7 @@ public class PrShiftConfiguration : IEntityTypeConfiguration<PrShift>
         builder.Property(e => e.BreakTm4To).HasColumnName("Break_Tm4To");
         builder.Property(e => e.BreakTm5From).HasColumnName("Break_Tm5From");
         builder.Property(e => e.BreakTm5To).HasColumnName("Break_Tm5To");
+        builder.Property(e => e.BreakStorageVersion).HasDefaultValue((byte)0);
         builder.Property(e => e.OtStartTime).HasColumnName("OT_StartTime");
         builder.Property(e => e.OverrideMrpPlan).HasColumnName("Override_MRP_Plan").HasMaxLength(1);
         builder.Property(e => e.Created);

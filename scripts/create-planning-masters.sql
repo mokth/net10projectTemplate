@@ -82,6 +82,7 @@ BEGIN
         Break_Tm4To datetime NULL,
         Break_Tm5From datetime NULL,
         Break_Tm5To datetime NULL,
+        BreakStorageVersion tinyint NOT NULL CONSTRAINT DF_PrShift_BreakStorageVersion DEFAULT (0),
         OT_StartTime datetime NULL,
         Override_MRP_Plan nvarchar(1) NULL,
         Created datetime NULL,
@@ -92,6 +93,43 @@ BEGIN
         BranchCode nvarchar(10) NULL,
         LocCode nvarchar(10) NULL,
         totaltime float NULL
+    );
+END
+GO
+
+IF COL_LENGTH(N'dbo.PrShift', N'BreakStorageVersion') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrShift ADD BreakStorageVersion tinyint NOT NULL
+        CONSTRAINT DF_PrShift_BreakStorageVersion DEFAULT (0);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.PrShift')
+      AND name = N'UX_PrShift_ShiftCd_CompCode'
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_PrShift_ShiftCd_CompCode ON dbo.PrShift (Shift_Cd, CompCode);
+END
+GO
+
+IF OBJECT_ID(N'dbo.PrShiftBreak', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PrShiftBreak (
+        CompCode nvarchar(10) NOT NULL,
+        Shift_Cd nvarchar(10) NOT NULL,
+        BreakSeq tinyint NOT NULL,
+        BreakFrom datetime NOT NULL,
+        BreakTo datetime NOT NULL,
+        Created datetime NULL,
+        UserID nvarchar(10) NULL,
+        CONSTRAINT PK_PrShiftBreak PRIMARY KEY (CompCode, Shift_Cd, BreakSeq),
+        CONSTRAINT CK_PrShiftBreak_BreakSeq CHECK (BreakSeq BETWEEN 1 AND 5),
+        CONSTRAINT FK_PrShiftBreak_PrShift FOREIGN KEY (Shift_Cd, CompCode)
+            REFERENCES dbo.PrShift (Shift_Cd, CompCode)
+            ON DELETE CASCADE
     );
 END
 GO

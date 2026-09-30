@@ -145,6 +145,7 @@ public class AppDbContext : DbContext
     public DbSet<PrPreventive> PrPreventives => Set<PrPreventive>();
     public DbSet<PrProcess> PrProcesses => Set<PrProcess>();
     public DbSet<PrShift> PrShifts => Set<PrShift>();
+    public DbSet<PrShiftBreak> PrShiftBreaks => Set<PrShiftBreak>();
     public DbSet<PrShiftCalendar> PrShiftCalendars => Set<PrShiftCalendar>();
     public DbSet<PrShiftGroup> PrShiftGroups => Set<PrShiftGroup>();
     public DbSet<PrShiftIcon> PrShiftIcons => Set<PrShiftIcon>();

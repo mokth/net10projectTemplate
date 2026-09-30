@@ -189,6 +189,52 @@ No delete on entry form. List delete does **not** check usage in `PrShiftGroup` 
 3. Successful save clears form but stays on page; Cancel returns to list.
 4. `Override_MRP_Plan` unused by this form.
 
+### 2.10 Dynamic break storage in ErpWeb
+
+ErpWeb now keeps the legacy wide break columns for compatibility and adds `dbo.PrShiftBreak` as the normalized break table.
+
+Authority is explicit:
+
+| `PrShift.BreakStorageVersion` | Source of truth |
+|-------------------------------|-----------------|
+| `0` | Legacy `Break_Tm1From/To` ... `Break_Tm5From/To` |
+| `>= 1` | `dbo.PrShiftBreak`, including zero rows as authoritative no-breaks |
+
+Every ErpWeb save builds one canonical break list, then writes both projections in one transaction:
+
+- `PrShiftBreak` rows are replace-all, dense `BreakSeq` 1..5.
+- `Break_Tm1..5` are repacked in the same order.
+- Unused wide slots are `00:00-00:00`, not `NULL`, so classic WebForms can keep binding/parsing.
+- `00:00-00:30` remains a real break; only `00:00-00:00` is the unused sentinel.
+- The compatibility limit remains five breaks until the wide columns are retired.
+
+Consumers that calculate shift totals, shift-group definitions, and work-order schedule capacity resolve breaks through the shared mapper. If version is `>= 1`, they do not fall back to stale wide columns.
+
+Scripts:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/preflight-pr-shift-break.sql` | Read-only anomaly report (blank CompCode, one-sided pairs, orphans, authority counts) |
+| `scripts/alter-pr-shift-break.sql` | Phase A schema (`@PromoteBreakStorage=0`) / Phase C remigrate (`=1`) |
+| `scripts/rollback-pr-shift-break-authority.sql` | Demote `BreakStorageVersion` to `0` without dropping children |
+
+The database relationship is DB-owned rather than EF-navigation-owned: `PrShiftBreak(Shift_Cd, CompCode)` references `PrShift(Shift_Cd, CompCode)` with `ON DELETE CASCADE`. New app delete flows still check shift-group dependencies first; cascade is safety for classic parent deletes and rollback operations.
+
+Cutover lifecycle:
+
+1. Phase A: run `scripts/alter-pr-shift-break.sql` with `@PromoteBreakStorage = 0` for additive schema only.
+2. Phase B: smoke classic WorkShift/ShiftGroup while every shift remains version `0`.
+3. Phase C: freeze shift maintenance, run promotion with `@PromoteBreakStorage = 1`; migration deletes existing child rows for version `0`, rebuilds from current wide columns, repacks wide to canonical order, and sets version `1`.
+4. Phase D: deploy child-aware ErpWeb. Classic may read; break edits must go through ErpWeb for this release.
+
+Rollback lifecycle:
+
+1. Freeze shift edits.
+2. Roll back the application.
+3. Run `scripts/rollback-pr-shift-break-authority.sql` to demote affected shifts to version `0`. Child rows are left in place but dormant.
+4. Old app edits wide columns.
+5. Before redeploying child-aware ErpWeb, freeze again and rerun promotion; version `0` rows are remigrated from the current wide columns, replacing stale child rows.
+
 ---
 
 ## 3. Shift Group (`ShiftGroup`)
