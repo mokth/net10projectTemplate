@@ -771,56 +771,6 @@ public partial class PrWorkOrderEntry : PageBase
         Navigation.NavigateTo($"/planning/work-orders/view/{Uri.EscapeDataString(workOrderNo)}", replace: true);
     }
 
-    protected RenderFragment Kpi(string label, string value, string? note) => builder =>
-    {
-        builder.OpenElement(0, "article");
-        builder.AddAttribute(1, "class", "pwo-kpi");
-        builder.OpenElement(2, "span");
-        builder.AddContent(3, label);
-        builder.CloseElement();
-        builder.OpenElement(4, "strong");
-        builder.AddContent(5, value);
-        builder.CloseElement();
-        if (!string.IsNullOrWhiteSpace(note))
-        {
-            builder.OpenElement(6, "small");
-            builder.AddContent(7, note);
-            builder.CloseElement();
-        }
-        builder.CloseElement();
-    };
-
-    protected RenderFragment Detail(string label, string? value) => builder =>
-    {
-        builder.OpenElement(0, "div");
-        builder.AddAttribute(1, "class", "pwo-detail");
-        builder.OpenElement(2, "span");
-        builder.AddContent(3, label);
-        builder.CloseElement();
-        builder.OpenElement(4, "strong");
-        builder.AddContent(5, string.IsNullOrWhiteSpace(value) ? "—" : value);
-        builder.CloseElement();
-        builder.CloseElement();
-    };
-
-    protected RenderFragment Gate(string label, string message) => builder =>
-    {
-        builder.OpenElement(0, "article");
-        builder.AddAttribute(1, "class", "pwo-gate");
-        builder.OpenElement(2, "i");
-        builder.AddAttribute(3, "class", "fa-solid fa-lock");
-        builder.CloseElement();
-        builder.OpenElement(4, "div");
-        builder.OpenElement(5, "strong");
-        builder.AddContent(6, label);
-        builder.CloseElement();
-        builder.OpenElement(7, "span");
-        builder.AddContent(8, message);
-        builder.CloseElement();
-        builder.CloseElement();
-        builder.CloseElement();
-    };
-
     private void PrepareRequestIdentity()
     {
         Request.WorkOrderNo = DetailModel?.WorkOrderNo;

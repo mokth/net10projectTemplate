@@ -172,6 +172,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<BomExplosionService>();
         services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
+        services.AddScoped<IProductionMaterialAllocationService, ProductionMaterialAllocationService>();
+        services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
         // Version-2 snapshot quantity contract (plan §7.3).
         services.AddScoped<IWorkOrderQuantityCalculator, WorkOrderQuantityCalculator>();
         services.AddScoped<IWorkOrderReadinessValidator, WorkOrderReadinessValidator>();
@@ -203,6 +205,9 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IPrWorkPrefixService, PrWorkPrefixService>();
         services.AddScoped<IPrMacSeqService, PrMacSeqService>();
         services.AddScoped<IPrPreventiveService, PrPreventiveService>();
+        services.AddScoped<IPrMaintenanceReasonService, PrMaintenanceReasonService>();
+        services.AddScoped<IPrMachineMaintenanceService, PrMachineMaintenanceService>();
+        services.AddScoped<IPrMachineMaintenanceSummaryService, PrMachineMaintenanceSummaryService>();
         services.AddScoped<IPrDefImportService, PrDefImportService>();
 
         services.AddScoped<IIvInventoryRefService, IvInventoryRefService>();

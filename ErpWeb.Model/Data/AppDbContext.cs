@@ -140,6 +140,7 @@ public class AppDbContext : DbContext
     public DbSet<PrMachine> PrMachines => Set<PrMachine>();
     public DbSet<PrMacMaintenance> PrMacMaintenances => Set<PrMacMaintenance>();
     public DbSet<PrMacMaintenanceImage> PrMacMaintenanceImages => Set<PrMacMaintenanceImage>();
+    public DbSet<PrMaintenanceReason> PrMaintenanceReasons => Set<PrMaintenanceReason>();
     public DbSet<PrMacSeq> PrMacSeqs => Set<PrMacSeq>();
     public DbSet<PrOperator> PrOperators => Set<PrOperator>();
     public DbSet<PrPreventive> PrPreventives => Set<PrPreventive>();
@@ -169,6 +170,9 @@ public class AppDbContext : DbContext
     public DbSet<ProductionChangeOrder> ProductionChangeOrders => Set<ProductionChangeOrder>();
     public DbSet<ProductionChangeOrderLine> ProductionChangeOrderLines => Set<ProductionChangeOrderLine>();
     public DbSet<ProductionPostingLink> ProductionPostingLinks => Set<ProductionPostingLink>();
+    public DbSet<ProductionMaterialMovement> ProductionMaterialMovements => Set<ProductionMaterialMovement>();
+    public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
+    public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -29,6 +29,7 @@ public interface IPrPreventiveService
     Task<PlanningServiceResult<IReadOnlyList<PrPreventive>>> ListAsync(CancellationToken ct = default);
     Task<PlanningServiceResult> SaveBatchAsync(IReadOnlyList<PrPreventive> rows, IReadOnlyList<int> deletedUids, CancellationToken ct = default);
     Task<PlanningServiceResult> AddRangeAsync(string machineCd, DateTime fromDate, DateTime toDate, TimeOnly start, TimeOnly end, string? reasonCd, string? remark, CancellationToken ct = default);
+    Task<PlanningServiceResult> CancelAsync(int preventiveUid, CancellationToken ct = default);
 }
 
 public sealed class PrOperatorService : IPrOperatorService
@@ -269,61 +270,130 @@ public sealed class PrPreventiveService : IPrPreventiveService
     {
         if (!await _access.CanAccessAsync(MenuCodes.PlanningMacPreventive, ct))
             return PlanningServiceResult<IReadOnlyList<PrPreventive>>.Fail(PlanningErrorCode.PermissionDenied, "Permission denied.");
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+            return PlanningServiceResult<IReadOnlyList<PrPreventive>>.Fail(PlanningErrorCode.TenantScopeError, "Tenant required.");
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var rows = await db.PrPreventives.AsNoTracking().OrderByDescending(x => x.DownDt).Take(2000).ToListAsync(ct);
+        var rows = await db.PrPreventives.AsNoTracking()
+            .Where(x => x.CompCode == scope.CompanyCode)
+            .OrderByDescending(x => x.DownDt)
+            .Take(2000)
+            .ToListAsync(ct);
         return PlanningServiceResult<IReadOnlyList<PrPreventive>>.Ok(rows);
     }
 
     public async Task<PlanningServiceResult> SaveBatchAsync(IReadOnlyList<PrPreventive> rows, IReadOnlyList<int> deletedUids, CancellationToken ct = default)
     {
-        if (!await _access.CanEditAsync(MenuCodes.PlanningMacPreventive, ct))
-            return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningMacPreventive);
         var write = _tenant.TryWriteScope();
         if (write is null) return PlanningServiceResult.TenantRequired();
+
+        var hasNew = rows.Any(r => r.Uid == 0);
+        var hasEdit = rows.Any(r => r.Uid != 0);
+        if (hasNew && !await _access.CanAddAsync(MenuCodes.PlanningMacPreventive, ct))
+            return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningMacPreventive);
+        if (hasEdit && !await _access.CanEditAsync(MenuCodes.PlanningMacPreventive, ct))
+            return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningMacPreventive);
+        if (deletedUids.Count > 0 && !await _access.CanDeleteAsync(MenuCodes.PlanningMacPreventive, ct))
+            return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningMacPreventive);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        foreach (var uid in deletedUids)
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
         {
-            var e = await db.PrPreventives.FirstOrDefaultAsync(x => x.Uid == uid, ct);
-            if (e is not null) db.PrPreventives.Remove(e);
-        }
-        foreach (var row in rows)
-        {
-            var mac = PlanningCodeNormalizer.NormalizeCode(row.MachineCd);
-            var day = row.DownDt.Date;
-            if (row.Uid == 0)
+            foreach (var uid in deletedUids)
             {
-                if (await db.PrPreventives.AnyAsync(x => x.MachineCd == mac && x.DownDt == day, ct))
-                    return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode, $"Preventive already exists for {mac} on {day:yyyy-MM-dd}.");
-                db.PrPreventives.Add(new PrPreventive
-                {
-                    MachineCd = mac,
-                    DownDt = day,
-                    StartTm = row.StartTm,
-                    EndTm = row.EndTm,
-                    ReasonCd = row.ReasonCd,
-                    Remark = row.Remark,
-                    Created = DateTime.Now,
-                    UserId = write.UserId
-                });
-            }
-            else
-            {
-                var e = await db.PrPreventives.FirstOrDefaultAsync(x => x.Uid == row.Uid, ct);
+                var e = await db.PrPreventives.FirstOrDefaultAsync(
+                    x => x.Uid == uid && x.CompCode == write.CompanyCode, ct);
                 if (e is null) continue;
-                var clash = await db.PrPreventives.AnyAsync(x => x.Uid != row.Uid && x.MachineCd == mac && x.DownDt == day, ct);
-                if (clash)
-                    return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode, $"Preventive already exists for {mac} on {day:yyyy-MM-dd}.");
-                e.MachineCd = mac;
-                e.DownDt = day;
-                e.StartTm = row.StartTm;
-                e.EndTm = row.EndTm;
-                e.ReasonCd = row.ReasonCd;
-                e.Remark = row.Remark;
-                e.Updated = DateTime.Now;
+                if (!string.Equals(e.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed,
+                        $"Cannot delete preventive {uid}: only PLANNED rows may be deleted. Use Cancel instead.");
+                if (await db.PrMacMaintenances.AnyAsync(x => x.PreventiveUid == uid && x.CompCode == write.CompanyCode, ct))
+                    return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists,
+                        $"Cannot delete preventive {uid}: linked maintenance history exists.");
+                db.PrPreventives.Remove(e);
             }
+
+            foreach (var row in rows)
+            {
+                var mac = PlanningCodeNormalizer.NormalizeCode(row.MachineCd);
+                var day = row.DownDt.Date;
+                if (!PreventiveWindowNormalizer.TryNormalize(day, row.StartTm, row.EndTm, out var window, out var timeErr))
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, timeErr ?? "Invalid preventive window.");
+
+                var machine = await db.PrMachines.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.MachineCd == mac && x.CompCode == write.CompanyCode, ct);
+                if (machine is null)
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} not found.");
+
+                var reasonCd = string.IsNullOrWhiteSpace(row.ReasonCd) ? null : PlanningCodeNormalizer.NormalizeCode(row.ReasonCd);
+                if (reasonCd is not null)
+                {
+                    var reasonOk = await db.PrMaintenanceReasons.AsNoTracking()
+                        .AnyAsync(x => x.CompCode == write.CompanyCode && x.ReasonCd == reasonCd && x.Active, ct);
+                    if (!reasonOk)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Reason {reasonCd} is not an active maintenance reason.");
+                }
+
+                if (row.Uid == 0)
+                {
+                    if (!machine.Active)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} is inactive.");
+
+                    var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, 0, window, ct);
+                    if (overlapErr is not null)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, overlapErr);
+
+                    db.PrPreventives.Add(new PrPreventive
+                    {
+                        MachineCd = mac,
+                        DownDt = day,
+                        StartTm = day.Add(row.StartTm.TimeOfDay),
+                        EndTm = day.Add(row.EndTm.TimeOfDay),
+                        ReasonCd = reasonCd,
+                        Remark = row.Remark,
+                        Status = PreventiveStatuses.Planned,
+                        CompCode = write.CompanyCode,
+                        BranchCode = write.BranchCode,
+                        LocCode = write.LocationCode,
+                        Created = DateTime.Now,
+                        UserId = write.UserId
+                    });
+                }
+                else
+                {
+                    var e = await db.PrPreventives.FirstOrDefaultAsync(
+                        x => x.Uid == row.Uid && x.CompCode == write.CompanyCode, ct);
+                    if (e is null) continue;
+                    if (!string.Equals(e.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed,
+                            $"Cannot edit preventive {row.Uid}: only PLANNED rows may be edited.");
+
+                    var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, e.Uid, window, ct);
+                    if (overlapErr is not null)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, overlapErr);
+
+                    e.MachineCd = mac;
+                    e.DownDt = day;
+                    e.StartTm = day.Add(row.StartTm.TimeOfDay);
+                    e.EndTm = day.Add(row.EndTm.TimeOfDay);
+                    e.ReasonCd = reasonCd;
+                    e.Remark = row.Remark;
+                    e.Updated = DateTime.Now;
+                    e.UserId = write.UserId;
+                }
+            }
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Preventive rows saved.");
         }
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Preventive rows saved.");
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     public async Task<PlanningServiceResult> AddRangeAsync(string machineCd, DateTime fromDate, DateTime toDate, TimeOnly start, TimeOnly end, string? reasonCd, string? remark, CancellationToken ct = default)
@@ -339,24 +409,120 @@ public sealed class PrPreventiveService : IPrPreventiveService
         if ((to - from).TotalDays + 1 > MaxRangeDays)
             return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Range cannot exceed {MaxRangeDays} days.");
 
+        var probeDay = from;
+        var startTm = probeDay.Add(start.ToTimeSpan());
+        var endTm = probeDay.Add(end.ToTimeSpan());
+        if (!PreventiveWindowNormalizer.TryNormalize(probeDay, startTm, endTm, out _, out var timeErr))
+            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, timeErr ?? "Invalid preventive window.");
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        for (var d = from; d <= to; d = d.AddDays(1))
+        var machine = await db.PrMachines.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.MachineCd == mac && x.CompCode == write.CompanyCode, ct);
+        if (machine is null)
+            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} not found.");
+        if (!machine.Active)
+            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} is inactive.");
+
+        var rc = string.IsNullOrWhiteSpace(reasonCd) ? null : PlanningCodeNormalizer.NormalizeCode(reasonCd);
+        if (rc is not null)
         {
-            if (await db.PrPreventives.AnyAsync(x => x.MachineCd == mac && x.DownDt == d, ct))
-                return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode, $"Preventive already exists for {mac} on {d:yyyy-MM-dd}.");
-            db.PrPreventives.Add(new PrPreventive
-            {
-                MachineCd = mac,
-                DownDt = d,
-                StartTm = d.Add(start.ToTimeSpan()),
-                EndTm = d.Add(end.ToTimeSpan()),
-                ReasonCd = reasonCd,
-                Remark = remark,
-                Created = DateTime.Now,
-                UserId = write.UserId
-            });
+            var reasonOk = await db.PrMaintenanceReasons.AsNoTracking()
+                .AnyAsync(x => x.CompCode == write.CompanyCode && x.ReasonCd == rc && x.Active, ct);
+            if (!reasonOk)
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Reason {rc} is not an active maintenance reason.");
         }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            for (var d = from; d <= to; d = d.AddDays(1))
+            {
+                var s = d.Add(start.ToTimeSpan());
+                var e = d.Add(end.ToTimeSpan());
+                if (!PreventiveWindowNormalizer.TryNormalize(d, s, e, out var window, out var err))
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err ?? "Invalid window.");
+
+                var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, 0, window, ct);
+                if (overlapErr is not null)
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"{overlapErr} (date {d:yyyy-MM-dd}).");
+
+                db.PrPreventives.Add(new PrPreventive
+                {
+                    MachineCd = mac,
+                    DownDt = d,
+                    StartTm = s,
+                    EndTm = e,
+                    ReasonCd = rc,
+                    Remark = remark,
+                    Status = PreventiveStatuses.Planned,
+                    CompCode = write.CompanyCode,
+                    BranchCode = write.BranchCode,
+                    LocCode = write.LocationCode,
+                    Created = DateTime.Now,
+                    UserId = write.UserId
+                });
+            }
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Preventive range added.");
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    public async Task<PlanningServiceResult> CancelAsync(int preventiveUid, CancellationToken ct = default)
+    {
+        if (!await _access.CanEditAsync(MenuCodes.PlanningMacPreventive, ct))
+            return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningMacPreventive);
+        var write = _tenant.TryWriteScope();
+        if (write is null) return PlanningServiceResult.TenantRequired();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var e = await db.PrPreventives.FirstOrDefaultAsync(
+            x => x.Uid == preventiveUid && x.CompCode == write.CompanyCode, ct);
+        if (e is null)
+            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Preventive not found.");
+        if (!string.Equals(e.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
+            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Only PLANNED preventive rows can be cancelled.");
+
+        e.Status = PreventiveStatuses.Cancelled;
+        e.Updated = DateTime.Now;
+        e.UserId = write.UserId;
         await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Preventive range added.");
+        return PlanningServiceResult.Ok("Preventive cancelled.");
+    }
+
+    private static async Task<string?> FindOverlapAsync(
+        AppDbContext db,
+        string compCode,
+        string machineCd,
+        int excludeUid,
+        PreventiveWindowNormalizer.NormalizedWindow window,
+        CancellationToken ct)
+    {
+        var from = window.WindowStart.Date.AddDays(-1);
+        var to = window.WindowEnd.Date.AddDays(1);
+        var candidates = await db.PrPreventives.AsNoTracking()
+            .Where(x => x.CompCode == compCode
+                        && x.MachineCd == machineCd
+                        && x.Uid != excludeUid
+                        && x.Status != PreventiveStatuses.Cancelled
+                        && x.DownDt >= from
+                        && x.DownDt <= to)
+            .ToListAsync(ct);
+
+        foreach (var c in candidates)
+        {
+            if (!PreventiveWindowNormalizer.TryNormalize(c.DownDt, c.StartTm, c.EndTm, out var existing, out _))
+                continue;
+            if (PreventiveWindowNormalizer.Overlaps(window, existing))
+                return $"Overlaps existing preventive for {machineCd} on {c.DownDt:yyyy-MM-dd} ({c.StartTm:HH:mm}-{c.EndTm:HH:mm}).";
+        }
+
+        return null;
     }
 }

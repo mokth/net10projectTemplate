@@ -219,6 +219,7 @@ public sealed class PrHierarchyService : IPrHierarchyService
                     ConversionTime = c.ConversionTime ?? 0,
                     StartupTime = c.StartupTime ?? 0,
                     QueueTime = c.QueueTime ?? 0,
+                    Active = true,
                     Created = DateTime.Now,
                     UserId = write.UserId,
                     CompCode = write.CompanyCode,

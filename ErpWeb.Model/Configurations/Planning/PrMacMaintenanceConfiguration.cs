@@ -25,5 +25,21 @@ public class PrMacMaintenanceConfiguration : IEntityTypeConfiguration<PrMacMaint
         builder.Property(e => e.MType).HasColumnName("MType").HasMaxLength(10);
         builder.Property(e => e.Name).HasMaxLength(100);
         builder.Property(e => e.Reminder).HasMaxLength(10);
+        builder.Property(e => e.StartDateTime);
+        builder.Property(e => e.EndDateTime);
+        builder.Property(e => e.ReasonCd).HasMaxLength(10);
+        builder.Property(e => e.PartsCost).HasPrecision(19, 2).IsRequired().HasDefaultValue(0m);
+        builder.Property(e => e.LabourCost).HasPrecision(19, 2).IsRequired().HasDefaultValue(0m);
+        builder.Property(e => e.OtherCost).HasPrecision(19, 2).IsRequired().HasDefaultValue(0m);
+        builder.Property(e => e.PreventiveUid);
+        builder.Property(e => e.Remark).HasMaxLength(500);
+        builder.Property(e => e.CompCode).HasMaxLength(10).IsRequired();
+        builder.Property(e => e.BranchCode).HasMaxLength(10);
+        builder.Property(e => e.LocCode).HasMaxLength(10);
+
+        builder.HasIndex(e => e.PreventiveUid)
+            .IsUnique()
+            .HasFilter("[PreventiveUid] IS NOT NULL")
+            .HasDatabaseName("UX_PrMacMaintenance_PreventiveUid");
     }
 }

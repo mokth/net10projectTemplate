@@ -15,6 +15,10 @@ public sealed class PrMachineListRow
     public double? ConversionTime { get; set; }
     public double? StartupTime { get; set; }
     public double? QueueTime { get; set; }
+    public bool Active { get; set; } = true;
+    public string? MachineType { get; set; }
+    public string? SerialNo { get; set; }
+    public decimal HourlyCost { get; set; }
     public DateTime? Updated { get; set; }
 }
 
@@ -29,6 +33,7 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
     protected override string EntityLabel => "Machine";
     protected override string HeroIconClass => "fa-solid fa-robot";
     protected override string HeroTitle => "Machines";
+    protected override bool SupportsActivate => true;
 
     [Inject] private IPrMachineService MachineService { get; set; } = default!;
     [Inject] private IPrProcessService ProcessService { get; set; } = default!;
@@ -41,9 +46,13 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
         new() { Caption = "Machine", FieldName = nameof(PrMachineListRow.MachineCd), VisibleIndex = 1, Width = "120px", SortIndex = 0 },
         new() { Caption = "Process", FieldName = nameof(PrMachineListRow.ProcessCd), VisibleIndex = 2, Width = "120px" },
         new() { Caption = "Description", FieldName = nameof(PrMachineListRow.Description), VisibleIndex = 3 },
-        new() { Caption = "Conversion", FieldName = nameof(PrMachineListRow.ConversionTime), DataType = "number", VisibleIndex = 4, Width = "100px" },
-        new() { Caption = "Startup", FieldName = nameof(PrMachineListRow.StartupTime), DataType = "number", VisibleIndex = 5, Width = "90px" },
-        new() { Caption = "Queue", FieldName = nameof(PrMachineListRow.QueueTime), DataType = "number", VisibleIndex = 6, Width = "90px" }
+        new() { Caption = "Type", FieldName = nameof(PrMachineListRow.MachineType), VisibleIndex = 4, Width = "110px" },
+        new() { Caption = "Serial No", FieldName = nameof(PrMachineListRow.SerialNo), VisibleIndex = 5, Width = "120px" },
+        new() { Caption = "Hourly Cost", FieldName = nameof(PrMachineListRow.HourlyCost), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 6, Width = "100px" },
+        new() { Caption = "Active", FieldName = nameof(PrMachineListRow.Active), DataType = "bool", VisibleIndex = 7, Width = "80px" },
+        new() { Caption = "Conversion", FieldName = nameof(PrMachineListRow.ConversionTime), DataType = "number", VisibleIndex = 8, Width = "100px" },
+        new() { Caption = "Startup", FieldName = nameof(PrMachineListRow.StartupTime), DataType = "number", VisibleIndex = 9, Width = "90px" },
+        new() { Caption = "Queue", FieldName = nameof(PrMachineListRow.QueueTime), DataType = "number", VisibleIndex = 10, Width = "90px" }
     ];
 
     protected override async Task OnPageInitializedAsync()
@@ -76,6 +85,10 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
                     ConversionTime = x.ConversionTime,
                     StartupTime = x.StartupTime,
                     QueueTime = x.QueueTime,
+                    Active = x.Active,
+                    MachineType = x.MachineType,
+                    SerialNo = x.SerialNo,
+                    HourlyCost = x.HourlyCost,
                     Updated = x.Updated
                 }).ToList();
             }
@@ -88,7 +101,16 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
     protected override async Task OnNewClickAsync()
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Add)) return;
-        EditModel = new PrMachineEditVm { ClientNodeId = Guid.NewGuid().ToString("N"), IsNew = true, ConversionTime = 0, StartupTime = 0, QueueTime = 0 };
+        EditModel = new PrMachineEditVm
+        {
+            ClientNodeId = Guid.NewGuid().ToString("N"),
+            IsNew = true,
+            Active = true,
+            ConversionTime = 0,
+            StartupTime = 0,
+            QueueTime = 0,
+            HourlyCost = 0
+        };
         ErrorMessage = null; IsEditMode = false; EditEnabled = true; CanEditFromView = false; PopupVisible = true;
     }
 
@@ -116,6 +138,10 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
             ConversionTime = row.ConversionTime,
             StartupTime = row.StartupTime,
             QueueTime = row.QueueTime,
+            Active = row.Active,
+            MachineType = row.MachineType,
+            SerialNo = row.SerialNo,
+            HourlyCost = row.HourlyCost,
             OriginalUpdated = row.Updated,
             IsNew = false
         };
@@ -150,5 +176,23 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
             ProcessCd = r.ProcessCd,
             OriginalUpdated = r.Updated,
             IsDeleted = true
+        }).ToList());
+
+    protected override Task<PlanningServiceResult> SetActiveSelectedAsync(bool isActive) =>
+        MachineService.SaveBatchAsync(SelectedRows.Select(r => new PrMachineEditVm
+        {
+            ClientNodeId = Guid.NewGuid().ToString("N"),
+            MachineCd = r.MachineCd,
+            ProcessCd = r.ProcessCd,
+            MachineDes = r.Description,
+            ConversionTime = r.ConversionTime,
+            StartupTime = r.StartupTime,
+            QueueTime = r.QueueTime,
+            Active = isActive,
+            MachineType = r.MachineType,
+            SerialNo = r.SerialNo,
+            HourlyCost = r.HourlyCost,
+            OriginalUpdated = r.Updated,
+            IsNew = false
         }).ToList());
 }

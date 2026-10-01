@@ -24,5 +24,9 @@ public class PrMachineConfiguration : IEntityTypeConfiguration<PrMachine>
         builder.Property(e => e.ConversionTime);
         builder.Property(e => e.StartupTime);
         builder.Property(e => e.QueueTime);
+        builder.Property(e => e.Active).IsRequired().HasDefaultValue(true);
+        builder.Property(e => e.MachineType).HasMaxLength(30);
+        builder.Property(e => e.SerialNo).HasMaxLength(50);
+        builder.Property(e => e.HourlyCost).HasPrecision(19, 6).IsRequired().HasDefaultValue(0m);
     }
 }

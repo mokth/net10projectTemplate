@@ -52,6 +52,28 @@ public static class ProductionAuditEventTypes
     public const string ScheduleRecalculated = "SCHEDULE_RECALCULATED";
     public const string MachineSelected = "MACHINE_SELECTED";
     public const string MaterialSubstituted = "MATERIAL_SUBSTITUTED";
+    public const string MaterialIssued = "MATERIAL_ISSUED";
+    public const string MaterialIssueRolledBack = "MATERIAL_ISSUE_ROLLED_BACK";
+}
+
+public static class ProductionMaterialMovementTypes
+{
+    public const string Issue = "ISSUE";
+    public const string IssueReversal = "ISSUE_REVERSAL";
+    public const string Return = "RETURN";
+    public const string Consume = "CONSUME";
+    public const string Adjustment = "ADJUST";
+}
+
+public static class ProductionPostingCommandTypes
+{
+    public const string MaterialIssuePost = "MATERIAL_ISSUE_POST";
+    public const string MaterialIssueRollback = "MATERIAL_ISSUE_ROLLBACK";
+}
+
+public static class ProductionDocumentTypes
+{
+    public const string MaterialIssue = "MATERIAL_ISSUE";
 }
 
 public static class ProductionChangeOrderStatuses

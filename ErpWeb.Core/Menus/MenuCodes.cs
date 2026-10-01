@@ -243,9 +243,14 @@ public static class MenuCodes
     public const string PlanningWorkPrefix = "PLN_WORK_PREFIX";
     public const string PlanningMacSeq = "PLN_MAC_SEQ";
     public const string PlanningMacPreventive = "PLN_MAC_PREVENTIVE";
+    public const string PlanningMaintenanceReason = "PLN_MAINT_REASON";
     public const string PlanningImportPrdDef = "PLN_IMPORT_PRDDEF";
     public const string PlanningTransactions = "PLN_TRANSACTIONS";
     public const string PlanningWorkOrder = "PLN_WORK_ORDER";
+    public const string PlanningMaterialIssue = "PLN_MATERIAL_ISSUE";
+    public const string PlanningMachineMaintenance = "PLN_MAC_MAINT";
+    public const string PlanningInquiry = "PLN_INQUIRY";
+    public const string PlanningMachineSummary = "PLN_MAC_SUMMARY";
 
 
     public const string Security = "SECURITY";

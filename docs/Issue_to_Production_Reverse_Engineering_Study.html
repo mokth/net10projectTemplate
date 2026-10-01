@@ -1,0 +1,2131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Issue_to_Production_Reverse_Engineering_Study.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="deep-reverse-engineering-study--old-erp-issue-to-production--new-blazor-erp">Deep Reverse-Engineering Study — Old ERP Issue to Production → New Blazor ERP</h1>
+<p><strong>Study date:</strong> 2026-10-01<br>
+<strong>Old ERP repository:</strong> <code>mokth/ERPOrigin</code> — <code>master</code> at <code>1282097754401af2b36ba7a0ab46cc83574e6253</code><br>
+<strong>New ERP repository:</strong> <code>mokth/net10projectTemplate</code> — <code>production</code> at <code>e1a41fed8114f3373bcabe99bfdcd8931b49bf40</code><br>
+<strong>Purpose:</strong> Reverse-engineer the real old ERP Issue-to-Production business behavior, then map the proven concepts into the existing new Blazor production and inventory architecture without copying the Web Forms design.</p>
+<hr>
+<h2 id="evidence-labels-used-in-this-report">Evidence labels used in this report</h2>
+<ul>
+<li><strong>VERIFIED FROM OLD ERP</strong> — directly supported by old ERP source code that was inspected.</li>
+<li><strong>VERIFIED FROM NEW ERP</strong> — directly supported by the current <code>production</code> branch of the new ERP.</li>
+<li><strong>INFERRED FROM AVAILABLE CODE</strong> — strongly implied by the code path but not fully proven end-to-end.</li>
+<li><strong>NOT VERIFIED</strong> — the repository evidence inspected does not prove the point.</li>
+<li><strong>RECOMMENDED FOR NEW ERP</strong> — design recommendation based on the verified behavior and the existing new architecture.</li>
+</ul>
+<h3 id="important-scope-limitation">Important scope limitation</h3>
+<p>The supplied prompt included a connection string for a local SQL Express database. This execution environment cannot directly connect to the user's local <code>mokth\SQLExpress</code> instance. Therefore, database behavior in this study was verified from repository SQL, table access code, posting routines, entities, and transaction logic rather than by querying the live local database. Any point that would require live-row inspection is explicitly marked <strong>NOT VERIFIED</strong> rather than guessed.</p>
+<hr>
+<h1 id="a-executive-summary">A. Executive Summary</h1>
+<h2 id="a1-what-issue-to-production-means-in-the-old-erp">A.1 What “Issue to Production” means in the old ERP</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The old ERP implements Issue to Production as a real inventory movement, not merely a BOM reservation or a display-only production requirement.</p>
+<p>The business meaning is:</p>
+<pre class="hljs"><code><div>Warehouse / Location / Lot stock
+            ↓
+        IP posting
+            ↓
+Inventory stock decreases
+            ↓
+Production WIP balance increases
+            ↓
+Work Order / Work Center / Process production continues
+            ↓
+Daily production output consumes/moves WIP through later process stages
+            ↓
+Finished/WIP output is produced
+</div></code></pre>
+<p>This corresponds to the “warehouse → production/WIP” model rather than treating issue as immediate final consumption.</p>
+<p>The key proof is the posting chain:</p>
+<pre class="hljs"><code><div>IssueToProductionEx.aspx.cs
+    ↓
+ProdNeedPostHelper.PostIP(...)
+    ↓
+IssueProdPostHelper.Post(...)
+    ↓
+CPosting.PostInventoryTransaction(&quot;IP&quot;, ...)
+    ↓
+CPosting.PostIPTransaction(...)
+    ↓
+warehouse IvBalLoc / IvBalance reduced
+IvTrxHistory written with cost
+    ↓
+CPosting.PostIPtoWIPBal(...)
+    ↓
+WIPItemBal / WIPItemBalLoc increased
+    ↓
+PrSchDailyProd IP record written
+</div></code></pre>
+<p>So the old ERP clearly separates these concepts:</p>
+<pre class="hljs"><code><div>Planned BOM requirement ≠ material issued ≠ material consumed/output
+</div></code></pre>
+<p>That separation is important and should be preserved in the new ERP.</p>
+<h2 id="a2-the-most-important-old-erp-rule">A.2 The most important old ERP rule</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>Material requirements are based on the <strong>Work Order BOM snapshot (<code>PrSchBOM</code>)</strong>, not directly on the current Product Definition BOM (<code>PrDefBOM</code>). The Issue-to-Production loader filters by:</p>
+<ul>
+<li>Work Order (<code>ScheCode</code>)</li>
+<li>product</li>
+<li>Work Center</li>
+<li>production process</li>
+<li>default BOM line</li>
+<li>non-WIP-default material</li>
+</ul>
+<p>This is correct ERP behavior because a released Work Order must preserve the material definition that applied to that order, even if the Product Definition changes later.</p>
+<h2 id="a3-old-material-formula">A.3 Old material formula</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The old helper derives a material-per-output ratio from the Work Order BOM and then calculates the issue requirement for the requested production quantity.</p>
+<p>Conceptually:</p>
+<pre class="hljs"><code><div>Material per output unit
+    = Work Order BOM StdQty / scheduled output qty
+
+Required material for requested output
+    = Round(Material per output unit × Requested Output Qty, 4)
+</div></code></pre>
+<p>The current helper ultimately executes:</p>
+<pre class="hljs"><code><div>newIssueQty = Math.Round(StdPackSize * reqQutput, <span class="hljs-number">4</span>);
+</div></code></pre>
+<p>and the caller derives <code>StdPackSize</code> from the Work Order BOM quantity/output basis.</p>
+<p>Example:</p>
+<pre class="hljs"><code><div>WO planned output = 1,000 PCS
+WO BOM RM001      =   500 KG
+Material ratio    = 0.5 KG / PCS
+
+Requested output  = 200 PCS
+Required issue    = 0.5 × 200 = 100 KG
+</div></code></pre>
+<p>A major limitation is that the calculation does <strong>not</strong> directly subtract historical issue quantity. Historical issue is loaded for warning/validation purposes. Therefore repeated applications using the same requested output basis can potentially create an over-issue scenario unless another validation/tolerance rule catches it.</p>
+<h2 id="a4-old-lot-allocation">A.4 Old lot allocation</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>Available stock comes from <code>IvBalLoc</code> rows with active status and positive quantity. The helper orders available lots by <code>TransDate</code> ascending and allocates the required quantity across them. This is FIFO-like by stock transaction date.</p>
+<p>It is <strong>not proven to be FEFO</strong>, even though expiry information is exposed in later code.</p>
+<h2 id="a5-old-stock-and-wip-posting">A.5 Old stock and WIP posting</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>At IP posting:</p>
+<ol>
+<li>inventory availability is rechecked;</li>
+<li>the warehouse/location/lot balance is reduced;</li>
+<li>inventory transaction history is written;</li>
+<li>inventory cost is carried into history;</li>
+<li>the issued material is added to WIP balances;</li>
+<li>a <code>PrSchDailyProd</code> IP record is created;</li>
+<li>the Work Order can move to <code>IN PROGRESS</code>.</li>
+</ol>
+<p>Posting is reversible. Rollback restores stock, reverses WIP, handles inventory history/rollback history, and removes the IP production daily record.</p>
+<h2 id="a6-key-weaknesses-in-the-old-implementation">A.6 Key weaknesses in the old implementation</h2>
+<p><strong>VERIFIED / INFERRED FROM OLD ERP</strong></p>
+<p>The business concepts are useful, but the implementation has several structural weaknesses:</p>
+<ul>
+<li>business rules are distributed across Web Forms code-behind, helpers, generic posting classes, and raw SQL;</li>
+<li>legacy field names are overloaded — e.g. batch <code>ProcessCode</code> is used for Work Center in parts of the IP flow, while the real production process is stored separately (<code>PreProcess</code>);</li>
+<li>historical issue aggregation is not consistently keyed to the exact Work Order BOM/operation occurrence;</li>
+<li>the old issue calculator does not inherently calculate <code>outstanding = required - net issued</code>;</li>
+<li>over-issue behavior is inconsistent between screen validation and tolerance logic;</li>
+<li>application/global posting locks are used instead of relying primarily on deterministic database row locks;</li>
+<li>UOM handling is much weaker and less explicit than the new ERP model;</li>
+<li>WIP and cost are real, but the execution facts are spread across generic inventory history, WIP balances, and production daily records.</li>
+</ul>
+<h2 id="a7-the-new-erp-is-already-structurally-prepared">A.7 The new ERP is already structurally prepared</h2>
+<p><strong>VERIFIED FROM NEW ERP</strong></p>
+<p>The current new ERP <code>production</code> branch already has much of the correct foundation:</p>
+<ul>
+<li>frozen Work Order snapshots;</li>
+<li><code>ProductionWorkOrderMaterial</code> tied to the exact consuming <code>WorkOrderOperationId</code>;</li>
+<li>Product Definition BOM base quantity and scrap percentage;</li>
+<li>explicit required UOM and inventory base UOM;</li>
+<li>conversion factor to base;</li>
+<li>tolerance;</li>
+<li>alternate group;</li>
+<li>issue method (<code>MANUAL</code>, <code>BACKFLUSH</code>, <code>PICK_LIST</code>);</li>
+<li>supply source including <code>INTERNAL_ROUTE_WIP</code>;</li>
+<li>material warehouse/location defaults;</li>
+<li>execution projection fields: <code>ReservedQty</code>, <code>PickedQty</code>, <code>IssuedQty</code>, <code>ReturnedQty</code>, <code>ConsumedQty</code>, <code>VarianceQty</code>;</li>
+<li>robust inventory batch/history framework;</li>
+<li>inventory transaction constant <code>IP</code> already exists;</li>
+<li>SQL Server concurrency protections (<code>UPDLOCK</code>, <code>HOLDLOCK</code>, conditional stock decrement);</li>
+<li>posting and rollback audit fields;</li>
+<li><code>ProductionPostingLink</code> idempotency infrastructure.</li>
+</ul>
+<p>The model itself states that material execution projections remain zero until production material execution is implemented. This is the missing layer.</p>
+<h2 id="a8-recommended-final-concept">A.8 Recommended final concept</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>Do not clone the old <code>IssueToProductionEx.aspx</code> design. Implement a new production material execution service around the existing Work Order material snapshot and existing inventory posting engine:</p>
+<pre class="hljs"><code><div>Released / In-Progress Work Order
+        ↓
+ProductionWorkOrderMaterial
+(exact consuming operation)
+        ↓
+Required / Net Issued / Outstanding / Available
+        ↓
+Material Issue document
+        ↓
+Warehouse / Location / Lot allocation
+        ↓
+ProductionMaterialIssueService
+        ↓  same DB transaction
+Existing inventory stock-out posting using TrxType = IP
+        ↓
+Immutable production material movement fact
+        ↓
+IssuedQty projection + WIP material position + actual cost
+        ↓
+Production output / consumption
+        ↓
+Return / reversal / variance
+</div></code></pre>
+<p>The new design should keep Issue and Consumption separate. That is one of the strongest concepts in the old ERP and is necessary for WIP, returns, shop-floor traceability, and actual costing.</p>
+<hr>
+<h1 id="b-old-erp-source-code-map">B. Old ERP Source-Code Map</h1>
+<h2 id="b1-primary-execution-chain">B.1 Primary execution chain</h2>
+<pre class="hljs"><code><div>ProductionPlan/ProdPlan/IssueToProductionEx.aspx
+        ↓
+ProductionPlan/ProdPlan/IssueToProductionEx.aspx.cs
+        ↓
+ProductionPlan/Helper/IssueProdHelper.cs
+  class IssueToProductionHelper
+        ↓
+ProductionPlan/Helper/IssueToProdHelper.cs
+        ↓
+ERPClasses/BL/PrSchBOMBL.cs
+        ↓
+PrSchBOM / PrSchWCenter / PrSchMas / IvMas / IvBalLoc / IvTrxHistory
+</div></code></pre>
+<p>Posting chain:</p>
+<pre class="hljs"><code><div>IssueToProductionEx.aspx.cs
+        ↓ Save(&quot;yes&quot;)
+ProductionPlan/HelperEx/NeedPostHelper.cs
+  ProdNeedPostHelper.PostIP(...)
+        ↓
+ProductionPlan/Helper/IssueProdPostHelper.cs
+  IssueProdPostHelper.Post(...)
+        ↓
+ERPClasses/Classes/CPosting.cs
+  PostInventoryTransaction(&quot;IP&quot;, ...)
+  PostIPTransaction(...)
+  PostIPtoWIPBal(...)
+        ↓
+IvTrxBatch / IvTrxBatchDetail
+IvBalLoc / IvBalance
+IvTrxHistory
+IvBalLocCost
+WIPItemBal / WIPItemBalLoc
+PrSchDailyProd
+PrSchMas
+</div></code></pre>
+<p>Rollback chain:</p>
+<pre class="hljs"><code><div>IssueProdPostHelper.Rollback(...)
+        ↓
+CPosting.RollbackInventoryTransaction(&quot;IP&quot;, ...)
+        ↓
+CPosting.RollbackIPTransaction(...)
+CPosting.RollbackIPtoWIPBal(...)
+        ↓
+Stock restored
+WIP reversed
+IvTrxHistory removed/reversal history recorded
+PrSchDailyProd IP record removed
+WO status recalculated
+</div></code></pre>
+<h2 id="b2-important-support-files-found">B.2 Important support files found</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Old ERP source</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP UI / staging</td>
+<td><code>ProductionPlan/ProdPlan/IssueToProductionEx.aspx.cs</code></td>
+<td>Main document creation, BOM loading, validation, save/post request</td>
+</tr>
+<tr>
+<td>BOM requirement</td>
+<td><code>ProductionPlan/Helper/IssueProdHelper.cs</code></td>
+<td>Work Order BOM + lots + requirement calculation</td>
+</tr>
+<tr>
+<td>BOM helper</td>
+<td><code>ProductionPlan/Helper/IssueToProdHelper.cs</code></td>
+<td>Load and validate schedule BOM, issue helper logic</td>
+</tr>
+<tr>
+<td>WO BOM BL</td>
+<td><code>ERPClasses/BL/PrSchBOMBL.cs</code></td>
+<td>Work Order BOM queries and material pack ratio</td>
+</tr>
+<tr>
+<td>IP posting orchestration</td>
+<td><code>ProductionPlan/HelperEx/NeedPostHelper.cs</code></td>
+<td>Posting access/status/global lock wrapper</td>
+</tr>
+<tr>
+<td>IP production posting</td>
+<td><code>ProductionPlan/Helper/IssueProdPostHelper.cs</code></td>
+<td>Inventory + WIP + production daily + rollback coordination</td>
+</tr>
+<tr>
+<td>Generic stock posting</td>
+<td><code>ERPClasses/Classes/CPosting.cs</code></td>
+<td>Stock availability, balance mutation, history, costing, WIP mutation</td>
+</tr>
+<tr>
+<td>Issued list</td>
+<td><code>ProductionPlan/ProdPlan/LookUp/IssuedProdList.aspx.cs</code></td>
+<td>Reads production issue history from <code>PrSchDailyProd</code></td>
+</tr>
+<tr>
+<td>Output/WIP execution</td>
+<td><code>ProductionPlan/Helper/DailyProdJONGPostHelper.cs</code> and related DailyProd helpers</td>
+<td>Moves WIP through production process and records output</td>
+</tr>
+<tr>
+<td>Production validation</td>
+<td><code>ERPClasses/BL/ProductionBL.cs</code></td>
+<td>BOM/default/alternative validation logic</td>
+</tr>
+</tbody>
+</table>
+<h2 id="b3-important-tables-seen-in-the-execution-chain">B.3 Important tables seen in the execution chain</h2>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Observed role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PrSchMas</code></td>
+<td>Work Order / schedule header</td>
+</tr>
+<tr>
+<td><code>PrSchWCenter</code></td>
+<td>Work Order Work Center snapshot</td>
+</tr>
+<tr>
+<td><code>PrSchProcess</code></td>
+<td>Work Order process snapshot</td>
+</tr>
+<tr>
+<td><code>PrSchBOM</code></td>
+<td><strong>Authoritative material requirement snapshot for IP</strong></td>
+</tr>
+<tr>
+<td><code>IvTrxBatch</code></td>
+<td>Inventory transaction header/staging document</td>
+</tr>
+<tr>
+<td><code>IvTrxBatchDetail</code></td>
+<td>Inventory transaction issue lines</td>
+</tr>
+<tr>
+<td><code>IvBalLoc</code></td>
+<td>Warehouse/location/lot stock balance</td>
+</tr>
+<tr>
+<td><code>IvBalance</code></td>
+<td>Inventory balance summary</td>
+</tr>
+<tr>
+<td><code>IvTrxHistory</code></td>
+<td>Posted inventory movement history and cost</td>
+</tr>
+<tr>
+<td><code>IvTrxHistoryRollback</code></td>
+<td>Rollback/reversal history</td>
+</tr>
+<tr>
+<td><code>IvBalLocCost</code></td>
+<td>Inventory balance/location costing support</td>
+</tr>
+<tr>
+<td><code>WIPItemBal</code></td>
+<td>Production WIP summary balance</td>
+</tr>
+<tr>
+<td><code>WIPItemBalLoc</code></td>
+<td>Work Order/process/lot-level WIP balance</td>
+</tr>
+<tr>
+<td><code>PrSchDailyProd</code></td>
+<td>Posted production/IP/output execution history</td>
+</tr>
+<tr>
+<td><code>PrSchDailyProcess</code></td>
+<td>Production process progress</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="c-end-to-end-old-erp-workflow">C. End-to-End Old ERP Workflow</h1>
+<h2 id="c1-verified-lifecycle">C.1 Verified lifecycle</h2>
+<pre class="hljs"><code><div>Product Definition
+  PrDef*
+        ↓
+Work Order creation / snapshot
+  PrSchMas
+  PrSchWCenter
+  PrSchProcess
+  PrSchBOM
+  PrSchMachine
+  PrSchLabour
+        ↓
+Issue to Production selects Work Order + WC + Process
+        ↓
+Load PrSchBOM default material requirements
+        ↓
+Join active IvBalLoc stock by material / warehouse
+        ↓
+Allocate issue qty across lots (TransDate ascending)
+        ↓
+Create IvTrxBatch(IP/NEW) + IvTrxBatchDetail
+        ↓
+Post IP
+        ↓
+Check stock again
+        ↓
+Decrease IvBalLoc / IvBalance
+        ↓
+Write IvTrxHistory and costing data
+        ↓
+Increase WIPItemBal / WIPItemBalLoc
+        ↓
+Write PrSchDailyProd TrxType=IP
+        ↓
+Work Order may become IN PROGRESS
+        ↓
+Daily production / process output
+        ↓
+consume/move previous-process WIP
+        ↓
+create process/WIP/FG output
+        ↓
+complete / close Work Order
+</div></code></pre>
+<h2 id="c2-work-order-eligibility">C.2 Work Order eligibility</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The main helper excludes Work Orders in <code>Completed</code> and <code>Closed</code> status from normal issue selection. The posting path also changes a released/active order toward <code>IN PROGRESS</code> after production execution begins.</p>
+<p><strong>NOT VERIFIED</strong></p>
+<p>A single centralized old status policy for every special page was not found during this study. There may be secondary/special production pages with different status behavior.</p>
+<hr>
+<h1 id="d-database-tables-and-relationships">D. Database Tables and Relationships</h1>
+<h2 id="d1-requirement-relationship">D.1 Requirement relationship</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The important relationship is:</p>
+<pre class="hljs"><code><div>PrSchMas (Work Order)
+   │ ScheCode
+   ├── PrSchWCenter
+   │      │ WCCode / WCICode
+   │      └── PrSchProcess
+   │             │ ProcessCode
+   │             └── PrSchBOM
+   │                    ICode / StdQty / Warehouse
+   │
+   └── execution
+          IvTrxBatch / Detail (IP)
+               ↓
+          IvTrxHistory
+               ↓
+          WIPItemBalLoc
+               ↓
+          PrSchDailyProd
+</div></code></pre>
+<p>The issue transaction is not merely linked to a Work Order header. The requirement source is process-aware because the <code>PrSchBOM</code> query includes exact Work Center and Process.</p>
+<h2 id="d2-legacy-identifier-issue">D.2 Legacy identifier issue</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The staging/history fields are confusing:</p>
+<ul>
+<li><code>ScheCode</code> = Work Order</li>
+<li>detail <code>ProcessCode</code> is used as Work Center in the IP path</li>
+<li>detail <code>WCProcessCode</code> is often set to <code>&quot;STOCK&quot;</code></li>
+<li>detail <code>PreProcess</code> preserves the actual production process</li>
+</ul>
+<p>This is a legacy implementation artifact and should <strong>not</strong> be copied.</p>
+<hr>
+<h1 id="e-work-order-and-bom-relationship">E. Work Order and BOM Relationship</h1>
+<h2 id="e1-does-ip-use-prdefbom-or-prschbom">E.1 Does IP use <code>PrDefBOM</code> or <code>PrSchBOM</code>?</h2>
+<p><strong>VERIFIED FROM OLD ERP: <code>PrSchBOM</code>.</strong></p>
+<p><code>IssueToProductionHelper.GetSchBomAllLot(...)</code> selects BOM rows from <code>PrSchBOM</code> and filters the selected Work Order, product, Work Center, and process.</p>
+<p>The current query includes:</p>
+<pre class="hljs"><code><div>PrSchBOM b
+JOIN PrSchWCenter w ... AND b.ScheCode = w.ScheCode
+JOIN IvMas m ...
+WHERE
+    b.ScheCode = selected WO
+    AND b.ProdCode = selected product
+    AND b.WCCode = selected WC
+    AND b.ProcessCode = selected process
+    AND b.BomDefault = 1
+    AND b.StdQty &gt; 0
+    AND WIPBomDefault = 0
+</div></code></pre>
+<p>A <code>PrDefBOM</code> join appears in legacy query versions for supplementary/default information, but it is <strong>not the authoritative requirement source</strong>.</p>
+<h2 id="e2-why-this-is-correct">E.2 Why this is correct</h2>
+<p>The Work Order BOM is the released execution snapshot. If the Product Definition is changed later, an existing Work Order should not silently consume a new BOM definition.</p>
+<p><strong>Decision for new ERP: KEEP.</strong></p>
+<hr>
+<h1 id="f-material-requirement-calculation">F. Material Requirement Calculation</h1>
+<h2 id="f1-old-erp-formula">F.1 Old ERP formula</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The old helper uses a material-per-output ratio and requested production quantity:</p>
+<pre class="hljs"><code><div>StdPackSize ≈ WorkOrderBomQty / WorkOrderScheduledOutputQty
+
+IssueRequirement
+= Round(StdPackSize × RequestedOutputQty, 4)
+</div></code></pre>
+<p>The key executable statement is:</p>
+<pre class="hljs"><code><div>newIssueQty = Math.Round(StdPackSize * reqQutput, <span class="hljs-number">4</span>);
+</div></code></pre>
+<p>Older/commented logic expressed the same ratio more explicitly:</p>
+<pre class="hljs"><code><div>(BOM Qty / Scheduled Output) × Requested Output
+</div></code></pre>
+<h2 id="f2-scrapreject-overload">F.2 Scrap/reject overload</h2>
+<p>Another helper overload calculates:</p>
+<pre class="hljs"><code><div>Normal material = Round(StdPackSize × RequestedOutputQty, 4)
+Scrap material  = Round(StdPackSize × ScrapQty, 4)
+Reject material = Round(StdPackSize × RejectQty, 4)
+
+Total allocation basis
+= Normal + Scrap + Reject
+</div></code></pre>
+<h2 id="f3-historical-issue-is-not-deducted-in-the-calculator">F.3 Historical issue is not deducted in the calculator</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p><code>IssuedQty</code> is loaded into the grouped calculation but is not subtracted from <code>newIssueQty</code> in the standard <code>CalculateReqBOM</code> method.</p>
+<p>Therefore this is <strong>not</strong> the old formula:</p>
+<pre class="hljs"><code><div>Issue Now = Requirement - Already Issued
+</div></code></pre>
+<p>Instead the screen calculates the requirement for the operator's requested output basis and uses issued quantity elsewhere for comparison/warning.</p>
+<p>This is a material weakness for repeated issue scenarios.</p>
+<h2 id="f4-new-erp-formula-is-better">F.4 New ERP formula is better</h2>
+<p><strong>VERIFIED FROM NEW ERP</strong></p>
+<p><code>WorkOrderQuantityCalculator.CalculateMaterialAsync(...)</code> implements:</p>
+<pre class="hljs"><code><div>OperationMaterialBasisQty
+= consuming operation output converted into BOM denominator UOM
+
+RequiredQty
+= Round4(
+    OperationMaterialBasisQty
+    × ComponentQtyPerParent
+    ÷ BomOutputQty
+    × (1 + ScrapPercent / 100)
+  )
+</div></code></pre>
+<p>Then it converts <code>RequiredQty</code> into inventory base UOM and stores:</p>
+<pre class="hljs"><code><div>RequiredBaseQty
+ConversionFactorToBase
+</div></code></pre>
+<p>Tolerance is explicitly <strong>not</strong> added into <code>RequiredQty</code>; it is treated as an execution/variance control.</p>
+<p><strong>Recommendation: use the new formula and snapshot, not the old pack-size calculation implementation.</strong></p>
+<hr>
+<h1 id="g-required--issued--returned--outstanding-logic">G. Required / Issued / Returned / Outstanding Logic</h1>
+<h2 id="g1-old-erp">G.1 Old ERP</h2>
+<h3 id="required-qty">Required Qty</h3>
+<p><strong>VERIFIED</strong> — derived from the Work Order BOM ratio and requested output as described above.</p>
+<h3 id="issued-qty">Issued Qty</h3>
+<p><strong>VERIFIED</strong> — <code>IssueToProductionHelper</code> reads posted <code>IvTrxHistory</code> where <code>TrxType='IP'</code> and aggregates quantity.</p>
+<p>A legacy weakness is that this aggregation is primarily by:</p>
+<pre class="hljs"><code><div>ScheCode + ProdCode + ProcessCode + ICode
+</div></code></pre>
+<p>and in the legacy IP mapping the history <code>ProcessCode</code> corresponds to Work Center. Therefore it does not provide a clean immutable key to the exact consuming Work Order BOM/operation occurrence.</p>
+<h3 id="returned-qty">Returned Qty</h3>
+<p><strong>PARTIALLY VERIFIED</strong> — production helper logic recognizes <code>PrSchDailyProd.TrxType='SR'</code> as a return/negative issue movement. Various production/subcontract paths use <code>SR</code>. However a single complete factory material-return page/posting chain equivalent to the IP chain was not fully traced in this study.</p>
+<h3 id="outstanding-qty">Outstanding Qty</h3>
+<p><strong>NOT VERIFIED AS A SINGLE AUTHORITATIVE OLD FORMULA.</strong></p>
+<p>The IP UI compares required quantity, current issue quantity, stock, and historical issued quantity, but the old calculator does not directly maintain a clean persistent <code>OutstandingQty</code> field.</p>
+<h2 id="g2-recommended-new-erp-formulas">G.2 Recommended new ERP formulas</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>Use immutable posted movement facts and rebuild the Work Order material projections from them:</p>
+<pre class="hljs"><code><div>NetIssuedQty
+= PostedIssueQty - PostedReturnQty
+
+OutstandingQty
+= max(0, RequiredQty - NetIssuedQty)
+
+OverIssueQty
+= max(0, NetIssuedQty - RequiredQty)
+
+WipMaterialQty
+= PostedIssueQty - PostedReturnQty - PostedConsumedQty ± Adjustments
+
+VarianceQty
+= ConsumedQty - RequiredQtyForActualOutput
+</div></code></pre>
+<p>Do not make <code>IssuedQty</code> synonymous with <code>ConsumedQty</code>.</p>
+<hr>
+<h1 id="h-warehouse--location--lot--uom-logic">H. Warehouse / Location / Lot / UOM Logic</h1>
+<h2 id="h1-old-warehouse-and-location-selection">H.1 Old warehouse and location selection</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p><code>PrSchBOM.Warehouse</code> is used when joining candidate <code>IvBalLoc</code> rows. The UI/staging detail records the selected source warehouse, source location, and source lot.</p>
+<p>The old source priority includes the BOM's warehouse and then the specific available stock slice selected from <code>IvBalLoc</code>.</p>
+<p>A universal old fallback priority across every scenario (BOM warehouse → item default → user default, etc.) was <strong>NOT VERIFIED</strong>.</p>
+<h2 id="h2-stock-availability">H.2 Stock availability</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The BOM lot loader uses active positive <code>IvBalLoc</code> stock. Posting rechecks the exact stock slice.</p>
+<p><code>CPosting.CheckQuantityAvailable</code> compares required issue quantities against the selected <code>IvBalLoc</code> quantity and rejects insufficient stock for stock-controlled items.</p>
+<p>Therefore normal IP posting does <strong>not</strong> intentionally permit a warehouse lot to go negative.</p>
+<h2 id="h3-multiple-lots">H.3 Multiple lots</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>One material requirement can be allocated across multiple <code>IvBalLoc</code> rows/lots. The requirement calculator walks the candidate stock rows until the requirement is filled.</p>
+<h2 id="h4-fifofefo">H.4 FIFO/FEFO</h2>
+<p><strong>VERIFIED</strong> — candidate rows are ordered by <code>IvBalLoc.TransDate</code> ascending.</p>
+<p><strong>INFERRED</strong> — this is a FIFO-like allocation policy.</p>
+<p><strong>NOT VERIFIED</strong> — FEFO is not proven. Expiry data is exposed but the inspected allocation routine does not sort by expiry.</p>
+<h2 id="h5-uom">H.5 UOM</h2>
+<p>The old ERP stores standard UOM and catch-weight quantities, and availability checking includes standard and catch-weight quantities.</p>
+<p>However, the old IP flow does not have the explicit, strongly modeled UOM chain present in the new ERP.</p>
+<p><strong>RECOMMENDED</strong> — new material issue must use the existing new ERP UOM conversion service and post inventory in <code>RequiredBaseQty/BaseUom</code>. Do not create a second production-only UOM conversion implementation.</p>
+<hr>
+<h1 id="i-inventory-posting-logic">I. Inventory Posting Logic</h1>
+<h2 id="i1-old-posting-effects">I.1 Old posting effects</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>At post:</p>
+<pre class="hljs"><code><div>IvTrxBatch (IP)        NEW → POSTED
+IvTrxBatchDetail       source movement lines
+IvBalLoc               quantity decreases
+IvBalance              inventory summary adjusts
+IvTrxHistory           posted movement + cost written
+IvBalLocCost           costing balance adjusted
+WIPItemBal             WIP increases
+WIPItemBalLoc          WO/process/lot WIP increases
+PrSchDailyProd         IP production execution record created
+PrSchMas               can become IN PROGRESS
+</div></code></pre>
+<p><code>IssueProdPostHelper.UpdateRec(SqlTransaction)</code> persists these changes inside a SQL transaction.</p>
+<h2 id="i2-inventory-direction">I.2 Inventory direction</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<pre class="hljs"><code><div>Raw material inventory OUT
+        ↓
+Production WIP IN
+</div></code></pre>
+<p>It is not merely a financial memo and not immediate final material consumption.</p>
+<h2 id="i3-cost">I.3 Cost</h2>
+<p><strong>VERIFIED</strong></p>
+<p>The selected stock row's unit price is carried into the IP detail/posting path. Inventory history and WIP receive the posted value/cost information.</p>
+<p><strong>NOT FULLY VERIFIED</strong></p>
+<p>The entire upstream valuation algorithm that originally established <code>IvBalLoc.UnitPrice</code> was not fully reverse engineered here. Therefore this report does not claim that the old ERP's accounting valuation is strictly FIFO, moving-average, or another method solely from the Issue-to-Production code.</p>
+<p>The <strong>selection</strong> behavior is FIFO-like; that is not automatically the same thing as the valuation method.</p>
+<hr>
+<h1 id="j-wip-behaviour">J. WIP Behaviour</h1>
+<h2 id="j1-old-erp-wip-model">J.1 Old ERP WIP model</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The old ERP has physical/logical production WIP balances:</p>
+<pre class="hljs"><code><div>WIPItemBal
+WIPItemBalLoc
+</div></code></pre>
+<p><code>PostIPtoWIPBal</code> increases WIP when raw material is issued.</p>
+<p>Later daily production helpers update <code>WIPItemBalLoc</code>, including logic explicitly described in code as deleting quantity from the previous process. This proves that WIP is carried through production/process execution rather than issue being treated as immediate final consumption.</p>
+<h2 id="j2-new-erp-implication">J.2 New ERP implication</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>Keep the conceptual WIP distinction, but do not copy the old WIP tables blindly.</p>
+<p>The current new <code>ProductionWorkOrderMaterial</code> already has:</p>
+<pre class="hljs"><code><div>IssuedQty
+ReturnedQty
+ConsumedQty
+VarianceQty
+</div></code></pre>
+<p>What is still missing is the immutable line-level production material execution fact that can explain those projections by:</p>
+<ul>
+<li>issue document;</li>
+<li>Work Order material line;</li>
+<li>exact operation;</li>
+<li>warehouse/location/lot;</li>
+<li>quantity/UOM/base quantity;</li>
+<li>actual posted cost;</li>
+<li>return/consume/reversal lineage.</li>
+</ul>
+<p>A production material movement ledger/fact should be the source; aggregate fields on <code>ProductionWorkOrderMaterial</code> should remain rebuildable projections.</p>
+<hr>
+<h1 id="k-costing-logic">K. Costing Logic</h1>
+<h2 id="k1-old-erp-material-cost">K.1 Old ERP material cost</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The IP issue line captures source unit price from inventory location/lot. The generic inventory posting layer writes cost information to <code>IvTrxHistory</code> and updates location costing. WIP posting carries unit price/cost into WIP.</p>
+<p>Thus actual material issue cost is based on the actual stock slice selected, not simply the BOM standard quantity alone.</p>
+<h2 id="k2-work-order-total-cost">K.2 Work Order total cost</h2>
+<p><strong>INFERRED / PARTIALLY VERIFIED</strong></p>
+<p>The old production subsystem also has labour, machine, output, WIP, and production-cost related structures, but a single end-to-end equation proving:</p>
+<pre class="hljs"><code><div>Material + Labour + Machine + Overhead = final production cost
+</div></code></pre>
+<p>for every production mode was not fully traced in this Issue-to-Production study.</p>
+<h2 id="k3-recommendation">K.3 Recommendation</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>When an IP stock-out posts, capture actual cost from the resulting authoritative inventory history into the production material movement fact. Never recalculate historical WIP material cost later from current item cost.</p>
+<p>This allows:</p>
+<pre class="hljs"><code><div>Actual Material Cost
+= Σ posted material movement base qty × captured actual unit cost
+</div></code></pre>
+<p>Then future FG costing can combine immutable actual material cost with machine/labour/overhead execution costs.</p>
+<hr>
+<h1 id="l-return--cancellation--reversal-logic">L. Return / Cancellation / Reversal Logic</h1>
+<h2 id="l1-ip-rollback">L.1 IP rollback</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>Posted IP can be rolled back through a real reversal flow. It is not simply deleted.</p>
+<p>The rollback path:</p>
+<ul>
+<li>validates period/status;</li>
+<li>calls inventory rollback;</li>
+<li>restores stock quantities/costing;</li>
+<li>verifies/reverses WIP;</li>
+<li>removes/reverses production daily IP facts;</li>
+<li>writes rollback history/audit data;</li>
+<li>recalculates Work Order state when appropriate.</li>
+</ul>
+<p>This is an important concept to keep.</p>
+<h2 id="l2-material-return">L.2 Material return</h2>
+<p><strong>PARTIALLY VERIFIED FROM OLD ERP</strong></p>
+<p><code>SR</code> is recognized in production execution as a return and is represented as negative issue in helper reporting. However the complete non-subcontract operator workflow for unused-material return was not traced to the same level as IP posting.</p>
+<h2 id="l3-recommended-new-behavior">L.3 Recommended new behavior</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>Separate these operations:</p>
+<pre class="hljs"><code><div>1. Rollback/Reversal
+   Corrects an erroneous posted IP, subject to downstream dependency checks.
+
+2. Return From Production
+   A legitimate later business movement of unused material from WIP back to inventory.
+</div></code></pre>
+<p>A posted issue should never be freely edited or physically deleted.</p>
+<hr>
+<h1 id="m-production-output-relationship">M. Production Output Relationship</h1>
+<h2 id="m1-old-erp">M.1 Old ERP</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>Production output is process-aware and interacts with WIP. <code>DailyProdJONGPostHelper</code> and related helpers:</p>
+<ul>
+<li>validate Work Order/Work Center/process BOM;</li>
+<li>update <code>PrSchDailyProcess</code>;</li>
+<li>add <code>PrSchDailyProd</code> output records;</li>
+<li>update Work Order status/progress;</li>
+<li>update WIP balances;</li>
+<li>deduct previous-process WIP when material/output moves forward;</li>
+<li>record actual good/scrap/reject quantities and unit price information.</li>
+</ul>
+<p>Therefore IP provides material to production; later output transactions move/consume that WIP and create subsequent WIP/finished output.</p>
+<h2 id="m2-critical-design-principle">M.2 Critical design principle</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>Do not let Production Output simply overwrite <code>IssuedQty</code> or assume that every issued material has already been consumed.</p>
+<p>A future output/backflush command should post explicit <code>CONSUME</code> material movement facts, after which:</p>
+<pre class="hljs"><code><div>ConsumedQty
+</div></code></pre>
+<p>is updated from those facts.</p>
+<hr>
+<h1 id="n-old-erp-weaknesses--keep--improve--replace--remove">N. Old ERP Weaknesses — KEEP / IMPROVE / REPLACE / REMOVE</h1>
+<table>
+<thead>
+<tr>
+<th>Old concept / implementation</th>
+<th>Decision</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Work Order BOM snapshot drives execution</td>
+<td><strong>KEEP</strong></td>
+<td>Correctly freezes production requirement</td>
+</tr>
+<tr>
+<td>Work Center + Process-level material ownership</td>
+<td><strong>KEEP</strong></td>
+<td>Needed for shop-floor and WIP traceability</td>
+</tr>
+<tr>
+<td>Partial issue / multiple IP documents</td>
+<td><strong>KEEP</strong></td>
+<td>Normal production requirement</td>
+</tr>
+<tr>
+<td>Multiple lot issue</td>
+<td><strong>KEEP</strong></td>
+<td>Required for lot traceability</td>
+</tr>
+<tr>
+<td>Warehouse stock → WIP model</td>
+<td><strong>KEEP</strong></td>
+<td>Correct distinction between issue and consumption</td>
+</tr>
+<tr>
+<td>Posted history and true rollback</td>
+<td><strong>KEEP</strong></td>
+<td>Audit/cost integrity</td>
+</tr>
+<tr>
+<td>FIFO-like default allocation</td>
+<td><strong>IMPROVE</strong></td>
+<td>Retain as option; support FEFO for expiring materials</td>
+</tr>
+<tr>
+<td>BOM requirement formula</td>
+<td><strong>IMPROVE</strong></td>
+<td>New ERP already has stronger base-qty + scrap + UOM formula</td>
+</tr>
+<tr>
+<td>Historical issued calculation</td>
+<td><strong>REPLACE</strong></td>
+<td>Legacy grouping is not tied to exact material/operation identity</td>
+</tr>
+<tr>
+<td>“Issue requirement” without automatic outstanding subtraction</td>
+<td><strong>REPLACE</strong></td>
+<td>New UI should explicitly calculate net issued/outstanding</td>
+</tr>
+<tr>
+<td>Over-issue/tolerance behavior</td>
+<td><strong>REPLACE</strong></td>
+<td>Make one clear policy based on material tolerance</td>
+</tr>
+<tr>
+<td>Alternative BOM semantics via <code>BomDefault</code></td>
+<td><strong>IMPROVE</strong></td>
+<td>New ERP has explicit alternate groups and provenance</td>
+</tr>
+<tr>
+<td>Raw SQL/string filtering in UI/helper classes</td>
+<td><strong>REPLACE</strong></td>
+<td>Use typed EF/repositories/services</td>
+</tr>
+<tr>
+<td>Core business logic in <code>.aspx.cs</code></td>
+<td><strong>REPLACE</strong></td>
+<td>Put execution rules in domain/application services</td>
+</tr>
+<tr>
+<td>Global posting lock</td>
+<td><strong>REPLACE</strong></td>
+<td>Use deterministic SQL row locks + idempotency + transaction</td>
+</tr>
+<tr>
+<td>Legacy <code>ProcessCode/WCProcessCode/PreProcess</code> overloading</td>
+<td><strong>REMOVE</strong></td>
+<td>Use real WorkOrderOperationId / route-step IDs</td>
+</tr>
+<tr>
+<td>Live Product Definition join as execution authority</td>
+<td><strong>REMOVE</strong></td>
+<td>Work Order snapshot must remain authoritative</td>
+</tr>
+<tr>
+<td>Free edit/delete of posted movement</td>
+<td><strong>REMOVE</strong></td>
+<td>Explicit return/reversal only</td>
+</tr>
+<tr>
+<td><code>CostPrice=0</code> staging hacks</td>
+<td><strong>REMOVE</strong></td>
+<td>Capture cost from authoritative inventory posting result</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="o-old-erp--new-erp-mapping">O. Old ERP → New ERP Mapping</h1>
+<table>
+<thead>
+<tr>
+<th>Business concept</th>
+<th>Old ERP</th>
+<th>New ERP existing component</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Product Definition</td>
+<td><code>PrDef*</code></td>
+<td><code>PrBomHdr</code>, <code>PrDefBOM</code>, operations/route steps</td>
+<td>Reuse new model</td>
+</tr>
+<tr>
+<td>Work Order</td>
+<td><code>PrSchMas</code></td>
+<td><code>ProductionWorkOrder</code></td>
+<td>Reuse</td>
+</tr>
+<tr>
+<td>WO Work Center</td>
+<td><code>PrSchWCenter</code></td>
+<td><code>ProductionWorkOrderRouteStep</code> / operation ownership</td>
+<td>Reuse modern graph</td>
+</tr>
+<tr>
+<td>WO Process</td>
+<td><code>PrSchProcess</code></td>
+<td><code>ProductionWorkOrderOperation</code></td>
+<td>Reuse</td>
+</tr>
+<tr>
+<td>WO BOM</td>
+<td><code>PrSchBOM</code></td>
+<td><code>ProductionWorkOrderMaterial</code></td>
+<td><strong>Primary new execution source</strong></td>
+</tr>
+<tr>
+<td>Legacy compatibility BOM</td>
+<td><code>PrSchBOM</code></td>
+<td><code>PrSchBom</code> entity exists</td>
+<td>Keep only for migrated/compatibility paths</td>
+</tr>
+<tr>
+<td>Material requirement</td>
+<td><code>StdQty</code> ratio</td>
+<td><code>RequiredQty</code>, <code>RequiredBaseQty</code></td>
+<td>Reuse new calculator</td>
+</tr>
+<tr>
+<td>BOM alternate</td>
+<td><code>BomDefault=0</code> informal alternative</td>
+<td><code>AlternateGroupCode</code></td>
+<td>Reuse new explicit model</td>
+</tr>
+<tr>
+<td>Issue method</td>
+<td>implicit/manual</td>
+<td><code>IssueMethod</code></td>
+<td>Reuse; future backflush/pick-list ready</td>
+</tr>
+<tr>
+<td>Supply source</td>
+<td>implicit</td>
+<td><code>SupplySource</code></td>
+<td>Reuse; critical for internal-route WIP</td>
+</tr>
+<tr>
+<td>Material issue document</td>
+<td><code>IvTrxBatch</code>/<code>Detail</code> IP</td>
+<td><code>IvTrxBatch</code>/<code>Detail</code>, IP constant exists</td>
+<td>Reuse inventory batch for stock side; add minimal production execution document/fact link</td>
+</tr>
+<tr>
+<td>Inventory posting</td>
+<td><code>CPosting</code></td>
+<td><code>IIvInventoryPostingService</code> / <code>IvInventoryPostingService</code></td>
+<td>Reuse new engine</td>
+</tr>
+<tr>
+<td>Inventory history</td>
+<td><code>IvTrxHistory</code></td>
+<td><code>IvTrxHistory</code></td>
+<td>Reuse</td>
+</tr>
+<tr>
+<td>Lot stock</td>
+<td><code>IvBalLoc</code></td>
+<td><code>IvBalLoc</code> + repository locks</td>
+<td>Reuse</td>
+</tr>
+<tr>
+<td>WIP balance</td>
+<td><code>WIPItemBal/Loc</code></td>
+<td>No equivalent complete material-execution ledger found</td>
+<td>Add production material movement source-of-truth; projection can represent WIP</td>
+</tr>
+<tr>
+<td>Issue/return/consume projection</td>
+<td>spread over tables</td>
+<td>fields already on <code>ProductionWorkOrderMaterial</code></td>
+<td>Rebuild from posted facts</td>
+</tr>
+<tr>
+<td>Idempotency link</td>
+<td>application/global locks</td>
+<td><code>PrProductionPostingLink</code></td>
+<td><strong>Reuse</strong></td>
+</tr>
+<tr>
+<td>Concurrency</td>
+<td>global posting lock + SQL tx</td>
+<td>DB row locks + conditional updates</td>
+<td>Reuse new mechanism</td>
+</tr>
+<tr>
+<td>Audit</td>
+<td>mixed updated/history fields</td>
+<td>explicit post/rollback/audit fields</td>
+<td>Reuse and extend production document audit</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="p-recommended-new-erp-business-design">P. Recommended New ERP Business Design</h1>
+<h2 id="p1-source-of-truth">P.1 Source of truth</h2>
+<p><strong>RECOMMENDED FOR NEW ERP</strong></p>
+<p>For modern Work Orders:</p>
+<pre class="hljs"><code><div>ProductionWorkOrderMaterial
+</div></code></pre>
+<p>must be the requirement source.</p>
+<p>Do not query live <code>PrDefBOM</code> when issuing material to a released Work Order.</p>
+<p>For legacy imported Work Orders, an adapter may read <code>PrSchBom</code>, but it should normalize into the same execution service contract.</p>
+<h2 id="p2-work-order-status-policy">P.2 Work Order status policy</h2>
+<p>Recommended issue eligibility:</p>
+<pre class="hljs"><code><div>RELEASED    → allowed
+IN_PROGRESS → allowed
+DRAFT       → blocked
+COMPLETED   → blocked for normal issue
+CANCELLED   → blocked
+</div></code></pre>
+<p>A controlled correction/change-order path can handle exceptional historical adjustment; normal material issue must not mutate completed/cancelled production casually.</p>
+<h2 id="p3-quantities-shown-to-operator">P.3 Quantities shown to operator</h2>
+<p>For each Work Order material/operation:</p>
+<pre class="hljs"><code><div>Required
+Issued
+Returned
+Net Issued
+Consumed
+Outstanding
+WIP Balance
+Available Stock
+Shortage
+Issue Now
+</div></code></pre>
+<p>Recommended definitions:</p>
+<pre class="hljs"><code><div>Net Issued = Issued - Returned
+Outstanding = max(0, Required - Net Issued)
+WIP Balance = Net Issued - Consumed ± WIP adjustments
+Shortage = max(0, Outstanding - AvailableToIssue)
+</div></code></pre>
+<h2 id="p4-partial-and-repeated-issue">P.4 Partial and repeated issue</h2>
+<p>Allow both.</p>
+<p>Example:</p>
+<pre class="hljs"><code><div>Required = 100 KG
+Issue 1 = 40 KG
+Issue 2 = 30 KG
+Net Issued = 70 KG
+Outstanding = 30 KG
+</div></code></pre>
+<p>The next issue screen should default <code>Issue Now</code> to 30 KG, not recalculate another 100 KG from the same production quantity.</p>
+<h2 id="p5-over-issue">P.5 Over-issue</h2>
+<p>Use the material tolerance explicitly:</p>
+<pre class="hljs"><code><div>MaxAllowedNetIssue
+= RequiredQty × (1 + TolerancePercent / 100)
+</div></code></pre>
+<p>Recommended default behavior:</p>
+<ul>
+<li>if <code>Tolerance = 0</code>, net issue cannot exceed required;</li>
+<li>if tolerance &gt; 0, issue may exceed required only up to the tolerated maximum;</li>
+<li>never use current stock availability as the only over-issue control;</li>
+<li>if future business requires exceptional override, introduce a specific permission and reason/audit entry rather than silently allowing it.</li>
+</ul>
+<h2 id="p6-substitutes--alternates">P.6 Substitutes / alternates</h2>
+<p>The new ERP already supports <code>AlternateGroupCode</code> and draft material substitution.</p>
+<p>Recommended execution rule:</p>
+<ul>
+<li>before release: substitute through the existing Work Order snapshot workflow;</li>
+<li>after release: substitution should require a controlled Work Order change order or an explicit material deviation command;</li>
+<li>posted actual movement must record the <strong>actual issued item</strong> and its relationship to the original Work Order material requirement;</li>
+<li>cost comes from the actual substitute's inventory layer/slice.</li>
+</ul>
+<h2 id="p7-supply-source-behavior">P.7 Supply-source behavior</h2>
+<p>Use <code>ProductionWorkOrderMaterial.SupplySource</code>:</p>
+<pre class="hljs"><code><div>PURCHASED / EXTERNAL stock source
+    → inventory warehouse issue
+
+INTERNAL_ROUTE_WIP
+    → consume from producing route-step WIP, not normal warehouse raw stock
+
+SEPARATE_PRODUCT_DEFINITION
+    → follow separately produced component/work-order supply semantics
+</div></code></pre>
+<p>This is important for future multi-stage production and should be respected from the first material execution design.</p>
+<hr>
+<h1 id="q-recommended-database-changes">Q. Recommended Database Changes</h1>
+<h2 id="q1-reuse-first--do-not-duplicate-these">Q.1 Reuse first — do not duplicate these</h2>
+<p><strong>VERIFIED FROM NEW ERP — ALREADY EXISTS</strong></p>
+<p>Do not create replacements for:</p>
+<pre class="hljs"><code><div>ProductionWorkOrder
+ProductionWorkOrderOperation
+ProductionWorkOrderMaterial
+IvTrxBatch
+IvTrxBatchDetail
+IvTrxHistory
+IvBalLoc
+PrProductionPostingLink
+</div></code></pre>
+<p>Also reuse existing UOM conversion and inventory posting infrastructure.</p>
+<h2 id="q2-what-is-genuinely-missing">Q.2 What is genuinely missing</h2>
+<p>The current generic inventory detail/history does not carry a clean production line identity such as:</p>
+<pre class="hljs"><code><div>WorkOrderMaterialId
+WorkOrderOperationId
+production movement semantic (ISSUE / RETURN / CONSUME / ADJUST)
+original movement/reversal lineage
+actual production WIP cost fact
+</div></code></pre>
+<p><code>ProductionWorkOrderMaterial</code> contains aggregate projection fields, but those fields alone cannot provide immutable lot/cost/document-level history.</p>
+<h3 id="recommended-minimal-addition">Recommended minimal addition</h3>
+<p>Create a production material execution fact/ledger (name can follow project naming standards, e.g. <code>PrMaterialMovement</code>) with an immutable row per posted material movement.</p>
+<p>Minimum conceptual fields:</p>
+<pre class="hljs"><code><div>UID
+CompanyCode
+BranchCode
+WorkOrderId
+WorkOrderMaterialId
+WorkOrderOperationId
+MovementType          ISSUE / RETURN / CONSUME / ADJUST / REVERSAL
+InventoryBatchNo
+InventoryHistoryId or inventory line identity
+ItemCode
+WarehouseCode
+LocationCode
+LotId / LotNo
+Qty
+UOM
+BaseQty
+BaseUOM
+UnitCost
+TotalCost
+PostingRequestId / PostingLinkId
+OriginalMovementId   nullable, for reversal/return lineage
+MovementDate
+PostedBy
+CreatedDate
+</div></code></pre>
+<p>This ledger should be the source for rebuilding:</p>
+<pre class="hljs"><code><div>IssuedQty
+ReturnedQty
+ConsumedQty
+VarianceQty
+WIP material balance
+</div></code></pre>
+<h3 id="why-a-new-production-movement-fact-is-justified">Why a new production movement fact is justified</h3>
+<p>Without it, the new system would repeat an old weakness: inventory history would know stock moved, but production would not have a stable typed link from that stock movement to the exact Work Order material/operation requirement.</p>
+<h3 id="do-we-need-a-separate-wip-balance-table-immediately">Do we need a separate WIP balance table immediately?</h3>
+<p><strong>Recommendation: no, not initially.</strong></p>
+<p>Start with immutable movement facts and <code>ProductionWorkOrderMaterial</code> projections. Derive WIP position from movement facts. If later performance requires it, add a rebuildable WIP balance projection — not a second independent source of truth.</p>
+<h2 id="q3-material-issue-headerlines">Q.3 Material issue header/lines</h2>
+<p>Two viable designs exist:</p>
+<h3 id="preferred-production-domain-design">Preferred production-domain design</h3>
+<p>Use a small production material issue aggregate (<code>PrMaterialIssue</code> + line) for operator workflow/status and translate it into <code>IvTrxBatch</code>/<code>IvTrxBatchDetail</code> for stock posting. This gives strong production semantics and clean line-to-material identity.</p>
+<h3 id="leaner-alternative">Leaner alternative</h3>
+<p>Use <code>IvTrxBatch</code>/<code>IvTrxBatchDetail</code> as the issue document itself and add a production link table that maps each inventory detail line to <code>WorkOrderMaterialId</code>/<code>WorkOrderOperationId</code>.</p>
+<p>For this project, the preferred design is the first approach <strong>only if</strong> the UI needs its own production-document lifecycle (draft, line allocation, post, return references). If issue is always saved-and-posted as a simple command, the lean link-table approach is sufficient.</p>
+<p>Do not add both unnecessarily.</p>
+<h2 id="q4-reuse-prproductionpostinglink">Q.4 Reuse <code>PrProductionPostingLink</code></h2>
+<p><strong>VERIFIED FROM NEW ERP</strong></p>
+<p><code>ProductionPostingLink</code> already exists specifically for later material/WIP/FG commands and already has:</p>
+<ul>
+<li><code>PostingRequestId</code>;</li>
+<li><code>WorkOrderId</code>;</li>
+<li>production document type/no/line;</li>
+<li>inventory batch number;</li>
+<li>posting operation id;</li>
+<li>original posting link;</li>
+<li>status/result;</li>
+<li>a unique idempotency key.</li>
+</ul>
+<p>Therefore do <strong>not</strong> create another general idempotency table.</p>
+<hr>
+<h1 id="r-recommended-blazor-ui">R. Recommended Blazor UI</h1>
+<h2 id="r1-main-issue-to-production-page">R.1 Main Issue to Production page</h2>
+<p>Suggested layout:</p>
+<pre class="hljs"><code><div>Issue to Production
+────────────────────────────────────────────────────────────
+Work Order : WO000123       Status : RELEASED
+Product    : FG001          Planned Qty : 1,000 PCS
+Operation  : WC1 / Process 10
+Issue Date : 2026-10-01
+
+Material   Required  Net Issued  Outstanding  Available  Issue Now
+RM001       500.00     300.00       200.00      450.00     200.00
+RM002       100.00      80.00        20.00       10.00      10.00
+RM003        50.00       0.00        50.00      100.00      50.00
+
+[Auto Fill Outstanding] [Show Shortages] [Select Lots] [Post Issue]
+</div></code></pre>
+<h2 id="r2-process-aware-navigation">R.2 Process-aware navigation</h2>
+<p>Because the new model has real operation identity, let the user select:</p>
+<pre class="hljs"><code><div>Work Order
+  → Route / Work Center
+      → Operation / Process
+          → Materials
+</div></code></pre>
+<p>Also support an “All outstanding materials” mode for store personnel, but still preserve each issue line's <code>WorkOrderOperationId</code>.</p>
+<h2 id="r3-lot-selection-popup">R.3 Lot selection popup</h2>
+<p>Show:</p>
+<pre class="hljs"><code><div>Lot
+Warehouse
+Location
+On Hand
+Allocated/Available if applicable
+Expiry
+Receipt/Stock Date
+Suggested Qty
+Issue Qty
+</div></code></pre>
+<p>Default auto allocation should be configurable:</p>
+<ul>
+<li>FEFO for expiry-controlled material;</li>
+<li>FIFO/oldest receipt for non-expiring material;</li>
+<li>manual override with validation.</li>
+</ul>
+<h2 id="r4-do-not-overload-screen">R.4 Do not overload screen</h2>
+<p>The everyday operator should mainly see:</p>
+<pre class="hljs"><code><div>Material
+Required
+Outstanding
+Available
+Issue Now
+Warehouse/Location
+Lot status
+</div></code></pre>
+<p>Detailed UOM conversion, source BOM version, costs, movement IDs, and audit trail belong in drill-down panels.</p>
+<hr>
+<h1 id="s-recommended-service-architecture">S. Recommended Service Architecture</h1>
+<pre class="hljs"><code><div>PrMaterialIssueEntry.razor
+        ↓
+PrMaterialIssueEntry.razor.cs
+  UI state only
+        ↓
+IProductionMaterialIssueService
+        ↓
+ProductionMaterialIssueService
+  - eligibility
+  - requirement/outstanding
+  - tolerance
+  - issue/return/reversal orchestration
+  - idempotency
+  - production movement facts
+        ↓
+IWorkOrderMaterialExecutionService
+  - lock/read Work Order + material + operation
+  - rebuild material projections
+  - WIP position
+        ↓
+IIvInventoryPostingService
+  existing stock engine
+        ↓
+IvStockPostingRepository
+  existing UPDLOCK/HOLDLOCK + conditional update
+        ↓
+EF Core / SQL Server
+</div></code></pre>
+<p>Optional services:</p>
+<pre class="hljs"><code><div>IMaterialAllocationService
+  FIFO / FEFO / manual lot allocation
+
+IProductionMaterialCostService
+  maps authoritative inventory posting cost into production movement cost
+
+IProductionMaterialInquiryService
+  shortage / movement / actual-vs-standard inquiry
+</div></code></pre>
+<p>Critical rule: <code>.razor.cs</code> must not contain stock posting, tolerance, outstanding, WIP, or costing rules.</p>
+<hr>
+<h1 id="t-transaction--concurrency-strategy">T. Transaction / Concurrency Strategy</h1>
+<h2 id="t1-old-erp-behavior">T.1 Old ERP behavior</h2>
+<p><strong>VERIFIED FROM OLD ERP</strong></p>
+<p>The old ERP uses SQL transactions but also uses an application/global posting lock mechanism around IP posting.</p>
+<p>This reduces concurrent posting risk but is broad and does not provide the same precision as deterministic database row locking.</p>
+<h2 id="t2-new-erp-inventory-engine-is-stronger">T.2 New ERP inventory engine is stronger</h2>
+<p><strong>VERIFIED FROM NEW ERP</strong></p>
+<p>The new stock posting code already:</p>
+<ul>
+<li>locks inventory batch rows;</li>
+<li>locks stock masters;</li>
+<li>locks <code>IvBalLoc</code> using <code>UPDLOCK, HOLDLOCK</code>;</li>
+<li>locks stock slices in deterministic order;</li>
+<li>aggregates required quantity per source balance row;</li>
+<li>rechecks on-hand quantity while locked;</li>
+<li>performs conditional SQL decrement with <code>AND StdQty &gt;= @qty</code>;</li>
+<li>rejects posting if the update affects zero rows;</li>
+<li>rejects duplicate history for a batch;</li>
+<li>writes posting operation IDs and audit fields;</li>
+<li>supports rollback.</li>
+</ul>
+<p>This solves the classic race:</p>
+<pre class="hljs"><code><div>Stock = 100
+User A wants 80
+User B wants 50
+</div></code></pre>
+<p>Only one transaction can successfully consume stock such that the protected balance remains sufficient.</p>
+<h2 id="t3-recommended-ip-transaction-boundary">T.3 Recommended IP transaction boundary</h2>
+<p>A production material issue should use <strong>one database transaction</strong> covering both inventory and production facts:</p>
+<pre class="hljs"><code><div>BEGIN TRANSACTION
+
+1. Resolve PostingRequestId / lock or insert ProductionPostingLink
+2. Lock Work Order and affected WorkOrderMaterial rows
+3. Verify WO status and snapshot revision
+4. Recalculate authoritative Required / NetIssued / MaxAllowed
+5. Validate issue qty and tolerance
+6. Build/validate inventory IP batch lines
+7. Call PostStockOutInTransactionAsync(..., expectedTrxType: &quot;IP&quot;)
+8. Read/capture authoritative posted cost/history identity
+9. Insert production material movement facts
+10. Rebuild Issued/Returned/Consumed/Variance projections
+11. Transition RELEASED → IN_PROGRESS if appropriate
+12. Complete ProductionPostingLink
+13. SaveChanges
+
+COMMIT
+</div></code></pre>
+<p>Any failure must roll back the whole unit.</p>
+<h2 id="t4-idempotency">T.4 Idempotency</h2>
+<p>Use existing <code>PrProductionPostingLink</code>:</p>
+<pre class="hljs"><code><div>Company + Branch + CommandType + PostingRequestId
+</div></code></pre>
+<p>If the client retries the same post after a timeout, the same command must not create a second stock issue.</p>
+<hr>
+<h1 id="u-future-production-compatibility">U. Future Production Compatibility</h1>
+<p>The recommended design is compatible with:</p>
+<h3 id="mrp">MRP</h3>
+<p>MRP reads <code>RequiredBaseQty</code>, supply source, warehouse, net issued, and availability to calculate shortage.</p>
+<h3 id="production-planning">Production planning</h3>
+<p>Operation-owned materials allow shortage by Work Center/process/time bucket.</p>
+<h3 id="finite-capacity--machine-scheduling">Finite capacity / machine scheduling</h3>
+<p>Material readiness can become a constraint against the operation's planned start time.</p>
+<h3 id="pick-list--staging">Pick list / staging</h3>
+<p><code>IssueMethod=PICK_LIST</code> is already modeled. Add reserve/pick movement stages without changing the Work Order BOM schema.</p>
+<h3 id="backflush">Backflush</h3>
+<p><code>IssueMethod=BACKFLUSH</code> can automatically create issue/consume movements from posted output while preserving the same movement ledger and inventory transaction engine.</p>
+<h3 id="shop-floor-mobilebarcode">Shop-floor mobile/barcode</h3>
+<p>Barcode scanning can resolve Work Order → operation → material → lot, then call the same service. Do not implement separate mobile posting logic.</p>
+<h3 id="wip">WIP</h3>
+<p>Internal route WIP is already modeled by <code>SupplySource=INTERNAL_ROUTE_WIP</code> and producer route step identity. The movement ledger can represent route-to-route WIP transfer/consume without abusing warehouse stock.</p>
+<h3 id="lot-traceability">Lot traceability</h3>
+<p>Because each movement records actual stock lot and Work Order material/operation identity, backward and forward traceability becomes possible:</p>
+<pre class="hljs"><code><div>supplier/receipt lot
+    → material issue
+    → Work Order operation
+    → WIP/output lot
+    → finished goods lot
+</div></code></pre>
+<h3 id="quality-scrap-rework">Quality, scrap, rework</h3>
+<p>Use explicit movement types/reasons and production execution documents instead of adjusting aggregate fields directly.</p>
+<h3 id="actual-costing--variance">Actual costing / variance</h3>
+<p>Immutable issue cost + actual consume/output quantities allow:</p>
+<pre class="hljs"><code><div>standard requirement vs actual consumption
+standard material cost vs actual material cost
+scrap/reject variance
+substitute material variance
+</div></code></pre>
+<hr>
+<h1 id="v-concrete-implementation-plan-for-ai-coding-agent">V. Concrete Implementation Plan for AI Coding Agent</h1>
+<h2 id="phase-1--freeze-the-execution-contract">Phase 1 — Freeze the execution contract</h2>
+<ol>
+<li>Treat <code>ProductionWorkOrderMaterial</code> as the modern requirement source.</li>
+<li>Define issue-eligible Work Order statuses.</li>
+<li>Define exact quantity formulas:
+<ul>
+<li>required;</li>
+<li>net issued;</li>
+<li>outstanding;</li>
+<li>maximum allowed using tolerance;</li>
+<li>WIP balance.</li>
+</ul>
+</li>
+<li>Define production movement types and return/reversal semantics.</li>
+<li>Decide whether the UI needs a production issue header/line aggregate or only a production line-link around <code>IvTrxBatch</code>.</li>
+</ol>
+<p><strong>Exit condition:</strong> no stock code yet; domain contract reviewed.</p>
+<h2 id="phase-2--production-material-readinquiry-service">Phase 2 — Production material read/inquiry service</h2>
+<p>Implement a read service that returns by Work Order/operation:</p>
+<pre class="hljs"><code><div>RequiredQty / UOM
+RequiredBaseQty / BaseUOM
+Issued
+Returned
+NetIssued
+Consumed
+Outstanding
+Tolerance / MaxAllowed
+Warehouse / Location defaults
+Available stock
+Shortage
+lot-control status
+alternate group / actual selected material
+</div></code></pre>
+<p>Do not use live Product Definition values for a released order.</p>
+<h2 id="phase-3--immutable-production-movement-persistence">Phase 3 — Immutable production movement persistence</h2>
+<p>Add the minimum production material execution fact/link schema decided in Phase 1.</p>
+<p>Requirements:</p>
+<ul>
+<li>exact <code>WorkOrderMaterialId</code>;</li>
+<li>exact <code>WorkOrderOperationId</code>;</li>
+<li>inventory batch/history identity;</li>
+<li>lot/source stock slice;</li>
+<li>base qty/UOM;</li>
+<li>actual cost;</li>
+<li>movement type;</li>
+<li>reversal lineage;</li>
+<li>audit fields.</li>
+</ul>
+<p>Add indexes for:</p>
+<pre class="hljs"><code><div>WorkOrderId + WorkOrderMaterialId + MovementType
+InventoryBatchNo
+OriginalMovementId
+WorkOrderOperationId
+</div></code></pre>
+<h2 id="phase-4--material-allocation-service">Phase 4 — Material allocation service</h2>
+<p>Implement:</p>
+<ul>
+<li>exact warehouse/location filter;</li>
+<li>lot-controlled vs non-lot material;</li>
+<li>FIFO default for non-expiry material;</li>
+<li>FEFO for expiry-controlled material;</li>
+<li>manual lot override;</li>
+<li>future-stock exclusion where applicable;</li>
+<li>base-UOM quantity normalization.</li>
+</ul>
+<p>The allocator proposes lines; posting remains authoritative and revalidates stock.</p>
+<h2 id="phase-5--ip-posting-command">Phase 5 — IP posting command</h2>
+<p>Implement <code>ProductionMaterialIssueService.PostAsync(...)</code>.</p>
+<p>Inside one EF/SQL transaction:</p>
+<ol>
+<li>enforce <code>PrProductionPostingLink</code> idempotency;</li>
+<li>lock Work Order/material rows;</li>
+<li>validate Released/InProgress;</li>
+<li>recompute net issued/outstanding/tolerance from posted facts;</li>
+<li>create or validate inventory <code>IP</code> batch/detail rows;</li>
+<li>invoke existing <code>PostStockOutInTransactionAsync(..., &quot;IP&quot;)</code>;</li>
+<li>capture inventory cost/history;</li>
+<li>create production movement facts;</li>
+<li>rebuild <code>ProductionWorkOrderMaterial.IssuedQty</code> and other projections;</li>
+<li>update Work Order to InProgress when first execution occurs;</li>
+<li>commit link and transaction.</li>
+</ol>
+<p>Do <strong>not</strong> add IP to the generic public dispatcher unless there is a clear use case; production posting should go through the production service so a user cannot create stock IP without Work Order/WIP facts.</p>
+<h2 id="phase-6--blazor-issue-to-production-ui">Phase 6 — Blazor Issue-to-Production UI</h2>
+<p>Create:</p>
+<pre class="hljs"><code><div>PrMaterialIssueEntry.razor
+PrMaterialIssueEntry.razor.cs
+PrMaterialIssueEntry.razor.css
+</div></code></pre>
+<p>Features:</p>
+<ul>
+<li>Work Order selector limited to issue-eligible orders;</li>
+<li>route/operation focus;</li>
+<li>material requirement grid;</li>
+<li>outstanding auto-fill;</li>
+<li>shortage display;</li>
+<li>lot allocation popup;</li>
+<li>post confirmation;</li>
+<li>no business posting logic in UI.</li>
+</ul>
+<h2 id="phase-7--return-from-production">Phase 7 — Return From Production</h2>
+<p>Implement explicit return document/command:</p>
+<ul>
+<li>reference Work Order material and preferably original issue movement;</li>
+<li>cannot return more than WIP material available;</li>
+<li>stock-in occurs in the same transaction as production return fact;</li>
+<li>original cost should be preserved/reconciled, not replaced with today's item cost;</li>
+<li>update <code>ReturnedQty</code> and WIP position.</li>
+</ul>
+<p>Standardize the inventory transaction type for production return after checking project-wide naming conventions; do not overload customer return <code>CR</code>.</p>
+<h2 id="phase-8--ip-reversal">Phase 8 — IP reversal</h2>
+<p>Implement rollback/reversal using the existing inventory rollback engine only when downstream production dependencies permit it.</p>
+<p>Block rollback if, for example, material has already been consumed or later production output depends on the issued movement, unless an explicit compensating correction workflow is used.</p>
+<p>Never physically delete posted history.</p>
+<h2 id="phase-9--production-consumptionoutput-integration">Phase 9 — Production consumption/output integration</h2>
+<p>When Daily Production / Output is implemented:</p>
+<ul>
+<li>issue remains separate;</li>
+<li>consume WIP with explicit <code>CONSUME</code> facts;</li>
+<li>backflush can create issue + consume automatically where configured;</li>
+<li>update <code>ConsumedQty</code> from facts;</li>
+<li>preserve lot genealogy;</li>
+<li>calculate actual material variance.</li>
+</ul>
+<h2 id="phase-10--inquiries">Phase 10 — Inquiries</h2>
+<p>Add:</p>
+<pre class="hljs"><code><div>Material Issue History by WO
+WO Material Requirement vs Issued vs Consumed
+Material Shortage by WO / operation / date
+WIP Material by WO / operation / lot
+Actual vs Standard Material Usage
+Material Cost Variance
+Lot Traceability
+</div></code></pre>
+<h2 id="phase-11--production-grade-concurrency-tests">Phase 11 — Production-grade concurrency tests</h2>
+<p>At minimum test SQL Server concurrency for:</p>
+<pre class="hljs"><code><div>same stock slice, two simultaneous IP posts
+same WO material, two simultaneous issue posts
+idempotent client retry
+post vs rollback race
+issue vs Work Order cancellation
+lot allocation race
+return vs consume race
+</div></code></pre>
+<p>The existing SQL Server inventory concurrency test approach can be reused.</p>
+<hr>
+<h1 id="required-questions--direct-answers">Required Questions — Direct Answers</h1>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">#</th>
+<th>Question</th>
+<th>Finding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1</td>
+<td>What exactly does Issue to Production mean in old ERP?</td>
+<td><strong>VERIFIED:</strong> Warehouse/location/lot stock is posted out and material is posted into production WIP, with production execution history. It is not final consumption.</td>
+</tr>
+<tr>
+<td style="text-align:right">2</td>
+<td>Which pages implement it?</td>
+<td><strong>VERIFIED:</strong> Primary page is <code>ProductionPlan/ProdPlan/IssueToProductionEx.aspx(.cs)</code> plus lookup/history pages including <code>IssuedProdList</code>; other production pages interact with its WIP/output results.</td>
+</tr>
+<tr>
+<td style="text-align:right">3</td>
+<td>Which classes contain real logic?</td>
+<td><strong>VERIFIED:</strong> <code>IssueToProductionHelper</code>, <code>IssueToProdHelper</code>, <code>PrSchBOMBL</code>, <code>ProdNeedPostHelper</code>, <code>IssueProdPostHelper</code>, <code>CPosting</code>, plus DailyProd output helpers.</td>
+</tr>
+<tr>
+<td style="text-align:right">4</td>
+<td>Which DB tables are involved?</td>
+<td><strong>VERIFIED:</strong> <code>PrSchMas</code>, <code>PrSchWCenter</code>, <code>PrSchProcess</code>, <code>PrSchBOM</code>, <code>IvTrxBatch</code>, <code>IvTrxBatchDetail</code>, <code>IvBalLoc</code>, <code>IvBalance</code>, <code>IvTrxHistory</code>, costing tables, <code>WIPItemBal</code>, <code>WIPItemBalLoc</code>, <code>PrSchDailyProd</code>, etc.</td>
+</tr>
+<tr>
+<td style="text-align:right">5</td>
+<td>How is it linked to WO?</td>
+<td><strong>VERIFIED:</strong> <code>ScheCode</code> + Work Center + process requirement; production history/WIP also carries WO references.</td>
+</tr>
+<tr>
+<td style="text-align:right">6</td>
+<td>Product Definition BOM or WO BOM?</td>
+<td><strong>VERIFIED:</strong> Work Order BOM <code>PrSchBOM</code>.</td>
+</tr>
+<tr>
+<td style="text-align:right">7</td>
+<td>Required material formula?</td>
+<td><strong>VERIFIED:</strong> approximately <code>(PrSchBOM StdQty / WO scheduled output) × requested output</code>, rounded to 4 decimals; scrap/reject overload adds proportional quantities.</td>
+</tr>
+<tr>
+<td style="text-align:right">8</td>
+<td>Already-issued qty?</td>
+<td><strong>VERIFIED:</strong> aggregated from posted <code>IvTrxHistory</code> IP records; legacy keying is not exact operation-line identity.</td>
+</tr>
+<tr>
+<td style="text-align:right">9</td>
+<td>Outstanding qty?</td>
+<td><strong>NOT VERIFIED as one old authoritative formula.</strong> UI compares requirement/current issue/historical issue; new system should explicitly maintain <code>Required - NetIssued</code>.</td>
+</tr>
+<tr>
+<td style="text-align:right">10</td>
+<td>Partial issue?</td>
+<td><strong>VERIFIED:</strong> yes, multiple issue quantities/lots/documents are possible.</td>
+</tr>
+<tr>
+<td style="text-align:right">11</td>
+<td>Over-issue?</td>
+<td><strong>VERIFIED:</strong> code comments explicitly permit issue above Work Order schedule in some paths; a tolerance check exists when tolerance is configured. Behavior is inconsistent enough to replace with a single new policy.</td>
+</tr>
+<tr>
+<td style="text-align:right">12</td>
+<td>Substitutes?</td>
+<td><strong>PARTIALLY VERIFIED:</strong> <code>BomDefault=0</code> represents alternative material in WO BOM validation. Normal IP BOM loader filters default rows; complete operator substitution flow in IP page was not verified.</td>
+</tr>
+<tr>
+<td style="text-align:right">13</td>
+<td>Warehouse/location selection?</td>
+<td><strong>VERIFIED:</strong> BOM warehouse is used to load stock; selected <code>IvBalLoc</code> supplies exact warehouse/location/lot. Universal fallback priority not verified.</td>
+</tr>
+<tr>
+<td style="text-align:right">14</td>
+<td>Available stock?</td>
+<td><strong>VERIFIED:</strong> active <code>IvBalLoc</code> quantity; posting revalidates exact stock slice.</td>
+</tr>
+<tr>
+<td style="text-align:right">15</td>
+<td>UOM conversion?</td>
+<td><strong>PARTIALLY VERIFIED:</strong> standard/catch-weight quantities exist, but old logic is not as explicit as the new UOM chain. New existing UOM service should be authoritative.</td>
+</tr>
+<tr>
+<td style="text-align:right">16</td>
+<td>Lot/batch handling?</td>
+<td><strong>VERIFIED:</strong> multiple lots supported; candidate rows ordered by stock <code>TransDate</code> ascending.</td>
+</tr>
+<tr>
+<td style="text-align:right">17</td>
+<td>Stock transactions generated?</td>
+<td><strong>VERIFIED:</strong> IP <code>IvTrxBatch/Detail</code>, inventory history/cost updates, stock decrease, WIP increase, production daily IP record.</td>
+</tr>
+<tr>
+<td style="text-align:right">18</td>
+<td>When does stock reduce?</td>
+<td><strong>VERIFIED:</strong> on IP post, not merely when BOM is loaded or document is staged.</td>
+</tr>
+<tr>
+<td style="text-align:right">19</td>
+<td>WIP or immediate consumption?</td>
+<td><strong>VERIFIED:</strong> WIP.</td>
+</tr>
+<tr>
+<td style="text-align:right">20</td>
+<td>Material cost?</td>
+<td><strong>VERIFIED:</strong> actual selected stock slice unit price/cost is propagated into inventory/WIP posting. Complete upstream valuation algorithm is not fully verified.</td>
+</tr>
+<tr>
+<td style="text-align:right">21</td>
+<td>Return from production?</td>
+<td><strong>PARTIALLY VERIFIED:</strong> <code>SR</code> return semantics exist and reduce issue in production reporting; full standard factory return chain was not traced to the same depth.</td>
+</tr>
+<tr>
+<td style="text-align:right">22</td>
+<td>Cancellation/reversal?</td>
+<td><strong>VERIFIED:</strong> posted IP has real rollback restoring stock/WIP/history state; not simple deletion.</td>
+</tr>
+<tr>
+<td style="text-align:right">23</td>
+<td>Relationship to output?</td>
+<td><strong>VERIFIED:</strong> subsequent daily production moves/consumes WIP and records process/output quantities.</td>
+</tr>
+<tr>
+<td style="text-align:right">24</td>
+<td>Tied to WC/process?</td>
+<td><strong>VERIFIED:</strong> BOM selection is exact WO + WC + process. Legacy history field mapping weakens exact reconciliation.</td>
+</tr>
+<tr>
+<td style="text-align:right">25</td>
+<td>Shortages?</td>
+<td><strong>VERIFIED at issue time:</strong> stock vs required/current issue is checked. Automatic feed into MRP/PR from this IP workflow is <strong>NOT VERIFIED</strong>.</td>
+</tr>
+<tr>
+<td style="text-align:right">26</td>
+<td>Concurrent over-issue prevention?</td>
+<td><strong>OLD:</strong> global posting lock + SQL transaction and stock revalidation. <strong>NEW:</strong> existing row-level locking/conditional decrement is stronger and should be reused.</td>
+</tr>
+<tr>
+<td style="text-align:right">27</td>
+<td>Old logic to retain?</td>
+<td>WO snapshot, process ownership, partial issue, lot trace, WIP staging, real posting/rollback, actual cost linkage.</td>
+</tr>
+<tr>
+<td style="text-align:right">28</td>
+<td>Old logic to improve?</td>
+<td>outstanding/net-issued model, UOM, alternatives, tolerance, identifier clarity, concurrency, separation of UI/service logic.</td>
+</tr>
+<tr>
+<td style="text-align:right">29</td>
+<td>Existing new tables/services to reuse?</td>
+<td><code>ProductionWorkOrder*</code>, especially <code>ProductionWorkOrderMaterial</code>; <code>IvTrxBatch/Detail/History</code>; <code>IvBalLoc</code>; UOM service; inventory posting/repository; <code>PrProductionPostingLink</code>.</td>
+</tr>
+<tr>
+<td style="text-align:right">30</td>
+<td>Genuinely required new components?</td>
+<td>Production material execution service, material allocation service, immutable production material movement/line link, Blazor issue UI, return/reversal integration, material execution inquiries.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="key-source-evidence-catalogue">Key Source Evidence Catalogue</h1>
+<h2 id="old-erp">Old ERP</h2>
+<h3 id="productionplanhelperissueprodhelpercs"><code>ProductionPlan/Helper/IssueProdHelper.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li><code>GetSchBomAllLot(...)</code> reads <code>PrSchBOM</code> and exact WO/WC/process.</li>
+<li>filters <code>BomDefault=1</code>, <code>WIPBomDefault=0</code>.</li>
+<li>joins active positive <code>IvBalLoc</code> stock.</li>
+<li>reads posted <code>IvTrxHistory</code> IP quantity.</li>
+<li><code>CalculateReqBOM(...)</code> uses <code>Math.Round(StdPackSize * reqQutput, 4)</code>.</li>
+<li>allocation sorts stock rows by <code>TransDate</code> ascending.</li>
+</ul>
+<h3 id="erpclassesblprschbomblcs"><code>ERPClasses/BL/PrSchBOMBL.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>BOM retrieval by Work Order + Work Center + process.</li>
+<li>pack-size/material ratio derived from scheduled BOM/output quantities.</li>
+</ul>
+<h3 id="productionplanprodplanissuetoproductionexaspxcs"><code>ProductionPlan/ProdPlan/IssueToProductionEx.aspx.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>operator BOM loading and lot allocation.</li>
+<li>staging into <code>IvTrxBatch</code> / <code>IvTrxBatchDetail</code> type IP.</li>
+<li>warehouse/location/lot capture.</li>
+<li>stock/requirement/historical issue validation.</li>
+<li>tolerance validation.</li>
+<li>post request routed to <code>ProdNeedPostHelper.PostIP</code>.</li>
+</ul>
+<h3 id="productionplanhelperissueprodposthelpercs"><code>ProductionPlan/Helper/IssueProdPostHelper.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>calls inventory IP posting.</li>
+<li>calls <code>PostIPtoWIPBal</code>.</li>
+<li>adds <code>PrSchDailyProd</code> IP record.</li>
+<li>changes Work Order progress state.</li>
+<li>transactionally updates stock/WIP/production tables.</li>
+<li>rollback reverses inventory/WIP/production history.</li>
+</ul>
+<h3 id="erpclassesclassescpostingcs"><code>ERPClasses/Classes/CPosting.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>IP dispatch to <code>PostIPTransaction</code>.</li>
+<li>exact source-balance quantity check.</li>
+<li>inventory balance decrease.</li>
+<li>history/cost update.</li>
+<li>WIP balance update.</li>
+<li>rollback support.</li>
+</ul>
+<h3 id="erpclassesblproductionblcs"><code>ERPClasses/BL/ProductionBL.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>comments explicitly define <code>BomDefault=1</code> as default and <code>BomDefault=0</code> as alternative.</li>
+<li>production validation recognizes alternative BOM usage.</li>
+</ul>
+<h3 id="productionplanhelperdailyprodjongposthelpercs"><code>ProductionPlan/Helper/DailyProdJONGPostHelper.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>production process output history.</li>
+<li><code>WIPItemBalLoc</code> updates.</li>
+<li>previous-process WIP reduction/movement.</li>
+<li>Work Order progress/status updates.</li>
+</ul>
+<h2 id="new-erp-production">New ERP <code>production</code></h2>
+<h3 id="erpwebmodelentitiesproductionproductionworkordermaterialcs"><code>ErpWeb.Model/Entities/Production/ProductionWorkOrderMaterial.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>exact <code>WorkOrderOperationId</code> ownership.</li>
+<li>BOM numerator/denominator UOM model.</li>
+<li><code>RequiredQty</code>, <code>RequiredBaseQty</code>, <code>ConversionFactorToBase</code>.</li>
+<li><code>ScrapPercent</code>, <code>Tolerance</code>, <code>IssueMethod</code>, <code>SupplySource</code>.</li>
+<li>alternate group.</li>
+<li><code>IssuedQty</code>, <code>ReturnedQty</code>, <code>ConsumedQty</code>, <code>VarianceQty</code> marked as rebuildable execution projections.</li>
+</ul>
+<h3 id="erpwebcoreproductionworkorderquantitycalculatorcs"><code>ErpWeb.Core/Production/WorkOrderQuantityCalculator.cs</code></h3>
+<p>Evidence:</p>
+<pre class="hljs"><code><div>RequiredQty
+= operation basis
+× ComponentQtyPerParent
+÷ BomOutputQty
+× (1 + ScrapPercent/100)
+</div></code></pre>
+<p>with strict UOM conversion and base-UOM calculation.</p>
+<h3 id="erpwebcoreproductionworkordersnapshotbuildercs"><code>ErpWeb.Core/Production/WorkOrderSnapshotBuilder.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>copies Product Definition values into frozen Work Order material snapshot.</li>
+<li>resolves alternate/supply-source/route producer.</li>
+<li>assigns material warehouse/location defaults.</li>
+</ul>
+<h3 id="erpwebuiplanningworkordersprworkorderentryrazorcs"><code>ErpWeb.UI/Planning/WorkOrders/PrWorkOrderEntry.razor.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>modern Work Order service usage.</li>
+<li>operation/material hierarchy.</li>
+<li>alternate material substitution in Draft.</li>
+<li>release explicitly does not post inventory.</li>
+</ul>
+<h3 id="erpwebcoreinventoryivtrxconstantscs"><code>ErpWeb.Core/Inventory/IvTrxConstants.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li><code>IssueToProduction = &quot;IP&quot;</code> already defined.</li>
+</ul>
+<h3 id="erpwebcoreinventoryiivinventorypostingservicecs"><code>ErpWeb.Core/Inventory/IIvInventoryPostingService.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>reusable in-transaction stock-out API and rollback API.</li>
+</ul>
+<h3 id="erpwebcoreinventoryivinventorypostingservicecs"><code>ErpWeb.Core/Inventory/IvInventoryPostingService.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>current public dispatcher does not yet include IP.</li>
+<li>lower-level stock-out core accepts caller-provided expected transaction type.</li>
+<li>locks/revalidates stock, writes history, audit, and supports rollback.</li>
+</ul>
+<h3 id="erpwebmodelrepositoriesinventoryivstockpostingrepositorycs"><code>ErpWeb.Model/Repositories/Inventory/IvStockPostingRepository.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li><code>UPDLOCK, HOLDLOCK</code> for stock balances.</li>
+<li>deterministic exact-balance locking.</li>
+<li>atomic conditional decrement (<code>StdQty &gt;= qty</code>).</li>
+</ul>
+<h3 id="erpwebmodelentitiesproductionproductionpostinglinkcs"><code>ErpWeb.Model/Entities/Production/ProductionPostingLink.cs</code></h3>
+<p>Evidence:</p>
+<ul>
+<li>already reserved for material/WIP/FG posting idempotency and production↔inventory link.</li>
+<li>do not duplicate this capability.</li>
+</ul>
+<hr>
+<h1 id="final-conclusion">Final Conclusion</h1>
+<p>The old ERP's strongest production concept is not its Web Forms screen. It is the transaction model:</p>
+<pre class="hljs"><code><div>Frozen Work Order material requirement
+        ↓
+process-aware material issue
+        ↓
+real warehouse stock-out
+        ↓
+real WIP position
+        ↓
+actual production/process output
+        ↓
+return/reversal/traceable cost
+</div></code></pre>
+<p>That concept should be preserved.</p>
+<p>The new ERP should <strong>not</strong> clone <code>IssueToProductionEx.aspx.cs</code>, <code>CPosting</code>, or the old WIP table architecture line-by-line. The current new codebase already has a better Work Order snapshot, material formula, UOM model, alternate model, transaction audit model, idempotency model, and stock concurrency engine.</p>
+<p>The missing implementation is the <strong>production material execution layer</strong> that safely connects:</p>
+<pre class="hljs"><code><div>ProductionWorkOrderMaterial
+        ↔
+production material movement facts
+        ↔
+IvTrxBatch / IvTrxHistory
+        ↔
+WIP / consumption / output
+</div></code></pre>
+<p>If this layer is implemented with immutable movement facts, exact operation/material identity, existing SQL Server stock locks, and one transaction across stock + production state, the new ERP will preserve the proven behavior of the old system while eliminating the old system's ambiguity and concurrency weaknesses.</p>
+
+</body>
+</html>

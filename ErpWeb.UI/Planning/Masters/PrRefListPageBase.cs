@@ -116,7 +116,7 @@ public abstract class PrRefListPageBase<TRow> : PageBase
         }
     }
 
-    protected async Task OnRowActionAsync(SelectedButtonInfo<TRow> info)
+    protected virtual async Task OnRowActionAsync(SelectedButtonInfo<TRow> info)
     {
         if (info.SelectedRow is null)
         {

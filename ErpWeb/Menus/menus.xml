@@ -274,12 +274,20 @@
             Icon="fa-solid fa-list-ol" />
       <Menu Code="PLN_MAC_PREVENTIVE" Name="Machine Preventive" Route="/planning/machine-preventive" SortOrder="13"
             Icon="fa-solid fa-wrench" />
-      <Menu Code="PLN_IMPORT_PRDDEF" Name="Import Product Definition" Route="/planning/import-product-def" SortOrder="14"
+      <Menu Code="PLN_MAINT_REASON" Name="Maintenance Reasons" Route="/planning/maintenance-reasons" SortOrder="14"
+            Icon="fa-solid fa-list-check" />
+      <Menu Code="PLN_IMPORT_PRDDEF" Name="Import Product Definition" Route="/planning/import-product-def" SortOrder="15"
             Icon="fa-solid fa-file-excel" />
     </Menu>
     <Menu Code="PLN_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-industry">
       <Menu Code="PLN_WORK_ORDER" Name="Work Orders" Route="/planning/work-orders" SortOrder="1"
             Icon="fa-solid fa-clipboard-list" />
+      <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="2"
+            Icon="fa-solid fa-screwdriver-wrench" />
+    </Menu>
+    <Menu Code="PLN_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
+      <Menu Code="PLN_MAC_SUMMARY" Name="Machine Maintenance Summary" Route="/planning/machine-maintenance-summary" SortOrder="1"
+            Icon="fa-solid fa-chart-column" />
     </Menu>
   </Menu>
 

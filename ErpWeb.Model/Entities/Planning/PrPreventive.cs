@@ -13,4 +13,10 @@ public class PrPreventive
     public DateTime? Updated { get; set; }
     public string? UserId { get; set; }
     public string? Remark { get; set; }
+    public string Status { get; set; } = "PLANNED";
+    public DateTime? CompletedOn { get; set; }
+    public string? CompletedBy { get; set; }
+    public string CompCode { get; set; } = string.Empty;
+    public string? BranchCode { get; set; }
+    public string? LocCode { get; set; }
 }

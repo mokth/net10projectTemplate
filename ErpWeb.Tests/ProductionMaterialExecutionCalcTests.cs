@@ -1,0 +1,69 @@
+using ErpWeb.Core.Production;
+
+namespace ErpWeb.Tests;
+
+[Trait(TestCategories.Name, TestCategories.Planning)]
+public sealed class ProductionMaterialExecutionCalcTests
+{
+    [Fact]
+    public void Outstanding_supports_partial_and_repeated_issue()
+    {
+        Assert.Equal(60m, ProductionMaterialExecutionCalc.Outstanding(100m, 40m, 0m));
+        Assert.Equal(30m, ProductionMaterialExecutionCalc.Outstanding(100m, 70m, 0m));
+    }
+
+    [Fact]
+    public void Returned_quantity_reopens_the_requirement()
+    {
+        Assert.Equal(40m, ProductionMaterialExecutionCalc.Outstanding(100m, 70m, 10m));
+    }
+
+    [Theory]
+    [InlineData(100, 0, 100)]
+    [InlineData(100, 5, 105)]
+    [InlineData(1.23456, 0, 1.2346)]
+    public void Maximum_issue_applies_tolerance_and_quantity_rounding(
+        decimal required, decimal tolerance, decimal expected)
+    {
+        Assert.Equal(expected, ProductionMaterialExecutionCalc.MaxAllowedNetIssue(required, tolerance));
+    }
+
+    [Fact]
+    public void Effective_issue_subtracts_reversal_facts()
+    {
+        Assert.Equal(35m, ProductionMaterialExecutionCalc.MovementEffectiveIssue(40m, 5m));
+    }
+
+    [Theory]
+    [InlineData(12.5, 2, 25)]
+    [InlineData(12.5, 0.25, 3.125)]
+    public void Conversion_to_base_supports_whole_and_fractional_factors(
+        decimal issueQty, decimal conversion, decimal expectedBaseQty)
+    {
+        Assert.Equal(expectedBaseQty,
+            ProductionMaterialExecutionCalc.BaseQtyForIssueQty(issueQty, conversion));
+        Assert.Equal(issueQty,
+            ProductionMaterialExecutionCalc.IssueQtyForBaseQty(expectedBaseQty, conversion));
+    }
+
+    [Fact]
+    public void Final_allocation_receives_rounding_remainder()
+    {
+        var quantities = ProductionMaterialExecutionCalc.AllocateIssueQty(
+            1m,
+            [1m, 1m, 1m],
+            3m);
+
+        Assert.Equal([0.3333m, 0.3333m, 0.3334m], quantities);
+        Assert.Equal(1m, quantities.Sum());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Conversion_factor_must_be_positive(decimal conversion)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ProductionMaterialExecutionCalc.BaseQtyForIssueQty(1m, conversion));
+    }
+}

@@ -101,21 +101,29 @@ public sealed class ProductionCalendarScheduleDataLoader : IProductionCalendarSc
             }
         }
 
-        // Preventive range: extend by 1 day past horizon for overnight spill
+        // Preventive range: extend by 1 day past horizon for overnight spill.
+        // Only PLANNED rows block capacity (COMPLETED/CANCELLED do not).
         var prevStart = horizonStart.ToDateTime(TimeOnly.MinValue).AddDays(-1);
         var prevEnd = horizonEnd.ToDateTime(new TimeOnly(23, 59, 59)).AddDays(1);
         var preventives = await db.PrPreventives.AsNoTracking()
-            .Where(x => x.MachineCd == mac && x.DownDt >= prevStart && x.DownDt <= prevEnd)
+            .Where(x => x.CompCode == comp
+                        && x.MachineCd == mac
+                        && x.Status == PreventiveStatuses.Planned
+                        && x.DownDt >= prevStart
+                        && x.DownDt <= prevEnd)
             .ToListAsync(ct);
 
-        var windows = preventives.Select(p =>
+        var windows = new List<PreventiveWindow>();
+        foreach (var p in preventives)
         {
-            var day = p.DownDt.Date;
-            var s = day.Add(p.StartTm.TimeOfDay);
-            var e = day.Add(p.EndTm.TimeOfDay);
-            if (e <= s) e = e.AddDays(1);
-            return new PreventiveWindow { Start = DateTime.SpecifyKind(s, DateTimeKind.Unspecified), End = DateTime.SpecifyKind(e, DateTimeKind.Unspecified) };
-        }).ToList();
+            if (!PreventiveWindowNormalizer.TryNormalize(p.DownDt, p.StartTm, p.EndTm, out var n, out _))
+                continue;
+            windows.Add(new PreventiveWindow
+            {
+                Start = DateTime.SpecifyKind(n.WindowStart, DateTimeKind.Unspecified),
+                End = DateTime.SpecifyKind(n.WindowEnd, DateTimeKind.Unspecified)
+            });
+        }
 
         return ProductionCalendarScheduler.BuildScheduleData(mac, calendar, shiftGroups, windows);
     }

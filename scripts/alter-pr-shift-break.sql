@@ -8,23 +8,29 @@
 --   D) deploy child-aware ErpWeb; classic READ only for breaks
 -- Rollback: scripts/rollback-pr-shift-break-authority.sql then remigrate before redeploy.
 --
--- Phase A schema smoke: set @PromoteBreakStorage = 0.
+-- IMPORTANT: GO separators are required so ALTER TABLE ADD BreakStorageVersion is visible
+-- to later batches (SQL Server compiles each batch separately).
+--
+-- Phase A schema smoke: leave @PromoteBreakStorage = 0 in the promote batch below.
 -- Phase C migration/remigration: set @PromoteBreakStorage = 1 after freezing shift edits.
 
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
-
-DECLARE @PromoteBreakStorage bit = 0; -- set to 1 only during the frozen Phase C promotion/remigration
-DECLARE @Midnight datetime = CONVERT(datetime, CONVERT(date, GETDATE()));
+GO
 
 IF OBJECT_ID(N'dbo.PrShift', N'U') IS NULL
     THROW 51000, 'dbo.PrShift is required before running alter-pr-shift-break.sql.', 1;
+GO
 
 IF COL_LENGTH(N'dbo.PrShift', N'BreakStorageVersion') IS NULL
 BEGIN
     ALTER TABLE dbo.PrShift ADD BreakStorageVersion tinyint NOT NULL
         CONSTRAINT DF_PrShift_BreakStorageVersion DEFAULT (0);
-END;
+    PRINT N'Added dbo.PrShift.BreakStorageVersion.';
+END
+ELSE
+    PRINT N'dbo.PrShift.BreakStorageVersion already exists.';
+GO
 
 IF EXISTS (
     SELECT Shift_Cd
@@ -33,6 +39,7 @@ IF EXISTS (
     HAVING COUNT(*) > 1
 )
     THROW 51001, 'Duplicate PrShift.Shift_Cd values block the required composite unique index.', 1;
+GO
 
 IF EXISTS (
     SELECT 1
@@ -41,6 +48,7 @@ IF EXISTS (
       AND (CompCode IS NULL OR LTRIM(RTRIM(CompCode)) = N'')
 )
     THROW 51002, 'Break migration found PrShift rows with blank CompCode. Repair tenant data first.', 1;
+GO
 
 ;WITH WidePairs AS (
     SELECT s.CompCode, s.Shift_Cd, v.Seq, v.BreakFrom, v.BreakTo
@@ -55,20 +63,27 @@ IF EXISTS (
     WHERE ISNULL(s.BreakStorageVersion, 0) = 0
 )
 SELECT CompCode, Shift_Cd, Seq, BreakFrom, BreakTo
+INTO #OneSidedBreaks
 FROM WidePairs
 WHERE (BreakFrom IS NULL AND BreakTo IS NOT NULL)
    OR (BreakFrom IS NOT NULL AND BreakTo IS NULL);
 
-IF @@ROWCOUNT > 0
+IF EXISTS (SELECT 1 FROM #OneSidedBreaks)
+BEGIN
+    SELECT * FROM #OneSidedBreaks;
     THROW 51003, 'One-sided legacy break pairs found. Repair before promotion.', 1;
+END
+DROP TABLE #OneSidedBreaks;
+GO
+
+-- Schema objects + optional promotion (single batch so @Promote / @Midnight stay in scope)
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+DECLARE @PromoteBreakStorage bit = 0; -- set to 1 only during the frozen Phase C promotion/remigration
+DECLARE @Midnight datetime = CONVERT(datetime, CONVERT(date, GETDATE()));
 
 BEGIN TRANSACTION;
-
-IF COL_LENGTH(N'dbo.PrShift', N'BreakStorageVersion') IS NULL
-BEGIN
-    ALTER TABLE dbo.PrShift ADD BreakStorageVersion tinyint NOT NULL
-        CONSTRAINT DF_PrShift_BreakStorageVersion DEFAULT (0);
-END;
 
 IF OBJECT_ID(N'dbo.PrShiftBreak', N'U') IS NULL
 BEGIN
@@ -84,7 +99,10 @@ BEGIN
         CONSTRAINT PK_PrShiftBreak PRIMARY KEY (CompCode, Shift_Cd, BreakSeq),
         CONSTRAINT CK_PrShiftBreak_BreakSeq CHECK (BreakSeq BETWEEN 1 AND 5)
     );
-END;
+    PRINT N'Created dbo.PrShiftBreak.';
+END
+ELSE
+    PRINT N'dbo.PrShiftBreak already exists.';
 
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
@@ -93,7 +111,10 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE UNIQUE INDEX UX_PrShift_ShiftCd_CompCode ON dbo.PrShift (Shift_Cd, CompCode);
-END;
+    PRINT N'Created UX_PrShift_ShiftCd_CompCode.';
+END
+ELSE
+    PRINT N'UX_PrShift_ShiftCd_CompCode already exists.';
 
 IF NOT EXISTS (
     SELECT 1
@@ -107,7 +128,10 @@ BEGIN
     FOREIGN KEY (Shift_Cd, CompCode)
     REFERENCES dbo.PrShift (Shift_Cd, CompCode)
     ON DELETE CASCADE;
-END;
+    PRINT N'Created FK_PrShiftBreak_PrShift ON DELETE CASCADE.';
+END
+ELSE
+    PRINT N'FK_PrShiftBreak_PrShift already exists.';
 
 IF @PromoteBreakStorage = 1
 BEGIN
@@ -143,7 +167,7 @@ BEGIN
           AND NOT (CONVERT(time(0), BreakFrom) = '00:00' AND CONVERT(time(0), BreakTo) = '00:00')
     ),
     Normalized AS (
-        SELECT CompCode, Shift_Cd, Seq, StartMin, EndMin,
+        SELECT CompCode, Shift_Cd, Seq, StartMin, EndMin, EndMin0,
                BreakStart = CASE WHEN EndMin0 < StartMin AND BreakStart0 < StartMin THEN BreakStart0 + 1440 ELSE BreakStart0 END,
                BreakEnd = CASE
                    WHEN BreakEnd0 < BreakStart0 THEN BreakEnd0 + 1440
@@ -153,9 +177,8 @@ BEGIN
         FROM UsedBreaks
     ),
     Validated AS (
-        SELECT *,
-               BreakSeq = ROW_NUMBER() OVER (PARTITION BY CompCode, Shift_Cd ORDER BY BreakStart, BreakEnd, Seq),
-               PrevEnd = LAG(BreakEnd) OVER (PARTITION BY CompCode, Shift_Cd ORDER BY BreakStart, BreakEnd, Seq)
+        SELECT CompCode, Shift_Cd, StartMin, EndMin, BreakStart, BreakEnd, Seq,
+               BreakSeq = ROW_NUMBER() OVER (PARTITION BY CompCode, Shift_Cd ORDER BY BreakStart, BreakEnd, Seq)
         FROM Normalized
     )
     SELECT CompCode, Shift_Cd, StartMin, EndMin, BreakSeq, BreakStart, BreakEnd
@@ -246,9 +269,14 @@ BEGIN
         BreakStorageVersion = 1
     FROM dbo.PrShift s
     INNER JOIN Packed p ON p.CompCode = s.CompCode AND p.Shift_Cd = s.Shift_Cd;
-END;
+
+    PRINT N'Promotion completed: BreakStorageVersion set to 1 for migrated shifts.';
+END
+ELSE
+    PRINT N'Phase A only: Promotion skipped (@PromoteBreakStorage = 0).';
 
 COMMIT;
 
 PRINT N'PrShiftBreak schema ensured. Promotion setting:';
 SELECT @PromoteBreakStorage AS PromoteBreakStorage;
+GO

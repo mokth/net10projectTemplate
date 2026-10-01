@@ -17,4 +17,15 @@ public class PrMacMaintenance
     public string? MType { get; set; }
     public string? Name { get; set; }
     public string? Reminder { get; set; }
+    public DateTime? StartDateTime { get; set; }
+    public DateTime? EndDateTime { get; set; }
+    public string? ReasonCd { get; set; }
+    public decimal PartsCost { get; set; }
+    public decimal LabourCost { get; set; }
+    public decimal OtherCost { get; set; }
+    public int? PreventiveUid { get; set; }
+    public string? Remark { get; set; }
+    public string CompCode { get; set; } = string.Empty;
+    public string? BranchCode { get; set; }
+    public string? LocCode { get; set; }
 }

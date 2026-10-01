@@ -932,6 +932,74 @@ END;
 GO
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
+   PrMaterialMovement (immutable production material execution ledger)
+   Inventory tables remain the physical stock authority. All FKs are NO ACTION/RESTRICT.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+IF OBJECT_ID(N'dbo.PrMaterialMovement', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PrMaterialMovement
+    (
+        UID bigint IDENTITY(1,1) NOT NULL CONSTRAINT PK_PrMaterialMovement PRIMARY KEY,
+        CompanyCode nvarchar(5) NOT NULL,
+        BranchCode nvarchar(5) NOT NULL,
+        WorkOrderID bigint NOT NULL,
+        WorkOrderMaterialID bigint NOT NULL,
+        WorkOrderOperationID bigint NOT NULL,
+        MovementType nvarchar(20) NOT NULL,
+        MovementDate datetime2 NOT NULL,
+        ItemCode nvarchar(30) NOT NULL,
+        Qty decimal(18,4) NOT NULL,
+        UOM nvarchar(10) NOT NULL,
+        BaseQty decimal(18,4) NOT NULL,
+        BaseUOM nvarchar(10) NOT NULL,
+        ConversionFactorToBase decimal(18,8) NOT NULL,
+        WarehouseCode nvarchar(20) NOT NULL,
+        LocationCode nvarchar(10) NOT NULL,
+        LotNo nvarchar(50) NOT NULL,
+        LotID int NULL,
+        FromBalLocID int NOT NULL,
+        ItemStatus nvarchar(10) NOT NULL,
+        InventoryBatchID int NOT NULL,
+        InventoryBatchNo int NOT NULL,
+        InventoryBatchDetailID int NOT NULL,
+        InventoryTrxLineNo smallint NOT NULL,
+        InventoryHistoryID int NULL,
+        InventoryPostingOperationID nvarchar(64) NULL,
+        UnitCost decimal(18,4) NOT NULL,
+        TotalCost decimal(18,4) NOT NULL,
+        PostingLinkID bigint NOT NULL,
+        OriginalMovementID bigint NULL,
+        Reason nvarchar(50) NULL,
+        Remarks nvarchar(250) NULL,
+        CreatedDate datetime2 NOT NULL,
+        CreatedBy nvarchar(10) NOT NULL,
+        CONSTRAINT CK_PrMaterialMovement_Qty CHECK (Qty > 0 AND BaseQty > 0),
+        CONSTRAINT CK_PrMaterialMovement_Conversion CHECK (ConversionFactorToBase > 0),
+        CONSTRAINT CK_PrMaterialMovement_Cost CHECK (UnitCost >= 0 AND TotalCost >= 0),
+        CONSTRAINT CK_PrMaterialMovement_Type CHECK
+            (MovementType IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'CONSUME', N'ADJUST')),
+        CONSTRAINT FK_PrMaterialMovement_PrWorkOrder FOREIGN KEY (WorkOrderID) REFERENCES dbo.PrWorkOrder (UID),
+        CONSTRAINT FK_PrMaterialMovement_PrWorkOrderMaterial FOREIGN KEY (WorkOrderMaterialID) REFERENCES dbo.PrWorkOrderMaterial (UID),
+        CONSTRAINT FK_PrMaterialMovement_PrWorkOrderOperation FOREIGN KEY (WorkOrderOperationID) REFERENCES dbo.PrWorkOrderOperation (UID),
+        CONSTRAINT FK_PrMaterialMovement_PrProductionPostingLink FOREIGN KEY (PostingLinkID) REFERENCES dbo.PrProductionPostingLink (UID),
+        CONSTRAINT FK_PrMaterialMovement_OriginalMovement FOREIGN KEY (OriginalMovementID) REFERENCES dbo.PrMaterialMovement (UID),
+        CONSTRAINT FK_PrMaterialMovement_IvTrxBatch FOREIGN KEY (InventoryBatchID) REFERENCES dbo.IvTrxBatch (ID),
+        CONSTRAINT FK_PrMaterialMovement_IvTrxBatchDetail FOREIGN KEY (InventoryBatchDetailID) REFERENCES dbo.IvTrxBatchDetail (ID),
+        CONSTRAINT FK_PrMaterialMovement_IvBalLoc FOREIGN KEY (FromBalLocID) REFERENCES dbo.IvBalLoc (ID),
+        CONSTRAINT FK_PrMaterialMovement_IvLot FOREIGN KEY (LotID) REFERENCES dbo.IvLot (ID)
+    );
+    CREATE INDEX IX_PrMaterialMovement_WorkOrder_Date ON dbo.PrMaterialMovement (WorkOrderID, MovementDate);
+    CREATE INDEX IX_PrMaterialMovement_Material_Type ON dbo.PrMaterialMovement (WorkOrderMaterialID, MovementType);
+    CREATE INDEX IX_PrMaterialMovement_Operation_Date ON dbo.PrMaterialMovement (WorkOrderOperationID, MovementDate);
+    CREATE INDEX IX_PrMaterialMovement_InventoryBatch ON dbo.PrMaterialMovement (CompanyCode, BranchCode, InventoryBatchNo);
+    CREATE INDEX IX_PrMaterialMovement_OriginalMovement ON dbo.PrMaterialMovement (OriginalMovementID);
+    CREATE UNIQUE INDEX UQ_PrMaterialMovement_PostingLine
+        ON dbo.PrMaterialMovement (PostingLinkID, InventoryBatchDetailID, MovementType);
+END;
+GO
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
    Legacy snapshot migration (plan §6.7)
    Existing records are never reconstructed from today's Product Definition. They keep their data
    and are marked as version-1 legacy snapshots.
@@ -967,7 +1035,8 @@ IF EXISTS
             (N'PrWorkOrderAudit'),
             (N'PrWorkOrderChange'),
             (N'PrWorkOrderChangeLine'),
-            (N'PrProductionPostingLink')
+            (N'PrProductionPostingLink'),
+            (N'PrMaterialMovement')
     ) required (ObjectName)
     WHERE OBJECT_ID(N'dbo.' + required.ObjectName, N'U') IS NULL
 )

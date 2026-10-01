@@ -16,6 +16,10 @@ public sealed class PrMachineEditVm
     public double? ConversionTime { get; set; }
     public double? StartupTime { get; set; }
     public double? QueueTime { get; set; }
+    public bool Active { get; set; } = true;
+    public string? MachineType { get; set; }
+    public string? SerialNo { get; set; }
+    public decimal HourlyCost { get; set; }
     public DateTime? OriginalUpdated { get; set; }
     public bool IsNew { get; set; }
     public bool IsDeleted { get; set; }
@@ -121,6 +125,9 @@ public sealed class PrMachineService : IPrMachineService
 
                 if (row.IsNew)
                 {
+                    if (row.HourlyCost < 0)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Hourly Cost cannot be negative.");
+
                     if (await db.PrMachines.AnyAsync(x => x.MachineCd == mc && x.CompCode == write.CompanyCode, ct))
                         return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode,
                             "Each machine can only be assigned one process code.",
@@ -137,6 +144,10 @@ public sealed class PrMachineService : IPrMachineService
                         ConversionTime = row.ConversionTime ?? 0,
                         StartupTime = row.StartupTime ?? 0,
                         QueueTime = row.QueueTime ?? 0,
+                        Active = row.Active,
+                        MachineType = string.IsNullOrWhiteSpace(row.MachineType) ? null : row.MachineType.Trim(),
+                        SerialNo = string.IsNullOrWhiteSpace(row.SerialNo) ? null : row.SerialNo.Trim(),
+                        HourlyCost = row.HourlyCost,
                         Created = DateTime.Now,
                         UserId = write.UserId,
                         CompCode = write.CompanyCode,
@@ -146,6 +157,9 @@ public sealed class PrMachineService : IPrMachineService
                 }
                 else
                 {
+                    if (row.HourlyCost < 0)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Hourly Cost cannot be negative.");
+
                     // ProcessCd is immutable on update — use hierarchy Relocated for process change
                     var entity = await db.PrMachines.FirstOrDefaultAsync(
                         x => x.MachineCd == mc && x.ProcessCd == pc && x.CompCode == write.CompanyCode, ct);
@@ -158,6 +172,10 @@ public sealed class PrMachineService : IPrMachineService
                     if (row.ConversionTime is not null) entity.ConversionTime = row.ConversionTime;
                     if (row.StartupTime is not null) entity.StartupTime = row.StartupTime;
                     if (row.QueueTime is not null) entity.QueueTime = row.QueueTime;
+                    entity.Active = row.Active;
+                    entity.MachineType = string.IsNullOrWhiteSpace(row.MachineType) ? null : row.MachineType.Trim();
+                    entity.SerialNo = string.IsNullOrWhiteSpace(row.SerialNo) ? null : row.SerialNo.Trim();
+                    entity.HourlyCost = row.HourlyCost;
                     entity.Updated = DateTime.Now;
                     entity.UpdatedUid = write.UserId;
                 }

@@ -1,0 +1,215 @@
+@page "/planning/machine-maintenance"
+@inherits PrRefListPageBase<PrMachineMaintenanceListRow>
+
+<PageTitle>Machine Maintenance</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMachineMaintenance">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PopupVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="@HeroIconClass"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning</p>
+            <h1 class="iv-title">@HeroTitle</h1>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.5rem .75rem;">
+            <div class="iv-field">
+                <label class="iv-field__label">From</label>
+                <DxDateEdit @bind-Date="@FilterFrom" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">To</label>
+                <DxDateEdit @bind-Date="@FilterTo" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Machine</label>
+                <DxComboBox Data="@FilterMachines" @bind-Value="@FilterMachineCd"
+                            TextFieldName="@nameof(MachineCdOption.MachineCd)"
+                            ValueFieldName="@nameof(MachineCdOption.MachineCd)"
+                            NullText="All machines"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            CssClass="w-100" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Type</label>
+                <DxComboBox Data="@MaintenanceTypes" @bind-Value="@FilterType"
+                            NullText="All types"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            CssClass="w-100" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Status</label>
+                <DxComboBox Data="@MaintenanceStatuses" @bind-Value="@FilterStatus"
+                            NullText="All statuses"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            CssClass="w-100" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Reason</label>
+                <DxComboBox Data="@Reasons" @bind-Value="@FilterReasonCd"
+                            TextFieldName="@nameof(PrMaintenanceReason.ReasonCd)"
+                            ValueFieldName="@nameof(PrMaintenanceReason.ReasonCd)"
+                            NullText="All reasons"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            CssClass="w-100" />
+            </div>
+        </div>
+        <div class="iv-toolbar-row" style="margin-top:.75rem;">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Search" Click="@SearchAsync" Enabled="@(!IsLoading)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" Enabled="@(!IsLoading)" />
+        </div>
+    </section>
+
+    @if (IsLoading) { <p>Loading maintenance…</p> }
+
+    <CommonDataGridEx Columns="@Columns()"
+                      Buttons="@ToolbarButtons"
+                      ActionButtons="@RowActionButtons"
+                      KeyName="@nameof(PrMachineMaintenanceListRow.Id)"
+                      GridKey="pln-machine-maintenance-list"
+                      Title="Machine Maintenance"
+                      T="PrMachineMaintenanceListRow"
+                      OnGridInstance="@OnGridInstance"
+                      GridData="@Data"
+                      allowSelect="true"
+                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                      OnButtonEventHandle="@OnToolbarButtonAsync"
+                      OnActionEventHandle="@OnRowActionAsync" />
+
+    <DxPopup HeaderCssClass="code-style"
+             HeaderText="@(IsEditMode ? (EditEnabled ? "Edit Maintenance" : "View Maintenance") : "New Maintenance")"
+             CloseOnOutsideClick="false" Width="60vw" CssClass="common-popup"
+             @bind-Visible="@PopupVisible">
+        <Content>
+            <EditForm Model="@EditModel" Context="mhForm" OnValidSubmit="@HandleValidSubmitAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@EditMachineOptions" @bind-Value="@EditModel.MachineCd"
+                                        TextFieldName="@nameof(MachineCdOption.MachineCd)"
+                                        ValueFieldName="@nameof(MachineCdOption.MachineCd)"
+                                        ReadOnly="@(!EditEnabled)" NullText="Select machine"
+                                        CssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@MaintenanceTypes" @bind-Value="@EditModel.MType"
+                                        ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Transaction Date" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.TrxDate" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reason" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@Reasons" @bind-Value="@EditModel.ReasonCd"
+                                        TextFieldName="@nameof(PrMaintenanceReason.ReasonCd)"
+                                        ValueFieldName="@nameof(PrMaintenanceReason.ReasonCd)"
+                                        ReadOnly="@(!EditEnabled)" NullText="Reason"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description / Problem" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Description" maxlength="200" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reported By" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.ReportBy" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Status" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@MaintenanceStatuses" @bind-Value="@EditModel.Status"
+                                        ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Date/Time" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.StartDateTime" TimeSectionVisible="true"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Date/Time" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@EditModel.EndDateTime" TimeSectionVisible="true"
+                                        ReadOnly="@(!EditEnabled)"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Action Taken" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.ActionTaken" maxlength="200" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Action By" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.ActionBy" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Parts Cost" ColSpanMd="4" BeginRow="true">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.PartsCost" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Labour Cost" ColSpanMd="4">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.LabourCost" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Other Cost" ColSpanMd="4">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.OtherCost" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Remark" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.Remark" maxlength="200" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                        <Template>
+                            <div class="iv-popup-actions">
+                                @if (EditEnabled)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsSubmitting ? "Saving…" : "Save")" SubmitFormOnClick="true" Enabled="@(!IsSubmitting)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@ClosePopup" Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@ClosePopup" />
+                                    @if (CanEditFromView)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" Click="@SwitchViewToEditAsync" />
+                                    }
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                        <Template><small class="text-danger">@ErrorMessage</small></Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </EditForm>
+        </Content>
+    </DxPopup>
+</div>
+</MenuAuthorize>

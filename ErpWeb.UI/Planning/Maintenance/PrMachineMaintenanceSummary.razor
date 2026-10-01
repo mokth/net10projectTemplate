@@ -1,0 +1,158 @@
+@page "/planning/machine-maintenance-summary"
+@inherits PageBase
+
+<PageTitle>Machine Maintenance Summary</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMachineSummary">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-chart-simple"></i></div>
+        <div>
+            <p class="iv-eyebrow">Planning · Inquiry</p>
+            <h1 class="iv-title">Machine Maintenance Summary</h1>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.5rem .75rem;">
+            <div class="iv-field">
+                <label class="iv-field__label">From</label>
+                <DxDateEdit @bind-Date="@FromDate" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">To</label>
+                <DxDateEdit @bind-Date="@ToDate" />
+            </div>
+            <div class="iv-field">
+                <label class="iv-field__label">Machine</label>
+                <DxComboBox Data="@Machines" @bind-Value="@MachineCd"
+                            TextFieldName="@nameof(MachineCdOption.MachineCd)"
+                            ValueFieldName="@nameof(MachineCdOption.MachineCd)"
+                            NullText="All machines"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                            CssClass="w-100" />
+            </div>
+        </div>
+        <div class="iv-toolbar-row" style="margin-top:.75rem;">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                      Text="@(IsLoading ? "Running…" : "Run")"
+                      Click="@RunAsync"
+                      Enabled="@(!IsLoading)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Clear"
+                      Click="@ClearFiltersAsync"
+                      Enabled="@(!IsLoading)" />
+        </div>
+        <p class="iv-hint">
+            PM cards use planned preventive dates in range. Hours and cost use actual maintenance datetime in range.
+        </p>
+    </section>
+
+    @if (IsLoading)
+    {
+        <div class="iv-skeleton" aria-busy="true">
+            <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+            <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+            <div class="iv-skeleton__line"></div>
+        </div>
+    }
+    else if (Result is not null)
+    {
+        <section class="iv-card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem;">
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Scheduled PM</span>
+                    <strong class="iv-kpi__value">@Result.Kpis.ScheduledPm.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Completed PM</span>
+                    <strong class="iv-kpi__value">@Result.Kpis.CompletedPm.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Pending PM</span>
+                    <strong class="iv-kpi__value">@Result.Kpis.PendingPm.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Overdue PM</span>
+                    <strong class="iv-kpi__value">@Result.Kpis.OverduePm.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Breakdowns</span>
+                    <strong class="iv-kpi__value">@Result.Kpis.Breakdowns.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Breakdown Hours</span>
+                    <strong class="iv-kpi__value">@HoursText(Result.Kpis.BreakdownHours)</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Maintenance Hours</span>
+                    <strong class="iv-kpi__value">@HoursText(Result.Kpis.MaintenanceHours)</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Maintenance Cost</span>
+                    <strong class="iv-kpi__value">@MoneyText(Result.Kpis.MaintenanceCost)</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="iv-card">
+            <h2 class="pi-headline">By Machine</h2>
+            @if (Result.ByMachine.Count == 0)
+            {
+                <p class="text-muted mb-0">No machine rows for the current filters.</p>
+            }
+            else
+            {
+                <DxGrid Data="@Result.ByMachine" CssClass="w-100">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.MachineCd)" Caption="Machine" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.ScheduledPm)" Caption="Scheduled" Width="100px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.CompletedPm)" Caption="Done" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.PendingPm)" Caption="Pending" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.OverduePm)" Caption="Overdue" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.Breakdowns)" Caption="Breakdowns" Width="110px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.MaintenanceHours)" Caption="Maint. Hours" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.BreakdownHours)" Caption="Breakdown Hours" Width="130px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.Cost)" Caption="Cost" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                </DxGrid>
+            }
+        </section>
+
+        <section class="iv-card">
+            <h2 class="pi-headline">By Reason</h2>
+            @if (Result.ByReason.Count == 0)
+            {
+                <p class="text-muted mb-0">No reason rows for the current filters.</p>
+            }
+            else
+            {
+                <DxGrid Data="@Result.ByReason" CssClass="w-100">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.ReasonCd)" Caption="Reason" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.ReasonType)" Caption="Type" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.Count)" Caption="Count" Width="90px" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.Hours)" Caption="Hours" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.Cost)" Caption="Cost" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                    </Columns>
+                </DxGrid>
+            }
+        </section>
+    }
+</div>
+</MenuAuthorize>

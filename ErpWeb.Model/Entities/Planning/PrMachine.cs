@@ -16,4 +16,8 @@ public class PrMachine
     public double? ConversionTime { get; set; }
     public double? StartupTime { get; set; }
     public double? QueueTime { get; set; }
+    public bool Active { get; set; } = true;
+    public string? MachineType { get; set; }
+    public string? SerialNo { get; set; }
+    public decimal HourlyCost { get; set; }
 }

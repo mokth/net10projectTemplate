@@ -687,3 +687,41 @@
     </div>
 </MenuAuthorize>
 
+@code {
+    // Keep these helpers in the .razor file (not RenderTreeBuilder in .razor.cs).
+    // Scoped CSS isolation only stamps attributes on markup compiled from this file;
+    // code-behind OpenElement output never gets them, so caption/value layout collapses.
+    private RenderFragment Kpi(string label, string value, string? note) => __builder =>
+    {
+        <article class="pwo-kpi">
+            <span>@label</span>
+            <div class="pwo-kpi__value">
+                <strong>@value</strong>
+                @if (!string.IsNullOrWhiteSpace(note))
+                {
+                    <small>@note</small>
+                }
+            </div>
+        </article>
+    };
+
+    private RenderFragment Detail(string label, string? value) => __builder =>
+    {
+        <div class="pwo-detail">
+            <span>@label</span>
+            <strong>@(string.IsNullOrWhiteSpace(value) ? "—" : value)</strong>
+        </div>
+    };
+
+    private RenderFragment Gate(string label, string message) => __builder =>
+    {
+        <article class="pwo-gate">
+            <i class="fa-solid fa-lock" aria-hidden="true"></i>
+            <div>
+                <strong>@label</strong>
+                <span>@message</span>
+            </div>
+        </article>
+    };
+}
+

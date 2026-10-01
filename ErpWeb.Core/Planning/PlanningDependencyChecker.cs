@@ -104,7 +104,7 @@ public sealed class PlanningDependencyChecker : IPlanningDependencyChecker
             });
         }
 
-        if (await db.PrPreventives.AsNoTracking().AnyAsync(x => x.MachineCd == mc, ct))
+        if (await db.PrPreventives.AsNoTracking().AnyAsync(x => x.MachineCd == mc && x.CompCode == scope.CompanyCode, ct))
         {
             refs.Add(new DependencyReference
             {

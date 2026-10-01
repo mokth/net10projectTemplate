@@ -70,6 +70,24 @@
                             <DxTextBox @bind-Text="@EditModel.MachineDes" maxlength="100" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine Type" ColSpanMd="6" BeginRow="true">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.MachineType" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Serial No" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@EditModel.SerialNo" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Hourly Cost" ColSpanMd="6" BeginRow="true">
+                        <Template><DxSpinEdit @bind-Value="@EditModel.HourlyCost" ReadOnly="@(!EditEnabled)" /></Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Active" ColSpanMd="3">
+                        <Template>
+                            <DxCheckBox @bind-Checked="@EditModel.Active" AllowIndeterminateState="false" ReadOnly="@(!EditEnabled)" />
+                        </Template>
+                    </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Conversion" ColSpanMd="4" BeginRow="true">
                         <Template><DxSpinEdit @bind-Value="@EditModel.ConversionTime" ReadOnly="@(!EditEnabled)" /></Template>
                     </DxFormLayoutItem>

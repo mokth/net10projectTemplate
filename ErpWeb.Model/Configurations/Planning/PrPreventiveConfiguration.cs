@@ -21,5 +21,11 @@ public class PrPreventiveConfiguration : IEntityTypeConfiguration<PrPreventive>
         builder.Property(e => e.Updated);
         builder.Property(e => e.UserId).HasColumnName("UserID").HasMaxLength(10);
         builder.Property(e => e.Remark).HasMaxLength(100);
+        builder.Property(e => e.Status).HasMaxLength(15).IsRequired().HasDefaultValue("PLANNED");
+        builder.Property(e => e.CompletedOn);
+        builder.Property(e => e.CompletedBy).HasMaxLength(20);
+        builder.Property(e => e.CompCode).HasMaxLength(10).IsRequired();
+        builder.Property(e => e.BranchCode).HasMaxLength(10);
+        builder.Property(e => e.LocCode).HasMaxLength(10);
     }
 }
