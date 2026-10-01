@@ -63,6 +63,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         var save = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines = [new PrProductDefLineVm { OperationKey = operationKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
@@ -130,6 +131,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         PrProductDefEditVm Build(decimal duration, bool withMachine) => new()
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines = [new PrProductDefLineVm { OperationKey = operationKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
@@ -180,6 +182,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         var draft = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines = [new PrProductDefLineVm { OperationKey = washKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
@@ -216,7 +219,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
                 .Select(x => x.RouteStepKey).SingleAsync();
         }
 
-        var loaded = await sut.GetAsync("FG001");
+        var loaded = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         loaded.Data!.Lines[0].SupplySource = PrMaterialSupplySources.InternalRouteWip;
         loaded.Data.Lines[0].ProducingRouteStepKey = producerKey;
         loaded.Data.Lines[0].IssueMethod = PrMaterialIssueMethods.Backflush;
@@ -227,7 +230,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         Assert.Equal(PrMaterialIssueMethods.Backflush, saved.Data.Lines[0].IssueMethod);
         Assert.Equal(producerKey, saved.Data.Lines[0].ProducingRouteStepKey);
 
-        var reloaded = await sut.GetAsync("FG001");
+        var reloaded = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         reloaded.Data!.Lines[0].ProducingRouteStepKey = finishedKey;
         var mismatched = await sut.SaveAsync(reloaded.Data, isNew: false, activate: false);
         Assert.False(mismatched.Succeeded);
@@ -250,6 +253,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         var draft = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines = [new PrProductDefLineVm { OperationKey = operationKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
@@ -266,7 +270,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         }, isNew: true, activate: false);
         Assert.True(draft.Succeeded, draft.Message);
 
-        var loaded = await sut.GetAsync("FG001");
+        var loaded = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         loaded.Data!.Lines[0].SupplySource = PrMaterialSupplySources.InternalRouteWip;
         loaded.Data.Lines[0].ProducingRouteStepKey = null;
 
@@ -347,6 +351,7 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         PrProductDefEditVm Request(string uom) => new()
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines =

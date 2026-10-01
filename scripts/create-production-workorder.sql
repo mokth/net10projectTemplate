@@ -47,6 +47,8 @@ BEGIN
         ProductCode nvarchar(30) NOT NULL,
         ProductDescription nvarchar(200) NULL,
         OutputUOM nvarchar(10) NULL,
+        SourceDefinitionCode nvarchar(30) NOT NULL,
+        SourceDefinitionName nvarchar(100) NULL,
         SourceBomHdrID bigint NOT NULL,
         SourceBomVersion int NOT NULL,
         BomBaseQty decimal(18,4) NOT NULL,
@@ -94,7 +96,7 @@ BEGIN
         CONSTRAINT CK_PrWorkOrder_Direction CHECK (SchedulingDirection IN (N'FORWARD', N'BACKWARD')),
         CONSTRAINT CK_PrWorkOrder_Status CHECK
             (Status IN (N'DRAFT', N'RELEASED', N'IN_PROGRESS', N'COMPLETED', N'CLOSED', N'CANCELLED')),
-        CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2))
+        CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2, 3))
     );
 
     CREATE UNIQUE INDEX UQ_PrWorkOrder_Company_WorkOrderNo
@@ -103,6 +105,8 @@ BEGIN
         ON dbo.PrWorkOrder (CompanyCode, BranchCode, Status, PlannedStartDateTime);
     CREATE INDEX IX_PrWorkOrder_Company_Branch_Product
         ON dbo.PrWorkOrder (CompanyCode, BranchCode, ProductCode);
+    CREATE INDEX IX_PrWorkOrder_Company_Product_Definition
+        ON dbo.PrWorkOrder (CompanyCode, ProductCode, SourceDefinitionCode);
     CREATE INDEX IX_PrWorkOrder_SourceBomHdrID
         ON dbo.PrWorkOrder (SourceBomHdrID);
     CREATE INDEX IX_PrWorkOrder_Company_SnapshotFormat
@@ -203,7 +207,7 @@ IF NOT EXISTS
       AND name = N'CK_PrWorkOrder_SnapshotFormat'
 )
     ALTER TABLE dbo.PrWorkOrder WITH CHECK
-        ADD CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2));
+        ADD CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2, 3));
 GO
 
 IF NOT EXISTS
@@ -301,6 +305,7 @@ BEGIN
         Tolerance decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderMaterial_Tolerance DEFAULT (0),
         IssueMethod nvarchar(20) NOT NULL CONSTRAINT DF_PrWorkOrderMaterial_IssueMethod DEFAULT (N'MANUAL'),
         SupplySource nvarchar(40) NOT NULL CONSTRAINT DF_PrWorkOrderMaterial_SupplySource DEFAULT (N'PURCHASED'),
+        ComponentDefinitionCode nvarchar(30) NULL,
         ProducingRouteStepID bigint NULL,
         RequiredQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderMaterial_Required DEFAULT (0),
         RequiredUOM nvarchar(10) NULL,

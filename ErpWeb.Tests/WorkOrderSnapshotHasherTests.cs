@@ -28,6 +28,7 @@ public sealed class WorkOrderSnapshotHasherTests
         BomBaseQty = 5m,
         BomBaseUom = "PCS",
         PlannedQty = 100m,
+        SnapshotHashVersion = ProductionSnapshotHashVersions.V1,
         DefinitionEffectiveDate = new DateTime(2026, 7, 1),
         SourceEffectiveFrom = new DateTime(2026, 1, 1),
         ScheduleAnchorDateTime = new DateTime(2026, 7, 6, 8, 0, 0),
@@ -419,8 +420,8 @@ public sealed class WorkOrderSnapshotHasherTests
     [Fact]
     public void Definition_source_hash_is_stable_for_identical_payloads()
     {
-        var first = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
-        var second = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var first = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
+        var second = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         Assert.Equal(first, second);
         Assert.Equal(64, first.Length);
@@ -429,7 +430,7 @@ public sealed class WorkOrderSnapshotHasherTests
     [Fact]
     public void Definition_source_hash_ignores_volatile_audit_metadata()
     {
-        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         var mutated = Revision();
         mutated.CreatedDate = new DateTime(2026, 9, 1);
@@ -442,54 +443,54 @@ public sealed class WorkOrderSnapshotHasherTests
         mutated.Lines.First().RowVersion = [7, 7];
         mutated.Operations.First().RowVersion = [8, 8];
 
-        Assert.Equal(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(mutated));
+        Assert.Equal(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(mutated));
     }
 
     [Fact]
     public void Definition_source_hash_changes_when_a_manufacturing_field_changes()
     {
-        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         var mutated = Revision();
         mutated.Lines.First().StdQty = 2.5m;
 
-        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(mutated));
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(mutated));
     }
 
     [Fact]
     public void Definition_source_hash_changes_with_revision_identity_and_effective_bounds()
     {
-        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         var versionBump = Revision();
         versionBump.Version = 4;
         var effectiveBump = Revision();
         effectiveBump.EffectiveFrom = new DateTime(2026, 2, 1);
 
-        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(versionBump));
-        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(effectiveBump));
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(versionBump));
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(effectiveBump));
     }
 
     [Fact]
     public void Definition_source_hash_changes_when_the_producer_reference_changes()
     {
-        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         var mutated = Revision();
         mutated.Lines.First().ProducingRouteStepId = 501;
 
-        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(mutated));
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(mutated));
     }
 
     [Fact]
     public void Definition_source_hash_covers_the_machine_option_dimensions()
     {
-        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(Revision());
+        var expected = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(Revision());
 
         var mutated = Revision();
         mutated.Operations.First().Machines.First().OutputPerCycle = 12m;
 
-        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(mutated));
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(mutated));
     }
 
     [Fact]
@@ -510,10 +511,10 @@ public sealed class WorkOrderSnapshotHasherTests
         };
         header.Lines.Add(orphan);
 
-        var withOrphan = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(header);
+        var withOrphan = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(header);
 
         orphan.StdQty = 3m;
 
-        Assert.NotEqual(withOrphan, WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(header));
+        Assert.NotEqual(withOrphan, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(header));
     }
 }

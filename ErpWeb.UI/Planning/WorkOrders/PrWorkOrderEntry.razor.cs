@@ -2,8 +2,10 @@ using System.Globalization;
 using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -17,6 +19,7 @@ public partial class PrWorkOrderEntry : PageBase
     [Parameter] public string? WorkOrderNo { get; set; }
 
     [Inject] private IProductionWorkOrderService WorkOrders { get; set; } = default!;
+    [Inject] private IPrProductDefService ProductDefs { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     private string? _loadedKey;
@@ -31,11 +34,17 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CancelConfirmVisible;
     protected bool HelpVisible;
     protected bool RefreshVisible;
+    protected bool ChangeDefinitionVisible;
     protected bool MaterialChangeVisible;
     protected string RefreshReason = string.Empty;
+    protected string ChangeDefinitionReason = string.Empty;
+    protected string? SelectedChangeDefinitionCode;
     protected ProductionWorkOrderRefreshPreview? RefreshPreviewModel;
+    protected ProductionWorkOrderChangeDefinitionPreview? ChangeDefinitionPreviewModel;
     protected ProductionWorkOrderMaterialVm? MaterialChangeSource;
     protected IReadOnlyList<ProductionWorkOrderMaterialAlternateVm> MaterialAlternates { get; set; } = [];
+    protected IReadOnlyList<DefinitionOption> DefinitionOptions { get; set; } = [];
+    protected IReadOnlyList<DefinitionOption> ChangeDefinitionOptions { get; set; } = [];
     protected long? SelectedAlternateBomLineId;
     protected bool ConfirmDiscardVisible;
     protected bool ConcurrencyVisible;
@@ -43,6 +52,8 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanEdit;
     protected bool CanRelease;
     protected bool CanCancel;
+    protected bool CanAccessMaterialIssue;
+    protected bool CanAddMaterialIssue;
     protected int ActiveTabIndex;
     protected bool InputsExpanded = true;
     protected long? FocusedRouteUid { get; set; }
@@ -71,13 +82,33 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsDraft => DetailModel is null || DetailModel.Status == ProductionWorkOrderStatuses.Draft;
     protected bool CanEditFields => !IsLoading && IsDraft &&
         ((IsNewMode && CanAdd) || (IsEditMode && CanEdit));
+    /// <summary>Format 1/2 drafts must Refresh before any input/structural edits.</summary>
+    protected bool NeedsDefinitionUpgrade =>
+        DetailModel is not null && IsDraft && !IsCurrentSnapshot;
+    protected bool CanEditInputs => CanEditFields && !NeedsDefinitionUpgrade;
+    protected bool CanEditDefinition => IsNewMode && CanEditInputs;
     protected bool CanOpenEdit => IsViewMode && IsDraft && CanEdit && DetailModel is not null;
     protected bool CanReleaseAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
         && CanRelease
+        && IsCurrentSnapshot
         && !HasUnsavedInputChanges;
     protected bool IsCurrentSnapshot =>
         DetailModel?.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current;
     protected bool CanCancelAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft } && CanCancel;
+    protected bool CanIssueMaterials => DetailModel is not null
+        && DetailModel.Status is ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress
+        && CanAccessMaterialIssue;
+    protected bool CanStartMaterialIssue => CanIssueMaterials && CanAddMaterialIssue && !IsSubmitting;
+    protected bool CanSaveDraft => CanEditInputs && !IsSubmitting;
+    protected bool CanRefreshDefinition => CanEditFields
+        && DetailModel is not null
+        && !HasUnsavedInputChanges
+        && !IsSubmitting;
+    protected bool CanChangeDefinition => CanEditFields
+        && IsCurrentSnapshot
+        && DetailModel is not null
+        && !HasUnsavedInputChanges
+        && !IsSubmitting;
     protected bool IsBackwardSchedule => string.Equals(
         Request.SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.Ordinal);
 
@@ -88,9 +119,42 @@ public partial class PrWorkOrderEntry : PageBase
     protected string CurrentStatus => DetailModel?.Status ?? ProductionWorkOrderStatuses.Draft;
     protected string? CurrentWorkOrderNo => DetailModel?.WorkOrderNo ?? Request.WorkOrderNo;
     protected int? CurrentBomVersion => PreviewModel?.SourceBomVersion
-        ?? (RequestMatchesSavedProduct ? DetailModel?.SourceBomVersion : null);
+        ?? (RequestMatchesSavedIdentity ? DetailModel?.SourceBomVersion : null);
     protected int? CurrentSnapshotRevision => DetailModel?.SnapshotRevision;
-    protected DateTime? CurrentSnapshotDate => PreviewModel?.SnapshotAsOfDate ?? DetailModel?.SnapshotAsOfDate;
+    protected string CurrentDefinitionCode => PreviewModel?.SourceDefinitionCode
+        ?? DetailModel?.SourceDefinitionCode
+        ?? Request.DefinitionCode
+        ?? string.Empty;
+    protected string? CurrentDefinitionName => PreviewModel?.SourceDefinitionName
+        ?? DetailModel?.SourceDefinitionName
+        ?? DefinitionOptions.FirstOrDefault(x =>
+            string.Equals(x.Code, CurrentDefinitionCode, StringComparison.OrdinalIgnoreCase))?.Name;
+    protected string DefinitionHeroChip
+    {
+        get
+        {
+            var code = CurrentDefinitionCode;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return string.Empty;
+            }
+
+            return CurrentBomVersion is int version ? $"{code} · V{version}" : code;
+        }
+    }
+    protected string DefinitionDisplayLabel
+    {
+        get
+        {
+            var code = CurrentDefinitionCode;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return "—";
+            }
+
+            return string.IsNullOrWhiteSpace(CurrentDefinitionName) ? code : $"{code} — {CurrentDefinitionName}";
+        }
+    }
     protected bool HasUnsavedInputChanges => !IsViewMode
         && !IsLoading
         && _savedInputFingerprint is not null
@@ -99,16 +163,22 @@ public partial class PrWorkOrderEntry : PageBase
         && string.Equals(_previewInputFingerprint, InputFingerprint(), StringComparison.Ordinal);
     protected bool RequestMatchesSavedProduct => DetailModel is not null
         && string.Equals(Request.ProductCode?.Trim(), DetailModel.ProductCode, StringComparison.OrdinalIgnoreCase);
+    protected bool RequestMatchesSavedIdentity => RequestMatchesSavedProduct
+        && string.Equals(
+            (Request.DefinitionCode ?? string.Empty).Trim(),
+            DetailModel?.SourceDefinitionCode ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
     protected string CurrentProductDescription => PreviewModel?.ProductDescription
         ?? _selectedProductDescription
-        ?? (RequestMatchesSavedProduct ? DetailModel?.ProductDescription : null)
+        ?? (RequestMatchesSavedIdentity ? DetailModel?.ProductDescription : null)
         ?? string.Empty;
     protected string CurrentOutputUom => PreviewModel?.OutputUom
         ?? _selectedProductUom
-        ?? (RequestMatchesSavedProduct ? DetailModel?.OutputUom : null)
+        ?? (RequestMatchesSavedIdentity ? DetailModel?.OutputUom : null)
         ?? string.Empty;
     protected string SnapshotState => PreviewModel is not null
         ? IsPreviewCurrent ? "Unsaved processed preview" : "Preview out of date"
+        : NeedsDefinitionUpgrade ? "Refresh required (older snapshot format)"
         : HasUnsavedInputChanges ? "Changes not processed"
         : DetailModel is not null ? "Saved server snapshot"
         : "Not processed";
@@ -116,6 +186,14 @@ public partial class PrWorkOrderEntry : PageBase
     {
         get
         {
+            if (NeedsDefinitionUpgrade)
+            {
+                return
+                [
+                    $"This Draft uses snapshot format v{DetailModel!.SnapshotFormatVersion}. Use Refresh Definition to upgrade to the current format before editing structure, changing definition, or releasing."
+                ];
+            }
+
             var warnings = PreviewModel?.Warnings ?? [];
             if (PreviewModel is not null && !IsPreviewCurrent)
             {
@@ -138,6 +216,13 @@ public partial class PrWorkOrderEntry : PageBase
         PreviewModel?.RouteSteps ?? DetailModel?.RouteSteps ?? [];
     protected IReadOnlyList<ProductionWorkOrderMaterialVm> MaterialRows =>
         PreviewModel?.Materials ?? DetailModel?.Materials ?? [];
+    protected IReadOnlyList<ProductionWorkOrderMaterialVm> ExecutionMaterialRows => DetailModel?.Materials ?? [];
+    protected decimal ExecutionRequiredQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.RequiredQty));
+    protected decimal ExecutionIssuedQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.IssuedQty));
+    protected decimal ExecutionReturnedQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.ReturnedQty));
+    protected decimal ExecutionNetIssuedQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.IssuedQty - x.ReturnedQty));
+    protected decimal ExecutionConsumedQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.ConsumedQty));
+    protected decimal ExecutionOutstandingQty => IvQty.Round(ExecutionMaterialRows.Sum(x => x.OpenRequirementQty));
     protected IReadOnlyList<ProductionWorkOrderOperationVm> OperationRows =>
         PreviewModel?.Operations ?? DetailModel?.Operations ?? [];
     protected IReadOnlyList<ProductionWorkOrderOperationVm> VisibleOperationRows
@@ -239,9 +324,9 @@ public partial class PrWorkOrderEntry : PageBase
         get
         {
             var qty = PreviewModel?.BomBaseQty
-                ?? (RequestMatchesSavedProduct ? DetailModel?.BomBaseQty : null);
+                ?? (RequestMatchesSavedIdentity ? DetailModel?.BomBaseQty : null);
             var uom = PreviewModel?.BomBaseUom
-                ?? (RequestMatchesSavedProduct ? DetailModel?.BomBaseUom : null);
+                ?? (RequestMatchesSavedIdentity ? DetailModel?.BomBaseUom : null);
             return qty is null ? "—" : $"{qty.Value:n4} {uom}".Trim();
         }
     }
@@ -266,6 +351,8 @@ public partial class PrWorkOrderEntry : PageBase
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Edit);
         CanRelease = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, ProductionPermissionCodes.Release);
         CanCancel = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Cancel);
+        CanAccessMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access);
+        CanAddMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
 
         var key = $"{Mode}|{WorkOrderNo}";
         if (string.Equals(key, _loadedKey, StringComparison.OrdinalIgnoreCase) && !IsLoading)
@@ -291,6 +378,8 @@ public partial class PrWorkOrderEntry : PageBase
             {
                 DetailModel = null;
                 Request = NewRequest();
+                DefinitionOptions = [];
+                ChangeDefinitionOptions = [];
                 _selectedProductDescription = null;
                 _selectedProductUom = null;
                 _savedInputFingerprint = InputFingerprint();
@@ -311,6 +400,7 @@ public partial class PrWorkOrderEntry : PageBase
             }
 
             ApplyDetail(result.Data);
+            await LoadDefinitionOptionsAsync(result.Data.ProductCode, selectDefaultWhenEmpty: false);
         }
         finally
         {
@@ -318,7 +408,7 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
 
-    protected Task OnProductCodeChanged(string? value)
+    protected async Task OnProductCodeChanged(string? value)
     {
         Request.ProductCode = value ?? string.Empty;
         PreviewModel = null;
@@ -329,7 +419,10 @@ public partial class PrWorkOrderEntry : PageBase
             _selectedProductUom = null;
         }
 
-        return Task.CompletedTask;
+        if (IsNewMode)
+        {
+            await LoadDefinitionOptionsAsync(Request.ProductCode, selectDefaultWhenEmpty: true);
+        }
     }
 
     protected async Task OnProductSelectedAsync(IvStockMasterLookupRow row)
@@ -339,7 +432,25 @@ public partial class PrWorkOrderEntry : PageBase
         _selectedProductUom = row.StdUom;
         PreviewModel = null;
         _previewInputFingerprint = null;
+        if (IsNewMode)
+        {
+            await LoadDefinitionOptionsAsync(row.ICode, selectDefaultWhenEmpty: true);
+        }
+
         await InvokeAsync(StateHasChanged);
+    }
+
+    protected Task OnDefinitionCodeChanged(string? value)
+    {
+        if (!CanEditDefinition)
+        {
+            return Task.CompletedTask;
+        }
+
+        Request.DefinitionCode = value ?? string.Empty;
+        PreviewModel = null;
+        _previewInputFingerprint = null;
+        return Task.CompletedTask;
     }
 
     protected async Task ProcessPreviewAsync()
@@ -361,10 +472,14 @@ public partial class PrWorkOrderEntry : PageBase
             Request.PlannedStartDate = result.Data.PlannedStartDate;
             Request.PlannedCompletionDate = result.Data.PlannedCompletionDate;
             Request.SchedulingDirection = result.Data.SchedulingDirection;
+            if (!string.IsNullOrWhiteSpace(result.Data.SourceDefinitionCode))
+            {
+                Request.DefinitionCode = result.Data.SourceDefinitionCode;
+            }
             _previewInputFingerprint = InputFingerprint();
             _selectedProductDescription = result.Data.ProductDescription;
             _selectedProductUom = result.Data.OutputUom;
-            StatusMessage = $"Preview calculated from Product Definition V{result.Data.SourceBomVersion} using the current Work Order quantity and scheduling rules.";
+            StatusMessage = $"Preview calculated from Product Definition {result.Data.SourceDefinitionCode} V{result.Data.SourceBomVersion} using the current Work Order quantity and scheduling rules.";
             ActiveTabIndex = 1;
         }
         finally
@@ -379,22 +494,40 @@ public partial class PrWorkOrderEntry : PageBase
         ClearFeedback();
         try
         {
+            if (NeedsDefinitionUpgrade)
+            {
+                ErrorMessage =
+                    "This Draft uses an older snapshot format. Refresh Definition before saving or making structural edits.";
+                return;
+            }
+
             PrepareRequestIdentity();
             var wasNew = IsNewMode;
-            var result = wasNew
-                ? await WorkOrders.CreateDraftAsync(Request)
-                : IsCurrentSnapshot
-                    ? await WorkOrders.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
-                    {
-                        WorkOrderNo = DetailModel!.WorkOrderNo,
-                        PlannedQty = Request.PlannedQty,
-                        SchedulingDirection = Request.SchedulingDirection,
-                        ScheduleAnchorDateTime = GetRequestedScheduleAnchor(),
-                        SourceReference = Request.SourceReference,
-                        Remark = Request.Remark,
-                        RowVersion = DetailModel.RowVersion
-                    })
-                    : await WorkOrders.SaveDraftAsync(Request);
+            IvMasterOperationResult<ProductionWorkOrderDetail> result;
+            if (wasNew)
+            {
+                result = await WorkOrders.CreateDraftAsync(Request);
+            }
+            else if (IsCurrentSnapshot)
+            {
+                result = await WorkOrders.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+                {
+                    WorkOrderNo = DetailModel!.WorkOrderNo,
+                    PlannedQty = Request.PlannedQty,
+                    SchedulingDirection = Request.SchedulingDirection,
+                    ScheduleAnchorDateTime = GetRequestedScheduleAnchor(),
+                    SourceReference = Request.SourceReference,
+                    Remark = Request.Remark,
+                    RowVersion = DetailModel.RowVersion
+                });
+            }
+            else
+            {
+                ErrorMessage =
+                    "This Draft uses an older snapshot format. Refresh Definition before saving or making structural edits.";
+                return;
+            }
+
             if (!result.Succeeded || result.Data is null)
             {
                 ApplyFailure(result);
@@ -518,8 +651,115 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
 
+    protected async Task OpenChangeDefinitionAsync()
+    {
+        if (DetailModel is null || !CanChangeDefinition)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            await LoadDefinitionOptionsAsync(DetailModel.ProductCode, selectDefaultWhenEmpty: false);
+            ChangeDefinitionOptions = DefinitionOptions
+                .Where(x => !string.Equals(x.Code, DetailModel.SourceDefinitionCode, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (ChangeDefinitionOptions.Count == 0)
+            {
+                ErrorMessage = "No other ACTIVE Product Definitions are available for this product.";
+                return;
+            }
+
+            SelectedChangeDefinitionCode = ChangeDefinitionOptions[0].Code;
+            ChangeDefinitionPreviewModel = null;
+            ChangeDefinitionReason = string.Empty;
+            ChangeDefinitionVisible = true;
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected void OnChangeDefinitionTargetChanged(string? value)
+    {
+        SelectedChangeDefinitionCode = value;
+        ChangeDefinitionPreviewModel = null;
+    }
+
+    protected async Task PreviewChangeDefinitionAsync()
+    {
+        if (DetailModel is null || string.IsNullOrWhiteSpace(SelectedChangeDefinitionCode))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.PreviewChangeDefinitionAsync(
+                DetailModel.WorkOrderNo, SelectedChangeDefinitionCode);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            ChangeDefinitionPreviewModel = result.Data;
+            StatusMessage =
+                $"Change Definition preview ready for {result.Data.TargetDefinitionCode} V{result.Data.TargetSourceBomVersion}.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task ConfirmChangeDefinitionAsync()
+    {
+        if (DetailModel is null || ChangeDefinitionPreviewModel is null)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.ConfirmChangeDefinitionAsync(new ProductionWorkOrderChangeDefinitionConfirm
+            {
+                WorkOrderNo = DetailModel.WorkOrderNo,
+                RowVersion = ChangeDefinitionPreviewModel.RowVersion,
+                TargetDefinitionCode = ChangeDefinitionPreviewModel.TargetDefinitionCode,
+                TargetSourceProductDefinitionRevisionId =
+                    ChangeDefinitionPreviewModel.TargetSourceProductDefinitionRevisionId ?? 0,
+                TargetDefinitionSourceHashVersion = ChangeDefinitionPreviewModel.TargetDefinitionSourceHashVersion,
+                TargetDefinitionSourceHash = ChangeDefinitionPreviewModel.TargetDefinitionSourceHash,
+                Reason = ChangeDefinitionReason
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            ApplyDetail(result.Data);
+            PreviewModel = null;
+            ChangeDefinitionVisible = false;
+            StatusMessage =
+                $"Draft {result.Data.WorkOrderNo} now uses Product Definition {result.Data.SourceDefinitionCode} V{result.Data.SourceBomVersion}.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
     protected bool CanSelectMachine(ProductionWorkOrderMachineVm machine) =>
-        CanEditFields
+        CanEditInputs
         && IsCurrentSnapshot
         && !machine.IsSelected
         && DetailModel is not null
@@ -566,7 +806,7 @@ public partial class PrWorkOrderEntry : PageBase
     }
 
     protected bool CanChangeMaterial(ProductionWorkOrderMaterialVm material) =>
-        CanEditFields
+        CanEditInputs
         && IsCurrentSnapshot
         && DetailModel is not null
         && !string.IsNullOrWhiteSpace(material.AlternateGroupCode)
@@ -759,6 +999,16 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
 
+    protected void OpenMaterialIssue()
+    {
+        if (DetailModel is null || !CanStartMaterialIssue)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"/planning/material-issues/new/{Uri.EscapeDataString(DetailModel.WorkOrderNo)}");
+    }
+
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
     protected string? FieldError(string field) => ValidationErrors.GetValueOrDefault(field);
@@ -793,8 +1043,8 @@ public partial class PrWorkOrderEntry : PageBase
         {
             WorkOrderNo = detail.WorkOrderNo,
             ProductCode = detail.ProductCode,
+            DefinitionCode = detail.SourceDefinitionCode,
             PlannedQty = detail.PlannedQty,
-            SnapshotAsOfDate = detail.SnapshotAsOfDate,
             PlannedStartDate = detail.PlannedStartDate,
             PlannedCompletionDate = detail.PlannedCompletionDate,
             SchedulingDirection = detail.SchedulingDirection,
@@ -807,6 +1057,72 @@ public partial class PrWorkOrderEntry : PageBase
         _selectedProductUom = detail.OutputUom;
         _savedInputFingerprint = InputFingerprint();
         _previewInputFingerprint = null;
+        ChangeDefinitionPreviewModel = null;
+        SelectedChangeDefinitionCode = null;
+    }
+
+    private async Task LoadDefinitionOptionsAsync(string? productCode, bool selectDefaultWhenEmpty)
+    {
+        var code = (productCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            DefinitionOptions = [];
+            if (selectDefaultWhenEmpty)
+            {
+                Request.DefinitionCode = PrProductDefinitionCodes.Standard;
+            }
+
+            return;
+        }
+
+        var result = await ProductDefs.ListActiveDefinitionsAsync(code);
+        if (!result.Succeeded || result.Data is null)
+        {
+            DefinitionOptions = [];
+            if (selectDefaultWhenEmpty && string.IsNullOrWhiteSpace(Request.DefinitionCode))
+            {
+                Request.DefinitionCode = PrProductDefinitionCodes.Standard;
+            }
+
+            if (!result.Succeeded && !string.IsNullOrWhiteSpace(result.Message))
+            {
+                ErrorMessage = result.Message;
+            }
+
+            return;
+        }
+
+        DefinitionOptions = result.Data
+            .Select(x => new DefinitionOption(
+                x.DefinitionCode,
+                x.DefinitionName,
+                x.Version,
+                x.IsDefaultDefinition,
+                FormatDefinitionOptionLabel(x)))
+            .ToList();
+
+        if (!selectDefaultWhenEmpty)
+        {
+            return;
+        }
+
+        var selected = DefinitionOptions.FirstOrDefault(x => x.IsDefault)
+            ?? (DefinitionOptions.Count == 1 ? DefinitionOptions[0] : null)
+            ?? DefinitionOptions.FirstOrDefault(x =>
+                string.Equals(x.Code, PrProductDefinitionCodes.Standard, StringComparison.OrdinalIgnoreCase))
+            ?? DefinitionOptions.FirstOrDefault();
+
+        Request.DefinitionCode = selected?.Code ?? PrProductDefinitionCodes.Standard;
+    }
+
+    private static string FormatDefinitionOptionLabel(PrProductDefinitionLookupRow row)
+    {
+        var name = string.IsNullOrWhiteSpace(row.DefinitionName)
+            ? row.DefinitionCode
+            : $"{row.DefinitionCode} — {row.DefinitionName}";
+        var revision = row.ActiveVersion ?? row.Version;
+        var suffix = revision > 0 ? $" · V{revision}" : string.Empty;
+        return row.IsDefaultDefinition ? $"{name}{suffix} (default)" : $"{name}{suffix}";
     }
 
     private void ApplyFailure<T>(IvMasterOperationResult<T> result)
@@ -831,7 +1147,7 @@ public partial class PrWorkOrderEntry : PageBase
         var today = DateTime.Today;
         return new ProductionWorkOrderDraftRequest
         {
-            SnapshotAsOfDate = today,
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             PlannedStartDate = today,
             PlannedCompletionDate = today,
             PlannedQty = 1m,
@@ -845,8 +1161,8 @@ public partial class PrWorkOrderEntry : PageBase
 
     private string InputFingerprint() => string.Join('\u001f',
         (Request.ProductCode ?? string.Empty).Trim().ToUpperInvariant(),
+        (Request.DefinitionCode ?? string.Empty).Trim().ToUpperInvariant(),
         IvQty.Round(Request.PlannedQty).ToString("0.0000", CultureInfo.InvariantCulture),
-        Request.SnapshotAsOfDate.Date.Ticks.ToString(CultureInfo.InvariantCulture),
         (Request.SchedulingDirection ?? string.Empty).Trim().ToUpperInvariant(),
         (IsBackwardSchedule ? Request.PlannedCompletionDate : Request.PlannedStartDate)
             .Date.Ticks.ToString(CultureInfo.InvariantCulture),
@@ -855,5 +1171,12 @@ public partial class PrWorkOrderEntry : PageBase
         (Request.Remark ?? string.Empty).Trim());
 
     protected sealed record Option(string Key, string Name);
+
+    protected sealed record DefinitionOption(
+        string Code,
+        string? Name,
+        int Version,
+        bool IsDefault,
+        string Label);
 }
 

@@ -91,15 +91,23 @@ END
 GO
 
 -- Optional one-time compatibility backfill from the legacy current/mutable route.
--- It targets only the latest PrBomHdr per company/product and never rewrites an existing
--- version-owned route. Archived legacy PrDefRev* import remains a separate migration task.
+-- Targets the migrated/default STANDARD definition only (highest Version of STANDARD).
+-- Never rewrites an existing version-owned route. Archived legacy PrDefRev* import remains separate.
 IF OBJECT_ID(N'dbo.PrDefWCenter', N'U') IS NOT NULL
    AND OBJECT_ID(N'dbo.PrDefProcess', N'U') IS NOT NULL
 BEGIN
     ;WITH latest AS (
         SELECT h.*,
-               ROW_NUMBER() OVER (PARTITION BY h.CompanyCode, h.ProdCode ORDER BY h.Version DESC) AS rn
+               ROW_NUMBER() OVER (
+                   PARTITION BY h.CompanyCode, h.ProdCode
+                   ORDER BY h.Version DESC
+               ) AS rn
         FROM dbo.PrBomHdr h
+        WHERE h.DefinitionCode = N'STANDARD'
+           OR (h.DefinitionCode IS NULL AND NOT EXISTS (
+                SELECT 1 FROM dbo.PrBomHdr x
+                WHERE x.CompanyCode = h.CompanyCode AND x.ProdCode = h.ProdCode
+                  AND x.DefinitionCode = N'STANDARD'))
     )
     INSERT INTO dbo.PrBomOperation (
         BomHdrID, CompanyCode, WorkCentreCode, OutputItemCode, CentralSequence,

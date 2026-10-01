@@ -69,8 +69,8 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
                 || workOrder.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current))
         {
             report.Add(ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired,
-                "This Work Order still carries a version-1 legacy snapshot. Refresh the definition "
-                + "and confirm before releasing.");
+                "This Work Order uses an older snapshot format. Refresh the Product Definition "
+                + "before releasing or structurally editing.");
         }
 
         if (!string.IsNullOrWhiteSpace(context.CurrentSnapshotHash)

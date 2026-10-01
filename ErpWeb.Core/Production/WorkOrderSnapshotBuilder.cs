@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
 
-/// <summary>Inputs for building a version-2 Work Order snapshot from a Product Definition revision.</summary>
+/// <summary>Inputs for building a format-3 Work Order snapshot from a Product Definition revision.</summary>
 public sealed class WorkOrderSnapshotRequest
 {
     public string CompanyCode { get; set; } = string.Empty;
@@ -17,10 +17,10 @@ public sealed class WorkOrderSnapshotRequest
     public decimal PlannedQty { get; set; } = 1m;
 
     /// <summary>
-    /// As-of date used to resolve the source revision. Persisted as the snapshot's definition
-    /// effective date so a later Refresh re-resolves against the same date.
+    /// Logical Product Definition code whose current ACTIVE revision is resolved for the snapshot.
+    /// Refresh re-resolves the same code.
     /// </summary>
-    public DateTime DefinitionEffectiveDate { get; set; } = DateTime.UtcNow.Date;
+    public string DefinitionCode { get; set; } = string.Empty;
 
     public DateTime PlannedStartDateTime { get; set; }
     public DateTime PlannedCompletionDateTime { get; set; }
@@ -65,15 +65,16 @@ public sealed class WorkOrderSnapshotBuildResult
 }
 
 /// <summary>
-/// Builds the complete version-2 Work Order snapshot graph from a resolved Product Definition
+/// Builds the complete format-3 Work Order snapshot graph from a resolved Product Definition
 /// revision (plan §7.1–§7.4).
 /// <para>
 /// The builder is deliberately faithful rather than clever: it copies the authored definition
 /// shape, resolves the cross-references that cannot survive a copy (route-step identity, machine
 /// option identity, labour owner), and then delegates all arithmetic to
-/// <see cref="IWorkOrderQuantityCalculator"/>. It never resolves a revision itself and never
-/// guesses at a missing value — anything the definition does not say is left missing so the
-/// Release readiness gate can refuse it (plan §9).
+/// <see cref="IWorkOrderQuantityCalculator"/>. It never merges SEPARATE child Product Definition
+/// BOMs into the parent Work Order — those materials stay as requirements with
+/// <c>ComponentDefinitionCode</c> only. It never guesses at a missing value — anything the
+/// definition does not say is left missing so the Release readiness gate can refuse it (plan §9).
 /// </para>
 /// </summary>
 public interface IWorkOrderSnapshotBuilder
@@ -123,10 +124,10 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
                 "Work Order planned quantity must be positive.");
         }
 
-        var resolved = await _loader.ResolveRevisionAsync(
+        var resolved = await _loader.ResolveActiveRevisionAsync(
             request.CompanyCode,
             request.ProductCode,
-            request.DefinitionEffectiveDate,
+            request.DefinitionCode,
             cancellationToken);
 
         if (!resolved.Succeeded)
@@ -291,19 +292,19 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             };
         }
 
-        var definitionSourceHash = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(revision);
+        var definitionSourceHash = WorkOrderSnapshotHasher.ComputeDefinitionSourceHash(
+            revision, ProductionDefinitionSourceHashVersions.Current);
 
         workOrder.DefinitionSourceHash = definitionSourceHash;
         workOrder.DefinitionSourceHashVersion = ProductionDefinitionSourceHashVersions.Current;
 
-        // The snapshot hash is written last because it covers the planned schedule and every
-        // derived quantity produced above.
-        workOrder.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(workOrder);
+        // Stamp algorithm versions before hashing so dispatch matches what we persist.
         workOrder.SnapshotHashVersion = ProductionSnapshotHashVersions.Current;
         workOrder.SnapshotFormatVersion = ProductionSnapshotFormatVersions.Current;
         workOrder.IsLegacySnapshot = false;
         workOrder.LegacySnapshotReason = null;
         workOrder.SnapshotRevision = request.SnapshotRevision;
+        workOrder.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(workOrder);
 
         return new WorkOrderSnapshotBuildResult
         {
@@ -331,11 +332,15 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             LocationCode = request.LocationCode,
             WorkOrderNo = request.WorkOrderNo ?? string.Empty,
             SnapshotRevision = request.SnapshotRevision,
-            DefinitionEffectiveDate = request.DefinitionEffectiveDate.Date,
+            // Deprecated date-selection column retained for hash-V1 / SQL NOT NULL compatibility.
+            DefinitionEffectiveDate = DateTime.UtcNow.Date,
 
             ProductCode = productCode,
             ProductDescription = request.ProductDescription ?? productItem?.IDesc,
             OutputUom = Normalize(revision.BaseUom) ?? Normalize(productItem?.StdUom),
+
+            SourceDefinitionCode = PrProductDefinitionCodes.Normalize(revision.DefinitionCode),
+            SourceDefinitionName = revision.DefinitionName,
 
             SourceBomHdrId = revision.Uid,
             SourceBomVersion = revision.Version,
@@ -604,6 +609,10 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
         material.Tolerance = source.Tolerance;
         material.IssueMethod = Normalize(source.IssueMethod) ?? PrMaterialIssueMethods.Manual;
         material.SupplySource = supplySource;
+        // Freeze SEPARATE child definition identity only — do not merge that child's BOM here.
+        material.ComponentDefinitionCode = string.IsNullOrWhiteSpace(source.ComponentDefinitionCode)
+            ? null
+            : PrProductDefinitionCodes.Normalize(source.ComponentDefinitionCode);
         material.RequiredUom = standardUom;
         material.BaseUom = baseUom;
         material.WarehouseCode = Normalize(source.Warehouse) ?? item?.DefWarehouse;

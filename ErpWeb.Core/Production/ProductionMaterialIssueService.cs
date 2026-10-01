@@ -80,7 +80,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             return Fail(IvMasterErrorCode.NotFound, "Work Order was not found.");
         if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress))
             return Fail(IvMasterErrorCode.Validation, "Materials can be issued only for released or in-progress Work Orders.");
-        if (order.SnapshotFormatVersion != ProductionSnapshotFormatVersions.Current || order.IsLegacySnapshot)
+        if (!ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot)
             return Fail(IvMasterErrorCode.Validation, "The Work Order must have a current, non-legacy snapshot before material issue.");
         if (operationId.HasValue && order.Operations.All(x => x.Uid != operationId.Value))
             return Fail(IvMasterErrorCode.NotFound, "Work Order operation was not found.");

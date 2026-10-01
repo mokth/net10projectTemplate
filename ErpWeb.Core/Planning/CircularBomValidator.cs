@@ -3,57 +3,70 @@ using ErpWeb.Model.Entities.Planning;
 namespace ErpWeb.Core.Planning;
 
 /// <summary>
-/// Detects circular BOM references within a company-scoped component graph.
+/// Detects circular BOM references within a company-scoped Product+Definition graph.
 /// Shared by Product Definition Save/Activate and BOM explosion.
 /// </summary>
 public static class CircularBomValidator
 {
+    /// <summary>Graph node identity: Product + DefinitionCode.</summary>
+    public readonly record struct NodeKey(string ProdCode, string DefinitionCode)
+    {
+        public string Display => Format(ProdCode, DefinitionCode);
+
+        public static NodeKey Create(string? prodCode, string? definitionCode) =>
+            new(Normalize(prodCode), Normalize(definitionCode));
+
+        public static string Format(string? prodCode, string? definitionCode) =>
+            $"{Normalize(prodCode)}[{Normalize(definitionCode)}]";
+    }
+
     /// <summary>
-    /// Builds adjacency from prod → direct component codes, then checks whether
-    /// adding/using <paramref name="prodCode"/> → <paramref name="componentCodes"/> creates a cycle.
+    /// Builds adjacency from parent definition → child definitions, then checks whether
+    /// adding/using <paramref name="prod"/> → <paramref name="componentNodes"/> creates a cycle.
     /// </summary>
     public static string? FindCyclePath(
-        string prodCode,
-        IReadOnlyList<string> componentCodes,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> existingGraph)
+        NodeKey prod,
+        IReadOnlyList<NodeKey> componentNodes,
+        IReadOnlyDictionary<NodeKey, IReadOnlyList<NodeKey>> existingGraph)
     {
-        var graph = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var graph = new Dictionary<NodeKey, HashSet<NodeKey>>();
         foreach (var (parent, children) in existingGraph)
         {
-            if (!graph.TryGetValue(parent, out var set))
+            var parentKey = NodeKey.Create(parent.ProdCode, parent.DefinitionCode);
+            if (!graph.TryGetValue(parentKey, out var set))
             {
-                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                graph[parent] = set;
+                set = [];
+                graph[parentKey] = set;
             }
 
             foreach (var child in children)
             {
-                set.Add(child);
+                set.Add(NodeKey.Create(child.ProdCode, child.DefinitionCode));
             }
         }
 
-        var prod = Normalize(prodCode);
-        if (!graph.TryGetValue(prod, out var prodChildren))
+        var prodKey = NodeKey.Create(prod.ProdCode, prod.DefinitionCode);
+        if (!graph.TryGetValue(prodKey, out var prodChildren))
         {
-            prodChildren = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            graph[prod] = prodChildren;
+            prodChildren = [];
+            graph[prodKey] = prodChildren;
         }
         else
         {
             prodChildren.Clear();
         }
 
-        foreach (var c in componentCodes)
+        foreach (var c in componentNodes)
         {
-            var child = Normalize(c);
-            if (child.Length == 0)
+            var child = NodeKey.Create(c.ProdCode, c.DefinitionCode);
+            if (child.ProdCode.Length == 0 || child.DefinitionCode.Length == 0)
             {
                 continue;
             }
 
-            if (string.Equals(child, prod, StringComparison.OrdinalIgnoreCase))
+            if (child == prodKey)
             {
-                return $"{prod} → {child}";
+                return $"{prodKey.Display} → {child.Display}";
             }
 
             prodChildren.Add(child);
@@ -61,10 +74,10 @@ public static class CircularBomValidator
 
         foreach (var child in prodChildren)
         {
-            var path = new List<string> { prod };
-            if (Dfs(child, prod, graph, path, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+            var path = new List<NodeKey> { prodKey };
+            if (Dfs(child, prodKey, graph, path, []))
             {
-                return string.Join(" → ", path);
+                return string.Join(" → ", path.Select(x => x.Display));
             }
         }
 
@@ -75,35 +88,39 @@ public static class CircularBomValidator
     /// Walks from <paramref name="start"/> looking for a return to any ancestor (cycle).
     /// </summary>
     public static string? FindCycleFromRoot(
-        string start,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> graph)
+        NodeKey start,
+        IReadOnlyDictionary<NodeKey, IReadOnlyList<NodeKey>> graph)
     {
-        var adj = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var adj = new Dictionary<NodeKey, IReadOnlyList<NodeKey>>();
         foreach (var kv in graph)
         {
-            adj[Normalize(kv.Key)] = kv.Value.Select(Normalize).Where(x => x.Length > 0).ToList();
+            var key = NodeKey.Create(kv.Key.ProdCode, kv.Key.DefinitionCode);
+            adj[key] = kv.Value
+                .Select(x => NodeKey.Create(x.ProdCode, x.DefinitionCode))
+                .Where(x => x.ProdCode.Length > 0 && x.DefinitionCode.Length > 0)
+                .ToList();
         }
 
-        var root = Normalize(start);
-        var path = new List<string>();
-        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (DfsVisit(root, adj, path, visiting, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+        var root = NodeKey.Create(start.ProdCode, start.DefinitionCode);
+        var path = new List<NodeKey>();
+        var visiting = new HashSet<NodeKey>();
+        if (DfsVisit(root, adj, path, visiting, []))
         {
-            return string.Join(" → ", path);
+            return string.Join(" → ", path.Select(x => x.Display));
         }
 
         return null;
     }
 
     private static bool Dfs(
-        string current,
-        string target,
-        IReadOnlyDictionary<string, HashSet<string>> graph,
-        List<string> path,
-        HashSet<string> visiting)
+        NodeKey current,
+        NodeKey target,
+        IReadOnlyDictionary<NodeKey, HashSet<NodeKey>> graph,
+        List<NodeKey> path,
+        HashSet<NodeKey> visiting)
     {
         path.Add(current);
-        if (string.Equals(current, target, StringComparison.OrdinalIgnoreCase))
+        if (current == target)
         {
             return true;
         }
@@ -131,16 +148,15 @@ public static class CircularBomValidator
     }
 
     private static bool DfsVisit(
-        string current,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> graph,
-        List<string> path,
-        HashSet<string> visiting,
-        HashSet<string> visited)
+        NodeKey current,
+        IReadOnlyDictionary<NodeKey, IReadOnlyList<NodeKey>> graph,
+        List<NodeKey> path,
+        HashSet<NodeKey> visiting,
+        HashSet<NodeKey> visited)
     {
         path.Add(current);
         if (!visiting.Add(current))
         {
-            // cycle — path already ends with repeat; keep cycle suffix
             return true;
         }
 

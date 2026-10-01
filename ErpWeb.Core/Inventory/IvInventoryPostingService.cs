@@ -3216,11 +3216,16 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
     private static bool IsVendorReturnTrxType(string expectedTrxType) =>
         string.Equals(expectedTrxType, IvTrxTypes.VendorReturn, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsIssueToProductionTrxType(string expectedTrxType) =>
+        string.Equals(expectedTrxType, IvTrxTypes.IssueToProduction, StringComparison.OrdinalIgnoreCase);
+
     private static string StockOutNotFoundMessage(string expectedTrxType) =>
         IsScrapTrxType(expectedTrxType)
             ? "Scrap was not found."
             : IsVendorReturnTrxType(expectedTrxType)
                 ? "Vendor return was not found."
+                : IsIssueToProductionTrxType(expectedTrxType)
+                    ? "Issue to Production was not found."
                 : "Miscellaneous issue was not found.";
 
     private static string StockOutOnlyNewCanPostMessage(string expectedTrxType) =>
@@ -3228,6 +3233,8 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             ? "Only NEW scrap documents can be posted."
             : IsVendorReturnTrxType(expectedTrxType)
                 ? "Only NEW vendor returns can be posted."
+                : IsIssueToProductionTrxType(expectedTrxType)
+                    ? "Only NEW Issue to Production documents can be posted."
                 : "Only NEW issues can be posted.";
 
     private static string StockOutNoLinesMessage(string expectedTrxType) =>
@@ -3235,6 +3242,8 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             ? "Scrap has no lines."
             : IsVendorReturnTrxType(expectedTrxType)
                 ? "Vendor return has no lines."
+                : IsIssueToProductionTrxType(expectedTrxType)
+                    ? "Issue to Production has no lines."
                 : "Issue has no lines.";
 
     private static string StockOutOnlyPostedCanRollbackMessage(string expectedTrxType) =>
@@ -3242,6 +3251,8 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             ? "Only POSTED scrap documents can be rolled back."
             : IsVendorReturnTrxType(expectedTrxType)
                 ? "Only POSTED vendor returns can be rolled back."
+                : IsIssueToProductionTrxType(expectedTrxType)
+                    ? "Only POSTED Issue to Production documents can be rolled back."
                 : "Only POSTED issues can be rolled back.";
 
     private static string StockOutSourceMismatchMessage(string expectedTrxType, int balLocId) =>
@@ -3249,6 +3260,8 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             ? $"Source balance Id {balLocId} no longer matches the scrap line (item/warehouse/location/lot/status)."
             : IsVendorReturnTrxType(expectedTrxType)
                 ? $"Source balance Id {balLocId} no longer matches the vendor return line (item/warehouse/location/lot/status)."
+                : IsIssueToProductionTrxType(expectedTrxType)
+                    ? $"Source balance Id {balLocId} no longer matches the Issue to Production line (item/warehouse/location/lot/status)."
                 : $"Source balance Id {balLocId} no longer matches the issue line (item/warehouse/location/lot/status).";
 
     private sealed class MrLinePlan

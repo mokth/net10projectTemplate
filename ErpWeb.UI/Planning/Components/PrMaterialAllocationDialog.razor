@@ -1,0 +1,132 @@
+<DxPopup HeaderText="Allocate stock" CloseOnOutsideClick="false" CloseOnEscape="false" Width="980px"
+         CssClass="common-popup pr-allocation-popup" Visible="@Visible" VisibleChanged="@OnVisibleChanged">
+    <Content>
+        <div class="pr-allocation">
+            @if (Material is not null)
+            {
+                <div class="pr-allocation__header">
+                    <div><span>Material</span><strong>@Material.ComponentCode</strong><small>@Material.Description</small></div>
+                    <div><span>Issue quantity</span><strong>@RequestedQty.ToString("n4") @Material.RequiredUom</strong><small>@RequestedBaseQty.ToString("n4") @Material.BaseUom required</small></div>
+                    <div><span>Allocated</span><strong>@AllocatedBaseQty.ToString("n4") @Material.BaseUom</strong><small class="@(ShortBaseQty > 0 ? "text-warning" : "text-success")">@ShortBaseQty.ToString("n4") short</small></div>
+                </div>
+            }
+            <p class="pr-allocation__help"><i class="fa-solid fa-circle-info"></i> Auto allocation uses FEFO for expiring lots and FIFO when expiry dates are unavailable.</p>
+            @if (IsLoading) { <p class="text-muted">Loading eligible stock…</p> }
+            else if (!string.IsNullOrWhiteSpace(DialogError)) { <div class="alert alert-danger">@DialogError</div> }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle pr-allocation__table">
+                        <thead><tr><th>Warehouse</th><th>Location</th><th>Lot</th><th>On hand</th><th>Expiry</th><th>Stock date</th><th>Suggested</th><th>Issue base qty</th><th>Base UOM</th>@if (CanViewCost) { <th>Unit cost</th> }</tr></thead>
+                        <tbody>
+                        @foreach (var row in Rows)
+                        {
+                            <tr class="@(row.IssueBaseQty > 0 ? "table-primary" : null)">
+                                <td>@row.Warehouse</td><td>@row.Location</td><td>@(string.IsNullOrWhiteSpace(row.LotNo) ? "—" : row.LotNo)</td>
+                                <td class="text-end">@row.AvailableBaseQty.ToString("n4")</td><td>@DateText(row.ExpiryDate)</td><td>@DateText(row.StockDate)</td>
+                                <td class="text-end">@row.SuggestedBaseQty.ToString("n4")</td>
+                                <td><InputNumber TValue="decimal" class="form-control form-control-sm text-end" @bind-Value="row.IssueBaseQty" min="0" step="0.0001" /></td>
+                                <td>@row.BaseUom</td>@if (CanViewCost) { <td class="text-end">@row.UnitPrice?.ToString("n4")</td> }
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+                @if (Rows.Count == 0) { <p class="text-muted">No eligible stock is available for this material.</p> }
+            }
+        </div>
+    </Content>
+    <FooterContentTemplate>
+        <div class="d-flex gap-2 justify-content-end w-100">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@Clear" Enabled="@(!IsLoading)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Auto Allocate" IconCssClass="fa-solid fa-wand-magic-sparkles" Click="@AutoAllocateAsync" Enabled="@(!IsLoading)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelAsync" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyAsync" Enabled="@(!IsLoading)" />
+        </div>
+    </FooterContentTemplate>
+</DxPopup>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public ProductionMaterialIssueMaterial? Material { get; set; }
+    [Parameter] public DateTime IssueDate { get; set; }
+    [Parameter] public decimal RequestedQty { get; set; }
+    [Parameter] public IReadOnlyList<ProductionMaterialIssueAllocationRequest> Allocations { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyList<ProductionMaterialIssueAllocationRequest>> Applied { get; set; }
+    [Inject] private IProductionMaterialAllocationService AllocationService { get; set; } = default!;
+
+    private long? _loadedMaterialId;
+    private DateTime _loadedDate;
+    private bool IsLoading;
+    private string? DialogError;
+    private List<AllocationRow> Rows { get; set; } = [];
+    private bool CanViewCost => Material?.CanManualIssue == true && Rows.Any(x => x.UnitPrice.HasValue);
+    private decimal RequestedBaseQty => Material is null ? 0m : IvQty.Round(RequestedQty * Material.ConversionFactorToBase);
+    private decimal AllocatedBaseQty => IvQty.Round(Rows.Sum(x => x.IssueBaseQty));
+    private decimal ShortBaseQty => Math.Max(0m, IvQty.Round(RequestedBaseQty - AllocatedBaseQty));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && Material is not null && (_loadedMaterialId != Material.WorkOrderMaterialId || _loadedDate != IssueDate.Date))
+            await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true; DialogError = null; Rows = [];
+        _loadedMaterialId = Material!.WorkOrderMaterialId; _loadedDate = IssueDate.Date;
+        var result = await AllocationService.GetStockCandidatesAsync(Material.WorkOrderMaterialId, IssueDate);
+        if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to load eligible stock.";
+        else
+        {
+            var existing = Allocations.ToDictionary(x => x.FromBalLocId, x => x.BaseQty);
+            Rows = result.Data.Select(x => new AllocationRow(x) { IssueBaseQty = existing.GetValueOrDefault(x.FromBalLocId) }).ToList();
+        }
+        IsLoading = false;
+    }
+
+    private async Task AutoAllocateAsync()
+    {
+        if (Material is null) return;
+        IsLoading = true; DialogError = null;
+        var result = await AllocationService.AutoAllocateAsync(new ProductionMaterialAllocationRequest
+        { WorkOrderMaterialId = Material.WorkOrderMaterialId, IssueDate = IssueDate, RequestedQty = RequestedQty });
+        if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to allocate stock.";
+        else
+        {
+            var allocated = result.Data.Allocations.ToDictionary(x => x.FromBalLocId, x => x.SuggestedBaseQty);
+            foreach (var row in Rows) row.IssueBaseQty = allocated.GetValueOrDefault(row.FromBalLocId);
+        }
+        IsLoading = false;
+    }
+
+    private void Clear() { foreach (var row in Rows) row.IssueBaseQty = 0m; DialogError = null; }
+    private async Task ApplyAsync()
+    {
+        if (Rows.Any(x => x.IssueBaseQty < 0m || x.IssueBaseQty > x.AvailableBaseQty)) { DialogError = "Issue quantities must be between zero and the current on-hand quantity."; return; }
+        if (Math.Abs(AllocatedBaseQty - RequestedBaseQty) > 0.0001m) { DialogError = $"Allocate exactly {RequestedBaseQty:n4} {Material?.BaseUom}."; return; }
+        await Applied.InvokeAsync(Rows.Where(x => x.IssueBaseQty > 0m).Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = IvQty.Round(x.IssueBaseQty) }).ToList());
+        await CloseAsync();
+    }
+    private async Task CancelAsync() => await CloseAsync();
+    private async Task CloseAsync() { _loadedMaterialId = null; await VisibleChanged.InvokeAsync(false); }
+    private Task OnVisibleChanged(bool value) => VisibleChanged.InvokeAsync(value);
+    private static string DateText(DateTime? value) => value?.ToString("dd MMM yyyy") ?? "—";
+
+    private sealed class AllocationRow
+    {
+        public AllocationRow(ProductionMaterialStockCandidate x) { FromBalLocId = x.FromBalLocId; Warehouse = x.Warehouse; Location = x.Location; LotNo = x.LotNo; ExpiryDate = x.ExpiryDate; StockDate = x.StockDate; AvailableBaseQty = x.AvailableBaseQty; BaseUom = x.BaseUom; SuggestedBaseQty = x.SuggestedBaseQty; UnitPrice = x.UnitPrice; }
+        public int FromBalLocId { get; }
+        public string Warehouse { get; }
+        public string Location { get; }
+        public string LotNo { get; }
+        public DateTime? ExpiryDate { get; }
+        public DateTime? StockDate { get; }
+        public decimal AvailableBaseQty { get; }
+        public string BaseUom { get; }
+        public decimal SuggestedBaseQty { get; }
+        public decimal? UnitPrice { get; }
+        public decimal IssueBaseQty { get; set; }
+    }
+}

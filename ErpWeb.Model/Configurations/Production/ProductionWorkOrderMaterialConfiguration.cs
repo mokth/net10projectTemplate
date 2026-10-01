@@ -48,6 +48,7 @@ public sealed class ProductionWorkOrderMaterialConfiguration : IEntityTypeConfig
         ConfigureQty(builder.Property(x => x.Tolerance));
         builder.Property(x => x.IssueMethod).HasMaxLength(20).IsRequired();
         builder.Property(x => x.SupplySource).HasMaxLength(40).IsRequired();
+        builder.Property(x => x.ComponentDefinitionCode).HasMaxLength(30);
         ConfigureQty(builder.Property(x => x.RequiredQty));
         builder.Property(x => x.RequiredUom).HasColumnName("RequiredUOM").HasMaxLength(10);
         ConfigureQty(builder.Property(x => x.RequiredBaseQty));

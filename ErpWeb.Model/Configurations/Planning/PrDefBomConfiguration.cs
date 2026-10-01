@@ -8,7 +8,13 @@ public class PrDefBomConfiguration : IEntityTypeConfiguration<PrDefBOM>
 {
     public void Configure(EntityTypeBuilder<PrDefBOM> builder)
     {
-        builder.ToTable("PrDefBOM");
+        builder.ToTable("PrDefBOM", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_PrDefBOM_ComponentDefinitionCode",
+                "([SupplySource] = N'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NOT NULL) "
+                + "OR ([SupplySource] <> N'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NULL)");
+        });
         builder.HasKey(e => e.Uid);
 
         builder.Property(e => e.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
@@ -32,6 +38,7 @@ public class PrDefBomConfiguration : IEntityTypeConfiguration<PrDefBOM>
             .HasDefaultValue(PrMaterialIssueMethods.Manual).ValueGeneratedNever();
         builder.Property(e => e.SupplySource).HasMaxLength(40).IsRequired()
             .HasDefaultValue(PrMaterialSupplySources.Purchased).ValueGeneratedNever();
+        builder.Property(e => e.ComponentDefinitionCode).HasMaxLength(30);
         builder.Ignore(e => e.MaterialStandardQty);
         builder.Ignore(e => e.StandardUom);
         builder.Ignore(e => e.TolerancePercent);

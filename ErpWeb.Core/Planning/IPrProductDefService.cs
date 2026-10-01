@@ -24,20 +24,61 @@ public sealed class PrProductDefListRow
     public string? ProdDesc { get; init; }
     public string? StdUom { get; init; }
     public string MfgType { get; init; } = "BUY";
-    public int BomVersion { get; init; }
-    public string BomStatus { get; init; } = string.Empty;
-    public int BomItemCount { get; init; }
     public bool IsActive { get; init; }
+
+    public string DefinitionCode { get; init; } = string.Empty;
+    public string? DefinitionName { get; init; }
+    public bool IsDefaultDefinition { get; init; }
+
+    public int? ActiveVersion { get; init; }
+    public int LatestVersion { get; init; }
+    public string LatestStatus { get; init; } = string.Empty;
+    public int LatestBomItemCount { get; init; }
+    public DateTime? LatestModifiedDate { get; init; }
+
+    /// <summary>Stable list key: ProdCode + U+001F + DefinitionCode.</summary>
+    public string DefinitionKey { get; init; } = string.Empty;
+
+    /// <summary>Compatibility alias for list columns that previously used BomItemCount.</summary>
+    public int BomItemCount => LatestBomItemCount;
+
     public DateTime? CreatedDate { get; init; }
     public string? CreatedBy { get; init; }
     public DateTime? ModifiedDate { get; init; }
     public string? ModifiedBy { get; init; }
+
+    /// <summary>Compatibility alias for list actions that previously used BomVersion.</summary>
+    public int BomVersion => LatestVersion;
+
+    /// <summary>Compatibility alias for list actions that previously used BomStatus.</summary>
+    public string BomStatus => LatestStatus;
 }
 
 public sealed class PrProductDefListPage
 {
     public IReadOnlyList<PrProductDefListRow> Rows { get; init; } = [];
     public int TotalCount { get; init; }
+}
+
+/// <summary>Logical Product Definition identity (Company implied by tenant scope).</summary>
+public sealed class PrProductDefinitionKey
+{
+    public string ProdCode { get; init; } = string.Empty;
+    public string DefinitionCode { get; init; } = string.Empty;
+}
+
+/// <summary>Lookup row for Work Order / authoring definition pickers.</summary>
+public sealed class PrProductDefinitionLookupRow
+{
+    public long? BomHdrId { get; init; }
+    public string ProdCode { get; init; } = string.Empty;
+    public string DefinitionCode { get; init; } = string.Empty;
+    public string? DefinitionName { get; init; }
+    public int Version { get; init; }
+    public int? ActiveVersion { get; init; }
+    public int? LatestVersion { get; init; }
+    public string? LatestStatus { get; init; }
+    public bool IsDefaultDefinition { get; init; }
 }
 
 public sealed class PrProductDefLineVm
@@ -68,6 +109,12 @@ public sealed class PrProductDefLineVm
 
     /// <summary>PURCHASED | INTERNAL_ROUTE_WIP | SEPARATE_PRODUCT_DEFINITION | EXTERNAL_SUPPLY.</summary>
     public string SupplySource { get; set; } = PrMaterialSupplySources.Purchased;
+
+    /// <summary>
+    /// When <see cref="SupplySource"/> is SEPARATE_PRODUCT_DEFINITION, the child Product Definition code.
+    /// Must be null for other supply sources.
+    /// </summary>
+    public string? ComponentDefinitionCode { get; set; }
 
     /// <summary>
     /// Stable key of the in-house route step that produces this component. Required when
@@ -174,6 +221,14 @@ public sealed class PrBomStructureNode
     /// <summary>Whose BOM this line belongs to. Null on the synthetic root.</summary>
     public string? OwnerProdCode { get; init; }
 
+    /// <summary>Owner Product Definition code. Null on the synthetic root.</summary>
+    public string? OwnerDefinitionCode { get; init; }
+
+    /// <summary>
+    /// Child Product Definition code when the line supply source is SEPARATE_PRODUCT_DEFINITION.
+    /// </summary>
+    public string? ComponentDefinitionCode { get; init; }
+
     public long? SourceLineUid { get; init; }
     public string? LineTempId { get; init; }
     public long? BomHdrId { get; init; }
@@ -185,6 +240,7 @@ public sealed class PrBomStructureNode
 public sealed class PrBomStructureResult
 {
     public string RootProdCode { get; init; } = string.Empty;
+    public string RootDefinitionCode { get; init; } = string.Empty;
     public long? RootBomHdrId { get; init; }
     public int? RootBomVersion { get; init; }
     public string? RootBomStatus { get; init; }
@@ -196,14 +252,25 @@ public static class PrBomStructureKeys
 {
     public const int MaxDepth = 20;
 
-    public static string Root(string prodCode) =>
-        "R:" + Normalize(prodCode);
+    public static string Root(string prodCode, string definitionCode) =>
+        "R:" + FormatNode(prodCode, definitionCode);
 
+    /// <summary>Compatibility overload — defaults to STANDARD definition.</summary>
+    public static string Root(string prodCode) =>
+        Root(prodCode, PrProductDefinitionCodes.Standard);
+
+    public static string Line(string parentKey, string ownerProdCode, string ownerDefinitionCode, string lineId) =>
+        parentKey + "/" + FormatNode(ownerProdCode, ownerDefinitionCode) + ":" + lineId;
+
+    /// <summary>Compatibility overload — defaults owner definition to STANDARD.</summary>
     public static string Line(string parentKey, string ownerProdCode, string lineId) =>
-        parentKey + "/" + Normalize(ownerProdCode) + ":" + lineId;
+        Line(parentKey, ownerProdCode, PrProductDefinitionCodes.Standard, lineId);
 
     public static string LineId(long uid, string? tempId) =>
         uid > 0 ? uid.ToString() : (string.IsNullOrWhiteSpace(tempId) ? "0" : tempId.Trim());
+
+    public static string FormatNode(string? prodCode, string? definitionCode) =>
+        Normalize(prodCode) + "[" + Normalize(definitionCode) + "]";
 
     public static string Normalize(string? value) =>
         (value ?? string.Empty).Trim().ToUpperInvariant();
@@ -217,13 +284,29 @@ public sealed class PrProductDefEditVm
     public string MfgType { get; set; } = "BUY";
     public bool IsActive { get; set; } = true;
 
+    /// <summary>Manufacturing-method code within the product. Immutable after first save.</summary>
+    public string DefinitionCode { get; set; } = string.Empty;
+
+    /// <summary>Human-readable name for the logical definition.</summary>
+    public string? DefinitionName { get; set; }
+
+    /// <summary>Whether this ACTIVE revision is the product's default definition.</summary>
+    public bool IsDefaultDefinition { get; set; }
+
     public long BomHdrId { get; set; }
     public int Version { get; set; } = 1;
     public string Status { get; set; } = "DRAFT";
-    public DateTime? EffectiveFrom { get; set; }
-    public DateTime? EffectiveTo { get; set; }
     public decimal BaseQty { get; set; } = 1m;
     public string? BaseUom { get; set; }
+
+    /// <summary>
+    /// Deprecated date-window fields retained for in-flight service compatibility during
+    /// multi-definition migration. New selection uses DefinitionCode + ACTIVE status.
+    /// </summary>
+    public DateTime? EffectiveFrom { get; set; }
+
+    /// <summary>Deprecated — see <see cref="EffectiveFrom"/>.</summary>
+    public DateTime? EffectiveTo { get; set; }
 
     /// <summary>Work-order number prefix (max 10).</summary>
     public string? Prefix { get; set; }
@@ -246,6 +329,7 @@ public interface IPrProductDefService
 
     Task<IvMasterOperationResult<PrProductDefEditVm>> GetAsync(
         string prodCode,
+        string definitionCode,
         int? version = null,
         CancellationToken cancellationToken = default);
 
@@ -256,6 +340,7 @@ public interface IPrProductDefService
     /// </summary>
     Task<IvMasterOperationResult<PrBomStructureResult>> GetStructureTreeAsync(
         string prodCode,
+        string definitionCode,
         int? version = null,
         CancellationToken cancellationToken = default);
 
@@ -267,22 +352,34 @@ public interface IPrProductDefService
 
     Task<IvMasterOperationResult<PrProductDefEditVm>> CreateNewVersionAsync(
         string prodCode,
+        string definitionCode,
         int? fromVersion = null,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<PrProductDefEditVm>> ActivateAsync(
         string prodCode,
+        string definitionCode,
         int version,
-        DateTime? effectiveFrom,
-        DateTime? effectiveTo,
         byte[]? headerRowVersion,
         CancellationToken cancellationToken = default);
 
+    /// <summary>ACTIVE definitions only — Work Order / runtime selection.</summary>
+    Task<IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>> ListActiveDefinitionsAsync(
+        string prodCode,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Logical definitions with ACTIVE and/or DRAFT revisions — Product Definition authoring picker.
+    /// </summary>
+    Task<IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>> ListDefinitionsAsync(
+        string prodCode,
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<DeleteCheckResult>> CanDeleteAsync(
-        IReadOnlyList<string> prodCodes,
+        IReadOnlyList<PrProductDefinitionKey> keys,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<object?>> DeleteAsync(
-        IReadOnlyList<string> prodCodes,
+        IReadOnlyList<PrProductDefinitionKey> keys,
         CancellationToken cancellationToken = default);
 }

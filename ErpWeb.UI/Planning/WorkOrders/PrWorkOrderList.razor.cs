@@ -32,12 +32,14 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     protected string? AppliedWorkOrderNo;
     protected string? AppliedProductCode;
+    protected string? AppliedDefinitionCode;
     protected string? AppliedStatus;
     protected DateTime? AppliedStartFrom;
     protected DateTime? AppliedStartTo;
 
     protected string DraftWorkOrderNo = string.Empty;
     protected string DraftProductCode = string.Empty;
+    protected string DraftDefinitionCode = string.Empty;
     protected string DraftStatus = string.Empty;
     protected DateTime? DraftStartFrom;
     protected DateTime? DraftStartTo;
@@ -47,6 +49,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         !string.IsNullOrWhiteSpace(SearchText)
         || !string.IsNullOrWhiteSpace(AppliedWorkOrderNo)
         || !string.IsNullOrWhiteSpace(AppliedProductCode)
+        || !string.IsNullOrWhiteSpace(AppliedDefinitionCode)
         || !string.IsNullOrWhiteSpace(AppliedStatus)
         || AppliedStartFrom is not null
         || AppliedStartTo is not null;
@@ -67,17 +70,18 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         new() { Caption = "Work Order", FieldName = nameof(ProductionWorkOrderListRow.WorkOrderNo), Width = "145px", SortIndex = 0, VisibleIndex = 1 },
         new() { Caption = "Product", FieldName = nameof(ProductionWorkOrderListRow.ProductCode), Width = "130px", VisibleIndex = 2 },
         new() { Caption = "Description", FieldName = nameof(ProductionWorkOrderListRow.ProductDescription), VisibleIndex = 3 },
-        new() { Caption = "Status", FieldName = nameof(ProductionWorkOrderListRow.Status), Width = "115px", VisibleIndex = 4 },
-        new() { Caption = "BOM Ver.", FieldName = nameof(ProductionWorkOrderListRow.BomVersion), DataType = "number", Width = "85px", VisibleIndex = 5 },
-        new() { Caption = "Planned Qty", FieldName = nameof(ProductionWorkOrderListRow.PlannedQty), DataType = "number", DecimalPlace = 4, Width = "110px", VisibleIndex = 6 },
-        new() { Caption = "Good Qty", FieldName = nameof(ProductionWorkOrderListRow.GoodQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 7 },
-        new() { Caption = "Remaining", FieldName = nameof(ProductionWorkOrderListRow.RemainingQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 8 },
-        new() { Caption = "Start", FieldName = nameof(ProductionWorkOrderListRow.PlannedStartDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 9 },
-        new() { Caption = "Completion", FieldName = nameof(ProductionWorkOrderListRow.PlannedCompletionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 10 },
-        new() { Caption = "Source", FieldName = nameof(ProductionWorkOrderListRow.SourceReference), Width = "130px", VisibleIndex = 11 },
-        new() { Caption = "Material %", FieldName = nameof(ProductionWorkOrderListRow.MaterialProgressPercent), DataType = "number", DecimalPlace = 2, Width = "100px", VisibleIndex = 12 },
-        new() { Caption = "Production %", FieldName = nameof(ProductionWorkOrderListRow.ProductionProgressPercent), DataType = "number", DecimalPlace = 2, Width = "110px", VisibleIndex = 13 },
-        ..AuditColumns.For(startVisibleIndex: 14)
+        new() { Caption = "Definition", FieldName = nameof(ProductionWorkOrderListRow.SourceDefinitionCode), Width = "120px", VisibleIndex = 4 },
+        new() { Caption = "Status", FieldName = nameof(ProductionWorkOrderListRow.Status), Width = "115px", VisibleIndex = 5 },
+        new() { Caption = "Def. Ver.", FieldName = nameof(ProductionWorkOrderListRow.BomVersion), DataType = "number", Width = "85px", VisibleIndex = 6 },
+        new() { Caption = "Planned Qty", FieldName = nameof(ProductionWorkOrderListRow.PlannedQty), DataType = "number", DecimalPlace = 4, Width = "110px", VisibleIndex = 7 },
+        new() { Caption = "Good Qty", FieldName = nameof(ProductionWorkOrderListRow.GoodQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 8 },
+        new() { Caption = "Remaining", FieldName = nameof(ProductionWorkOrderListRow.RemainingQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 9 },
+        new() { Caption = "Start", FieldName = nameof(ProductionWorkOrderListRow.PlannedStartDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 10 },
+        new() { Caption = "Completion", FieldName = nameof(ProductionWorkOrderListRow.PlannedCompletionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 11 },
+        new() { Caption = "Source", FieldName = nameof(ProductionWorkOrderListRow.SourceReference), Width = "130px", VisibleIndex = 12 },
+        new() { Caption = "Material %", FieldName = nameof(ProductionWorkOrderListRow.MaterialProgressPercent), DataType = "number", DecimalPlace = 2, Width = "100px", VisibleIndex = 13 },
+        new() { Caption = "Production %", FieldName = nameof(ProductionWorkOrderListRow.ProductionProgressPercent), DataType = "number", DecimalPlace = 2, Width = "110px", VisibleIndex = 14 },
+        ..AuditColumns.For(startVisibleIndex: 15)
     ];
 
     protected List<ButtonInfo> Buttons { get; private set; } = [];
@@ -162,6 +166,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
     {
         DraftWorkOrderNo = AppliedWorkOrderNo ?? string.Empty;
         DraftProductCode = AppliedProductCode ?? string.Empty;
+        DraftDefinitionCode = AppliedDefinitionCode ?? string.Empty;
         DraftStatus = AppliedStatus ?? string.Empty;
         DraftStartFrom = AppliedStartFrom;
         DraftStartTo = AppliedStartTo;
@@ -172,6 +177,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
     {
         AppliedWorkOrderNo = NullIfEmpty(DraftWorkOrderNo);
         AppliedProductCode = NullIfEmpty(DraftProductCode);
+        AppliedDefinitionCode = NullIfEmpty(DraftDefinitionCode);
         AppliedStatus = NullIfEmpty(DraftStatus);
         AppliedStartFrom = DraftStartFrom?.Date;
         AppliedStartTo = DraftStartTo?.Date;
@@ -181,7 +187,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     protected async Task ClearFiltersAsync()
     {
-        DraftWorkOrderNo = DraftProductCode = DraftStatus = string.Empty;
+        DraftWorkOrderNo = DraftProductCode = DraftDefinitionCode = DraftStatus = string.Empty;
         DraftStartFrom = DraftStartTo = null;
         await ApplyFiltersAsync();
     }
@@ -221,6 +227,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
             SearchText = NullIfEmpty(SearchText),
             WorkOrderNo = AppliedWorkOrderNo,
             ProductCode = AppliedProductCode,
+            DefinitionCode = AppliedDefinitionCode,
             Status = AppliedStatus,
             StartDateFrom = AppliedStartFrom,
             StartDateTo = AppliedStartTo
@@ -320,6 +327,7 @@ public sealed class ProductionWorkOrderGridDataSource : GridCustomDataSource
         SearchText = source.SearchText,
         WorkOrderNo = source.WorkOrderNo,
         ProductCode = source.ProductCode,
+        DefinitionCode = source.DefinitionCode,
         Status = source.Status,
         StartDateFrom = source.StartDateFrom,
         StartDateTo = source.StartDateTo,

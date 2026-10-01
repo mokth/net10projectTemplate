@@ -42,6 +42,9 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         {
             CompanyCode = "DEMO",
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            DefinitionName = PrProductDefinitionCodes.StandardName,
+            IsDefaultDefinition = true,
             Version = 3,
             Status = PrBomStatuses.Active,
             EffectiveFrom = new DateTime(2026, 1, 1),
@@ -586,7 +589,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(3.15m, nested.RequiredQty);
 
         var productDefinitions = CreateProductDefinitionSut();
-        var deleteCheck = await productDefinitions.CanDeleteAsync(["PH001"]);
+        var deleteCheck = await productDefinitions.CanDeleteAsync([new PrProductDefinitionKey { ProdCode = "PH001", DefinitionCode = PrProductDefinitionCodes.Standard }]);
         Assert.True(deleteCheck.Succeeded, deleteCheck.Message);
         Assert.False(deleteCheck.Data!.CanDelete);
     }
@@ -904,12 +907,12 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 
         var productDefinitions = CreateProductDefinitionSut();
 
-        var check = await productDefinitions.CanDeleteAsync(["FG001"]);
+        var check = await productDefinitions.CanDeleteAsync([new PrProductDefinitionKey { ProdCode = "FG001", DefinitionCode = PrProductDefinitionCodes.Standard }]);
         Assert.True(check.Succeeded, check.Message);
         Assert.False(check.Data!.CanDelete);
         Assert.Contains(check.Data.References, x => x.ReferenceType == "Production Work Order" && x.Count == 1);
 
-        var delete = await productDefinitions.DeleteAsync(["FG001"]);
+        var delete = await productDefinitions.DeleteAsync([new PrProductDefinitionKey { ProdCode = "FG001", DefinitionCode = PrProductDefinitionCodes.Standard }]);
         Assert.False(delete.Succeeded);
         Assert.Equal(IvMasterErrorCode.InUse, delete.ErrorCode);
     }
@@ -1029,7 +1032,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     {
         ProductCode = "FG001",
         PlannedQty = quantity,
-        SnapshotAsOfDate = new DateTime(2026, 9, 28),
+        DefinitionCode = PrProductDefinitionCodes.Standard,
         PlannedStartDate = new DateTime(2026, 10, 1),
         PlannedCompletionDate = new DateTime(2026, 10, 3),
         SchedulingDirection = ProductionSchedulingDirections.Forward,

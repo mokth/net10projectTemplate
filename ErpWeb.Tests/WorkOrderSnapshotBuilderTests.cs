@@ -91,7 +91,7 @@ public sealed class WorkOrderSnapshotBuilderTests : IAsyncLifetime
         WorkOrderNo = "WO-0001",
         ProductCode = "FG001",
         PlannedQty = 100m,
-        DefinitionEffectiveDate = new DateTime(2026, 7, 15),
+        DefinitionCode = PrProductDefinitionCodes.Standard,
         PlannedStartDateTime = new DateTime(2026, 7, 20, 8, 0, 0),
         PlannedCompletionDateTime = new DateTime(2026, 7, 24, 17, 0, 0),
     };
@@ -106,6 +106,9 @@ public sealed class WorkOrderSnapshotBuilderTests : IAsyncLifetime
         {
             CompanyCode = "DEMO",
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            DefinitionName = PrProductDefinitionCodes.StandardName,
+            IsDefaultDefinition = true,
             Version = 3,
             Status = PrBomStatuses.Active,
             EffectiveFrom = new DateTime(2026, 1, 1),
@@ -332,7 +335,7 @@ public sealed class WorkOrderSnapshotBuilderTests : IAsyncLifetime
         Assert.Equal(3, workOrder.SourceBomVersion);
         Assert.Equal(revision.Uid, workOrder.SourceProductDefinitionRevisionId);
         Assert.Equal(new DateTime(2026, 1, 1), workOrder.SourceEffectiveFrom);
-        Assert.Equal(new DateTime(2026, 7, 15), workOrder.DefinitionEffectiveDate);
+        Assert.Equal(PrProductDefinitionCodes.Standard, workOrder.SourceDefinitionCode);
         Assert.Equal("Finished Good", workOrder.ProductDescription);
         Assert.Equal("PCS", workOrder.OutputUom);
         Assert.Equal(5m, workOrder.BomBaseQty);

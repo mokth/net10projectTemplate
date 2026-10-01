@@ -14,8 +14,13 @@ public class PrBomHdrConfiguration : IEntityTypeConfiguration<PrBomHdr>
         builder.Property(e => e.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
         builder.Property(e => e.CompanyCode).HasMaxLength(5).IsRequired();
         builder.Property(e => e.ProdCode).HasMaxLength(30).IsRequired();
+        builder.Property(e => e.DefinitionCode).HasMaxLength(30).IsRequired();
+        builder.Property(e => e.DefinitionName).HasMaxLength(100);
+        builder.Property(e => e.IsDefaultDefinition).HasDefaultValue(false).ValueGeneratedNever();
         builder.Property(e => e.Version).IsRequired();
-        builder.Property(e => e.Status).HasMaxLength(20).IsRequired();
+        builder.Property(e => e.Status).HasMaxLength(20).IsRequired()
+            .HasDefaultValue(PrBomStatuses.Draft).ValueGeneratedNever();
+        // Deprecated compatibility columns — retained for historical hash v1.
         builder.Property(e => e.EffectiveFrom);
         builder.Property(e => e.EffectiveTo);
         builder.Property(e => e.BaseQty).HasPrecision(18, 4).IsRequired();
@@ -35,9 +40,22 @@ public class PrBomHdrConfiguration : IEntityTypeConfiguration<PrBomHdr>
         builder.Property(e => e.ModifiedBy).HasColumnName("UpdatedUID").HasMaxLength(10);
         builder.Property(e => e.RowVersion).IsRowVersion();
 
-        builder.HasIndex(e => new { e.CompanyCode, e.ProdCode, e.Version })
+        builder.HasIndex(e => new { e.CompanyCode, e.ProdCode, e.DefinitionCode, e.Version })
             .IsUnique()
-            .HasDatabaseName("UQ_PrBomHdr_Company_Prod_Version");
+            .HasDatabaseName("UQ_PrBomHdr_Company_Prod_Definition_Version");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.ProdCode, e.DefinitionCode })
+            .IsUnique()
+            .HasFilter("[Status] = N'ACTIVE'")
+            .HasDatabaseName("UX_PrBomHdr_OneActiveRevision");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.ProdCode })
+            .IsUnique()
+            .HasFilter("[Status] = N'ACTIVE' AND [IsDefaultDefinition] = 1")
+            .HasDatabaseName("UX_PrBomHdr_OneActiveDefault");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.ProdCode, e.DefinitionCode, e.Status })
+            .HasDatabaseName("IX_PrBomHdr_Company_Prod_Definition_Status");
 
         builder.HasIndex(e => new { e.CompanyCode, e.ProdCode, e.Status })
             .HasDatabaseName("IX_PrBomHdr_Company_Prod_Status");

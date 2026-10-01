@@ -64,6 +64,12 @@ public class PrDefBOM
     public string IssueMethod { get; set; } = PrMaterialIssueMethods.Manual;
     public string SupplySource { get; set; } = PrMaterialSupplySources.Purchased;
 
+    /// <summary>
+    /// When <see cref="SupplySource"/> is <see cref="PrMaterialSupplySources.SeparateProductDefinition"/>,
+    /// the Product Definition code that produces <see cref="ICode"/>. Null for other supply sources.
+    /// </summary>
+    public string? ComponentDefinitionCode { get; set; }
+
     public string? BranchCode { get; set; }
     public string? LocationCode { get; set; }
 

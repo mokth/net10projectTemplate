@@ -8,6 +8,7 @@ public sealed class ProductionWorkOrderListQuery
     public string? SearchText { get; set; }
     public string? WorkOrderNo { get; set; }
     public string? ProductCode { get; set; }
+    public string? DefinitionCode { get; set; }
     public string? Status { get; set; }
     public DateTime? StartDateFrom { get; set; }
     public DateTime? StartDateTo { get; set; }
@@ -22,6 +23,8 @@ public sealed class ProductionWorkOrderListRow
     public string WorkOrderNo { get; init; } = string.Empty;
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
+    public string SourceDefinitionCode { get; init; } = string.Empty;
+    public string? SourceDefinitionName { get; init; }
     public string? OutputUom { get; init; }
     public string Status { get; init; } = string.Empty;
     public int BomVersion { get; init; }
@@ -51,8 +54,8 @@ public sealed class ProductionWorkOrderDraftRequest
 {
     public string? WorkOrderNo { get; set; }
     public string ProductCode { get; set; } = string.Empty;
+    public string DefinitionCode { get; set; } = string.Empty;
     public decimal PlannedQty { get; set; } = 1m;
-    public DateTime SnapshotAsOfDate { get; set; } = DateTime.UtcNow.Date;
     public DateTime PlannedStartDate { get; set; } = DateTime.UtcNow.Date;
     public DateTime PlannedCompletionDate { get; set; } = DateTime.UtcNow.Date;
     public string SchedulingDirection { get; set; } = ProductionSchedulingDirections.Forward;
@@ -86,6 +89,7 @@ public sealed class ProductionWorkOrderMaterialVm
     public string? StandardUom { get; init; }
     public string? IssueMethod { get; init; }
     public string? SupplySource { get; init; }
+    public string? ComponentDefinitionCode { get; init; }
     public decimal RequiredBaseQty { get; init; }
     public string? BaseUom { get; init; }
     public decimal RequiredQty { get; init; }
@@ -169,17 +173,19 @@ public sealed class ProductionWorkOrderPreview
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
     public string? OutputUom { get; init; }
+    public string SourceDefinitionCode { get; init; } = string.Empty;
+    public string? SourceDefinitionName { get; init; }
     public long SourceBomHdrId { get; init; }
     public int SourceBomVersion { get; init; }
     public decimal BomBaseQty { get; init; }
     public string? BomBaseUom { get; init; }
     public decimal PlannedQty { get; init; }
-    public DateTime SnapshotAsOfDate { get; init; }
     public DateTime PlannedStartDate { get; init; }
     public DateTime PlannedCompletionDate { get; init; }
     public string SchedulingDirection { get; init; } = string.Empty;
     public DateTime ScheduleAnchorDateTime { get; init; }
     public string SnapshotHash { get; init; } = string.Empty;
+    public long? SourceProductDefinitionRevisionId { get; init; }
     public IReadOnlyList<ProductionWorkOrderRouteStepVm> RouteSteps { get; init; } = [];
     public IReadOnlyList<ProductionWorkOrderMaterialVm> Materials { get; init; } = [];
     public IReadOnlyList<ProductionWorkOrderOperationVm> Operations { get; init; } = [];
@@ -195,7 +201,8 @@ public sealed class ProductionWorkOrderDetail
     public string? LocationCode { get; init; }
     public int SnapshotRevision { get; init; }
     public string SnapshotHash { get; init; } = string.Empty;
-    public DateTime SnapshotAsOfDate { get; init; }
+    public string SourceDefinitionCode { get; init; } = string.Empty;
+    public string? SourceDefinitionName { get; init; }
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
     public string? OutputUom { get; init; }
@@ -388,6 +395,31 @@ public sealed class ProductionWorkOrderRefreshConfirm
     public string Reason { get; set; } = string.Empty;
 }
 
+public sealed class ProductionWorkOrderChangeDefinitionPreview
+{
+    public byte[] RowVersion { get; init; } = [];
+    public string TargetDefinitionCode { get; init; } = string.Empty;
+    public string? TargetDefinitionName { get; init; }
+    public long? TargetSourceProductDefinitionRevisionId { get; init; }
+    public int TargetSourceBomVersion { get; init; }
+    public int TargetDefinitionSourceHashVersion { get; init; }
+    public string TargetDefinitionSourceHash { get; init; } = string.Empty;
+    public IReadOnlyList<string> Added { get; init; } = [];
+    public IReadOnlyList<string> Removed { get; init; } = [];
+    public IReadOnlyList<string> Changed { get; init; } = [];
+}
+
+public sealed class ProductionWorkOrderChangeDefinitionConfirm
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[] RowVersion { get; set; } = [];
+    public string TargetDefinitionCode { get; set; } = string.Empty;
+    public long TargetSourceProductDefinitionRevisionId { get; set; }
+    public int TargetDefinitionSourceHashVersion { get; set; }
+    public string TargetDefinitionSourceHash { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
 public sealed class ProductionWorkOrderReleaseRequest
 {
     public string WorkOrderNo { get; set; } = string.Empty;
@@ -429,6 +461,7 @@ public sealed class ProductionWorkOrderMaterialAlternateVm
     public decimal ComponentQtyPerParent { get; init; }
     public string? StandardUom { get; init; }
     public string SupplySource { get; init; } = string.Empty;
+    public string? ComponentDefinitionCode { get; init; }
 }
 
 public interface IProductionWorkOrderService
@@ -478,6 +511,15 @@ public interface IProductionWorkOrderService
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> RefreshDraftFromDefinitionAsync(
         ProductionWorkOrderRefreshConfirm request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>> PreviewChangeDefinitionAsync(
+        string workOrderNo,
+        string targetDefinitionCode,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ConfirmChangeDefinitionAsync(
+        ProductionWorkOrderChangeDefinitionConfirm request,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(

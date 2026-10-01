@@ -33,9 +33,9 @@ public class PrBomStructureMergeTests
     [Fact]
     public void Merge_replaces_owner_children_and_keeps_descendant_subtree()
     {
-        var root = PrBomStructureKeys.Root("FG001");
-        var bbKey = PrBomStructureKeys.Line(root, "FG001", "10");
-        var rmKey = PrBomStructureKeys.Line(bbKey, "BB001", "20");
+        var root = PrBomStructureKeys.Root("FG001", PrProductDefinitionCodes.Standard);
+        var bbKey = PrBomStructureKeys.Line(root, "FG001", PrProductDefinitionCodes.Standard, "10");
+        var rmKey = PrBomStructureKeys.Line(bbKey, "BB001", PrProductDefinitionCodes.Standard, "20");
         var persisted = new List<PrBomStructureNode>
         {
             new()
@@ -60,6 +60,7 @@ public class PrBomStructureMergeTests
         var model = new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BomHdrId = 1,
             Version = 1,
             Status = PrBomStatuses.Draft,
@@ -77,7 +78,12 @@ public class PrBomStructureMergeTests
         };
 
         var merged = ErpWeb.UI.Planning.Masters.PrProductDefEntry.MergeStructureWithCurrentOwner(
-            persisted, "FG001", "FG001", model);
+            persisted,
+            "FG001",
+            PrProductDefinitionCodes.Standard,
+            "FG001",
+            PrProductDefinitionCodes.Standard,
+            model);
 
         Assert.Contains(merged, x => x.ItemCode == "RM002" && x.OwnerProdCode == "FG001");
         var bb = merged.Single(x => x.ItemCode == "BB001");

@@ -1,14 +1,20 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Data.Common;
 
 namespace ErpWeb.Tests;
 
@@ -23,7 +29,9 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
         _factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite(_connection).Options);
+            .UseSqlite(_connection)
+            .AddInterceptors(new SqliteUnicodeLiteralInterceptor())
+            .Options);
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
     }
@@ -136,12 +144,12 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         var allocation = new ProductionMaterialAllocationService(
             _factory,
             InventoryTenantTestHelper.CreateTenantContext(),
-            access,
+            access.Object,
             new FixedCurrentDateService(new DateTime(2026, 10, 1)));
         var sut = new ProductionMaterialIssueService(
             _factory,
             InventoryTenantTestHelper.CreateTenantContext(),
-            access,
+            access.Object,
             new FixedCurrentDateService(new DateTime(2026, 10, 1)),
             allocation);
 
@@ -160,24 +168,257 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.Equal(new DateTime(2026, 10, 1), result.Data.IssueDate);
     }
 
+    [Fact]
+    public async Task Post_creates_inventory_and_production_facts_and_replay_is_idempotent()
+    {
+        var materialId = await SeedAsync(lotControl: false, location: null);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(Balance(30, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
+            await db.SaveChangesAsync();
+        }
+
+        var request = await CreatePostRequestAsync(materialId, 30, issueQty: 4m);
+        var sut = CreatePostingSut(CreateInventoryPosting());
+
+        var first = await sut.PostAsync(request);
+        var replay = await sut.PostAsync(request);
+
+        Assert.True(first.Succeeded, first.Message);
+        Assert.True(replay.Succeeded, replay.Message);
+        Assert.Equal(first.Data!.BatchNo, replay.Data!.BatchNo);
+        Assert.Equal(ProductionWorkOrderStatuses.InProgress, first.Data.WorkOrderStatus);
+        var postedMaterial = Assert.Single(first.Data.Materials);
+        Assert.Equal(materialId, postedMaterial.WorkOrderMaterialId);
+        Assert.Equal(4m, postedMaterial.IssuedQty);
+        Assert.Equal(6m, postedMaterial.OutstandingQty);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(6m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 30)).StdQty);
+        Assert.Equal(IvBatchStatuses.Posted, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
+        Assert.Single(await verify.IvTrxHistories.ToListAsync());
+        var movement = Assert.Single(await verify.ProductionMaterialMovements.ToListAsync());
+        Assert.Equal(4m, movement.Qty);
+        Assert.Equal(4m, movement.BaseQty);
+        Assert.Equal(2m, movement.UnitCost);
+        Assert.Equal(8m, movement.TotalCost);
+        Assert.Equal(4m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
+        Assert.Equal(ProductionWorkOrderStatuses.InProgress, (await verify.ProductionWorkOrders.SingleAsync()).Status);
+        Assert.Equal(ProductionPostingLinkStatuses.Succeeded, (await verify.ProductionPostingLinks.SingleAsync()).Status);
+        Assert.Single(await verify.ProductionAuditEvents.Where(x => x.EventType == ProductionAuditEventTypes.MaterialIssued).ToListAsync());
+
+        var list = await sut.SearchAsync(new ProductionMaterialIssueListQuery { WorkOrderNo = "WO-1" });
+        Assert.True(list.Succeeded, list.Message);
+        var listRow = Assert.Single(list.Data!.Rows);
+        Assert.Equal(first.Data.BatchNo, listRow.BatchNo);
+        Assert.Equal(1, listRow.LineCount);
+
+        var document = await sut.GetAsync(first.Data.BatchNo);
+        Assert.True(document.Succeeded, document.Message);
+        Assert.Equal("WO-1", document.Data!.WorkOrderNo);
+        var documentLine = Assert.Single(document.Data.Lines);
+        Assert.Equal(4m, documentLine.IssueQty);
+        Assert.Equal(2m, documentLine.UnitCost);
+
+        var rollbackRequest = new ProductionMaterialIssueRollbackRequest
+        {
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            InventoryBatchNo = first.Data.BatchNo,
+            Reason = "Incorrect production issue"
+        };
+        var rollback = await sut.RollbackAsync(rollbackRequest);
+        var rollbackReplay = await sut.RollbackAsync(rollbackRequest);
+
+        Assert.True(rollback.Succeeded, rollback.Message);
+        Assert.True(rollbackReplay.Succeeded, rollbackReplay.Message);
+        Assert.Equal(rollback.Data!.RollbackOperationId, rollbackReplay.Data!.RollbackOperationId);
+        Assert.Equal(0m, Assert.Single(rollback.Data.Materials).IssuedQty);
+
+        verify.ChangeTracker.Clear();
+        Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 30)).StdQty);
+        Assert.Equal(IvBatchStatuses.Cancelled, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
+        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+        var movements = await verify.ProductionMaterialMovements.OrderBy(x => x.Uid).ToListAsync();
+        Assert.Equal(2, movements.Count);
+        Assert.Equal(ProductionMaterialMovementTypes.Issue, movements[0].MovementType);
+        Assert.Equal(ProductionMaterialMovementTypes.IssueReversal, movements[1].MovementType);
+        Assert.Equal(movements[0].Uid, movements[1].OriginalMovementId);
+        Assert.Equal(0m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
+        Assert.Equal(ProductionWorkOrderStatuses.InProgress, (await verify.ProductionWorkOrders.SingleAsync()).Status);
+        var links = await verify.ProductionPostingLinks.OrderBy(x => x.Uid).ToListAsync();
+        Assert.Equal(2, links.Count);
+        Assert.Equal(ProductionPostingLinkStatuses.Reversed, links[0].Status);
+        Assert.Equal(ProductionPostingLinkStatuses.Succeeded, links[1].Status);
+        Assert.Equal(links[0].Uid, links[1].OriginalPostingLinkId);
+        Assert.Single(await verify.ProductionAuditEvents.Where(x => x.EventType == ProductionAuditEventTypes.MaterialIssueRolledBack).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Rollback_is_blocked_when_a_later_movement_depends_on_the_issue()
+    {
+        var materialId = await SeedAsync(lotControl: false, location: null);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(Balance(32, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
+            await db.SaveChangesAsync();
+        }
+        var sut = CreatePostingSut(CreateInventoryPosting());
+        var posted = await sut.PostAsync(await CreatePostRequestAsync(materialId, 32, issueQty: 4m));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var issue = await db.ProductionMaterialMovements.SingleAsync();
+            db.ProductionMaterialMovements.Add(new ProductionMaterialMovement
+            {
+                CompanyCode = issue.CompanyCode, BranchCode = issue.BranchCode,
+                WorkOrderId = issue.WorkOrderId, WorkOrderMaterialId = issue.WorkOrderMaterialId,
+                WorkOrderOperationId = issue.WorkOrderOperationId, MovementType = ProductionMaterialMovementTypes.Consume,
+                MovementDate = issue.MovementDate.AddMinutes(1), ItemCode = issue.ItemCode,
+                Qty = 1m, Uom = issue.Uom, BaseQty = 1m, BaseUom = issue.BaseUom,
+                ConversionFactorToBase = issue.ConversionFactorToBase, WarehouseCode = issue.WarehouseCode,
+                LocationCode = issue.LocationCode, LotNo = issue.LotNo, LotId = issue.LotId,
+                FromBalLocId = issue.FromBalLocId, ItemStatus = issue.ItemStatus,
+                InventoryBatchId = issue.InventoryBatchId, InventoryBatchNo = issue.InventoryBatchNo,
+                InventoryBatchDetailId = issue.InventoryBatchDetailId, InventoryTrxLineNo = issue.InventoryTrxLineNo,
+                UnitCost = issue.UnitCost, TotalCost = issue.UnitCost, PostingLinkId = issue.PostingLinkId,
+                OriginalMovementId = issue.Uid, CreatedDate = issue.CreatedDate.AddMinutes(1), CreatedBy = "admin"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await sut.RollbackAsync(new ProductionMaterialIssueRollbackRequest
+        {
+            PostingRequestId = Guid.NewGuid().ToString("N"), InventoryBatchNo = posted.Data!.BatchNo,
+            Reason = "Should be blocked"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(6m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 32)).StdQty);
+        Assert.Equal(IvBatchStatuses.Posted, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
+        Assert.DoesNotContain(await verify.ProductionMaterialMovements.ToListAsync(), x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal);
+    }
+
+    [Fact]
+    public async Task Inventory_failure_rolls_back_batch_stock_link_and_production_changes()
+    {
+        var materialId = await SeedAsync(lotControl: false, location: null);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(Balance(31, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
+            await db.SaveChangesAsync();
+        }
+
+        var inner = CreateInventoryPosting();
+        var failedPosting = new Mock<IIvInventoryPostingService>();
+        failedPosting
+            .Setup(x => x.PostStockOutInTransactionAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (AppDbContext db, string company, string branch, string user, int batchNo, string trxType, CancellationToken ct) =>
+            {
+                var staged = await inner.PostStockOutInTransactionAsync(db, company, branch, user, batchNo, trxType, ct);
+                Assert.True(staged.Succeeded, staged.ErrorMessage);
+                return IvInventoryPostingBatchResult.Fail(batchNo, "Forced failure after inventory changes were staged.");
+            });
+
+        var result = await CreatePostingSut(failedPosting.Object)
+            .PostAsync(await CreatePostRequestAsync(materialId, 31, issueQty: 4m));
+
+        Assert.False(result.Succeeded);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 31)).StdQty);
+        Assert.Empty(await verify.IvTrxBatches.ToListAsync());
+        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+        Assert.Empty(await verify.ProductionMaterialMovements.ToListAsync());
+        Assert.Empty(await verify.ProductionPostingLinks.ToListAsync());
+        Assert.Empty(await verify.ProductionAuditEvents.ToListAsync());
+        Assert.Empty(await verify.MsRunningNos.ToListAsync());
+        Assert.Equal(0m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, (await verify.ProductionWorkOrders.SingleAsync()).Status);
+    }
+
     private ProductionMaterialAllocationService CreateSut(bool canViewCost)
     {
         var access = Access(canViewCost);
         return new ProductionMaterialAllocationService(
             _factory,
             InventoryTenantTestHelper.CreateTenantContext(),
-            access,
+            access.Object,
             new FixedCurrentDateService(new DateTime(2026, 10, 1)));
     }
 
-    private static IAccessRightService Access(bool canViewCost)
+    private ProductionMaterialIssueService CreatePostingSut(IIvInventoryPostingService posting)
+    {
+        var access = Access(canViewCost: true);
+        access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Post, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Rollback, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var allocation = new ProductionMaterialAllocationService(
+            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)));
+        return new ProductionMaterialIssueService(
+            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)),
+            allocation, new RunningNumberService(), new IvStockPostingRepository(), posting);
+    }
+
+    private IIvInventoryPostingService CreateInventoryPosting() =>
+        new IvInventoryPostingService(
+            _factory,
+            InventoryTenantTestHelper.CreateTenantContext(),
+            Access(canViewCost: true).Object,
+            new IvStockPostingRepository(),
+            new IvStockCommonRepository(_factory),
+            new PoOrderRepository(),
+            NullLogger<IvInventoryPostingService>.Instance);
+
+    private async Task<ProductionMaterialIssuePostRequest> CreatePostRequestAsync(
+        long materialId,
+        int balanceId,
+        decimal issueQty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync();
+        return new ProductionMaterialIssuePostRequest
+        {
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            WorkOrderNo = order.WorkOrderNo,
+            SnapshotRevision = order.SnapshotRevision,
+            SnapshotHash = order.SnapshotHash,
+            IssueDate = new DateTime(2026, 10, 1),
+            Remark = "Production issue test",
+            Lines =
+            [
+                new ProductionMaterialIssueLineRequest
+                {
+                    WorkOrderMaterialId = materialId,
+                    IssueQty = issueQty,
+                    Allocations =
+                    [
+                        new ProductionMaterialIssueAllocationRequest
+                        {
+                            FromBalLocId = balanceId,
+                            BaseQty = issueQty
+                        }
+                    ]
+                }
+            ]
+        };
+    }
+
+    private static Mock<IAccessRightService> Access(bool canViewCost)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.ViewCost, It.IsAny<CancellationToken>()))
             .ReturnsAsync(canViewCost);
-        return access.Object;
+        return access;
     }
 
     private async Task<long> SeedAsync(bool lotControl, string? location)
@@ -276,5 +517,17 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _connection.DisposeAsync();
+    }
+
+    private sealed class SqliteUnicodeLiteralInterceptor : DbCommandInterceptor
+    {
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result)
+        {
+            command.CommandText = command.CommandText.Replace("N'", "'", StringComparison.Ordinal);
+            return result;
+        }
     }
 }

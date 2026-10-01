@@ -103,6 +103,10 @@
                                 </div>
                                 <div class="iv-compact-row__meta">
                                     <span>@row.Status</span>
+                                    @if (!string.IsNullOrWhiteSpace(row.SourceDefinitionCode))
+                                    {
+                                        <span class="code-style">@row.SourceDefinitionCode · V@row.BomVersion</span>
+                                    }
                                     <span>@row.PlannedQty.ToString("n4") @row.OutputUom</span>
                                     <span>Due @row.PlannedCompletionDate.ToString("dd MMM yyyy")</span>
                                 </div>
@@ -129,6 +133,11 @@
                         <DxFormLayoutItem Caption="Product code" ColSpanMd="12">
                             <Template>
                                 <DxTextBox @bind-Text="@DraftProductCode" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Definition code" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftDefinitionCode" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Status" ColSpanMd="12">

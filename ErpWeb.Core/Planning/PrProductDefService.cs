@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
+using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Planning;
@@ -50,18 +51,25 @@ public sealed class PrProductDefService : IPrProductDefService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        // Latest version per product (by Version desc)
         var headers = db.PrBomHdrs.AsNoTracking().Where(x => x.CompanyCode == company);
+
+        // Latest version per Product + DefinitionCode
         var latest = from h in headers
-                     group h by h.ProdCode into g
+                     group h by new { h.ProdCode, h.DefinitionCode } into g
                      select new
                      {
-                         ProdCode = g.Key,
+                         g.Key.ProdCode,
+                         g.Key.DefinitionCode,
                          Version = g.Max(x => x.Version)
                      };
 
         var joined = from l in latest
-                     join h in headers on new { l.ProdCode, l.Version } equals new { h.ProdCode, h.Version }
+                     join h in headers on new { l.ProdCode, l.DefinitionCode, l.Version }
+                         equals new { h.ProdCode, h.DefinitionCode, Version = h.Version }
+                     join a in headers.Where(x => x.Status == PrBomStatuses.Active)
+                         on new { h.ProdCode, h.DefinitionCode }
+                         equals new { a.ProdCode, a.DefinitionCode } into aj
+                     from a in aj.DefaultIfEmpty()
                      join s in db.IvStockMasters.AsNoTracking().Where(x => x.CompanyCode == company)
                          on h.ProdCode equals s.ICode into sj
                      from s in sj.DefaultIfEmpty()
@@ -72,14 +80,19 @@ public sealed class PrProductDefService : IPrProductDefService
                          StdUom = s != null ? s.StdUom : null,
                          MfgType = s != null ? s.MfgType : PrMfgTypes.Buy,
                          IsActive = s != null && s.IsActive,
-                         BomVersion = h.Version,
-                         BomStatus = h.Status,
-                         BomItemCount = db.PrDefBOMs.Count(b => b.BomHdrId == h.Uid),
+                         DefinitionCode = h.DefinitionCode,
+                         DefinitionName = a != null ? a.DefinitionName : h.DefinitionName,
+                         IsDefaultDefinition = a != null && a.IsDefaultDefinition,
+                         ActiveVersion = a != null ? (int?)a.Version : null,
+                         LatestVersion = h.Version,
+                         LatestStatus = h.Status,
+                         LatestBomItemCount = db.PrDefBOMs.Count(b => b.BomHdrId == h.Uid),
+                         LatestModifiedDate = h.ModifiedDate,
                          h.CreatedDate,
                          h.CreatedBy,
                          h.ModifiedDate,
                          h.ModifiedBy,
-                         h.Uid
+                         LatestUid = h.Uid
                      };
 
         if (!string.IsNullOrWhiteSpace(query.SearchText))
@@ -87,7 +100,9 @@ public sealed class PrProductDefService : IPrProductDefService
             var term = query.SearchText.Trim();
             joined = joined.Where(x =>
                 x.ProdCode.Contains(term)
-                || (x.ProdDesc != null && x.ProdDesc.Contains(term)));
+                || (x.ProdDesc != null && x.ProdDesc.Contains(term))
+                || x.DefinitionCode.Contains(term)
+                || (x.DefinitionName != null && x.DefinitionName.Contains(term)));
         }
 
         if (!string.IsNullOrWhiteSpace(query.ProdCode))
@@ -117,7 +132,7 @@ public sealed class PrProductDefService : IPrProductDefService
             var bom = db.PrDefBOMs.AsNoTracking().Where(x => x.CompanyCode == company);
 
             joined = joined.Where(p => bom.Any(b =>
-                b.BomHdrId == p.Uid
+                b.BomHdrId == p.LatestUid
                 && (componentCode == null || componentCode.Length == 0 || b.ICode.Contains(componentCode))
                 && (componentDesc == null || componentDesc.Length == 0
                     || (b.IName != null && b.IName.Contains(componentDesc)))
@@ -128,16 +143,26 @@ public sealed class PrProductDefService : IPrProductDefService
         var sortField = (query.SortField ?? nameof(PrProductDefListRow.ProdCode)).Trim();
         joined = (sortField.ToUpperInvariant(), query.SortDescending) switch
         {
-            ("PRODDESC", true) => joined.OrderByDescending(x => x.ProdDesc).ThenByDescending(x => x.ProdCode),
-            ("PRODDESC", false) => joined.OrderBy(x => x.ProdDesc).ThenBy(x => x.ProdCode),
-            ("BOMITEMCOUNT", true) => joined.OrderByDescending(x => x.BomItemCount).ThenBy(x => x.ProdCode),
-            ("BOMITEMCOUNT", false) => joined.OrderBy(x => x.BomItemCount).ThenBy(x => x.ProdCode),
-            ("ISACTIVE", true) => joined.OrderByDescending(x => x.IsActive).ThenBy(x => x.ProdCode),
-            ("ISACTIVE", false) => joined.OrderBy(x => x.IsActive).ThenBy(x => x.ProdCode),
-            ("BOMVERSION", true) => joined.OrderByDescending(x => x.BomVersion).ThenBy(x => x.ProdCode),
-            ("BOMVERSION", false) => joined.OrderBy(x => x.BomVersion).ThenBy(x => x.ProdCode),
-            (_, true) => joined.OrderByDescending(x => x.ProdCode),
-            _ => joined.OrderBy(x => x.ProdCode)
+            ("PRODDESC", true) => joined.OrderByDescending(x => x.ProdDesc).ThenByDescending(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("PRODDESC", false) => joined.OrderBy(x => x.ProdDesc).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("DEFINITIONCODE", true) => joined.OrderByDescending(x => x.DefinitionCode).ThenBy(x => x.ProdCode),
+            ("DEFINITIONCODE", false) => joined.OrderBy(x => x.DefinitionCode).ThenBy(x => x.ProdCode),
+            ("BOMITEMCOUNT", true) => joined.OrderByDescending(x => x.LatestBomItemCount).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("BOMITEMCOUNT", false) => joined.OrderBy(x => x.LatestBomItemCount).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("ISACTIVE", true) => joined.OrderByDescending(x => x.IsActive).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("ISACTIVE", false) => joined.OrderBy(x => x.IsActive).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("BOMVERSION", true) => joined.OrderByDescending(x => x.LatestVersion).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            ("BOMVERSION", false) => joined.OrderBy(x => x.LatestVersion).ThenBy(x => x.ProdCode)
+                .ThenBy(x => x.DefinitionCode),
+            (_, true) => joined.OrderByDescending(x => x.ProdCode).ThenByDescending(x => x.DefinitionCode),
+            _ => joined.OrderBy(x => x.ProdCode).ThenBy(x => x.DefinitionCode)
         };
 
         var total = await joined.CountAsync(cancellationToken);
@@ -150,9 +175,15 @@ public sealed class PrProductDefService : IPrProductDefService
                 ProdDesc = x.ProdDesc,
                 StdUom = x.StdUom,
                 MfgType = x.MfgType,
-                BomVersion = x.BomVersion,
-                BomStatus = x.BomStatus,
-                BomItemCount = x.BomItemCount,
+                DefinitionCode = x.DefinitionCode,
+                DefinitionName = x.DefinitionName,
+                IsDefaultDefinition = x.IsDefaultDefinition,
+                ActiveVersion = x.ActiveVersion,
+                LatestVersion = x.LatestVersion,
+                LatestStatus = x.LatestStatus,
+                LatestBomItemCount = x.LatestBomItemCount,
+                LatestModifiedDate = x.LatestModifiedDate,
+                DefinitionKey = x.ProdCode + "\u001f" + x.DefinitionCode,
                 IsActive = x.IsActive,
                 CreatedDate = x.CreatedDate,
                 CreatedBy = x.CreatedBy,
@@ -170,6 +201,7 @@ public sealed class PrProductDefService : IPrProductDefService
 
     public async Task<IvMasterOperationResult<PrProductDefEditVm>> GetAsync(
         string prodCode,
+        string definitionCode,
         int? version = null,
         CancellationToken cancellationToken = default)
     {
@@ -185,10 +217,16 @@ public sealed class PrProductDefService : IPrProductDefService
             return FailVm(IvMasterErrorCode.Validation, "Product code is required.", "ProdCode");
         }
 
+        var defCode = PrProductDefinitionCodes.Normalize(definitionCode);
+        if (defCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(defCode))
+        {
+            return FailVm(IvMasterErrorCode.Validation, "Definition code is required.", "DefinitionCode");
+        }
+
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        var header = await ResolveHeaderForEditAsync(db, company, code, version, cancellationToken);
+        var header = await ResolveHeaderForEditAsync(db, company, code, defCode, version, cancellationToken);
         if (header is null)
         {
             return FailVm(IvMasterErrorCode.NotFound, "Product definition not found.");
@@ -241,6 +279,7 @@ public sealed class PrProductDefService : IPrProductDefService
 
     public async Task<IvMasterOperationResult<PrBomStructureResult>> GetStructureTreeAsync(
         string prodCode,
+        string definitionCode,
         int? version = null,
         CancellationToken cancellationToken = default)
     {
@@ -256,10 +295,16 @@ public sealed class PrProductDefService : IPrProductDefService
             return FailStructure(IvMasterErrorCode.Validation, "Product code is required.", "ProdCode");
         }
 
+        var defCode = PrProductDefinitionCodes.Normalize(definitionCode);
+        if (defCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(defCode))
+        {
+            return FailStructure(IvMasterErrorCode.Validation, "Definition code is required.", "DefinitionCode");
+        }
+
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        var rootHeader = await ResolveHeaderForEditAsync(db, company, code, version, cancellationToken);
+        var rootHeader = await ResolveHeaderForEditAsync(db, company, code, defCode, version, cancellationToken);
         if (rootHeader is null)
         {
             return FailStructure(IvMasterErrorCode.NotFound, "Product definition not found.");
@@ -268,8 +313,12 @@ public sealed class PrProductDefService : IPrProductDefService
         var rootItem = await db.IvStockMasters.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyCode == company && x.ICode == code, cancellationToken);
 
+        var rootDefinition = string.IsNullOrWhiteSpace(rootHeader.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(rootHeader.DefinitionCode);
+
         var cache = new StructureLoadCache();
-        cache.Headers[(code, rootHeader.Version)] = rootHeader;
+        cache.Headers[(code, rootDefinition, rootHeader.Version)] = rootHeader;
         if (rootItem is not null)
         {
             cache.Items[code] = new StructureItemInfo(
@@ -280,7 +329,7 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         var nodes = new List<PrBomStructureNode>();
-        var rootKey = PrBomStructureKeys.Root(code);
+        var rootKey = PrBomStructureKeys.Root(code, rootDefinition);
         nodes.Add(new PrBomStructureNode
         {
             Key = rootKey,
@@ -292,17 +341,19 @@ public sealed class PrProductDefService : IPrProductDefService
             StdQty = rootHeader.BaseQty,
             StdUom = rootHeader.BaseUom ?? rootItem?.StdUom,
             OwnerProdCode = null,
+            OwnerDefinitionCode = null,
             BomHdrId = rootHeader.Uid,
             BomVersion = rootHeader.Version,
             BomStatus = rootHeader.Status,
             Status = PrBomStructureNodeStatus.Normal
         });
 
-        var pathStack = new List<string> { code };
+        var pathStack = new List<(string Prod, string Def)> { (code, rootDefinition) };
         await WalkStructureAsync(
             db,
             company,
             ownerProdCode: code,
+            ownerDefinitionCode: rootDefinition,
             ownerHeader: rootHeader,
             parentKey: rootKey,
             level: 0,
@@ -314,6 +365,7 @@ public sealed class PrProductDefService : IPrProductDefService
         return IvMasterOperationResult<PrBomStructureResult>.Ok(new PrBomStructureResult
         {
             RootProdCode = code,
+            RootDefinitionCode = rootDefinition,
             RootBomHdrId = rootHeader.Uid,
             RootBomVersion = rootHeader.Version,
             RootBomStatus = rootHeader.Status,
@@ -378,16 +430,35 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         PrBomHdr? existingHeader = null;
+        string definitionCode;
+        string? definitionName;
+
         if (!isNew)
         {
+            // DefinitionCode is immutable after first save — resolve the revision first, then lock the code.
+            var requestedDef = PrProductDefinitionCodes.Normalize(model.DefinitionCode);
             existingHeader = await db.PrBomHdrs
                 .FirstOrDefaultAsync(x => x.CompanyCode == company
                                           && x.ProdCode == prodCode
+                                          && x.DefinitionCode == requestedDef
                                           && x.Version == model.Version, cancellationToken);
+            if (existingHeader is null && requestedDef.Length > 0)
+            {
+                // Fallback: locate by Prod+Version then enforce DefinitionCode match (legacy rows).
+                existingHeader = await db.PrBomHdrs
+                    .FirstOrDefaultAsync(x => x.CompanyCode == company
+                                              && x.ProdCode == prodCode
+                                              && x.Version == model.Version, cancellationToken);
+            }
+
             if (existingHeader is null)
             {
                 return FailVm(IvMasterErrorCode.NotFound, "Product definition not found.");
             }
+
+            definitionCode = string.IsNullOrWhiteSpace(existingHeader.DefinitionCode)
+                ? PrProductDefinitionCodes.Standard
+                : PrProductDefinitionCodes.Normalize(existingHeader.DefinitionCode);
 
             if (existingHeader.Status is PrBomStatuses.Active or PrBomStatuses.Superseded or PrBomStatuses.Inactive)
             {
@@ -402,14 +473,45 @@ public sealed class PrProductDefService : IPrProductDefService
                 return FailVm(IvMasterErrorCode.Concurrency,
                     "This product definition was changed by another user. Reload and try again.");
             }
+
+            definitionName = Truncate(
+                string.IsNullOrWhiteSpace(model.DefinitionName) ? existingHeader.DefinitionName : model.DefinitionName,
+                NameMax);
         }
         else
         {
-            var any = await db.PrBomHdrs.AsNoTracking()
-                .AnyAsync(x => x.CompanyCode == company && x.ProdCode == prodCode, cancellationToken);
-            if (any)
+            definitionCode = PrProductDefinitionCodes.Normalize(model.DefinitionCode);
+            if (definitionCode.Length == 0)
             {
-                errors[nameof(model.ProdCode)] = "A product definition already exists for this product. Use Create New Version.";
+                definitionCode = PrProductDefinitionCodes.Standard;
+            }
+
+            if (!PrProductDefinitionCodes.IsValidFormat(definitionCode))
+            {
+                errors[nameof(model.DefinitionCode)] =
+                    "Definition code must be 1–30 characters (A–Z, 0–9, hyphen, underscore).";
+            }
+
+            definitionName = Truncate(
+                string.IsNullOrWhiteSpace(model.DefinitionName)
+                    ? (definitionCode == PrProductDefinitionCodes.Standard
+                        ? PrProductDefinitionCodes.StandardName
+                        : model.DefinitionName)
+                    : model.DefinitionName,
+                NameMax);
+
+            if (prodCode.Length > 0 && definitionCode.Length > 0
+                && !errors.ContainsKey(nameof(model.DefinitionCode)))
+            {
+                var any = await db.PrBomHdrs.AsNoTracking()
+                    .AnyAsync(x => x.CompanyCode == company
+                                   && x.ProdCode == prodCode
+                                   && x.DefinitionCode == definitionCode, cancellationToken);
+                if (any)
+                {
+                    errors[nameof(model.DefinitionCode)] =
+                        "A product definition already exists for this product and definition code. Use Create New Version.";
+                }
             }
         }
 
@@ -448,23 +550,65 @@ public sealed class PrProductDefService : IPrProductDefService
             cancellationToken);
 
         var seenComponents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var normalized = new List<(string ICode, string? IName, decimal StdQty, string? StdUom, int SeqNo, decimal ScrapPercent, string Warehouse, bool BomDefault, string? AlternateGroupCode, decimal Tolerance, bool WipBomDefault, Guid? OperationKey, string IssueMethod, string SupplySource, Guid? ProducingRouteStepKey)>();
+        var normalized = new List<(
+            string ICode,
+            string? IName,
+            decimal StdQty,
+            string? StdUom,
+            int SeqNo,
+            decimal ScrapPercent,
+            string Warehouse,
+            bool BomDefault,
+            string? AlternateGroupCode,
+            decimal Tolerance,
+            bool WipBomDefault,
+            Guid? OperationKey,
+            string IssueMethod,
+            string SupplySource,
+            string? ComponentDefinitionCode,
+            Guid? ProducingRouteStepKey)>();
         var operationKeys = normalizedOperations.Select(x => x.OperationKey).ToHashSet();
         var defaultsByGroup = new Dictionary<string, int>(StringComparer.Ordinal);
-        // Route steps that already exist for this revision. A material may only point at one of
-        // these; a brand-new revision gains step keys after its first save.
         var persistedRouteSteps = existingHeader is null
             ? []
             : await db.PrBomRouteSteps.AsNoTracking()
                 .Where(x => x.BomHdrId == existingHeader.Uid)
                 .ToListAsync(cancellationToken);
         var availableStepOutputs = KnownRouteStepOutputItems(persistedRouteSteps);
-        // Reuse persisted step keys on re-save so producer references and client state stay stable.
         var existingStepKeys = persistedRouteSteps
             .GroupBy(x => (x.WorkCentreCode, x.OutputItemCode, x.StageSequence))
             .ToDictionary(g => g.Key, g => g.First().RouteStepKey);
         if (operationKeys.Contains(Guid.Empty) || operationKeys.Count != normalizedOperations.Count)
             errors["Operations"] = "Each process must have a unique, non-empty identity.";
+
+        // Preload logical definition existence for SEPARATE draft validation
+        HashSet<(string Prod, string Def)>? logicalDefs = null;
+        HashSet<(string Prod, string Def)>? activeDefs = null;
+        if (lines.Any(l => string.Equals(
+                (l.SupplySource ?? string.Empty).Trim(),
+                PrMaterialSupplySources.SeparateProductDefinition,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            var defRows = await db.PrBomHdrs.AsNoTracking()
+                .Where(x => x.CompanyCode == company)
+                .Select(x => new { x.ProdCode, x.DefinitionCode, x.Status })
+                .ToListAsync(cancellationToken);
+            logicalDefs = defRows
+                .Select(x => (
+                    NormalizeCode(x.ProdCode),
+                    string.IsNullOrWhiteSpace(x.DefinitionCode)
+                        ? PrProductDefinitionCodes.Standard
+                        : PrProductDefinitionCodes.Normalize(x.DefinitionCode)))
+                .ToHashSet(new ProdDefTupleComparer());
+            activeDefs = defRows
+                .Where(x => x.Status == PrBomStatuses.Active)
+                .Select(x => (
+                    NormalizeCode(x.ProdCode),
+                    string.IsNullOrWhiteSpace(x.DefinitionCode)
+                        ? PrProductDefinitionCodes.Standard
+                        : PrProductDefinitionCodes.Normalize(x.DefinitionCode)))
+                .ToHashSet(new ProdDefTupleComparer());
+        }
 
         for (var i = 0; i < lines.Count; i++)
         {
@@ -472,7 +616,6 @@ public sealed class PrProductDefService : IPrProductDefService
             var label = $"Line {i + 1}";
             if (line.OperationKey is { } owner && !operationKeys.Contains(owner))
                 errors[$"Lines[{i}].OperationKey"] = $"{label}: the owning process is missing.";
-            // Preserve standalone legacy BOMs; routed definitions require explicit ownership.
             if (activate && normalizedOperations.Count > 0 && line.OperationKey is null)
                 errors[$"Lines[{i}].OperationKey"] = $"{label}: assign this material to its consuming process before activation.";
             var iCode = ValidateCode(errors, $"Lines[{i}].ICode", $"{label} item", line.ICode, CodeMax);
@@ -532,6 +675,36 @@ public sealed class PrProductDefService : IPrProductDefService
             if (!PrMaterialSupplySources.IsValid(supplySource))
                 errors[$"Lines[{i}].SupplySource"] = $"{label}: select a valid supply source.";
 
+            string? componentDefinitionCode = null;
+            if (string.Equals(supplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
+            {
+                var childDef = PrProductDefinitionCodes.Normalize(line.ComponentDefinitionCode);
+                if (childDef.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(childDef))
+                {
+                    errors[$"Lines[{i}].ComponentDefinitionCode"] =
+                        $"{label}: component definition code is required for SEPARATE_PRODUCT_DEFINITION.";
+                }
+                else if (logicalDefs is not null && !logicalDefs.Contains((iCode, childDef)))
+                {
+                    errors[$"Lines[{i}].ComponentDefinitionCode"] =
+                        $"{label}: product definition {iCode}[{childDef}] does not exist.";
+                }
+                else if (activate && activeDefs is not null && !activeDefs.Contains((iCode, childDef)))
+                {
+                    errors[$"Lines[{i}].ComponentDefinitionCode"] =
+                        $"{label}: product definition {iCode}[{childDef}] has no ACTIVE revision.";
+                }
+                else
+                {
+                    componentDefinitionCode = childDef;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(line.ComponentDefinitionCode))
+            {
+                errors[$"Lines[{i}].ComponentDefinitionCode"] =
+                    $"{label}: component definition code is only allowed for SEPARATE_PRODUCT_DEFINITION.";
+            }
+
             Guid? producingKey = null;
             if (line.ProducingRouteStepKey is { } candidate && candidate != Guid.Empty)
             {
@@ -566,7 +739,6 @@ public sealed class PrProductDefService : IPrProductDefService
             var alternateGroup = PrBomAlternateGroups.Normalize(line.AlternateGroupCode);
             if (alternateGroup is null)
             {
-                // New saves always require an explicit group. Singleton defaults default to ICode.
                 alternateGroup = iCode.Length > 0 ? iCode : null;
             }
 
@@ -624,6 +796,7 @@ public sealed class PrProductDefService : IPrProductDefService
                         line.OperationKey,
                         issueMethod,
                         supplySource,
+                        componentDefinitionCode,
                         producingKey));
                 }
             }
@@ -651,18 +824,27 @@ public sealed class PrProductDefService : IPrProductDefService
             }
         }
 
-        // Circular BOM check against other products' ACTIVE graphs (company-scoped)
-        if (errors.Count == 0 && prodCode.Length > 0)
+        // Circular BOM: SEPARATE edges only, keyed by (Prod, Definition)
+        if (errors.Count == 0 && prodCode.Length > 0 && definitionCode.Length > 0)
         {
-            var graph = await BuildActiveComponentGraphAsync(db, company, excludeProdCode: null, cancellationToken);
+            var graph = await BuildActiveComponentGraphAsync(
+                db, company, exclude: null, cancellationToken);
+            var componentNodes = normalized
+                .Where(x => string.Equals(
+                    x.SupplySource,
+                    PrMaterialSupplySources.SeparateProductDefinition,
+                    StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode))
+                .Select(x => CircularBomValidator.NodeKey.Create(x.ICode, x.ComponentDefinitionCode))
+                .ToList();
             var path = CircularBomValidator.FindCyclePath(
-                prodCode,
-                normalized.Select(x => x.ICode).ToList(),
+                CircularBomValidator.NodeKey.Create(prodCode, definitionCode),
+                componentNodes,
                 graph);
             if (path is not null)
             {
                 errors[nameof(model.Lines)] =
-                    $"Cannot save BOM for {prodCode} because it creates a circular BOM: {path}.";
+                    $"Cannot save BOM for {prodCode}[{definitionCode}] because it creates a circular BOM: {path}.";
             }
         }
 
@@ -678,43 +860,12 @@ public sealed class PrProductDefService : IPrProductDefService
                 $"No approved conversion from Base UOM {requestedBaseUom} to inventory UOM {productInventoryUom} ({UomConversionFailureCodes.MissingConversion}).";
         }
 
-        var targetStatus = activate ? PrBomStatuses.Active : (existingHeader?.Status ?? PrBomStatuses.Draft);
-        if (activate)
-        {
-            targetStatus = PrBomStatuses.Active;
-        }
-        else if (isNew)
+        var targetStatus = activate
+            ? PrBomStatuses.Active
+            : (existingHeader?.Status ?? PrBomStatuses.Draft);
+        if (isNew && !activate)
         {
             targetStatus = PrBomStatuses.Draft;
-        }
-
-        DateTime? effFrom = model.EffectiveFrom?.Date;
-        DateTime? effTo = model.EffectiveTo?.Date;
-        if (activate || targetStatus == PrBomStatuses.Active)
-        {
-            effFrom ??= DateTime.UtcNow.Date;
-            if (effTo is not null && effFrom is not null && effTo <= effFrom)
-            {
-                errors[nameof(model.EffectiveTo)] = "Effective To must be after Effective From (the end date is exclusive).";
-            }
-
-            // Overlap is a hard error when editing an already-ACTIVE BOM's window.
-            // Activate of a DRAFT supersedes prior ACTIVE versions instead.
-            if (!activate
-                && existingHeader is not null
-                && existingHeader.Status == PrBomStatuses.Active
-                && errors.Count == 0
-                && prodCode.Length > 0)
-            {
-                var overlap = await FindOverlapAsync(
-                    db, company, prodCode, effFrom, effTo,
-                    excludeUid: existingHeader.Uid, cancellationToken);
-                if (overlap is not null)
-                {
-                    errors[nameof(model.EffectiveFrom)] =
-                        $"Effective dates overlap with BOM version {overlap.Version}.";
-                }
-            }
         }
 
         if (errors.Count > 0)
@@ -740,10 +891,13 @@ public sealed class PrProductDefService : IPrProductDefService
                 {
                     CompanyCode = company,
                     ProdCode = prodCode,
+                    DefinitionCode = definitionCode,
+                    DefinitionName = definitionName,
+                    IsDefaultDefinition = false,
                     Version = 1,
-                    Status = targetStatus,
-                    EffectiveFrom = targetStatus == PrBomStatuses.Active ? effFrom : model.EffectiveFrom?.Date,
-                    EffectiveTo = model.EffectiveTo?.Date,
+                    Status = PrBomStatuses.Draft,
+                    EffectiveFrom = null,
+                    EffectiveTo = null,
                     BaseQty = baseQty,
                     BaseUom = baseUom,
                     Prefix = prefix,
@@ -761,28 +915,7 @@ public sealed class PrProductDefService : IPrProductDefService
             else
             {
                 header = existingHeader!;
-                if (activate && header.Status != PrBomStatuses.Active)
-                {
-                    await SupersedeOverlappingAsync(db, company, prodCode, header.Uid, effFrom!.Value, now, user, cancellationToken);
-                    header.Status = PrBomStatuses.Active;
-                    header.EffectiveFrom = effFrom;
-                    header.EffectiveTo = effTo;
-                }
-                else if (header.Status == PrBomStatuses.Active)
-                {
-                    header.EffectiveFrom = effFrom ?? header.EffectiveFrom;
-                    header.EffectiveTo = effTo;
-                }
-                else
-                {
-                    header.EffectiveFrom = model.EffectiveFrom?.Date;
-                    header.EffectiveTo = model.EffectiveTo?.Date;
-                    if (activate)
-                    {
-                        header.Status = PrBomStatuses.Active;
-                    }
-                }
-
+                header.DefinitionName = definitionName;
                 header.BaseQty = baseQty;
                 header.BaseUom = baseUom;
                 header.Prefix = prefix;
@@ -802,14 +935,6 @@ public sealed class PrProductDefService : IPrProductDefService
                     .ToListAsync(cancellationToken);
                 db.PrBomRouteSteps.RemoveRange(oldRouteSteps);
                 await db.SaveChangesAsync(cancellationToken);
-            }
-
-            if (isNew && activate)
-            {
-                await SupersedeOverlappingAsync(db, company, prodCode, header.Uid, effFrom!.Value, now, user, cancellationToken);
-                header.Status = PrBomStatuses.Active;
-                header.EffectiveFrom = effFrom;
-                header.EffectiveTo = effTo;
             }
 
             var (operationsByKey, routeStepsByKey) = AddRoute(
@@ -842,6 +967,7 @@ public sealed class PrProductDefService : IPrProductDefService
                     Tolerance = line.Tolerance,
                     IssueMethod = line.IssueMethod,
                     SupplySource = line.SupplySource,
+                    ComponentDefinitionCode = line.ComponentDefinitionCode,
                     CreatedDate = now,
                     CreatedBy = user,
                     ModifiedDate = now,
@@ -856,22 +982,36 @@ public sealed class PrProductDefService : IPrProductDefService
             {
                 product.MfgType = PrMfgTypes.Make;
             }
-            else if (product is not null && mfgType == PrMfgTypes.Phantom
-                     && PrMfgTypes.Normalize(product.MfgType) != PrMfgTypes.Phantom)
-            {
-                // keep phantom if already set; if promoting from buy already handled
-            }
 
             await db.SaveChangesAsync(cancellationToken);
+
+            if (activate)
+            {
+                await ActivateRevisionInTransactionAsync(
+                    db,
+                    company,
+                    header,
+                    requestDefault: model.IsDefaultDefinition,
+                    now,
+                    user,
+                    cancellationToken);
+            }
+
             await tx.CommitAsync(cancellationToken);
 
-            return await GetAsync(prodCode, header.Version, cancellationToken);
+            return await GetAsync(prodCode, definitionCode, header.Version, cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
             await tx.RollbackAsync(cancellationToken);
             return FailVm(IvMasterErrorCode.Concurrency,
                 "This product definition was changed by another user. Reload and try again.");
+        }
+        catch (DbUpdateException ex) when (IsUniqueIndexConflict(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "Another user activated or changed the default for this product definition. Reload and try again.");
         }
         catch
         {
@@ -880,8 +1020,17 @@ public sealed class PrProductDefService : IPrProductDefService
         }
     }
 
+    private static bool IsUniqueIndexConflict(DbUpdateException ex)
+    {
+        var message = ex.InnerException?.Message ?? ex.Message;
+        return message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("IX_", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task<IvMasterOperationResult<PrProductDefEditVm>> CreateNewVersionAsync(
         string prodCode,
+        string definitionCode,
         int? fromVersion = null,
         CancellationToken cancellationToken = default)
     {
@@ -898,14 +1047,30 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         var code = NormalizeCode(prodCode);
+        var defCode = PrProductDefinitionCodes.Normalize(definitionCode);
+        if (code.Length == 0)
+        {
+            return FailVm(IvMasterErrorCode.Validation, "Product code is required.", "ProdCode");
+        }
+
+        if (defCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(defCode))
+        {
+            return FailVm(IvMasterErrorCode.Validation, "Definition code is required.", "DefinitionCode");
+        }
+
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
         var source = fromVersion is int v
             ? await db.PrBomHdrs.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.CompanyCode == company && x.ProdCode == code && x.Version == v, cancellationToken)
+                .FirstOrDefaultAsync(x => x.CompanyCode == company
+                                          && x.ProdCode == code
+                                          && x.DefinitionCode == defCode
+                                          && x.Version == v, cancellationToken)
             : await db.PrBomHdrs.AsNoTracking()
-                .Where(x => x.CompanyCode == company && x.ProdCode == code)
+                .Where(x => x.CompanyCode == company
+                            && x.ProdCode == code
+                            && x.DefinitionCode == defCode)
                 .OrderByDescending(x => x.Version)
                 .FirstOrDefaultAsync(cancellationToken);
 
@@ -915,7 +1080,9 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         var maxVer = await db.PrBomHdrs
-            .Where(x => x.CompanyCode == company && x.ProdCode == code)
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == code
+                        && x.DefinitionCode == defCode)
             .MaxAsync(x => x.Version, cancellationToken);
 
         var lines = await db.PrDefBOMs.AsNoTracking()
@@ -944,6 +1111,9 @@ public sealed class PrProductDefService : IPrProductDefService
         {
             CompanyCode = company,
             ProdCode = code,
+            DefinitionCode = source.DefinitionCode,
+            DefinitionName = source.DefinitionName,
+            IsDefaultDefinition = false,
             Version = maxVer + 1,
             Status = PrBomStatuses.Draft,
             EffectiveFrom = null,
@@ -995,8 +1165,6 @@ public sealed class PrProductDefService : IPrProductDefService
                     l.LabourDescription,
                     l.CostPerOutputUnit)).ToList())).ToList())).ToList();
 
-        // Route step keys are scoped per header, so a new version can reuse the source keys and
-        // keep each material's producer reference valid without a remap.
         var (operationsByKey, routeStepsByKey) = AddRoute(
             db, header, company, clonedOperations, existingStepKeys, now, user);
 
@@ -1028,6 +1196,7 @@ public sealed class PrProductDefService : IPrProductDefService
                 Tolerance = line.Tolerance,
                 IssueMethod = line.IssueMethod,
                 SupplySource = line.SupplySource,
+                ComponentDefinitionCode = line.ComponentDefinitionCode,
                 CreatedDate = now,
                 CreatedBy = user,
                 ModifiedDate = now,
@@ -1039,32 +1208,126 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        return await GetAsync(code, header.Version, cancellationToken);
+        return await GetAsync(code, defCode, header.Version, cancellationToken);
     }
 
     public async Task<IvMasterOperationResult<PrProductDefEditVm>> ActivateAsync(
         string prodCode,
+        string definitionCode,
         int version,
-        DateTime? effectiveFrom,
-        DateTime? effectiveTo,
         byte[]? headerRowVersion,
         CancellationToken cancellationToken = default)
     {
-        var get = await GetAsync(prodCode, version, cancellationToken);
+        var get = await GetAsync(prodCode, definitionCode, version, cancellationToken);
         if (!get.Succeeded || get.Data is null)
         {
             return get;
         }
 
         var model = get.Data;
-        model.EffectiveFrom = effectiveFrom ?? model.EffectiveFrom ?? DateTime.UtcNow.Date;
-        model.EffectiveTo = effectiveTo ?? model.EffectiveTo;
         model.HeaderRowVersion = headerRowVersion ?? model.HeaderRowVersion;
         return await SaveAsync(model, isNew: false, activate: true, cancellationToken);
     }
 
+    public async Task<IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>> ListActiveDefinitionsAsync(
+        string prodCode,
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = await RequireCompanyScopeAsync(PermissionCodes.Access, cancellationToken);
+        if (ctx.Error is not null)
+        {
+            return FailLookup(ctx.Error);
+        }
+
+        var code = NormalizeCode(prodCode);
+        if (code.Length == 0)
+        {
+            return IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>.Fail(
+                IvMasterErrorCode.Validation, "Product code is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await db.PrBomHdrs.AsNoTracking()
+            .Where(x => x.CompanyCode == ctx.CompanyCode && x.ProdCode == code && x.Status == PrBomStatuses.Active)
+            .OrderByDescending(x => x.IsDefaultDefinition)
+            .ThenBy(x => x.DefinitionCode)
+            .Select(x => new PrProductDefinitionLookupRow
+            {
+                BomHdrId = x.Uid,
+                ProdCode = x.ProdCode,
+                DefinitionCode = x.DefinitionCode,
+                DefinitionName = x.DefinitionName,
+                Version = x.Version,
+                ActiveVersion = x.Version,
+                LatestVersion = x.Version,
+                LatestStatus = x.Status,
+                IsDefaultDefinition = x.IsDefaultDefinition
+            })
+            .ToListAsync(cancellationToken);
+
+        return IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>.Ok(rows);
+    }
+
+    public async Task<IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>> ListDefinitionsAsync(
+        string prodCode,
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = await RequireCompanyScopeAsync(PermissionCodes.Access, cancellationToken);
+        if (ctx.Error is not null)
+        {
+            return FailLookup(ctx.Error);
+        }
+
+        var code = NormalizeCode(prodCode);
+        if (code.Length == 0)
+        {
+            return IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>.Fail(
+                IvMasterErrorCode.Validation, "Product code is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var headers = await db.PrBomHdrs.AsNoTracking()
+            .Where(x => x.CompanyCode == ctx.CompanyCode && x.ProdCode == code)
+            .ToListAsync(cancellationToken);
+
+        var rows = headers
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.DefinitionCode)
+                ? PrProductDefinitionCodes.Standard
+                : PrProductDefinitionCodes.Normalize(x.DefinitionCode), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var active = g.FirstOrDefault(x => x.Status == PrBomStatuses.Active);
+                var drafts = g.Where(x => x.Status == PrBomStatuses.Draft).ToList();
+                if (active is null && drafts.Count == 0)
+                {
+                    return null;
+                }
+
+                var latest = g.OrderByDescending(x => x.Version).First();
+                return new PrProductDefinitionLookupRow
+                {
+                    BomHdrId = active?.Uid ?? latest.Uid,
+                    ProdCode = code,
+                    DefinitionCode = g.Key,
+                    DefinitionName = active?.DefinitionName ?? latest.DefinitionName,
+                    Version = active?.Version ?? latest.Version,
+                    ActiveVersion = active?.Version,
+                    LatestVersion = latest.Version,
+                    LatestStatus = latest.Status,
+                    IsDefaultDefinition = active?.IsDefaultDefinition ?? false
+                };
+            })
+            .Where(x => x is not null)
+            .Cast<PrProductDefinitionLookupRow>()
+            .OrderByDescending(x => x.IsDefaultDefinition)
+            .ThenBy(x => x.DefinitionCode, StringComparer.Ordinal)
+            .ToList();
+
+        return IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>.Ok(rows);
+    }
+
     public async Task<IvMasterOperationResult<DeleteCheckResult>> CanDeleteAsync(
-        IReadOnlyList<string> prodCodes,
+        IReadOnlyList<PrProductDefinitionKey> keys,
         CancellationToken cancellationToken = default)
     {
         var ctx = await RequireCompanyScopeAsync(PermissionCodes.Delete, cancellationToken);
@@ -1073,8 +1336,8 @@ public sealed class PrProductDefService : IPrProductDefService
             return IvMasterOperationResult<DeleteCheckResult>.Fail(ctx.Error.Code, ctx.Error.Message);
         }
 
-        var codes = NormalizeCodes(prodCodes);
-        if (codes.Count == 0)
+        var normalized = NormalizeDefinitionKeys(keys);
+        if (normalized.Count == 0)
         {
             return IvMasterOperationResult<DeleteCheckResult>.Fail(
                 IvMasterErrorCode.Validation, "Select at least one product definition.");
@@ -1082,36 +1345,13 @@ public sealed class PrProductDefService : IPrProductDefService
 
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var rootWorkOrderRefs = await db.ProductionWorkOrders.AsNoTracking()
-            .Where(x => x.CompanyCode == company && codes.Contains(x.ProductCode))
-            .Select(x => new { ProductCode = x.ProductCode, WorkOrderId = x.Uid })
-            .ToListAsync(cancellationToken);
-        var materialWorkOrderRefs = await db.ProductionWorkOrderMaterials.AsNoTracking()
-            .Where(x => x.SourceBomHeader != null
-                && x.SourceBomHeader.CompanyCode == company
-                && codes.Contains(x.SourceBomHeader.ProdCode))
-            .Select(x => new { ProductCode = x.SourceBomHeader!.ProdCode, x.WorkOrderId })
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        var workOrderRefs = rootWorkOrderRefs
-            .Concat(materialWorkOrderRefs)
-            .GroupBy(x => x.ProductCode, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new { ProductCode = g.Key, Count = g.Select(x => x.WorkOrderId).Distinct().Count() })
-            .ToList();
-        if (workOrderRefs.Count > 0)
+        var blockers = await FindDeleteBlockersAsync(db, company, normalized, cancellationToken);
+        if (blockers.Count > 0)
         {
-            var references = workOrderRefs
-                .Select(x => new IvMasterReferenceHit
-                {
-                    ReferenceType = "Production Work Order",
-                    Count = x.Count,
-                    Detail = x.ProductCode
-                })
-                .ToList();
             return IvMasterOperationResult<DeleteCheckResult>.Ok(
                 DeleteCheckResult.Blocked(
-                    "Product Definition cannot be deleted because one or more Work Orders retain its BOM revision.",
-                    references));
+                    "Product Definition cannot be deleted because it is referenced by Work Orders or other definitions.",
+                    blockers));
         }
 
         return IvMasterOperationResult<DeleteCheckResult>.Ok(
@@ -1119,7 +1359,7 @@ public sealed class PrProductDefService : IPrProductDefService
     }
 
     public async Task<IvMasterOperationResult<object?>> DeleteAsync(
-        IReadOnlyList<string> prodCodes,
+        IReadOnlyList<PrProductDefinitionKey> keys,
         CancellationToken cancellationToken = default)
     {
         var ctx = await RequireCompanyScopeAsync(PermissionCodes.Delete, cancellationToken);
@@ -1128,8 +1368,8 @@ public sealed class PrProductDefService : IPrProductDefService
             return IvMasterOperationResult<object?>.Fail(ctx.Error.Code, ctx.Error.Message);
         }
 
-        var codes = NormalizeCodes(prodCodes);
-        if (codes.Count == 0)
+        var normalized = NormalizeDefinitionKeys(keys);
+        if (normalized.Count == 0)
         {
             return IvMasterOperationResult<object?>.Fail(
                 IvMasterErrorCode.Validation, "Select at least one product definition.");
@@ -1137,9 +1377,28 @@ public sealed class PrProductDefService : IPrProductDefService
 
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        var blockers = await FindDeleteBlockersAsync(db, company, normalized, cancellationToken);
+        if (blockers.Count > 0)
+        {
+            return IvMasterOperationResult<object?>.Fail(
+                IvMasterErrorCode.InUse,
+                "Product Definition cannot be deleted because it is referenced by Work Orders or other definitions.");
+        }
+
+        var prodCodes = normalized.Select(x => x.ProdCode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var defCodes = normalized.Select(x => x.DefinitionCode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var headers = await db.PrBomHdrs
-            .Where(x => x.CompanyCode == company && codes.Contains(x.ProdCode))
+            .Where(x => x.CompanyCode == company
+                        && prodCodes.Contains(x.ProdCode)
+                        && defCodes.Contains(x.DefinitionCode))
             .ToListAsync(cancellationToken);
+
+        headers = headers
+            .Where(h => normalized.Any(k =>
+                string.Equals(k.ProdCode, h.ProdCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(k.DefinitionCode, h.DefinitionCode, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
 
         if (headers.Count == 0)
         {
@@ -1147,147 +1406,269 @@ public sealed class PrProductDefService : IPrProductDefService
                 IvMasterErrorCode.NotFound, "Product definition not found.");
         }
 
-        var headerIds = headers.Select(x => x.Uid).ToList();
-        var hasRootWorkOrderRef = await db.ProductionWorkOrders.AsNoTracking()
-            .AnyAsync(x => x.CompanyCode == company && codes.Contains(x.ProductCode), cancellationToken);
-        var hasMaterialSnapshotRef = await db.ProductionWorkOrderMaterials.AsNoTracking()
-            .AnyAsync(x => x.SourceBomHdrId != null && headerIds.Contains(x.SourceBomHdrId.Value), cancellationToken);
-        if (hasRootWorkOrderRef || hasMaterialSnapshotRef)
-        {
-            return IvMasterOperationResult<object?>.Fail(
-                IvMasterErrorCode.InUse,
-                "Product Definition cannot be deleted because a Work Order retains its BOM revision.");
-        }
-
         db.PrBomHdrs.RemoveRange(headers);
         await db.SaveChangesAsync(cancellationToken);
         return IvMasterOperationResult<object?>.Ok();
     }
 
-    private static async Task<Dictionary<string, IReadOnlyList<string>>> BuildActiveComponentGraphAsync(
+    private static async Task<List<IvMasterReferenceHit>> FindDeleteBlockersAsync(
         AppDbContext db,
         string company,
-        string? excludeProdCode,
+        IReadOnlyList<PrProductDefinitionKey> keys,
         CancellationToken cancellationToken)
+    {
+        var hits = new List<IvMasterReferenceHit>();
+        var prodCodes = keys.Select(x => x.ProdCode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var defCodes = keys.Select(x => x.DefinitionCode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var headers = await db.PrBomHdrs.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && prodCodes.Contains(x.ProdCode)
+                        && defCodes.Contains(x.DefinitionCode))
+            .Select(x => new { x.Uid, x.ProdCode, x.DefinitionCode })
+            .ToListAsync(cancellationToken);
+
+        var matchedHeaders = headers
+            .Where(h => keys.Any(k =>
+                string.Equals(k.ProdCode, h.ProdCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(k.DefinitionCode, h.DefinitionCode, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        var headerIds = matchedHeaders.Select(x => x.Uid).ToList();
+
+        // Work Orders by Product + SourceDefinitionCode
+        var woRefs = await db.ProductionWorkOrders.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && prodCodes.Contains(x.ProductCode)
+                        && defCodes.Contains(x.SourceDefinitionCode))
+            .Select(x => new { x.ProductCode, x.SourceDefinitionCode, x.Uid })
+            .ToListAsync(cancellationToken);
+        woRefs = woRefs
+            .Where(x => keys.Any(k =>
+                string.Equals(k.ProdCode, x.ProductCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(k.DefinitionCode, x.SourceDefinitionCode, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        foreach (var g in woRefs.GroupBy(
+                     x => (x.ProductCode, x.SourceDefinitionCode),
+                     new ProdDefTupleComparer()))
+        {
+            hits.Add(new IvMasterReferenceHit
+            {
+                ReferenceType = "Production Work Order",
+                Count = g.Select(x => x.Uid).Distinct().Count(),
+                Detail = $"{g.Key.Item1}[{g.Key.Item2}]"
+            });
+        }
+
+        // Material snapshots by SourceBomHdrId
+        if (headerIds.Count > 0)
+        {
+            var materialCount = await db.ProductionWorkOrderMaterials.AsNoTracking()
+                .Where(x => x.SourceBomHdrId != null && headerIds.Contains(x.SourceBomHdrId.Value))
+                .Select(x => x.WorkOrderId)
+                .Distinct()
+                .CountAsync(cancellationToken);
+            if (materialCount > 0)
+            {
+                hits.Add(new IvMasterReferenceHit
+                {
+                    ReferenceType = "Work Order Material Snapshot",
+                    Count = materialCount,
+                    Detail = string.Join(", ", keys.Select(k => $"{k.ProdCode}[{k.DefinitionCode}]"))
+                });
+            }
+        }
+
+        // SEPARATE parent lines referencing ICode + ComponentDefinitionCode
+        foreach (var key in keys)
+        {
+            var parentCount = await db.PrDefBOMs.AsNoTracking()
+                .Where(x => x.CompanyCode == company
+                            && x.ICode == key.ProdCode
+                            && x.ComponentDefinitionCode == key.DefinitionCode
+                            && x.SupplySource == PrMaterialSupplySources.SeparateProductDefinition)
+                .Select(x => x.BomHdrId)
+                .Distinct()
+                .CountAsync(cancellationToken);
+            if (parentCount > 0)
+            {
+                hits.Add(new IvMasterReferenceHit
+                {
+                    ReferenceType = "Parent Product Definition (SEPARATE)",
+                    Count = parentCount,
+                    Detail = $"{key.ProdCode}[{key.DefinitionCode}]"
+                });
+            }
+        }
+
+        return hits;
+    }
+
+    /// <summary>
+    /// Two-step activation inside the caller's open transaction: free ACTIVE/default filtered-index
+    /// slots, SaveChanges, then set the target ACTIVE + IsDefaultDefinition and SaveChanges again.
+    /// </summary>
+    private static async Task ActivateRevisionInTransactionAsync(
+        AppDbContext db,
+        string company,
+        PrBomHdr header,
+        bool requestDefault,
+        DateTime now,
+        string user,
+        CancellationToken cancellationToken)
+    {
+        var prodCode = header.ProdCode;
+        var definitionCode = string.IsNullOrWhiteSpace(header.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(header.DefinitionCode);
+
+        var priorActive = await db.PrBomHdrs
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == prodCode
+                        && x.DefinitionCode == definitionCode
+                        && x.Status == PrBomStatuses.Active
+                        && x.Uid != header.Uid)
+            .ToListAsync(cancellationToken);
+
+        var priorWasDefault = priorActive.Any(x => x.IsDefaultDefinition);
+        foreach (var prior in priorActive)
+        {
+            prior.Status = PrBomStatuses.Superseded;
+            prior.IsDefaultDefinition = false;
+            prior.ModifiedDate = now;
+            prior.ModifiedBy = user;
+        }
+
+        var otherDefaults = await db.PrBomHdrs
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == prodCode
+                        && x.Status == PrBomStatuses.Active
+                        && x.IsDefaultDefinition
+                        && x.Uid != header.Uid
+                        && x.DefinitionCode != definitionCode)
+            .ToListAsync(cancellationToken);
+
+        var otherDefaultExists = otherDefaults.Count > 0;
+        var setDefault = requestDefault
+                         || (priorWasDefault && !otherDefaultExists)
+                         || (!priorWasDefault && !otherDefaultExists);
+
+        if (setDefault)
+        {
+            foreach (var other in otherDefaults)
+            {
+                other.IsDefaultDefinition = false;
+                other.ModifiedDate = now;
+                other.ModifiedBy = user;
+            }
+        }
+
+        // Step 1: free filtered unique index slots
+        await db.SaveChangesAsync(cancellationToken);
+
+        // Step 2: activate target
+        header.Status = PrBomStatuses.Active;
+        header.IsDefaultDefinition = setDefault;
+        header.ActivatedDate = now;
+        header.ActivatedBy = user;
+        header.ModifiedDate = now;
+        header.ModifiedBy = user;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task<Dictionary<CircularBomValidator.NodeKey, IReadOnlyList<CircularBomValidator.NodeKey>>>
+        BuildActiveComponentGraphAsync(
+            AppDbContext db,
+            string company,
+            CircularBomValidator.NodeKey? exclude,
+            CancellationToken cancellationToken)
     {
         var activeHeaders = await db.PrBomHdrs.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.Status == PrBomStatuses.Active)
-            .Select(x => new { x.Uid, x.ProdCode })
+            .Select(x => new { x.Uid, x.ProdCode, x.DefinitionCode })
             .ToListAsync(cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(excludeProdCode))
+        if (exclude is { } ex)
         {
+            var excludeKey = CircularBomValidator.NodeKey.Create(ex.ProdCode, ex.DefinitionCode);
             activeHeaders = activeHeaders
-                .Where(x => !string.Equals(x.ProdCode, excludeProdCode, StringComparison.OrdinalIgnoreCase))
+                .Where(x => CircularBomValidator.NodeKey.Create(x.ProdCode, x.DefinitionCode) != excludeKey)
                 .ToList();
         }
 
         var hdrIds = activeHeaders.Select(x => x.Uid).ToList();
         var lines = await db.PrDefBOMs.AsNoTracking()
             .Where(x => hdrIds.Contains(x.BomHdrId))
-            .Select(x => new { x.BomHdrId, x.ICode })
+            .Select(x => new { x.BomHdrId, x.ICode, x.ComponentDefinitionCode, x.SupplySource })
             .ToListAsync(cancellationToken);
 
         var byHdr = lines.GroupBy(x => x.BomHdrId)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.ICode).ToList());
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<CircularBomValidator.NodeKey>)g
+                    .Where(x => string.Equals(
+                        x.SupplySource,
+                        PrMaterialSupplySources.SeparateProductDefinition,
+                        StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode))
+                    .Select(x => CircularBomValidator.NodeKey.Create(x.ICode, x.ComponentDefinitionCode))
+                    .ToList());
 
-        var graph = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var graph = new Dictionary<CircularBomValidator.NodeKey, IReadOnlyList<CircularBomValidator.NodeKey>>();
         foreach (var h in activeHeaders)
         {
-            graph[h.ProdCode] = byHdr.TryGetValue(h.Uid, out var c) ? c : [];
+            var key = CircularBomValidator.NodeKey.Create(
+                h.ProdCode,
+                string.IsNullOrWhiteSpace(h.DefinitionCode) ? PrProductDefinitionCodes.Standard : h.DefinitionCode);
+            graph[key] = byHdr.TryGetValue(h.Uid, out var c) ? c : [];
         }
 
         return graph;
     }
 
-    private static async Task<PrBomHdr?> FindOverlapAsync(
-        AppDbContext db,
-        string company,
-        string prodCode,
-        DateTime? effFrom,
-        DateTime? effTo,
-        long? excludeUid,
-        CancellationToken cancellationToken)
-    {
-        var from = effFrom ?? DateTime.MinValue.Date;
-        var actives = await db.PrBomHdrs.AsNoTracking()
-            .Where(x => x.CompanyCode == company
-                        && x.ProdCode == prodCode
-                        && x.Status == PrBomStatuses.Active
-                        && (excludeUid == null || x.Uid != excludeUid))
-            .ToListAsync(cancellationToken);
-
-        foreach (var other in actives)
-        {
-            if (WindowsOverlap(from, effTo, other.EffectiveFrom, other.EffectiveTo))
-            {
-                return other;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>
-    /// Inclusive From, exclusive To (null To = open). Overlap if ranges intersect.
-    /// </summary>
-    internal static bool WindowsOverlap(
-        DateTime? aFrom, DateTime? aTo,
-        DateTime? bFrom, DateTime? bTo)
-    {
-        var aStart = (aFrom ?? DateTime.MinValue).Date;
-        var aEnd = aTo?.Date ?? DateTime.MaxValue.Date;
-        var bStart = (bFrom ?? DateTime.MinValue).Date;
-        var bEnd = bTo?.Date ?? DateTime.MaxValue.Date;
-        // [start, end) overlap
-        return aStart < bEnd && bStart < aEnd;
-    }
-
-    private static async Task SupersedeOverlappingAsync(
-        AppDbContext db,
-        string company,
-        string prodCode,
-        long keepUid,
-        DateTime newFrom,
-        DateTime now,
-        string user,
-        CancellationToken cancellationToken)
-    {
-        var others = await db.PrBomHdrs
-            .Where(x => x.CompanyCode == company
-                        && x.ProdCode == prodCode
-                        && x.Status == PrBomStatuses.Active
-                        && x.Uid != keepUid)
-            .ToListAsync(cancellationToken);
-
-        foreach (var other in others)
-        {
-            other.Status = PrBomStatuses.Superseded;
-            other.EffectiveTo ??= newFrom;
-            other.ModifiedDate = now;
-            other.ModifiedBy = user;
-        }
-    }
-
-    /// <summary>
-    /// Same header pick as <see cref="GetAsync"/>: explicit version, else latest Version desc.
+    /// Same header pick as <see cref="GetAsync"/>: explicit version, else latest Version desc
+    /// for Company + Prod + DefinitionCode.
     /// </summary>
     private static async Task<PrBomHdr?> ResolveHeaderForEditAsync(
         AppDbContext db,
         string company,
         string prodCode,
+        string definitionCode,
         int? version,
         CancellationToken cancellationToken)
     {
+        var def = PrProductDefinitionCodes.Normalize(definitionCode);
         if (version is int v)
         {
             return await db.PrBomHdrs.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.CompanyCode == company && x.ProdCode == prodCode && x.Version == v,
+                .FirstOrDefaultAsync(x => x.CompanyCode == company
+                                          && x.ProdCode == prodCode
+                                          && x.DefinitionCode == def
+                                          && x.Version == v,
                     cancellationToken);
         }
 
         return await db.PrBomHdrs.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.ProdCode == prodCode)
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == prodCode
+                        && x.DefinitionCode == def)
+            .OrderByDescending(x => x.Version)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static async Task<PrBomHdr?> ResolveActiveHeaderAsync(
+        AppDbContext db,
+        string company,
+        string prodCode,
+        string definitionCode,
+        CancellationToken cancellationToken)
+    {
+        var def = PrProductDefinitionCodes.Normalize(definitionCode);
+        return await db.PrBomHdrs.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == prodCode
+                        && x.DefinitionCode == def
+                        && x.Status == PrBomStatuses.Active)
             .OrderByDescending(x => x.Version)
             .FirstOrDefaultAsync(cancellationToken);
     }
@@ -1296,10 +1677,11 @@ public sealed class PrProductDefService : IPrProductDefService
         AppDbContext db,
         string company,
         string ownerProdCode,
+        string ownerDefinitionCode,
         PrBomHdr ownerHeader,
         string parentKey,
         int level,
-        List<string> pathStack,
+        List<(string Prod, string Def)> pathStack,
         List<PrBomStructureNode> nodes,
         StructureLoadCache cache,
         CancellationToken cancellationToken)
@@ -1311,16 +1693,30 @@ public sealed class PrProductDefService : IPrProductDefService
         {
             var childCode = NormalizeCode(line.ICode);
             var lineId = PrBomStructureKeys.LineId(line.Uid, tempId: null);
-            var key = PrBomStructureKeys.Line(parentKey, ownerProdCode, lineId);
+            var ownerDefinition = string.IsNullOrWhiteSpace(ownerDefinitionCode)
+                ? PrProductDefinitionCodes.Standard
+                : PrProductDefinitionCodes.Normalize(ownerDefinitionCode);
+            var key = PrBomStructureKeys.Line(parentKey, ownerProdCode, ownerDefinition, lineId);
             var item = await GetStructureItemAsync(db, company, childCode, cache, cancellationToken);
             var mfg = item?.MfgType ?? PrMfgTypes.Buy;
             var childLevel = level + 1;
 
+            var isSeparate = string.Equals(
+                line.SupplySource,
+                PrMaterialSupplySources.SeparateProductDefinition,
+                StringComparison.OrdinalIgnoreCase);
+            var childDefinition = isSeparate
+                ? PrProductDefinitionCodes.Normalize(line.ComponentDefinitionCode)
+                : null;
+
             var status = PrBomStructureNodeStatus.Normal;
-            var shouldRecurse = mfg is PrMfgTypes.Make or PrMfgTypes.Phantom;
+            var shouldRecurse = isSeparate
+                                && !string.IsNullOrWhiteSpace(childDefinition);
 
             if (shouldRecurse
-                && pathStack.Any(p => string.Equals(p, childCode, StringComparison.OrdinalIgnoreCase)))
+                && pathStack.Any(p =>
+                    string.Equals(p.Prod, childCode, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(p.Def, childDefinition, StringComparison.OrdinalIgnoreCase)))
             {
                 status = PrBomStructureNodeStatus.Circular;
                 shouldRecurse = false;
@@ -1332,10 +1728,10 @@ public sealed class PrProductDefService : IPrProductDefService
             }
 
             PrBomHdr? childHeader = null;
-            if (shouldRecurse)
+            if (shouldRecurse && childDefinition is not null)
             {
-                childHeader = await ResolveHeaderForEditCachedAsync(
-                    db, company, childCode, version: null, cache, cancellationToken);
+                childHeader = await ResolveActiveHeaderCachedAsync(
+                    db, company, childCode, childDefinition, cache, cancellationToken);
                 if (childHeader is null)
                 {
                     status = PrBomStructureNodeStatus.MissingBom;
@@ -1357,6 +1753,8 @@ public sealed class PrProductDefService : IPrProductDefService
                 Warehouse = line.Warehouse,
                 SeqNo = line.SeqNo,
                 OwnerProdCode = ownerProdCode,
+                OwnerDefinitionCode = ownerDefinition,
+                ComponentDefinitionCode = childDefinition,
                 SourceLineUid = line.Uid,
                 BomHdrId = ownerHeader.Uid,
                 BomVersion = ownerHeader.Version,
@@ -1364,13 +1762,14 @@ public sealed class PrProductDefService : IPrProductDefService
                 Status = status
             });
 
-            if (shouldRecurse && childHeader is not null)
+            if (shouldRecurse && childHeader is not null && childDefinition is not null)
             {
-                pathStack.Add(childCode);
+                pathStack.Add((childCode, childDefinition));
                 await WalkStructureAsync(
                     db,
                     company,
                     ownerProdCode: childCode,
+                    ownerDefinitionCode: childDefinition,
                     ownerHeader: childHeader,
                     parentKey: key,
                     level: childLevel,
@@ -1383,43 +1782,28 @@ public sealed class PrProductDefService : IPrProductDefService
         }
     }
 
-    private static async Task<PrBomHdr?> ResolveHeaderForEditCachedAsync(
+    private static async Task<PrBomHdr?> ResolveActiveHeaderCachedAsync(
         AppDbContext db,
         string company,
         string prodCode,
-        int? version,
+        string definitionCode,
         StructureLoadCache cache,
         CancellationToken cancellationToken)
     {
-        if (version is int v)
+        var def = PrProductDefinitionCodes.Normalize(definitionCode);
+        if (cache.ActiveResolved.TryGetValue((prodCode, def), out var known))
         {
-            if (cache.Headers.TryGetValue((prodCode, v), out var byVersion))
-            {
-                return byVersion;
-            }
-
-            var header = await ResolveHeaderForEditAsync(db, company, prodCode, v, cancellationToken);
-            if (header is not null)
-            {
-                cache.Headers[(prodCode, header.Version)] = header;
-            }
-
-            return header;
+            return known;
         }
 
-        if (cache.LatestResolved.TryGetValue(prodCode, out var latestKnown))
+        var header = await ResolveActiveHeaderAsync(db, company, prodCode, def, cancellationToken);
+        cache.ActiveResolved[(prodCode, def)] = header;
+        if (header is not null)
         {
-            return latestKnown;
+            cache.Headers[(prodCode, def, header.Version)] = header;
         }
 
-        var latest = await ResolveHeaderForEditAsync(db, company, prodCode, version: null, cancellationToken);
-        cache.LatestResolved[prodCode] = latest;
-        if (latest is not null)
-        {
-            cache.Headers[(prodCode, latest.Version)] = latest;
-        }
-
-        return latest;
+        return header;
     }
 
     private static async Task<List<PrDefBOM>> GetStructureLinesAsync(
@@ -1472,20 +1856,28 @@ public sealed class PrProductDefService : IPrProductDefService
 
     private sealed class StructureLoadCache
     {
-        public Dictionary<(string Prod, int Version), PrBomHdr> Headers { get; } = new(new ProdVersionComparer());
-        public Dictionary<string, PrBomHdr?> LatestResolved { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<(string Prod, string Def, int Version), PrBomHdr> Headers { get; } =
+            new(new ProdDefVersionComparer());
+
+        public Dictionary<(string Prod, string Def), PrBomHdr?> ActiveResolved { get; } =
+            new(new ProdDefTupleComparer());
+
         public Dictionary<long, List<PrDefBOM>> Lines { get; } = new();
         public Dictionary<string, StructureItemInfo> Items { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private sealed class ProdVersionComparer : IEqualityComparer<(string Prod, int Version)>
+    private sealed class ProdDefVersionComparer : IEqualityComparer<(string Prod, string Def, int Version)>
     {
-        public bool Equals((string Prod, int Version) x, (string Prod, int Version) y) =>
+        public bool Equals((string Prod, string Def, int Version) x, (string Prod, string Def, int Version) y) =>
             x.Version == y.Version
-            && string.Equals(x.Prod, y.Prod, StringComparison.OrdinalIgnoreCase);
+            && string.Equals(x.Prod, y.Prod, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.Def, y.Def, StringComparison.OrdinalIgnoreCase);
 
-        public int GetHashCode((string Prod, int Version) obj) =>
-            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Prod), obj.Version);
+        public int GetHashCode((string Prod, string Def, int Version) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Prod),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Def),
+                obj.Version);
     }
 
     private sealed record StructureItemInfo(string Code, string? Desc, string MfgType, string? StdUom);
@@ -1939,11 +2331,12 @@ public sealed class PrProductDefService : IPrProductDefService
             StdUom = product?.StdUom,
             MfgType = PrMfgTypes.Normalize(product?.MfgType),
             IsActive = product?.IsActive ?? false,
+            DefinitionCode = header.DefinitionCode,
+            DefinitionName = header.DefinitionName,
+            IsDefaultDefinition = header.IsDefaultDefinition,
             BomHdrId = header.Uid,
             Version = header.Version,
             Status = header.Status,
-            EffectiveFrom = header.EffectiveFrom,
-            EffectiveTo = header.EffectiveTo,
             BaseQty = header.BaseQty,
             BaseUom = header.BaseUom,
             Prefix = header.Prefix,
@@ -1965,6 +2358,7 @@ public sealed class PrProductDefService : IPrProductDefService
                 Tolerance = x.Tolerance,
                 IssueMethod = x.IssueMethod,
                 SupplySource = x.SupplySource,
+                ComponentDefinitionCode = x.ComponentDefinitionCode,
                 ProducingRouteStepKey = x.ProducingRouteStepId is { } producerId
                                         && routeStepKeyById.TryGetValue(producerId, out var producerKey)
                     ? producerKey
@@ -2048,6 +2442,9 @@ public sealed class PrProductDefService : IPrProductDefService
     private static IvMasterOperationResult<PrProductDefListPage> FailPage(ScopeError error) =>
         IvMasterOperationResult<PrProductDefListPage>.Fail(error.Code, error.Message);
 
+    private static IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>> FailLookup(ScopeError error) =>
+        IvMasterOperationResult<IReadOnlyList<PrProductDefinitionLookupRow>>.Fail(error.Code, error.Message);
+
     private static IvMasterOperationResult<PrProductDefEditVm> FailVm(ScopeError error) =>
         IvMasterOperationResult<PrProductDefEditVm>.Fail(error.Code, error.Message);
 
@@ -2085,12 +2482,35 @@ public sealed class PrProductDefService : IPrProductDefService
     private static string NormalizeCode(string? value) =>
         (value ?? string.Empty).Trim().ToUpperInvariant();
 
-    private static List<string> NormalizeCodes(IReadOnlyList<string>? codes) =>
-        (codes ?? [])
-            .Select(NormalizeCode)
-            .Where(x => x.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    private static List<PrProductDefinitionKey> NormalizeDefinitionKeys(IReadOnlyList<PrProductDefinitionKey>? keys)
+    {
+        var result = new List<PrProductDefinitionKey>();
+        var seen = new HashSet<(string, string)>(new ProdDefTupleComparer());
+        foreach (var key in keys ?? [])
+        {
+            var prod = NormalizeCode(key.ProdCode);
+            var def = PrProductDefinitionCodes.Normalize(key.DefinitionCode);
+            if (prod.Length == 0 || def.Length == 0)
+                continue;
+            if (!seen.Add((prod, def)))
+                continue;
+            result.Add(new PrProductDefinitionKey { ProdCode = prod, DefinitionCode = def });
+        }
+
+        return result;
+    }
+
+    private sealed class ProdDefTupleComparer : IEqualityComparer<(string, string)>
+    {
+        public bool Equals((string, string) x, (string, string) y) =>
+            string.Equals(x.Item1, y.Item1, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.Item2, y.Item2, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode((string, string) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item1),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item2));
+    }
 
     private static string ValidateCode(
         IDictionary<string, string> errors,

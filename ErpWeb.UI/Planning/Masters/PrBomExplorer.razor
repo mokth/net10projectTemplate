@@ -1,4 +1,5 @@
 @page "/planning/product-definitions/explode/{ProdCode}"
+@page "/planning/product-definitions/explode/{ProdCode}/{DefinitionCode}"
 @inherits PageBase
 @using ErpWeb.Core.Planning
 
@@ -14,101 +15,130 @@
             </div>
         }
 
-        <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true">
-                <i class="fa-solid fa-sitemap"></i>
-            </div>
-            <div class="iv-hero__copy">
-                <p class="iv-eyebrow">Planning · Product Definition</p>
-                <h1 class="iv-title">BOM Explorer</h1>
-                <div class="iv-chips">
-                    <span class="iv-chip code-style">@ProdCode</span>
-                    @if (Result is not null)
-                    {
-                        <span class="iv-chip">V@(Result.RootBomVersion)</span>
-                        <span class="iv-chip">Base @Result.RootBaseQty?.ToString("n4") @Result.RootBaseUom</span>
-                    }
-                </div>
-            </div>
-        </header>
-
-        <section class="iv-card">
-            <h2 class="iv-card__title">Parameters</h2>
-            <div class="pdf-head">
-                <div class="iv-field">
-                    <label class="iv-field__label">Quantity</label>
-                    <DxSpinEdit @bind-Value="@Quantity" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
-                </div>
-                <div class="iv-field">
-                    <label class="iv-field__label">As-of date</label>
-                    <DxDateEdit @bind-Date="@AsOfDate" />
-                </div>
-                <div class="iv-field">
-                    <label class="iv-field__label">View</label>
-                    <DxComboBox Data="@ModeOptions"
-                                TextFieldName="Text"
-                                ValueFieldName="Value"
-                                @bind-Value="@SelectedMode"
-                                SearchMode="ListSearchMode.None" />
-                </div>
-                <div class="pdf-editor__actions" style="align-self:end">
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="@(IsLoading ? "Exploding…" : "EXPLODE")"
-                              IconCssClass="fa-solid fa-bolt"
-                              Click="@ExplodeAsync"
-                              Enabled="@(!IsLoading)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="BACK"
-                              Click="@GoBackAsync" />
-                </div>
-            </div>
-            <p class="pdf-hint">
-                Structural Tree shows the full hierarchy. Material Requirement shows BUY and MAKE extended quantities (Phantom exploded through).
-                Production Issue Requirement shows what a production order for this item would issue directly.
-            </p>
-        </section>
-
-        @if (IsLoading)
-        {
-            <section class="iv-card">
-                <div class="iv-skeleton" aria-busy="true">
-                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
-                    <div class="iv-skeleton__line"></div>
-                </div>
-            </section>
-        }
-        else if (Result is not null)
+        @if (NeedsDefinitionChoice)
         {
             <section class="iv-card">
                 <header class="pdf-section__head">
-                    <h2 class="iv-card__title mb-0">@ModeTitle</h2>
-                    <span class="pdf-count">@Result.Nodes.Count rows</span>
+                    <div>
+                        <h2 class="iv-card__title mb-0">Choose a Production Definition</h2>
+                        <p>Product <span class="code-style">@ProdCode</span> has more than one definition and no single default.</p>
+                    </div>
                 </header>
-                <div class="pdf-grid">
-                    <DxGrid Data="@Result.Nodes"
-                            KeyFieldName="@nameof(BomExplosionNode.Path)"
-                            ShowFilterRow="false"
-                            ShowGroupPanel="false"
-                            ShowSearchBox="false"
-                            TextWrapEnabled="false"
-                            CssClass="w-100">
-                        <Columns>
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Level)" Caption="Lvl" Width="60px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ItemCode)" Caption="Item" Width="120px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ItemDesc)" Caption="Description" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ParentItemCode)" Caption="Parent" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.MfgType)" Caption="Mfg" Width="90px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.QtyPerParent)" Caption="Qty / parent" DisplayFormat="n4" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ExtendedQty)" Caption="Extended qty" DisplayFormat="n4" Width="120px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Uom)" Caption="UOM" Width="80px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ScrapPercent)" Caption="Scrap %" DisplayFormat="n4" Width="90px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.BomVersion)" Caption="BOM Ver" Width="90px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Warehouse)" Caption="WH" Width="100px" />
-                            <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Path)" Caption="Path" />
-                        </Columns>
-                    </DxGrid>
+                <div class="pdf-editor__actions" style="flex-wrap:wrap;gap:.5rem">
+                    @foreach (var row in DefinitionChoices)
+                    {
+                        <DxButton RenderStyle="@(row.IsDefaultDefinition ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                  Text="@(row.IsDefaultDefinition ? $"{row.DefinitionCode} (Default)" : row.DefinitionCode)"
+                                  Click="@(() => ChooseDefinition(row.DefinitionCode))" />
+                    }
                 </div>
             </section>
+        }
+        else
+        {
+            <header class="iv-hero">
+                <div class="iv-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-sitemap"></i>
+                </div>
+                <div class="iv-hero__copy">
+                    <p class="iv-eyebrow">Planning · Product Definition</p>
+                    <h1 class="iv-title">BOM Explorer</h1>
+                    <div class="iv-chips">
+                        <span class="iv-chip code-style">@ProdCode</span>
+                        @if (!string.IsNullOrWhiteSpace(ResolvedDefinitionCode))
+                        {
+                            <span class="iv-chip code-style">@ResolvedDefinitionCode</span>
+                        }
+                        @if (Result is not null)
+                        {
+                            <span class="iv-chip">V@(Result.RootBomVersion)</span>
+                            <span class="iv-chip">Base @Result.RootBaseQty?.ToString("n4") @Result.RootBaseUom</span>
+                        }
+                    </div>
+                </div>
+            </header>
+
+            <section class="iv-card">
+                <h2 class="iv-card__title">Parameters</h2>
+                <div class="pdf-head">
+                    <div class="iv-field">
+                        <label class="iv-field__label">Quantity</label>
+                        <DxSpinEdit @bind-Value="@Quantity" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Definition code</label>
+                        <DxTextBox Text="@ResolvedDefinitionCode" ReadOnly="true" InputCssClass="code-style" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">View</label>
+                        <DxComboBox Data="@ModeOptions"
+                                    TextFieldName="Text"
+                                    ValueFieldName="Value"
+                                    @bind-Value="@SelectedMode"
+                                    SearchMode="ListSearchMode.None" />
+                    </div>
+                    <div class="pdf-editor__actions" style="align-self:end">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsLoading ? "Exploding…" : "EXPLODE")"
+                                  IconCssClass="fa-solid fa-bolt"
+                                  Click="@ExplodeAsync"
+                                  Enabled="@(!IsLoading && !string.IsNullOrWhiteSpace(ResolvedDefinitionCode))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="BACK"
+                                  Click="@GoBackAsync" />
+                    </div>
+                </div>
+                <p class="pdf-hint">
+                    Explodes the ACTIVE revision of the selected Production Definition (or an explicit Version when previewing).
+                    Child SEPARATE_PRODUCT_DEFINITION lines follow Component Production Definition ACTIVE revisions.
+                    Structural Tree shows the full hierarchy. Material Requirement shows BUY and MAKE extended quantities (Phantom exploded through SEPARATE links).
+                    Production Issue Requirement shows what a production order for this item would issue directly.
+                </p>
+            </section>
+
+            @if (IsLoading)
+            {
+                <section class="iv-card">
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                </section>
+            }
+            else if (Result is not null)
+            {
+                <section class="iv-card">
+                    <header class="pdf-section__head">
+                        <h2 class="iv-card__title mb-0">@ModeTitle</h2>
+                        <span class="pdf-count">@Result.Nodes.Count rows</span>
+                    </header>
+                    <div class="pdf-grid">
+                        <DxGrid Data="@Result.Nodes"
+                                KeyFieldName="@nameof(BomExplosionNode.Path)"
+                                ShowFilterRow="false"
+                                ShowGroupPanel="false"
+                                ShowSearchBox="false"
+                                TextWrapEnabled="false"
+                                CssClass="w-100">
+                            <Columns>
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Level)" Caption="Lvl" Width="60px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ItemCode)" Caption="Item" Width="120px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ItemDesc)" Caption="Description" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ParentItemCode)" Caption="Parent" Width="110px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.MfgType)" Caption="Mfg" Width="90px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.DefinitionCode)" Caption="Definition" Width="120px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.QtyPerParent)" Caption="Qty / parent" DisplayFormat="n4" Width="110px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ExtendedQty)" Caption="Extended qty" DisplayFormat="n4" Width="120px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Uom)" Caption="UOM" Width="80px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.ScrapPercent)" Caption="Scrap %" DisplayFormat="n4" Width="90px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.BomVersion)" Caption="BOM Ver" Width="90px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Warehouse)" Caption="WH" Width="100px" />
+                                <DxGridDataColumn FieldName="@nameof(BomExplosionNode.Path)" Caption="Path" />
+                            </Columns>
+                        </DxGrid>
+                    </div>
+                </section>
+            }
         }
     </div>
 </MenuAuthorize>

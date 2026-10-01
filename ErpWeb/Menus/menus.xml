@@ -282,7 +282,9 @@
     <Menu Code="PLN_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-industry">
       <Menu Code="PLN_WORK_ORDER" Name="Work Orders" Route="/planning/work-orders" SortOrder="1"
             Icon="fa-solid fa-clipboard-list" />
-      <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="2"
+        <Menu Code="PLN_MATERIAL_ISSUE" Name="Issue to Production" Route="/planning/material-issues" SortOrder="2"
+              Icon="fa-solid fa-dolly" />
+        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="3"
             Icon="fa-solid fa-screwdriver-wrench" />
     </Menu>
     <Menu Code="PLN_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">

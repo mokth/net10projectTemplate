@@ -53,7 +53,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
     public async Task Structure_fails_for_missing_product()
     {
         var sut = CreateSut();
-        var result = await sut.GetStructureTreeAsync("NOPE");
+        var result = await sut.GetStructureTreeAsync("NOPE", PrProductDefinitionCodes.Standard);
         Assert.False(result.Succeeded);
         Assert.Equal(IvMasterErrorCode.NotFound, result.ErrorCode);
     }
@@ -74,10 +74,10 @@ public class PrBomStructureTreeTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var tree = await sut.GetStructureTreeAsync("FG002");
+        var tree = await sut.GetStructureTreeAsync("FG002", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Single(tree.Data!.Nodes);
-        Assert.Equal(PrBomStructureKeys.Root("FG002"), tree.Data.Nodes[0].Key);
+        Assert.Equal(PrBomStructureKeys.Root("FG002", PrProductDefinitionCodes.Standard), tree.Data.Nodes[0].Key);
         Assert.Null(tree.Data.Nodes[0].ParentKey);
         Assert.Null(tree.Data.Nodes[0].OwnerProdCode);
     }
@@ -90,15 +90,15 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         var sut = CreateSut();
         Assert.True((await sut.SaveAsync(Bom("FG001", ("RM001", 2m)), true, true)).Succeeded);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Equal(2, tree.Data!.Nodes.Count);
         var rm = tree.Data.Nodes.Single(x => x.ItemCode == "RM001");
         Assert.Equal("FG001", rm.OwnerProdCode);
-        Assert.Equal(PrBomStructureKeys.Root("FG001"), rm.ParentKey);
+        Assert.Equal(PrBomStructureKeys.Root("FG001", PrProductDefinitionCodes.Standard), rm.ParentKey);
         Assert.Equal(PrBomStructureNodeStatus.Normal, rm.Status);
         Assert.True(rm.SourceLineUid > 0);
-        Assert.Equal(PrBomStructureKeys.Line(rm.ParentKey!, "FG001", rm.SourceLineUid!.Value.ToString()), rm.Key);
+        Assert.Equal(PrBomStructureKeys.Line(rm.ParentKey!, "FG001", PrProductDefinitionCodes.Standard, rm.SourceLineUid!.Value.ToString()), rm.Key);
         Assert.DoesNotContain(tree.Data.Nodes, x => x.ParentKey == rm.Key);
     }
 
@@ -112,7 +112,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         Assert.True((await sut.SaveAsync(Bom("SA001", ("RM001", 3m)), true, true)).Succeeded);
         Assert.True((await sut.SaveAsync(Bom("FG001", ("SA001", 1m)), true, true)).Succeeded);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Equal(3, tree.Data!.Nodes.Count);
 
@@ -134,7 +134,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         Assert.True((await sut.SaveAsync(Bom("PH001", ("RM001", 1m)), true, true)).Succeeded);
         Assert.True((await sut.SaveAsync(Bom("FG001", ("PH001", 1m)), true, true)).Succeeded);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Contains(tree.Data!.Nodes, x => x.ItemCode == "RM001" && x.OwnerProdCode == "PH001");
     }
@@ -149,7 +149,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         var sut = CreateSut();
         Assert.True((await sut.SaveAsync(Bom("FG001", ("MK001", 1m), ("PH001", 1m), ("RM001", 1m)), true, true)).Succeeded);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Equal(PrBomStructureNodeStatus.MissingBom,
             tree.Data!.Nodes.Single(x => x.ItemCode == "MK001").Status);
@@ -172,7 +172,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         Assert.True((await sut.SaveAsync(Bom("BB002", ("RM001", 5m)), true, true)).Succeeded);
         Assert.True((await sut.SaveAsync(Bom("FG001", ("BB001", 1m), ("BB002", 1m)), true, true)).Succeeded);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         var rms = tree.Data!.Nodes.Where(x => x.ItemCode == "RM001").ToList();
         Assert.Equal(2, rms.Count);
@@ -190,6 +190,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         var dup = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines =
             [
@@ -210,12 +211,12 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         Assert.True((await sut.SaveAsync(Bom("SA001", ("RM001", 1m)), true, false)).Succeeded); // draft child
         Assert.True((await sut.SaveAsync(Bom("FG001", ("SA001", 1m)), true, false)).Succeeded); // draft root
 
-        var getRoot = await sut.GetAsync("FG001");
-        var getChild = await sut.GetAsync("SA001");
+        var getRoot = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
+        var getChild = await sut.GetAsync("SA001", PrProductDefinitionCodes.Standard);
         Assert.Equal(PrBomStatuses.Draft, getRoot.Data!.Status);
         Assert.Equal(PrBomStatuses.Draft, getChild.Data!.Status);
 
-        var tree = await sut.GetStructureTreeAsync("FG001");
+        var tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Equal(PrBomStatuses.Draft, tree.Data!.RootBomStatus);
         Assert.Contains(tree.Data.Nodes, x => x.ItemCode == "RM001" && x.OwnerProdCode == "SA001");
@@ -230,7 +231,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         var sut = CreateSut();
         var v1 = await sut.SaveAsync(Bom("FG001", ("RM001", 1m)), true, true);
         Assert.True(v1.Succeeded, v1.Message);
-        var draft = await sut.CreateNewVersionAsync("FG001", 1);
+        var draft = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard, 1);
         Assert.True(draft.Succeeded, draft.Message);
         draft.Data!.Lines =
         [
@@ -238,13 +239,13 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         ];
         Assert.True((await sut.SaveAsync(draft.Data, false, false)).Succeeded);
 
-        var latestGet = await sut.GetAsync("FG001");
-        var latestTree = await sut.GetStructureTreeAsync("FG001");
+        var latestGet = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
+        var latestTree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.Equal(latestGet.Data!.Version, latestTree.Data!.RootBomVersion);
         Assert.Contains(latestTree.Data.Nodes, x => x.ItemCode == "RM002");
 
-        var v1Get = await sut.GetAsync("FG001", 1);
-        var v1Tree = await sut.GetStructureTreeAsync("FG001", 1);
+        var v1Get = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard, 1);
+        var v1Tree = await sut.GetStructureTreeAsync("FG001", PrProductDefinitionCodes.Standard, 1);
         Assert.Equal(v1Get.Data!.Version, v1Tree.Data!.RootBomVersion);
         Assert.Contains(v1Tree.Data.Nodes, x => x.ItemCode == "RM001");
         Assert.DoesNotContain(v1Tree.Data.Nodes, x => x.ItemCode == "RM002");
@@ -279,7 +280,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var tree = await sut.GetStructureTreeAsync("A");
+        var tree = await sut.GetStructureTreeAsync("A", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         var circular = tree.Data!.Nodes.Single(x => x.ItemCode == "A" && x.OwnerProdCode == "B");
         Assert.Equal(PrBomStructureNodeStatus.Circular, circular.Status);
@@ -305,7 +306,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
             Assert.True((await sut.SaveAsync(Bom($"M{i:D2}", ($"M{i + 1:D2}", 1m)), true, true)).Succeeded);
         }
 
-        var tree = await sut.GetStructureTreeAsync("M00");
+        var tree = await sut.GetStructureTreeAsync("M00", PrProductDefinitionCodes.Standard);
         Assert.True(tree.Succeeded, tree.Message);
         Assert.Contains(tree.Data!.Nodes, x => x.Status == PrBomStructureNodeStatus.MaxDepth);
         // Should not have exploded all the way to RM001 if depth stopped early
@@ -344,6 +345,7 @@ public class PrBomStructureTreeTests : IAsyncLifetime
         new()
         {
             ProdCode = prod,
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = lines.Select((x, i) => new PrProductDefLineVm
             {

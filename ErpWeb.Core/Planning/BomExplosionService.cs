@@ -50,8 +50,6 @@ public sealed class BomExplosionService : IBomExplosionService
     /// <summary>
     /// Executes the calculation against the caller's DbContext/transaction. This is internal on
     /// purpose: callers must enforce their own tenant and permission boundary before invoking it.
-    /// Work Order save uses it so BOM selection, snapshot creation and persistence share one
-    /// transaction instead of trusting an earlier browser preview.
     /// </summary>
     internal async Task<IvMasterOperationResult<BomExplosionResult>> ExplodeInContextAsync(
         AppDbContext db,
@@ -75,12 +73,18 @@ public sealed class BomExplosionService : IBomExplosionService
             return Fail("Product code is required.", "ProdCode");
         }
 
+        var definitionCode = string.IsNullOrWhiteSpace(request.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(request.DefinitionCode);
+        if (definitionCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(definitionCode))
+        {
+            return Fail("Definition code is required.", nameof(request.DefinitionCode));
+        }
+
         if (request.Quantity <= 0m)
         {
             return Fail("Quantity must be greater than zero.", nameof(request.Quantity));
         }
-
-        var asOf = request.AsOfDate.Date;
 
         var rootItem = await db.IvStockMasters.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyCode == company && x.ICode == prodCode, cancellationToken);
@@ -90,34 +94,37 @@ public sealed class BomExplosionService : IBomExplosionService
         }
 
         var rootHdr = await ResolveHeaderAsync(
-            db, company, prodCode, asOf, request.Version, cancellationToken);
+            db, company, prodCode, definitionCode, request.Version, cancellationToken);
         if (rootHdr is null)
         {
             return Fail(
                 request.Version is int v
-                    ? $"Cannot explode Product {prodCode}: BOM version {v} was not found."
-                    : $"Cannot explode Product {prodCode}: no active BOM for the requested date.",
+                    ? $"Cannot explode Product {prodCode}[{definitionCode}]: BOM version {v} was not found."
+                    : $"Cannot explode Product {prodCode}[{definitionCode}]: no ACTIVE Product Definition revision.",
                 "ProdCode");
         }
 
         var cache = new BomLoadCache();
-        cache.Headers[(prodCode, rootHdr.Version)] = rootHdr;
+        cache.Headers[(prodCode, definitionCode, rootHdr.Version)] = rootHdr;
+        cache.ActiveByKey[(prodCode, definitionCode)] = rootHdr;
         cache.Items[prodCode] = new ItemInfo(prodCode, rootItem.IDesc, PrMfgTypes.Normalize(rootItem.MfgType), rootItem.StdUom);
 
         var nodes = new List<BomExplosionNode>();
-        var pathStack = new List<string> { prodCode };
+        var pathStack = new List<(string Prod, string Def)> { (prodCode, definitionCode) };
         var error = await WalkAsync(
             db,
             company,
-            asOf,
             request.Mode,
             parentCode: null,
             itemCode: prodCode,
+            itemDefinitionCode: definitionCode,
             extendedQty: request.Quantity,
             level: 0,
             qtyPerParent: request.Quantity,
             scrapPercent: 0m,
             warehouse: null,
+            supplySource: null,
+            componentDefinitionCode: null,
             sourceLineUid: null,
             bomHdr: rootHdr,
             issueContext: true,
@@ -148,8 +155,8 @@ public sealed class BomExplosionService : IBomExplosionService
         return IvMasterOperationResult<BomExplosionResult>.Ok(new BomExplosionResult
         {
             RootProdCode = prodCode,
+            RootDefinitionCode = definitionCode,
             RootQuantity = request.Quantity,
-            AsOfDate = asOf,
             Mode = request.Mode,
             RootBomHdrId = rootHdr.Uid,
             RootBomVersion = rootHdr.Version,
@@ -162,19 +169,21 @@ public sealed class BomExplosionService : IBomExplosionService
     private async Task<string?> WalkAsync(
         AppDbContext db,
         string company,
-        DateTime asOf,
         BomExplosionMode mode,
         string? parentCode,
         string itemCode,
+        string itemDefinitionCode,
         decimal extendedQty,
         int level,
         decimal qtyPerParent,
         decimal scrapPercent,
         string? warehouse,
+        string? supplySource,
+        string? componentDefinitionCode,
         long? sourceLineUid,
         PrBomHdr? bomHdr,
         bool issueContext,
-        List<string> pathStack,
+        List<(string Prod, string Def)> pathStack,
         List<BomExplosionNode> nodes,
         BomLoadCache cache,
         CancellationToken cancellationToken)
@@ -183,7 +192,7 @@ public sealed class BomExplosionService : IBomExplosionService
 
         if (level > MaxDepth)
         {
-            return $"BOM explosion exceeded maximum depth ({MaxDepth}) at path {string.Join(" → ", pathStack)}.";
+            return $"BOM explosion exceeded maximum depth ({MaxDepth}) at path {FormatPath(pathStack)}.";
         }
 
         if (nodes.Count >= MaxNodes)
@@ -225,33 +234,34 @@ public sealed class BomExplosionService : IBomExplosionService
                 ExtendedQty = extendedQty,
                 Uom = item.StdUom,
                 MfgType = mfg,
+                DefinitionCode = itemDefinitionCode,
                 BomVersion = bomHdr?.Version,
                 BomHdrId = bomHdr?.Uid,
                 SourceLineUid = sourceLineUid,
                 ScrapPercent = scrapPercent,
                 Warehouse = warehouse,
-                Path = string.Join(" → ", pathStack),
+                SupplySource = supplySource,
+                ComponentDefinitionCode = componentDefinitionCode,
+                Path = FormatPath(pathStack),
                 IsLeafRequirement = isLeafRequirement,
                 IsIssueLine = isIssueLine
             });
         }
 
-        // Recursion policy
+        // Recursion policy: follow SEPARATE child definitions; preserve MAKE/PHANTOM/BUY emit semantics.
+        // MAKE without SEPARATE is a procurement boundary (no child definition walk).
+        // PHANTOM without SEPARATE has no child definition to explode through.
         var shouldRecurse = mfg is PrMfgTypes.Make or PrMfgTypes.Phantom || isRoot;
         if (!shouldRecurse)
         {
             return null;
         }
 
-        // For ProductionIssue: after emitting a MAKE child as issue line, do not recurse into its children for issue.
-        // Still must not recurse Make children in Issue mode.
         if (mode == BomExplosionMode.ProductionIssueRequirement && !isRoot && mfg == PrMfgTypes.Make)
         {
             return null;
         }
 
-        // Phantom in Issue mode: explode through (issueContext stays true).
-        // Make in Material/Tree: recurse with issueContext false for descendants under Make when in Issue mode — already returned.
         var childIssueContext = mode == BomExplosionMode.ProductionIssueRequirement
             && (isRoot || mfg == PrMfgTypes.Phantom);
 
@@ -260,11 +270,14 @@ public sealed class BomExplosionService : IBomExplosionService
         {
             if (mfg is PrMfgTypes.Make or PrMfgTypes.Phantom || isRoot)
             {
+                var resolveDefinition = string.IsNullOrWhiteSpace(itemDefinitionCode)
+                    ? PrProductDefinitionCodes.Standard
+                    : itemDefinitionCode;
                 childHdr = await ResolveHeaderCachedAsync(
-                    db, company, itemCode, asOf, version: null, cache, cancellationToken);
+                    db, company, itemCode, resolveDefinition, version: null, cache, cancellationToken);
                 if (childHdr is null)
                 {
-                    return $"Cannot explode Product {pathStack[0]} because {(mfg == PrMfgTypes.Phantom ? "Phantom" : "Make")} item {itemCode} has no active BOM for the requested date.";
+                    return $"Cannot explode Product {pathStack[0].Prod}[{pathStack[0].Def}] because {(mfg == PrMfgTypes.Phantom ? "Phantom" : "Make")} item {itemCode}[{resolveDefinition}] has no ACTIVE Product Definition revision.";
                 }
             }
         }
@@ -275,17 +288,18 @@ public sealed class BomExplosionService : IBomExplosionService
         }
 
         var lines = await GetLinesAsync(db, company, childHdr.Uid, cache, cancellationToken);
-        // Defensive circular check on graph of reached headers
         var cycle = DetectPathCycle(pathStack);
         if (cycle is not null)
         {
             return $"Cannot explode BOM because it creates a circular BOM: {cycle}.";
         }
 
+        var ownerDefinition = string.IsNullOrWhiteSpace(childHdr.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(childHdr.DefinitionCode);
+
         foreach (var line in lines.OrderBy(x => x.SeqNo).ThenBy(x => x.ICode))
         {
-            // Requirement modes exclude authored alternates so MRP / issue do not double-count.
-            // StructuralTree retains every authored line, including non-default alternates.
             if (mode is BomExplosionMode.MaterialRequirement or BomExplosionMode.ProductionIssueRequirement
                 && !line.BomDefault)
             {
@@ -293,30 +307,69 @@ public sealed class BomExplosionService : IBomExplosionService
             }
 
             var childCode = Normalize(line.ICode);
-            if (pathStack.Any(p => string.Equals(p, childCode, StringComparison.OrdinalIgnoreCase)))
+            var supply = string.IsNullOrWhiteSpace(line.SupplySource)
+                ? PrMaterialSupplySources.Purchased
+                : line.SupplySource.Trim().ToUpperInvariant();
+            var isSeparate = string.Equals(
+                supply,
+                PrMaterialSupplySources.SeparateProductDefinition,
+                StringComparison.Ordinal);
+
+            string? separateDefinition = null;
+            if (isSeparate)
             {
-                var cyclePath = string.Join(" → ", pathStack) + " → " + childCode;
+                separateDefinition = PrProductDefinitionCodes.Normalize(line.ComponentDefinitionCode);
+                if (separateDefinition.Length == 0)
+                {
+                    return $"SEPARATE_PRODUCT_DEFINITION line {childCode} under {itemCode}[{ownerDefinition}] is missing ComponentDefinitionCode.";
+                }
+            }
+
+            // Child definition selection:
+            // SEPARATE → ComponentDefinitionCode.
+            // MAKE/PHANTOM without SEPARATE → ACTIVE STANDARD (legacy multi-level / mode semantics).
+            // BUY / INTERNAL / EXTERNAL → no nested definition.
+            var childItem = await GetItemAsync(db, company, childCode, cache, cancellationToken);
+            var childMfg = childItem?.MfgType ?? PrMfgTypes.Buy;
+            string? recurseDefinition = null;
+            if (isSeparate)
+            {
+                recurseDefinition = separateDefinition;
+            }
+            else if (childMfg is PrMfgTypes.Make or PrMfgTypes.Phantom)
+            {
+                recurseDefinition = PrProductDefinitionCodes.Standard;
+            }
+
+            var pathDef = recurseDefinition ?? ownerDefinition;
+            if (pathStack.Any(p =>
+                    string.Equals(p.Prod, childCode, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(p.Def, pathDef, StringComparison.OrdinalIgnoreCase)))
+            {
+                var cyclePath = FormatPath(pathStack) + " → " + CircularBomValidator.NodeKey.Format(childCode, pathDef);
                 return $"Cannot explode BOM because it creates a circular BOM: {cyclePath}.";
             }
 
             var childExt = PrBomCalc.RequiredQty(
                 extendedQty, childHdr.BaseQty, line.StdQty, line.ScrapPercent);
 
-            pathStack.Add(childCode);
+            pathStack.Add((childCode, pathDef));
             var err = await WalkAsync(
                 db,
                 company,
-                asOf,
                 mode,
                 parentCode: itemCode,
                 itemCode: childCode,
+                itemDefinitionCode: recurseDefinition ?? string.Empty,
                 extendedQty: childExt,
                 level: level + 1,
                 qtyPerParent: line.StdQty,
                 scrapPercent: line.ScrapPercent,
                 warehouse: line.Warehouse,
+                supplySource: supply,
+                componentDefinitionCode: separateDefinition,
                 sourceLineUid: line.Uid,
-                bomHdr: null, // resolved inside for Make/Phantom
+                bomHdr: null,
                 issueContext: childIssueContext,
                 pathStack,
                 nodes,
@@ -332,14 +385,18 @@ public sealed class BomExplosionService : IBomExplosionService
         return null;
     }
 
-    private static string? DetectPathCycle(List<string> pathStack)
+    private static string FormatPath(List<(string Prod, string Def)> pathStack) =>
+        string.Join(" → ", pathStack.Select(p => CircularBomValidator.NodeKey.Format(p.Prod, p.Def)));
+
+    private static string? DetectPathCycle(List<(string Prod, string Def)> pathStack)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<(string, string)>();
         foreach (var p in pathStack)
         {
-            if (!seen.Add(p))
+            var key = (Normalize(p.Prod), Normalize(p.Def));
+            if (!seen.Add(key))
             {
-                return string.Join(" → ", pathStack);
+                return FormatPath(pathStack);
             }
         }
 
@@ -350,111 +407,81 @@ public sealed class BomExplosionService : IBomExplosionService
         AppDbContext db,
         string company,
         string prodCode,
-        DateTime asOf,
+        string definitionCode,
         int? version,
         CancellationToken cancellationToken)
     {
+        var def = PrProductDefinitionCodes.Normalize(definitionCode);
         var q = db.PrBomHdrs.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.ProdCode == prodCode);
+            .Where(x => x.CompanyCode == company
+                        && x.ProdCode == prodCode
+                        && x.DefinitionCode == def);
 
         if (version is int v)
         {
             return await q.FirstOrDefaultAsync(x => x.Version == v, cancellationToken);
         }
 
-        var actives = await q
-            .Where(x => x.Status == PrBomStatuses.Active || x.Status == PrBomStatuses.Superseded)
-            .ToListAsync(cancellationToken);
-
-        return actives
-            .Where(h => IsApplicable(h, asOf))
-            .OrderByDescending(x => x.Status == PrBomStatuses.Active)
-            .ThenByDescending(x => x.Version)
-            .FirstOrDefault();
+        return await q
+            .Where(x => x.Status == PrBomStatuses.Active)
+            .OrderByDescending(x => x.Version)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private static async Task<PrBomHdr?> ResolveHeaderCachedAsync(
         AppDbContext db,
         string company,
         string prodCode,
-        DateTime asOf,
+        string definitionCode,
         int? version,
         BomLoadCache cache,
         CancellationToken cancellationToken)
     {
-        if (version is int v && cache.Headers.TryGetValue((prodCode, v), out var cachedVer))
+        var def = PrProductDefinitionCodes.Normalize(definitionCode);
+        if (def.Length == 0)
+        {
+            return null;
+        }
+
+        if (version is int v && cache.Headers.TryGetValue((prodCode, def, v), out var cachedVer))
         {
             return cachedVer;
         }
 
-        if (version is null
-            && cache.ActiveByProd.TryGetValue(prodCode, out var cachedActive)
-            && IsApplicable(cachedActive, asOf)
-            && cachedActive.Status is PrBomStatuses.Active or PrBomStatuses.Superseded)
+        if (version is null && cache.ActiveByKey.TryGetValue((prodCode, def), out var cachedActive))
         {
             return cachedActive;
         }
 
-        // Reachability batch: load all headers for this prod once
-        if (!cache.AllHeadersLoaded.Contains(prodCode))
+        if (!cache.AllHeadersLoaded.Contains((prodCode, def)))
         {
             var list = await db.PrBomHdrs.AsNoTracking()
-                .Where(x => x.CompanyCode == company && x.ProdCode == prodCode)
+                .Where(x => x.CompanyCode == company
+                            && x.ProdCode == prodCode
+                            && x.DefinitionCode == def)
                 .ToListAsync(cancellationToken);
-            cache.AllHeadersLoaded.Add(prodCode);
+            cache.AllHeadersLoaded.Add((prodCode, def));
             foreach (var h in list)
             {
-                cache.Headers[(prodCode, h.Version)] = h;
+                cache.Headers[(prodCode, def, h.Version)] = h;
             }
 
-            var applicable = list
-                .Where(x => x.Status is PrBomStatuses.Active or PrBomStatuses.Superseded
-                            && IsApplicable(x, asOf))
-                .OrderByDescending(x => x.Status == PrBomStatuses.Active)
-                .ThenByDescending(x => x.Version)
+            var active = list
+                .Where(x => x.Status == PrBomStatuses.Active)
+                .OrderByDescending(x => x.Version)
                 .FirstOrDefault();
-            if (applicable is not null)
+            if (active is not null)
             {
-                cache.ActiveByProd[prodCode] = applicable;
+                cache.ActiveByKey[(prodCode, def)] = active;
             }
         }
 
         if (version is int ver)
         {
-            return cache.Headers.TryGetValue((prodCode, ver), out var h) ? h : null;
+            return cache.Headers.TryGetValue((prodCode, def, ver), out var h) ? h : null;
         }
 
-        if (cache.ActiveByProd.TryGetValue(prodCode, out var active)
-            && active.Status is PrBomStatuses.Active or PrBomStatuses.Superseded
-            && IsApplicable(active, asOf))
-        {
-            return active;
-        }
-
-        // Re-scan headers for date window
-        var match = cache.Headers.Values
-            .Where(h => string.Equals(h.ProdCode, prodCode, StringComparison.OrdinalIgnoreCase)
-                        && h.Status is PrBomStatuses.Active or PrBomStatuses.Superseded
-                        && IsApplicable(h, asOf))
-            .OrderByDescending(h => h.Status == PrBomStatuses.Active)
-            .ThenByDescending(h => h.Version)
-            .FirstOrDefault();
-        return match;
-    }
-
-    internal static bool IsApplicable(PrBomHdr h, DateTime asOf)
-    {
-        if (h.EffectiveFrom is DateTime from && asOf < from.Date)
-        {
-            return false;
-        }
-
-        if (h.EffectiveTo is DateTime to && asOf >= to.Date)
-        {
-            return false;
-        }
-
-        return true;
+        return cache.ActiveByKey.TryGetValue((prodCode, def), out var activeHdr) ? activeHdr : null;
     }
 
     private static async Task<ItemInfo?> GetItemAsync(
@@ -500,7 +527,6 @@ public sealed class BomExplosionService : IBomExplosionService
             .ToListAsync(cancellationToken);
         cache.Lines[bomHdrId] = lines;
 
-        // Prefetch component items + their headers for reachability
         var codes = lines.Select(x => x.ICode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (codes.Count > 0)
         {
@@ -540,9 +566,9 @@ public sealed class BomExplosionService : IBomExplosionService
     private sealed class BomLoadCache
     {
         public Dictionary<string, ItemInfo> Items { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<(string Prod, int Ver), PrBomHdr> Headers { get; } = new();
-        public Dictionary<string, PrBomHdr> ActiveByProd { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public HashSet<string> AllHeadersLoaded { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<(string Prod, string Def, int Ver), PrBomHdr> Headers { get; } = new();
+        public Dictionary<(string Prod, string Def), PrBomHdr> ActiveByKey { get; } = new();
+        public HashSet<(string Prod, string Def)> AllHeadersLoaded { get; } = new();
         public Dictionary<long, List<PrDefBOM>> Lines { get; } = new();
     }
 

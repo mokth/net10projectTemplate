@@ -15,6 +15,7 @@
 :r $(ScriptRoot)\alter-prdefbom-process-ownership.sql
 :r $(ScriptRoot)\alter-product-definition-phase1-foundation.sql
 :r $(ScriptRoot)\alter-bom-alternate-group.sql
+:r $(ScriptRoot)\alter-product-definition-multiple-definitions.sql
 
-PRINT N'Product Definition Phase 1 deployment sequence completed.';
+PRINT N'Product Definition Phase 1 + multiple-definitions deployment sequence completed.';
 GO

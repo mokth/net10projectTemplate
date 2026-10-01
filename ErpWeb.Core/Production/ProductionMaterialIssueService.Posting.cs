@@ -50,7 +50,7 @@ public sealed partial class ProductionMaterialIssueService
             if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress))
                 return PostFail(IvMasterErrorCode.Validation, "Work Order status does not allow material issue.");
             if (order.SnapshotRevision != request.SnapshotRevision || order.SnapshotHash != request.SnapshotHash
-                || order.SnapshotFormatVersion != ProductionSnapshotFormatVersions.Current || order.IsLegacySnapshot)
+                || !ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot)
                 return PostFail(IvMasterErrorCode.Concurrency, "The Work Order snapshot is stale; reload before posting.");
 
             var now = _clock.Now;
@@ -231,7 +231,15 @@ public sealed partial class ProductionMaterialIssueService
     private static async Task<ProductionMaterialIssuePostResult> BuildResultAsync(ErpWeb.Model.Data.AppDbContext db, ProductionPostingLink link, string woNo, CancellationToken ct)
     {
         var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync(x => x.Uid == link.WorkOrderId, ct);
-        var mats = await db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => x.WorkOrderId == order.Uid).ToListAsync(ct);
+        var materialIds = await db.ProductionMaterialMovements.AsNoTracking()
+            .Where(x => x.PostingLinkId == link.Uid)
+            .Select(x => x.WorkOrderMaterialId)
+            .Distinct()
+            .ToListAsync(ct);
+        var mats = await db.ProductionWorkOrderMaterials.AsNoTracking()
+            .Where(x => materialIds.Contains(x.Uid))
+            .OrderBy(x => x.Uid)
+            .ToListAsync(ct);
         return new ProductionMaterialIssuePostResult { PostingRequestId = link.PostingRequestId, BatchNo = link.InventoryBatchNo ?? 0,
             PostingOperationId = link.PostingOperationId, WorkOrderNo = woNo, WorkOrderStatus = order.Status, PostedDate = link.CompletedDate ?? link.CreatedDate,
             Materials = mats.Select(x => new ProductionMaterialIssuePostedMaterial { WorkOrderMaterialId = x.Uid, IssuedQty = x.IssuedQty,

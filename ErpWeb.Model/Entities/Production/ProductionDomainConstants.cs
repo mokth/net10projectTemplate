@@ -49,6 +49,7 @@ public static class ProductionAuditEventTypes
     public const string ChangeOrderRequested = "CHANGE_ORDER_REQUESTED";
     public const string ChangeOrderApproved = "CHANGE_ORDER_APPROVED";
     public const string Refreshed = "REFRESHED";
+    public const string DefinitionChanged = "DEFINITION_CHANGED";
     public const string ScheduleRecalculated = "SCHEDULE_RECALCULATED";
     public const string MachineSelected = "MACHINE_SELECTED";
     public const string MaterialSubstituted = "MATERIAL_SUBSTITUTED";
@@ -133,27 +134,43 @@ public static class ProductionCalendarSourceTypes
 }
 
 /// <summary>
-/// Snapshot format versions. Version 1 is the flattened Phase-1 snapshot; version 2 is the full
-/// route step / operation / machine / labour hierarchy (plan §6.6).
+/// Snapshot format versions. Format 1 = flattened Phase-1; format 2 = full hierarchy with
+/// date-based definition selection; format 3 = explicit Product Definition identity.
 /// </summary>
 public static class ProductionSnapshotFormatVersions
 {
     public const int Legacy = 1;
-    public const int Current = 2;
-}
+    public const int FullHierarchyV2 = 2;
+    public const int DefinitionIdentityV3 = 3;
+    public const int Current = DefinitionIdentityV3;
 
-/// <summary>Current canonical snapshot hash algorithm version (plan §4.2).</summary>
-public static class ProductionSnapshotHashVersions
-{
-    public const int Current = 1;
+    /// <summary>
+    /// Formats that carry the full route/operation/material hierarchy (format 2+) and can
+    /// support material issue / posting without requiring a format-3 upgrade on already-released rows.
+    /// </summary>
+    public static bool IsFullHierarchy(int snapshotFormatVersion) =>
+        snapshotFormatVersion >= FullHierarchyV2;
 }
 
 /// <summary>
-/// Current canonicalization version for <c>DefinitionSourceHash</c> — the hash of the exact
-/// Product Definition revision payload a snapshot was built from (plan §4.2).
+/// Snapshot hash algorithm versions. V1/V2 are immutable executable contracts — dispatch by
+/// the stored <c>SnapshotHashVersion</c>; never recompute a stored V1 hash with V2.
+/// </summary>
+public static class ProductionSnapshotHashVersions
+{
+    public const int V1 = 1;
+    public const int DefinitionIdentityV2 = 2;
+    public const int Current = DefinitionIdentityV2;
+}
+
+/// <summary>
+/// Definition source hash algorithm versions. V1 includes EffectiveFrom/To; V2 uses DefinitionCode
+/// and excludes IsDefaultDefinition from manufacturing content.
 /// </summary>
 public static class ProductionDefinitionSourceHashVersions
 {
-    public const int Current = 1;
+    public const int V1 = 1;
+    public const int DefinitionIdentityV2 = 2;
+    public const int Current = DefinitionIdentityV2;
 }
 

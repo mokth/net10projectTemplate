@@ -18,14 +18,21 @@ public class ProductionWorkOrder
     public string SnapshotHash { get; set; } = string.Empty;
 
     /// <summary>
-    /// The as-of date used to resolve the source Product Definition revision. Physically the
-    /// legacy <c>SnapshotAsOfDate</c> column (plan §6.6 compatibility mapping).
+    /// Deprecated: legacy as-of date used by format-1/2 snapshots. Physically the
+    /// <c>SnapshotAsOfDate</c> column. Retained for hash-version-1 compatibility; new selection
+    /// uses <see cref="SourceDefinitionCode"/>.
     /// </summary>
     public DateTime DefinitionEffectiveDate { get; set; }
 
     public string ProductCode { get; set; } = string.Empty;
     public string? ProductDescription { get; set; }
     public string? OutputUom { get; set; }
+
+    /// <summary>Logical Product Definition selected for this Work Order (e.g. STANDARD, LINE-B).</summary>
+    public string SourceDefinitionCode { get; set; } = string.Empty;
+
+    /// <summary>Definition name snapshotted from the source revision at build time.</summary>
+    public string? SourceDefinitionName { get; set; }
 
     public long SourceBomHdrId { get; set; }
     public PrBomHdr? SourceBomHeader { get; set; }
@@ -49,14 +56,14 @@ public class ProductionWorkOrder
     // ── Snapshot provenance and format (plan §6.6) ────────────────────────────────────────────
 
     /// <summary>
-    /// Source revision's own <c>EffectiveFrom</c> date. Distinct from
-    /// <see cref="DefinitionEffectiveDate"/>, which is the as-of date used to resolve it.
+    /// Deprecated: source revision EffectiveFrom from format-1/2 snapshots. Retained for
+    /// hash-version-1 compatibility only.
     /// </summary>
     public DateTime? SourceEffectiveFrom { get; set; }
 
     /// <summary>
     /// Physical <c>PrBomHdr.UID</c> of the Product Definition revision this snapshot was built
-    /// from. Refresh re-resolves against <see cref="DefinitionEffectiveDate"/> and compares.
+    /// from. Refresh re-resolves the same <see cref="SourceDefinitionCode"/> ACTIVE revision.
     /// </summary>
     public long? SourceProductDefinitionRevisionId { get; set; }
 

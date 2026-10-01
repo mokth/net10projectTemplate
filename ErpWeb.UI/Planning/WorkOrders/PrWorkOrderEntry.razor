@@ -38,11 +38,11 @@
                     {
                         <span class="iv-chip code-style">@Request.ProductCode</span>
                     }
-                    <span class="iv-chip">@CurrentStatus</span>
-                    @if (CurrentBomVersion is int version)
+                    @if (!string.IsNullOrWhiteSpace(DefinitionHeroChip))
                     {
-                        <span class="iv-chip">BOM V@version</span>
+                        <span class="iv-chip code-style">@DefinitionHeroChip</span>
                     }
+                    <span class="iv-chip">@CurrentStatus</span>
                     @if (CurrentSnapshotRevision is int revision)
                     {
                         <span class="iv-chip">Snapshot @revision</span>
@@ -74,13 +74,21 @@
                 }
             </div>
             <div class="pwo-commandbar__right">
-                @if (CanEditFields)
+                @if (NeedsDefinitionUpgrade && CanRefreshDefinition)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="REFRESH DEFINITION"
+                              IconCssClass="fa-solid fa-rotate"
+                              Click="@OpenRefreshAsync"
+                              Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanEditInputs)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="SAVE DRAFT"
                               IconCssClass="fa-regular fa-floppy-disk"
                               Click="@SaveDraftAsync"
-                              Enabled="@(!IsSubmitting)" />
+                              Enabled="@CanSaveDraft" />
                     <DxDropDownButton Text="MORE"
                                       RenderStyle="ButtonRenderStyle.Secondary"
                                       IconCssClass="fa-solid fa-ellipsis"
@@ -95,11 +103,16 @@
                                                   Click="@RecalculateScheduleAsync"
                                                   Visible="@IsCurrentSnapshot"
                                                   Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                            <DxDropDownButtonItem Text="CHANGE DEFINITION"
+                                                  IconCssClass="fa-solid fa-right-left"
+                                                  Click="@OpenChangeDefinitionAsync"
+                                                  Visible="@CanChangeDefinition"
+                                                  Enabled="@CanChangeDefinition" />
                             <DxDropDownButtonItem Text="REFRESH DEFINITION"
                                                   IconCssClass="fa-solid fa-rotate"
                                                   Click="@OpenRefreshAsync"
-                                                  Visible="@IsCurrentSnapshot"
-                                                  Enabled="@(!IsSubmitting && !HasUnsavedInputChanges)" />
+                                                  Visible="@CanRefreshDefinition"
+                                                  Enabled="@CanRefreshDefinition" />
                         </Items>
                     </DxDropDownButton>
                 }
@@ -110,6 +123,14 @@
                               IconCssClass="fa-solid fa-paper-plane"
                               Click="@(() => ReleaseConfirmVisible = true)"
                               Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanIssueMaterials)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="ISSUE MATERIALS"
+                              IconCssClass="fa-solid fa-dolly"
+                              Click="@OpenMaterialIssue"
+                              Enabled="@CanStartMaterialIssue" />
                 }
                 @if (CanCancelAction)
                 {
@@ -143,7 +164,7 @@
                             aria-controls="pwo-input-body">
                         <i class="fa-solid @(InputsExpanded ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i>
                         <span>
-                            <strong>Order and snapshot inputs</strong>
+                            <strong>Order and definition inputs</strong>
                             <small>Save applies required recalculation. Use More → Calculate Preview to inspect the calculated route, materials and schedule before saving.</small>
                         </span>
                     </button>
@@ -158,7 +179,7 @@
                         <IvStockMasterPicker ICode="@Request.ProductCode"
                                              ICodeChanged="OnProductCodeChanged"
                                              Selected="OnProductSelectedAsync"
-                                             Enabled="@CanEditFields"
+                                             Enabled="@CanEditInputs"
                                              InputCssClass="required-field code-style" />
                         @FieldError("ProductCode")
                     </div>
@@ -172,17 +193,42 @@
                                     MinValue="0.0001m"
                                     DisplayFormat="n4"
                                     ShowSpinButtons="false"
-                                    ReadOnly="@(!CanEditFields)" />
+                                    ReadOnly="@(!CanEditInputs)" />
                         @FieldError("PlannedQty")
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Output UOM</label>
                         <DxTextBox Text="@CurrentOutputUom" ReadOnly="true" InputCssClass="code-style" />
                     </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">BOM as-of date</label>
-                        <DxDateEdit @bind-Date="@Request.SnapshotAsOfDate" ReadOnly="@(!CanEditFields)" />
-                        @FieldError("SnapshotAsOfDate")
+                    <div class="iv-field pwo-span-2">
+                        <label class="iv-field__label">Product Definition</label>
+                        @if (CanEditDefinition)
+                        {
+                            <DxComboBox Data="@DefinitionOptions"
+                                        TextFieldName="@nameof(DefinitionOption.Label)"
+                                        ValueFieldName="@nameof(DefinitionOption.Code)"
+                                        Value="@Request.DefinitionCode"
+                                        ValueChanged="@((string? v) => OnDefinitionCodeChanged(v))"
+                                        Enabled="@CanEditDefinition"
+                                        NullText="Select ACTIVE definition" />
+                        }
+                        else
+                        {
+                            <DxTextBox Text="@DefinitionDisplayLabel" ReadOnly="true" InputCssClass="code-style" />
+                        }
+                        @if (CurrentBomVersion is int resolvedVersion)
+                        {
+                            <small class="pwo-section-note">Resolved revision V@resolvedVersion</small>
+                        }
+                        else if (NeedsDefinitionUpgrade)
+                        {
+                            <small class="pwo-section-note">Older snapshot format — Refresh Definition before editing.</small>
+                        }
+                        else if (!IsNewMode && IsDraft && IsCurrentSnapshot && CanChangeDefinition)
+                        {
+                            <small class="pwo-section-note">Definition is locked on a saved Draft. Use More → Change Definition to switch.</small>
+                        }
+                        @FieldError("DefinitionCode")
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Schedule direction</label>
@@ -190,16 +236,16 @@
                                     TextFieldName="@nameof(Option.Name)"
                                     ValueFieldName="@nameof(Option.Key)"
                                     @bind-Value="@Request.SchedulingDirection"
-                                    Enabled="@CanEditFields" />
+                                    Enabled="@CanEditInputs" />
                         @FieldError("SchedulingDirection")
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Planned start</label>
-                        <DxDateEdit @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditFields || IsBackwardSchedule)" />
+                        <DxDateEdit @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditInputs || IsBackwardSchedule)" />
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Planned completion</label>
-                        <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditFields || !IsBackwardSchedule)" />
+                        <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditInputs || !IsBackwardSchedule)" />
                         @FieldError("PlannedCompletionDate")
                     </div>
                     <div class="iv-field">
@@ -208,18 +254,18 @@
                                     TextFieldName="@nameof(Option.Name)"
                                     ValueFieldName="@nameof(Option.Key)"
                                     @bind-Value="@Request.SourceType"
-                                    Enabled="@CanEditFields" />
+                                    Enabled="@CanEditInputs" />
                     </div>
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Source reference</label>
                         <DxTextBox @bind-Text="@Request.SourceReference"
-                                   ReadOnly="@(!CanEditFields)"
+                                   ReadOnly="@(!CanEditInputs)"
                                    NullText="Optional manual demand reference" />
                         @FieldError("SourceReference")
                     </div>
                     <div class="iv-field pwo-span-all">
                         <label class="iv-field__label">Remark</label>
-                        <DxMemo @bind-Text="@Request.Remark" Rows="3" ReadOnly="@(!CanEditFields)" NullText="Optional production note" />
+                        <DxMemo @bind-Text="@Request.Remark" Rows="3" ReadOnly="@(!CanEditInputs)" NullText="Optional production note" />
                         @FieldError("Remark")
                     </div>
                 </div>
@@ -264,9 +310,10 @@
                             <section class="pwo-overview-section">
                                 <h3>Product Definition / Snapshot</h3>
                                 <div class="pwo-overview-grid">
+                                    @Detail("Definition code", CurrentDefinitionCode)
+                                    @Detail("Definition name", CurrentDefinitionName)
                                     @Detail("Definition revision", CurrentBomVersion?.ToString())
                                     @Detail("Snapshot revision", DetailModel?.SnapshotRevision.ToString())
-                                    @Detail("Snapshot date", CurrentSnapshotDate?.ToString("dd MMM yyyy"))
                                     @Detail("BOM base", BomBaseLabel)
                                     @Detail("Snapshot format", SnapshotFormatLabel)
                                     @Detail("Snapshot hash", ShortSnapshotHash)
@@ -352,6 +399,17 @@
                         }
                     </DxTabPage>
                     <DxTabPage Text="MATERIALS">
+                        @if (DetailModel is not null)
+                        {
+                            <div class="pwo-execution-summary" aria-label="Material execution summary">
+                                <div><span>Required</span><strong>@ExecutionRequiredQty.ToString("n4")</strong></div>
+                                <div><span>Issued</span><strong>@ExecutionIssuedQty.ToString("n4")</strong></div>
+                                <div><span>Returned</span><strong>@ExecutionReturnedQty.ToString("n4")</strong></div>
+                                <div><span>Net issued</span><strong>@ExecutionNetIssuedQty.ToString("n4")</strong></div>
+                                <div><span>Consumed</span><strong>@ExecutionConsumedQty.ToString("n4")</strong></div>
+                                <div><span>Outstanding</span><strong>@ExecutionOutstandingQty.ToString("n4")</strong></div>
+                            </div>
+                        }
                         @if (VisibleMaterialRows.Count == 0)
                         {
                             <p class="pwo-empty">Run Calculate Preview to inspect material requirements.</p>
@@ -368,6 +426,13 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentQtyPerParent)" Caption="Std Qty" DisplayFormat="n4" Width="95px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.StandardUom)" Caption="Std UOM" Width="85px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredQty)" Caption="Required" DisplayFormat="n4" Width="105px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.IssuedQty)" Caption="Issued" DisplayFormat="n4" Width="95px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ReturnedQty)" Caption="Returned" DisplayFormat="n4" Width="95px" />
+                                    <DxGridDataColumn Caption="Net Issued" Width="100px">
+                                        <CellDisplayTemplate>@((((ProductionWorkOrderMaterialVm)context.DataItem).IssuedQty - ((ProductionWorkOrderMaterialVm)context.DataItem).ReturnedQty).ToString("n4"))</CellDisplayTemplate>
+                                    </DxGridDataColumn>
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ConsumedQty)" Caption="Consumed" DisplayFormat="n4" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.OpenRequirementQty)" Caption="Outstanding" DisplayFormat="n4" Width="110px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredUom)" Caption="UOM" Width="70px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.RequiredBaseQty)" Caption="Base Qty" DisplayFormat="n4" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.BaseUom)" Caption="Base UOM" Width="85px" />
@@ -469,7 +534,7 @@
                     <DxTabPage Text="EXECUTION GATE">
                         <div class="pwo-gate-grid">
                             @Gate("Reservation / allocation", "Pending approved competition and priority policy")
-                            @Gate("Material issue / return", "Pending atomic inventory posting adapter")
+                            @Gate("Material issue", "Available for released and in-progress Work Orders")
                             @Gate("WIP and operation completion", "Pending quantity and transfer contract")
                             @Gate("Finished goods", "Pending WIP and cost-conservation contract")
                             @Gate("Costs and variances", "Pending valuation, approval and future GL mapping")
@@ -509,9 +574,20 @@
                     <p class="pwo-help__intro">Available actions depend on the Work Order status and your permissions.</p>
 
                     <section>
-                        <h3>1. Normal flow</h3>
+                        <h3>1. Product Definition concepts</h3>
+                        <ul>
+                            <li><strong>Product Definition</strong> — the manufacturing method for a product (for example STANDARD or LINE-B). A new Work Order picks an ACTIVE definition; the Draft then locks that choice.</li>
+                            <li><strong>Revision</strong> — the ACTIVE version number of the chosen definition when the Work Order snapshot was built (shown as V2, V3, …).</li>
+                            <li><strong>Snapshot</strong> — the frozen route, materials, machines and labour copied onto the Work Order. Editing the live Product Definition does not change an existing Work Order until you Refresh or Change Definition.</li>
+                            <li><strong>Refresh Definition</strong> — rebuilds the Draft from the same Product Definition code’s current ACTIVE revision. Required before editing older format 1/2 Drafts.</li>
+                            <li><strong>Change Definition</strong> — switches a current-format Draft to a different ACTIVE definition for the same product (preview the diff, then confirm).</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>2. Normal flow</h3>
                         <ol>
-                            <li>Set product, planned quantity, and scheduling direction/date.</li>
+                            <li>Set product, Product Definition, planned quantity, and scheduling direction/date.</li>
                             <li>Optional: More → Calculate Preview to inspect the calculated route, materials, and schedule without saving.</li>
                             <li>Save Draft to create or update the Work Order.</li>
                             <li>After the Draft is saved, adjust machine selection or material alternatives if required.</li>
@@ -521,27 +597,30 @@
                     </section>
 
                     <section>
-                        <h3>2. Buttons</h3>
+                        <h3>3. Buttons</h3>
                         <dl class="pwo-help__actions">
                             <dt>Save Draft</dt>
-                            <dd>Creates or updates the Draft and applies required recalculation.</dd>
+                            <dd>Creates a new Draft from the selected Product Definition, or updates header fields on a current-format Draft. Older format Drafts must Refresh first.</dd>
                             <dt>Release</dt>
-                            <dd>Approves the Draft for execution and makes its production snapshot read-only. Release does not post inventory. Hidden while inputs are unsaved.</dd>
+                            <dd>Approves the Draft for execution and makes its production snapshot read-only. Release does not post inventory. Hidden while inputs are unsaved or the snapshot format is outdated.</dd>
                             <dt>Cancel Draft</dt>
                             <dd>Marks the Draft as Cancelled. A cancellation reason is required. Does not delete the Work Order.</dd>
                             <dt>More → Calculate Preview</dt>
                             <dd>Calculates route, materials, quantities, and schedule for inspection without saving.</dd>
                             <dt>More → Recalculate Schedule</dt>
                             <dd>Re-runs scheduling for a saved current-snapshot Draft.</dd>
+                            <dt>More → Change Definition</dt>
+                            <dd>Preview and confirm switching the Draft to another ACTIVE Product Definition for the same product.</dd>
                             <dt>More → Refresh Definition</dt>
-                            <dd>Rebuilds the Draft from Product Definition, resets machine/material overrides to definition defaults, preserves the scheduling anchor, and recalculates the schedule.</dd>
+                            <dd>Rebuilds the Draft from the current ACTIVE revision of its Product Definition, resets machine/material overrides to definition defaults, preserves the scheduling anchor, and recalculates the schedule.</dd>
                         </dl>
                     </section>
 
                     <section>
-                        <h3>3. Tips</h3>
+                        <h3>4. Tips</h3>
                         <ul>
-                            <li>Unsaved input changes hide Release and disable Recalculate Schedule / Refresh Definition until the Draft is saved.</li>
+                            <li>On a new Work Order, choose the Product Definition from ACTIVE definitions. After save, the definition is read-only until you use Change Definition.</li>
+                            <li>Unsaved input changes hide Release and disable Recalculate Schedule / Refresh / Change Definition until the Draft is saved.</li>
                             <li>Calculate Preview is inspection-only. Save Draft persists the Work Order and applies any required recalculation.</li>
                             <li>After Release, the Work Order is read-only for this Draft-entry workflow.</li>
                         </ul>
@@ -562,7 +641,7 @@
                  CssClass="common-popup">
             <Content>
                 <p class="iv-confirm__copy">Release @CurrentWorkOrderNo for execution?</p>
-                <p class="text-muted small mb-0">The product, BOM revision, schedule and snapshot lines become read-only. This action does not post inventory.</p>
+                <p class="text-muted small mb-0">The product, Product Definition, schedule and snapshot lines become read-only. This action does not post inventory.</p>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => ReleaseConfirmVisible = false)" />
@@ -624,6 +703,64 @@
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => RefreshVisible = false)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Confirm refresh" Click="@ConfirmRefreshAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Change Product Definition"
+                 @bind-Visible="@ChangeDefinitionVisible"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup">
+            <Content>
+                <p class="iv-confirm__copy">
+                    Switch Draft @CurrentWorkOrderNo from
+                    <span class="code-style">@DetailModel?.SourceDefinitionCode</span>
+                    to another ACTIVE Product Definition. Machine and material overrides reset to the target definition defaults.
+                </p>
+                <div class="iv-field">
+                    <label class="iv-field__label">Target definition</label>
+                    <DxComboBox Data="@ChangeDefinitionOptions"
+                                TextFieldName="@nameof(DefinitionOption.Label)"
+                                ValueFieldName="@nameof(DefinitionOption.Code)"
+                                Value="@SelectedChangeDefinitionCode"
+                                ValueChanged="@((string? v) => OnChangeDefinitionTargetChanged(v))"
+                                NullText="Select target definition"
+                                Enabled="@(!IsSubmitting)" />
+                </div>
+                @if (ChangeDefinitionPreviewModel is not null)
+                {
+                    <p class="text-muted small mb-2">
+                        Target @ChangeDefinitionPreviewModel.TargetDefinitionCode
+                        @(string.IsNullOrWhiteSpace(ChangeDefinitionPreviewModel.TargetDefinitionName)
+                            ? ""
+                            : $" — {ChangeDefinitionPreviewModel.TargetDefinitionName}")
+                        · V@ChangeDefinitionPreviewModel.TargetSourceBomVersion.
+                        Added @ChangeDefinitionPreviewModel.Added.Count, removed @ChangeDefinitionPreviewModel.Removed.Count, changed @ChangeDefinitionPreviewModel.Changed.Count.
+                    </p>
+                }
+                <div class="iv-field">
+                    <label class="iv-field__label">Reason</label>
+                    <DxMemo @bind-Text="@ChangeDefinitionReason" Rows="2" NullText="Required when confirming" />
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => ChangeDefinitionVisible = false)" />
+                        @if (ChangeDefinitionPreviewModel is null)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Preview change"
+                                      Click="@PreviewChangeDefinitionAsync"
+                                      Enabled="@(!IsSubmitting && !string.IsNullOrWhiteSpace(SelectedChangeDefinitionCode))" />
+                        }
+                        else
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Confirm change"
+                                      Click="@ConfirmChangeDefinitionAsync"
+                                      Enabled="@(!IsSubmitting)" />
+                        }
                     </div>
                 </div>
             </Content>

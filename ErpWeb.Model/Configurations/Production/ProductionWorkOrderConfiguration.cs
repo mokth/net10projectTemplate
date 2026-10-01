@@ -25,6 +25,8 @@ public sealed class ProductionWorkOrderConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.ProductCode).HasMaxLength(30).IsRequired();
         builder.Property(x => x.ProductDescription).HasMaxLength(200);
         builder.Property(x => x.OutputUom).HasColumnName("OutputUOM").HasMaxLength(10);
+        builder.Property(x => x.SourceDefinitionCode).HasMaxLength(30).IsRequired();
+        builder.Property(x => x.SourceDefinitionName).HasMaxLength(100);
         builder.Property(x => x.SourceBomHdrId).HasColumnName("SourceBomHdrID");
         builder.Property(x => x.BomBaseQty).HasPrecision(18, 4);
         builder.Property(x => x.BomBaseUom).HasColumnName("BomBaseUOM").HasMaxLength(10);
@@ -74,6 +76,8 @@ public sealed class ProductionWorkOrderConfiguration : IEntityTypeConfiguration<
             .HasDatabaseName("IX_PrWorkOrder_Company_Branch_Status_Start");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ProductCode })
             .HasDatabaseName("IX_PrWorkOrder_Company_Branch_Product");
+        builder.HasIndex(x => new { x.CompanyCode, x.ProductCode, x.SourceDefinitionCode })
+            .HasDatabaseName("IX_PrWorkOrder_Company_Product_Definition");
         builder.HasIndex(x => x.SourceBomHdrId)
             .HasDatabaseName("IX_PrWorkOrder_SourceBomHdrID");
         builder.HasIndex(x => new { x.CompanyCode, x.SnapshotFormatVersion })

@@ -44,6 +44,9 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
         {
             CompanyCode = "DEMO",
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            DefinitionName = PrProductDefinitionCodes.StandardName,
+            IsDefaultDefinition = true,
             Version = version,
             Status = status,
             EffectiveFrom = from,
@@ -67,7 +70,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
             Revision(1, new DateTime(2026, 1, 1), new DateTime(2026, 6, 1), PrBomStatuses.Superseded),
             Revision(2, new DateTime(2026, 6, 1), null));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 7, 15));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.True(result.Succeeded);
         Assert.Equal(2, result.Revision!.Version);
@@ -81,8 +84,8 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
             Revision(1, new DateTime(2026, 6, 1), new DateTime(2026, 9, 1)),
             Revision(2, new DateTime(2026, 9, 1), null));
 
-        var onFrom = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 6, 1));
-        var onTo = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 9, 1));
+        var onFrom = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
+        var onTo = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.Equal(1, onFrom.Revision!.Version);
         Assert.Equal(2, onTo.Revision!.Version);
@@ -93,7 +96,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     {
         await AddAsync(Revision(1, null, null));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2030, 12, 31));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.True(result.Succeeded);
         Assert.Equal(1, result.Revision!.Version);
@@ -106,7 +109,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
             Revision(1, new DateTime(2026, 1, 1), new DateTime(2026, 2, 1)),
             Revision(2, new DateTime(2026, 3, 1), new DateTime(2026, 4, 1)));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.False(result.Succeeded);
         Assert.Equal(ProductionReadinessErrorCodes.DefinitionRevisionNotFound, result.FailureCode);
@@ -118,7 +121,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     {
         await AddAsync(Revision(4, new DateTime(2026, 1, 1), null, PrBomStatuses.Draft));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.False(result.Succeeded);
         Assert.Equal(ProductionReadinessErrorCodes.DefinitionRevisionNotFound, result.FailureCode);
@@ -131,7 +134,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
             Revision(1, new DateTime(2026, 1, 1), new DateTime(2026, 12, 31)),
             Revision(2, new DateTime(2026, 6, 1), null));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.False(result.Succeeded);
         Assert.Null(result.Revision);
@@ -144,7 +147,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     {
         await AddAsync(Revision(1, null, null));
 
-        var result = await _loader.ResolveRevisionAsync(" demo ", "fg001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync(" demo ", "fg001", "STANDARD");
 
         Assert.True(result.Succeeded);
     }
@@ -154,7 +157,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     {
         await AddAsync(Revision(1, null, null));
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG999", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG999", "STANDARD");
 
         Assert.Equal(ProductionReadinessErrorCodes.DefinitionRevisionNotFound, result.FailureCode);
     }
@@ -212,7 +215,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
 
         await AddAsync(header);
 
-        var result = await _loader.ResolveRevisionAsync("DEMO", "FG001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 
         Assert.True(result.Succeeded);
         var loadedStep = Assert.Single(result.Revision!.RouteSteps);
@@ -247,7 +250,7 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     [Fact]
     public async Task Blank_company_or_product_is_rejected_without_querying()
     {
-        var result = await _loader.ResolveRevisionAsync("  ", "FG001", new DateTime(2026, 7, 1));
+        var result = await _loader.ResolveActiveRevisionAsync("  ", "FG001", "STANDARD");
 
         Assert.False(result.Succeeded);
         Assert.Equal(ProductionReadinessErrorCodes.DefinitionRevisionNotFound, result.FailureCode);

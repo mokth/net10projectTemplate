@@ -14,6 +14,7 @@ public partial class PrProductDefEntry : PageBase
 {
     [Parameter] public string Mode { get; set; } = "view";
     [Parameter] public string? ProdCode { get; set; }
+    [Parameter] public string? DefinitionCode { get; set; }
 
     [Inject] private IPrProductDefService ProductDefs { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
@@ -28,6 +29,7 @@ public partial class PrProductDefEntry : PageBase
     private string? _loadedKey;
     private int _tempSeq;
     private string? _pendingOwnerProdCode;
+    private string? _pendingOwnerDefinitionCode;
     private bool _pendingAddAfterSwitch;
     private bool _pendingUpdateAfterDiscard;
     private Func<Task>? _pendingSelectionAction;
@@ -90,7 +92,16 @@ public partial class PrProductDefEntry : PageBase
     protected PrProductDefLabourVm LabourEdit { get; set; } = NewLabour();
 
     protected string StructureRootProdCode { get; set; } = string.Empty;
+    protected string StructureRootDefinitionCode { get; set; } = PrProductDefinitionCodes.Standard;
+
     protected string CurrentOwnerProdCode { get; set; } = string.Empty;
+    protected string CurrentOwnerDefinitionCode { get; set; } = PrProductDefinitionCodes.Standard;
+
+    protected bool NeedsDefinitionChoice { get; set; }
+    protected IReadOnlyList<PrProductDefinitionLookupRow> DefinitionChoices { get; set; } = [];
+
+    protected string? LineComponentDefinitionCode { get; set; }
+    protected IReadOnlyList<DefinitionOption> ComponentDefinitionOptions { get; set; } = [];
     protected string? CurrentSelectedNodeKey { get; set; }
     protected IReadOnlyList<PrBomStructureNode> DisplayNodes { get; set; } = [];
     protected IReadOnlyList<PrBomStructureNode> ProcessBomNodes { get; set; } = [];
@@ -147,6 +158,7 @@ public partial class PrProductDefEntry : PageBase
 
     protected sealed record Option(string Value, string Text);
     protected sealed record ProducerOption(Guid? Value, string Text);
+    protected sealed record DefinitionOption(string Value, string Text);
 
     protected static bool ShowsStandardDuration(PrProductDefOperationVm operation) =>
         PrProcessTypes.IsDurationBased(operation.ProcessType)
@@ -184,6 +196,7 @@ public partial class PrProductDefEntry : PageBase
     }
 
     protected string? PendingOwnerProdCode => _pendingOwnerProdCode;
+    protected string? PendingOwnerDefinitionCode => _pendingOwnerDefinitionCode;
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -203,7 +216,8 @@ public partial class PrProductDefEntry : PageBase
         && !string.Equals(_cleanSnapshot, Snapshot(Model), StringComparison.Ordinal);
 
     protected bool IsEditingRoot =>
-        string.Equals(CurrentOwnerProdCode, StructureRootProdCode, StringComparison.OrdinalIgnoreCase);
+        string.Equals(CurrentOwnerProdCode, StructureRootProdCode, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(CurrentOwnerDefinitionCode, StructureRootDefinitionCode, StringComparison.OrdinalIgnoreCase);
 
     protected string OwnerBreadcrumb
     {
@@ -214,14 +228,18 @@ public partial class PrProductDefEntry : PageBase
                 return string.Empty;
             }
 
+            var root = FormatOwnerLabel(StructureRootProdCode, StructureRootDefinitionCode);
             if (IsEditingRoot)
             {
-                return StructureRootProdCode;
+                return root;
             }
 
-            return $"{StructureRootProdCode} › {CurrentOwnerProdCode}";
+            return $"{root} › {FormatOwnerLabel(CurrentOwnerProdCode, CurrentOwnerDefinitionCode)}";
         }
     }
+
+    private static string FormatOwnerLabel(string? prodCode, string? definitionCode) =>
+        $"{PrBomStructureKeys.Normalize(prodCode)} [{PrBomStructureKeys.Normalize(definitionCode)}]";
 
     protected bool CanAddUnderSelection
     {
@@ -251,7 +269,11 @@ public partial class PrProductDefEntry : PageBase
         !IsViewMode
         && !IsReadOnlyStatus
         && SelectedNode is { ParentKey: not null, OwnerProdCode: not null }
-        && string.Equals(SelectedNode.OwnerProdCode, CurrentOwnerProdCode, StringComparison.OrdinalIgnoreCase);
+        && OwnersEqual(
+            SelectedNode.OwnerProdCode,
+            SelectedNode.OwnerDefinitionCode ?? CurrentOwnerDefinitionCode,
+            CurrentOwnerProdCode,
+            CurrentOwnerDefinitionCode);
 
     protected int CurrentOwnerLineCount => SelectedOperation is null ? 0
         : Model.Lines.Count(x => x.OperationKey == SelectedOperation.OperationKey);
@@ -434,7 +456,7 @@ public partial class PrProductDefEntry : PageBase
         }
         await LoadRoutingLookupsAsync();
 
-        var key = $"{Mode}|{ProdCode}";
+        var key = $"{Mode}|{ProdCode}|{DefinitionCode}";
         if (string.Equals(_loadedKey, key, StringComparison.OrdinalIgnoreCase) && !IsLoading)
         {
             return;
@@ -449,6 +471,8 @@ public partial class PrProductDefEntry : PageBase
         IsLoading = true;
         ErrorMessage = null;
         ValidationErrors.Clear();
+        NeedsDefinitionChoice = false;
+        DefinitionChoices = [];
         ResetLineEditor();
         ResetRoutingEditors();
         SelectedNode = null;
@@ -458,13 +482,19 @@ public partial class PrProductDefEntry : PageBase
             if (IsNewMode)
             {
                 StructureRootProdCode = string.Empty;
+                StructureRootDefinitionCode = PrProductDefinitionCodes.Standard;
                 CurrentOwnerProdCode = string.Empty;
+                CurrentOwnerDefinitionCode = PrProductDefinitionCodes.Standard;
                 UpdateProdCode = string.Empty;
                 Model = new PrProductDefEditVm
                 {
                     Status = PrBomStatuses.Draft,
                     BaseQty = 1m,
-                    Version = 1
+                    Version = 1,
+                    DefinitionCode = string.IsNullOrWhiteSpace(DefinitionCode)
+                        ? PrProductDefinitionCodes.Standard
+                        : PrProductDefinitionCodes.Normalize(DefinitionCode),
+                    DefinitionName = PrProductDefinitionCodes.StandardName
                 };
                 _persistedNodes = [];
                 PendingCentre = null;
@@ -473,18 +503,19 @@ public partial class PrProductDefEntry : PageBase
                 if (!string.IsNullOrWhiteSpace(ProdCode))
                 {
                     var code = ProdCode.Trim().ToUpperInvariant();
-                    var existing = await ProductDefs.GetAsync(code);
-                    if (existing.Succeeded && existing.Data is not null)
-                    {
-                        Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(code)}");
-                        return;
-                    }
-
+                    // /new/{ProdCode} preselects the product and keeps DefinitionCode editable.
+                    // Do NOT redirect to an existing default definition.
                     var resolved = await Lookups.ResolveItemAsync(code);
                     if (resolved.Succeeded && resolved.Item is not null)
                     {
                         await OnProductSelectedAsync(resolved.Item);
                         UpdateProdCode = code;
+                        if (!string.IsNullOrWhiteSpace(DefinitionCode))
+                        {
+                            Model.DefinitionCode = PrProductDefinitionCodes.Normalize(DefinitionCode);
+                            StructureRootDefinitionCode = Model.DefinitionCode;
+                            CurrentOwnerDefinitionCode = Model.DefinitionCode;
+                        }
                     }
                     else
                     {
@@ -509,7 +540,36 @@ public partial class PrProductDefEntry : PageBase
             CurrentOwnerProdCode = StructureRootProdCode;
             UpdateProdCode = StructureRootProdCode;
 
-            var result = await ProductDefs.GetAsync(StructureRootProdCode);
+            var routeDefinition = string.IsNullOrWhiteSpace(DefinitionCode)
+                ? null
+                : PrProductDefinitionCodes.Normalize(DefinitionCode);
+
+            if (routeDefinition is null)
+            {
+                var resolved = await ResolveDefinitionForRouteAsync(StructureRootProdCode);
+                if (resolved.RedirectCode is string redirect)
+                {
+                    Navigation.NavigateTo(
+                        $"/planning/product-definitions/{Mode}/{Uri.EscapeDataString(StructureRootProdCode)}/{Uri.EscapeDataString(redirect)}",
+                        replace: true);
+                    return;
+                }
+
+                if (resolved.Choices is { Count: > 0 })
+                {
+                    NeedsDefinitionChoice = true;
+                    DefinitionChoices = resolved.Choices;
+                    return;
+                }
+
+                ErrorMessage = resolved.Error ?? "Unable to resolve a Product Definition.";
+                return;
+            }
+
+            StructureRootDefinitionCode = routeDefinition;
+            CurrentOwnerDefinitionCode = routeDefinition;
+
+            var result = await ProductDefs.GetAsync(StructureRootProdCode, StructureRootDefinitionCode);
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Product definition not found.";
@@ -529,6 +589,40 @@ public partial class PrProductDefEntry : PageBase
         {
             IsLoading = false;
         }
+    }
+
+    private async Task<(string? RedirectCode, IReadOnlyList<PrProductDefinitionLookupRow>? Choices, string? Error)> ResolveDefinitionForRouteAsync(
+        string prodCode)
+    {
+        var list = await ProductDefs.ListDefinitionsAsync(prodCode);
+        if (!list.Succeeded || list.Data is null || list.Data.Count == 0)
+        {
+            return (null, null, list.Message ?? $"No Product Definitions found for {prodCode}.");
+        }
+
+        if (list.Data.Count == 1)
+        {
+            return (list.Data[0].DefinitionCode, null, null);
+        }
+
+        var defaults = list.Data.Where(x => x.IsDefaultDefinition).ToList();
+        if (defaults.Count == 1)
+        {
+            return (defaults[0].DefinitionCode, null, null);
+        }
+
+        return (null, list.Data, null);
+    }
+
+    protected void ChooseDefinition(string definitionCode)
+    {
+        if (string.IsNullOrWhiteSpace(ProdCode) || string.IsNullOrWhiteSpace(definitionCode))
+        {
+            return;
+        }
+
+        Navigation.NavigateTo(
+            $"/planning/product-definitions/{Mode}/{Uri.EscapeDataString(ProdCode)}/{Uri.EscapeDataString(definitionCode)}");
     }
 
     private async Task LoadRoutingLookupsAsync()
@@ -565,7 +659,7 @@ public partial class PrProductDefEntry : PageBase
             return;
         }
 
-        var tree = await ProductDefs.GetStructureTreeAsync(StructureRootProdCode, version);
+        var tree = await ProductDefs.GetStructureTreeAsync(StructureRootProdCode, StructureRootDefinitionCode, version);
         if (!tree.Succeeded || tree.Data is null)
         {
             // New unsaved root or load race — fall back to local-only tree
@@ -583,7 +677,13 @@ public partial class PrProductDefEntry : PageBase
 
     private void RebuildDisplayNodes()
     {
-        DisplayNodes = MergeStructureWithCurrentOwner(_persistedNodes, StructureRootProdCode, CurrentOwnerProdCode, Model);
+        DisplayNodes = MergeStructureWithCurrentOwner(
+            _persistedNodes,
+            StructureRootProdCode,
+            StructureRootDefinitionCode,
+            CurrentOwnerProdCode,
+            CurrentOwnerDefinitionCode,
+            Model);
         if (!string.IsNullOrWhiteSpace(CurrentSelectedNodeKey))
         {
             SelectedNode = DisplayNodes.FirstOrDefault(x =>
@@ -597,6 +697,12 @@ public partial class PrProductDefEntry : PageBase
         Model.ProdCode = code ?? string.Empty;
         StructureRootProdCode = (code ?? string.Empty).Trim().ToUpperInvariant();
         CurrentOwnerProdCode = StructureRootProdCode;
+        if (string.IsNullOrWhiteSpace(Model.DefinitionCode))
+        {
+            Model.DefinitionCode = PrProductDefinitionCodes.Standard;
+        }
+        StructureRootDefinitionCode = PrProductDefinitionCodes.Normalize(Model.DefinitionCode);
+        CurrentOwnerDefinitionCode = StructureRootDefinitionCode;
         UpdateProdCode = StructureRootProdCode;
         if (string.IsNullOrWhiteSpace(code))
         {
@@ -620,6 +726,13 @@ public partial class PrProductDefEntry : PageBase
         Model.IsActive = true;
         StructureRootProdCode = row.ICode.Trim().ToUpperInvariant();
         CurrentOwnerProdCode = StructureRootProdCode;
+        if (string.IsNullOrWhiteSpace(Model.DefinitionCode))
+        {
+            Model.DefinitionCode = PrProductDefinitionCodes.Standard;
+            Model.DefinitionName = PrProductDefinitionCodes.StandardName;
+        }
+        StructureRootDefinitionCode = PrProductDefinitionCodes.Normalize(Model.DefinitionCode);
+        CurrentOwnerDefinitionCode = StructureRootDefinitionCode;
         UpdateProdCode = StructureRootProdCode;
         RebuildDisplayNodes();
         RebuildCentreRows();
@@ -661,7 +774,29 @@ public partial class PrProductDefEntry : PageBase
             LineWarehouse = Warehouses[0].Code;
         }
 
+        await RefreshComponentDefinitionOptionsAsync();
         await InvokeAsync(StateHasChanged);
+    }
+
+    protected void OnLineSupplySourceChanged(string? value)
+    {
+        LineSupplySource = value ?? PrMaterialSupplySources.Purchased;
+        if (!string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
+        {
+            LineComponentDefinitionCode = null;
+            ComponentDefinitionOptions = [];
+        }
+        else
+        {
+            _ = RefreshComponentDefinitionOptionsAsync();
+        }
+
+        if (!string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal))
+        {
+            LineProducingRouteStepKey = null;
+        }
+
+        _ = InvokeAsync(StateHasChanged);
     }
 
     protected async Task OnTreeFocusedRowChanged(TreeListFocusedRowChangedEventArgs args)
@@ -679,17 +814,29 @@ public partial class PrProductDefEntry : PageBase
         CurrentSelectedNodeKey = node.Key;
         SelectedNode = node;
 
-        // Selecting a line owned by another product → switch edit context
+        // Selecting a line owned by another product definition → switch edit context
         if (node.ParentKey is not null
             && !string.IsNullOrWhiteSpace(node.OwnerProdCode)
-            && !string.Equals(node.OwnerProdCode, CurrentOwnerProdCode, StringComparison.OrdinalIgnoreCase))
+            && !OwnersEqual(
+                node.OwnerProdCode,
+                node.OwnerDefinitionCode ?? CurrentOwnerDefinitionCode,
+                CurrentOwnerProdCode,
+                CurrentOwnerDefinitionCode))
         {
-            await RequestOwnerSwitchAsync(node.OwnerProdCode, addAfter: false, selectKey: node.Key);
+            await RequestOwnerSwitchAsync(
+                node.OwnerProdCode,
+                node.OwnerDefinitionCode ?? CurrentOwnerDefinitionCode,
+                addAfter: false,
+                selectKey: node.Key);
             return;
         }
 
         if (node.ParentKey is not null
-            && string.Equals(node.OwnerProdCode, CurrentOwnerProdCode, StringComparison.OrdinalIgnoreCase))
+            && OwnersEqual(
+                node.OwnerProdCode,
+                node.OwnerDefinitionCode ?? CurrentOwnerDefinitionCode,
+                CurrentOwnerProdCode,
+                CurrentOwnerDefinitionCode))
         {
             var line = FindLine(node);
             if (line is not null)
@@ -711,56 +858,72 @@ public partial class PrProductDefEntry : PageBase
             return;
         }
 
-        var targetOwner = ResolveAddOwnerProdCode();
+        var (targetOwner, targetDefinition) = ResolveAddOwner();
         if (string.IsNullOrWhiteSpace(targetOwner))
         {
             ErrorMessage = "Product code is required before adding components.";
             return;
         }
 
-        if (!string.Equals(targetOwner, CurrentOwnerProdCode, StringComparison.OrdinalIgnoreCase))
+        if (!OwnersEqual(targetOwner, targetDefinition, CurrentOwnerProdCode, CurrentOwnerDefinitionCode))
         {
-            await RequestOwnerSwitchAsync(targetOwner, addAfter: true, selectKey: SelectedNode?.Key);
+            await RequestOwnerSwitchAsync(targetOwner, targetDefinition, addAfter: true, selectKey: SelectedNode?.Key);
             return;
         }
 
         ResetLineEditor();
     }
 
-    private string? ResolveAddOwnerProdCode()
+    private (string? ProdCode, string DefinitionCode) ResolveAddOwner()
     {
         if (SelectedNode is null || SelectedNode.ParentKey is null)
         {
-            return string.IsNullOrWhiteSpace(CurrentOwnerProdCode)
+            var prod = string.IsNullOrWhiteSpace(CurrentOwnerProdCode)
                 ? StructureRootProdCode
                 : CurrentOwnerProdCode;
+            return (prod, CurrentOwnerDefinitionCode);
         }
 
-        // Add under Make/Phantom → that item becomes owner
-        return SelectedNode.ItemCode;
+        // Drill into SEPARATE child definition when present; otherwise keep current owner definition.
+        var childDef = string.IsNullOrWhiteSpace(SelectedNode.ComponentDefinitionCode)
+            ? CurrentOwnerDefinitionCode
+            : PrProductDefinitionCodes.Normalize(SelectedNode.ComponentDefinitionCode);
+        return (SelectedNode.ItemCode, childDef);
     }
 
-    private async Task RequestOwnerSwitchAsync(string ownerProdCode, bool addAfter, string? selectKey)
+    private async Task RequestOwnerSwitchAsync(
+        string ownerProdCode,
+        string ownerDefinitionCode,
+        bool addAfter,
+        string? selectKey)
     {
         if (IsDirty)
         {
             _pendingOwnerProdCode = ownerProdCode;
+            _pendingOwnerDefinitionCode = ownerDefinitionCode;
             _pendingAddAfterSwitch = addAfter;
             CurrentSelectedNodeKey = selectKey;
             ConfirmDiscardVisible = true;
             return;
         }
 
-        await SwitchOwnerAsync(ownerProdCode, addAfter, selectKey);
+        await SwitchOwnerAsync(ownerProdCode, ownerDefinitionCode, addAfter, selectKey);
     }
 
-    private async Task SwitchOwnerAsync(string ownerProdCode, bool addAfter, string? selectKey)
+    private async Task SwitchOwnerAsync(
+        string ownerProdCode,
+        string ownerDefinitionCode,
+        bool addAfter,
+        string? selectKey)
     {
         ErrorMessage = null;
         var code = ownerProdCode.Trim().ToUpperInvariant();
+        var definition = string.IsNullOrWhiteSpace(ownerDefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(ownerDefinitionCode);
 
         // MissingBom / never saved: create new draft context in-memory
-        var get = await ProductDefs.GetAsync(code);
+        var get = await ProductDefs.GetAsync(code, definition);
         if (!get.Succeeded || get.Data is null)
         {
             if (get.ErrorCode == IvMasterErrorCode.NotFound)
@@ -768,6 +931,10 @@ public partial class PrProductDefEntry : PageBase
                 Model = new PrProductDefEditVm
                 {
                     ProdCode = code,
+                    DefinitionCode = definition,
+                    DefinitionName = definition == PrProductDefinitionCodes.Standard
+                        ? PrProductDefinitionCodes.StandardName
+                        : definition,
                     Status = PrBomStatuses.Draft,
                     BaseQty = 1m,
                     Version = 1,
@@ -775,7 +942,6 @@ public partial class PrProductDefEntry : PageBase
                         ? PrMfgTypes.Normalize(SelectedNode.MfgType)
                         : PrMfgTypes.Make
                 };
-                // Prefer stock desc from selected node
                 if (SelectedNode is not null
                     && string.Equals(SelectedNode.ItemCode, code, StringComparison.OrdinalIgnoreCase))
                 {
@@ -785,8 +951,9 @@ public partial class PrProductDefEntry : PageBase
                 }
 
                 CurrentOwnerProdCode = code;
+                CurrentOwnerDefinitionCode = definition;
                 ResetRoutingEditors();
-                CaptureClean(); // clean empty new context — adding will dirty
+                CaptureClean();
                 RebuildDisplayNodes();
                 if (addAfter)
                 {
@@ -805,6 +972,9 @@ public partial class PrProductDefEntry : PageBase
 
         Model = get.Data;
         CurrentOwnerProdCode = code;
+        CurrentOwnerDefinitionCode = string.IsNullOrWhiteSpace(Model.DefinitionCode)
+            ? definition
+            : PrProductDefinitionCodes.Normalize(Model.DefinitionCode);
         ResetRoutingEditors();
         CaptureClean();
         RebuildDisplayNodes();
@@ -817,7 +987,11 @@ public partial class PrProductDefEntry : PageBase
             ResetLineEditor();
         }
         else if (SelectedNode is not null
-                 && string.Equals(SelectedNode.OwnerProdCode, CurrentOwnerProdCode, StringComparison.OrdinalIgnoreCase))
+                 && OwnersEqual(
+                     SelectedNode.OwnerProdCode,
+                     SelectedNode.OwnerDefinitionCode ?? CurrentOwnerDefinitionCode,
+                     CurrentOwnerProdCode,
+                     CurrentOwnerDefinitionCode))
         {
             var line = FindLine(SelectedNode);
             if (line is not null)
@@ -834,8 +1008,26 @@ public partial class PrProductDefEntry : PageBase
             return;
         }
 
-        await RequestOwnerSwitchAsync(StructureRootProdCode, addAfter: false, selectKey: PrBomStructureKeys.Root(StructureRootProdCode));
+        await RequestOwnerSwitchAsync(
+            StructureRootProdCode,
+            StructureRootDefinitionCode,
+            addAfter: false,
+            selectKey: PrBomStructureKeys.Root(StructureRootProdCode, StructureRootDefinitionCode));
     }
+
+    private static bool OwnersEqual(
+        string? leftProd,
+        string? leftDefinition,
+        string? rightProd,
+        string? rightDefinition) =>
+        string.Equals(
+            PrBomStructureKeys.Normalize(leftProd),
+            PrBomStructureKeys.Normalize(rightProd),
+            StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            PrBomStructureKeys.Normalize(leftDefinition),
+            PrBomStructureKeys.Normalize(rightDefinition),
+            StringComparison.OrdinalIgnoreCase);
 
     private void BeginEditLine(PrProductDefLineVm line)
     {
@@ -857,7 +1049,9 @@ public partial class PrProductDefEntry : PageBase
         LineSupplySource = string.IsNullOrWhiteSpace(line.SupplySource)
             ? PrMaterialSupplySources.Purchased
             : line.SupplySource;
+        LineComponentDefinitionCode = line.ComponentDefinitionCode;
         LineProducingRouteStepKey = line.ProducingRouteStepKey;
+        _ = RefreshComponentDefinitionOptionsAsync();
     }
 
     private PrProductDefLineVm? FindLine(PrBomStructureNode node)
@@ -1003,6 +1197,12 @@ public partial class PrProductDefEntry : PageBase
                 target.MfgType = LineMfgType;
                 target.IssueMethod = LineIssueMethod;
                 target.SupplySource = LineSupplySource;
+                target.ComponentDefinitionCode =
+                    string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal)
+                        ? (string.IsNullOrWhiteSpace(LineComponentDefinitionCode)
+                            ? null
+                            : PrProductDefinitionCodes.Normalize(LineComponentDefinitionCode))
+                        : null;
                 target.ProducingRouteStepKey =
                     string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal)
                         ? LineProducingRouteStepKey
@@ -1035,6 +1235,12 @@ public partial class PrProductDefEntry : PageBase
                 MfgType = LineMfgType,
                 IssueMethod = LineIssueMethod,
                 SupplySource = LineSupplySource,
+                ComponentDefinitionCode =
+                    string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal)
+                        ? (string.IsNullOrWhiteSpace(LineComponentDefinitionCode)
+                            ? null
+                            : PrProductDefinitionCodes.Normalize(LineComponentDefinitionCode))
+                        : null,
                 ProducingRouteStepKey =
                     string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal)
                         ? LineProducingRouteStepKey
@@ -1098,18 +1304,22 @@ public partial class PrProductDefEntry : PageBase
             {
                 Model = result.Data;
                 CurrentOwnerProdCode = Model.ProdCode;
+                CurrentOwnerDefinitionCode = string.IsNullOrWhiteSpace(Model.DefinitionCode)
+                    ? PrProductDefinitionCodes.Standard
+                    : PrProductDefinitionCodes.Normalize(Model.DefinitionCode);
                 if (IsNewMode && string.IsNullOrWhiteSpace(StructureRootProdCode))
                 {
                     StructureRootProdCode = Model.ProdCode;
+                    StructureRootDefinitionCode = CurrentOwnerDefinitionCode;
                 }
 
                 CaptureClean();
             }
 
-            // Keep structure rooted at route product
+            // Keep structure rooted at route product + definition
             if (IsNewMode)
             {
-                Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(StructureRootProdCode)}");
+                Navigation.NavigateTo(CanonicalEntryUrl("edit", StructureRootProdCode, StructureRootDefinitionCode));
                 return;
             }
 
@@ -1118,7 +1328,7 @@ public partial class PrProductDefEntry : PageBase
 
             if (activate && IsEditingRoot)
             {
-                Navigation.NavigateTo($"/planning/product-definitions/view/{Uri.EscapeDataString(StructureRootProdCode)}");
+                Navigation.NavigateTo(CanonicalEntryUrl("view", StructureRootProdCode, StructureRootDefinitionCode));
             }
         }
         finally
@@ -1133,7 +1343,7 @@ public partial class PrProductDefEntry : PageBase
         ErrorMessage = null;
         try
         {
-            var result = await ProductDefs.CreateNewVersionAsync(Model.ProdCode, Model.Version);
+            var result = await ProductDefs.CreateNewVersionAsync(Model.ProdCode, CurrentOwnerDefinitionCode, Model.Version);
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Unable to create new version.";
@@ -1141,7 +1351,7 @@ public partial class PrProductDefEntry : PageBase
             }
 
             StatusMessage = $"Created draft version {result.Data.Version}.";
-            Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(StructureRootProdCode)}");
+            Navigation.NavigateTo(CanonicalEntryUrl("edit", StructureRootProdCode, StructureRootDefinitionCode));
         }
         finally
         {
@@ -1151,21 +1361,26 @@ public partial class PrProductDefEntry : PageBase
 
     protected Task GoEditAsync()
     {
-        Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(StructureRootProdCode)}");
+        Navigation.NavigateTo(CanonicalEntryUrl("edit", StructureRootProdCode, StructureRootDefinitionCode));
         return Task.CompletedTask;
     }
 
     protected Task GoExplodeAsync()
     {
-        Navigation.NavigateTo($"/planning/product-definitions/explode/{Uri.EscapeDataString(StructureRootProdCode)}");
+        Navigation.NavigateTo(
+            $"/planning/product-definitions/explode/{Uri.EscapeDataString(StructureRootProdCode)}/{Uri.EscapeDataString(StructureRootDefinitionCode)}");
         return Task.CompletedTask;
     }
+
+    private static string CanonicalEntryUrl(string mode, string prodCode, string definitionCode) =>
+        $"/planning/product-definitions/{mode}/{Uri.EscapeDataString(prodCode)}/{Uri.EscapeDataString(definitionCode)}";
 
     protected Task CancelAsync()
     {
         if (IsDirty)
         {
             _pendingOwnerProdCode = null;
+            _pendingOwnerDefinitionCode = null;
             _pendingAddAfterSwitch = false;
             ConfirmDiscardVisible = true;
             return Task.CompletedTask;
@@ -1200,11 +1415,13 @@ public partial class PrProductDefEntry : PageBase
         if (!string.IsNullOrWhiteSpace(_pendingOwnerProdCode))
         {
             var owner = _pendingOwnerProdCode;
+            var ownerDef = _pendingOwnerDefinitionCode ?? CurrentOwnerDefinitionCode;
             var add = _pendingAddAfterSwitch;
             var selectKey = CurrentSelectedNodeKey;
             _pendingOwnerProdCode = null;
+            _pendingOwnerDefinitionCode = null;
             _pendingAddAfterSwitch = false;
-            await SwitchOwnerAsync(owner, add, selectKey);
+            await SwitchOwnerAsync(owner, ownerDef, add, selectKey);
             return;
         }
 
@@ -1215,6 +1432,7 @@ public partial class PrProductDefEntry : PageBase
     {
         ConfirmDiscardVisible = false;
         _pendingOwnerProdCode = null;
+        _pendingOwnerDefinitionCode = null;
         _pendingAddAfterSwitch = false;
         _pendingUpdateAfterDiscard = false;
         _pendingSelectionAction = null;
@@ -1229,6 +1447,42 @@ public partial class PrProductDefEntry : PageBase
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
+
+    private async Task RefreshComponentDefinitionOptionsAsync()
+    {
+        ComponentDefinitionOptions = [];
+        if (!string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
+        {
+            LineComponentDefinitionCode = null;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(LineItem))
+        {
+            return;
+        }
+
+        var result = await ProductDefs.ListDefinitionsAsync(LineItem);
+        if (!result.Succeeded || result.Data is null)
+        {
+            return;
+        }
+
+        ComponentDefinitionOptions = result.Data
+            .Select(x => new DefinitionOption(
+                x.DefinitionCode,
+                string.IsNullOrWhiteSpace(x.DefinitionName)
+                    ? x.DefinitionCode
+                    : $"{x.DefinitionCode} — {x.DefinitionName}"))
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(LineComponentDefinitionCode)
+            && ComponentDefinitionOptions.All(x =>
+                !string.Equals(x.Value, LineComponentDefinitionCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            LineComponentDefinitionCode = null;
+        }
+    }
 
     protected static string StatusBadge(PrBomStructureNodeStatus status) => status switch
     {
@@ -1254,6 +1508,8 @@ public partial class PrProductDefEntry : PageBase
         LineTolerance = 0m;
         LineIssueMethod = PrMaterialIssueMethods.Manual;
         LineSupplySource = PrMaterialSupplySources.Purchased;
+        LineComponentDefinitionCode = null;
+        ComponentDefinitionOptions = [];
         LineProducingRouteStepKey = null;
     }
 
@@ -1281,7 +1537,7 @@ public partial class PrProductDefEntry : PageBase
     private async Task ApplyUpdateAsync(string code)
     {
         ErrorMessage = null;
-        var get = await ProductDefs.GetAsync(code);
+        var get = await ProductDefs.GetAsync(code, CurrentOwnerDefinitionCode);
         if (get.Succeeded && get.Data is not null)
         {
             if (!string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase)
@@ -2059,8 +2315,9 @@ public partial class PrProductDefEntry : PageBase
             model.BaseUom,
             model.Prefix,
             model.Remark,
-            model.EffectiveFrom,
-            model.EffectiveTo,
+            model.DefinitionCode,
+            model.DefinitionName,
+            model.IsDefaultDefinition,
             model.Status,
             model.Version,
             Lines = model.Lines.Select(x => new
@@ -2080,6 +2337,7 @@ public partial class PrProductDefEntry : PageBase
                 x.Tolerance,
                 x.IssueMethod,
                 x.SupplySource,
+                x.ComponentDefinitionCode,
                 x.ProducingRouteStepKey
             }),
             Operations = model.Operations.Select(x => new
@@ -2133,17 +2391,27 @@ public partial class PrProductDefEntry : PageBase
     public static IReadOnlyList<PrBomStructureNode> MergeStructureWithCurrentOwner(
         IReadOnlyList<PrBomStructureNode> persisted,
         string structureRoot,
+        string structureRootDefinition,
         string currentOwner,
+        string currentOwnerDefinition,
         PrProductDefEditVm model)
     {
         var rootCode = PrBomStructureKeys.Normalize(structureRoot);
+        var rootDefinition = string.IsNullOrWhiteSpace(structureRootDefinition)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(structureRootDefinition);
         var owner = PrBomStructureKeys.Normalize(currentOwner);
+        var ownerDefinition = string.IsNullOrWhiteSpace(currentOwnerDefinition)
+            ? (string.IsNullOrWhiteSpace(model.DefinitionCode)
+                ? PrProductDefinitionCodes.Standard
+                : PrProductDefinitionCodes.Normalize(model.DefinitionCode))
+            : PrProductDefinitionCodes.Normalize(currentOwnerDefinition);
         if (rootCode.Length == 0)
         {
             return [];
         }
 
-        var rootKey = PrBomStructureKeys.Root(rootCode);
+        var rootKey = PrBomStructureKeys.Root(rootCode, rootDefinition);
         List<PrBomStructureNode> baseNodes;
         if (persisted.Count == 0)
         {
@@ -2218,7 +2486,7 @@ public partial class PrProductDefEntry : PageBase
             foreach (var line in model.Lines.OrderBy(x => x.SeqNo).ThenBy(x => x.ICode))
             {
                 var lineId = PrBomStructureKeys.LineId(line.Uid, line.TempId);
-                var key = PrBomStructureKeys.Line(ownerNodeKey, owner, lineId);
+                var key = PrBomStructureKeys.Line(ownerNodeKey, owner, ownerDefinition, lineId);
                 var mfg = PrMfgTypes.Normalize(line.MfgType);
                 var status = PrBomStructureNodeStatus.Normal;
 
@@ -2240,6 +2508,13 @@ public partial class PrProductDefEntry : PageBase
                     Warehouse = line.Warehouse,
                     SeqNo = line.SeqNo,
                     OwnerProdCode = owner,
+                    OwnerDefinitionCode = ownerDefinition,
+                    ComponentDefinitionCode = string.Equals(
+                        line.SupplySource,
+                        PrMaterialSupplySources.SeparateProductDefinition,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? PrProductDefinitionCodes.Normalize(line.ComponentDefinitionCode)
+                        : null,
                     SourceLineUid = line.Uid > 0 ? line.Uid : null,
                     LineTempId = line.Uid > 0 ? null : line.TempId,
                     BomHdrId = model.BomHdrId > 0 ? model.BomHdrId : null,

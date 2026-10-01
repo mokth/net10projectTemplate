@@ -37,14 +37,13 @@ public sealed class ProductDefinitionLoadResult
 public interface IProductDefinitionSnapshotLoader
 {
     /// <summary>
-    /// Resolves the single ACTIVE revision whose half-open effective interval
-    /// <c>[EffectiveFrom, EffectiveTo)</c> contains <paramref name="definitionEffectiveDate"/>.
-    /// Null bounds are unbounded.
+    /// Resolves the single ACTIVE revision for <paramref name="companyCode"/> +
+    /// <paramref name="productCode"/> + <paramref name="definitionCode"/>.
     /// </summary>
-    Task<ProductDefinitionLoadResult> ResolveRevisionAsync(
+    Task<ProductDefinitionLoadResult> ResolveActiveRevisionAsync(
         string companyCode,
         string productCode,
-        DateTime definitionEffectiveDate,
+        string definitionCode,
         CancellationToken cancellationToken = default);
 
     /// <summary>Loads a specific revision (by physical ID) with the same graph.</summary>
@@ -59,14 +58,15 @@ public sealed class ProductDefinitionSnapshotLoader : IProductDefinitionSnapshot
 
     public ProductDefinitionSnapshotLoader(IDbContextFactory<AppDbContext> dbFactory) => _dbFactory = dbFactory;
 
-    public async Task<ProductDefinitionLoadResult> ResolveRevisionAsync(
+    public async Task<ProductDefinitionLoadResult> ResolveActiveRevisionAsync(
         string companyCode,
         string productCode,
-        DateTime definitionEffectiveDate,
+        string definitionCode,
         CancellationToken cancellationToken = default)
     {
         var company = Normalize(companyCode);
         var product = Normalize(productCode);
+        var definition = PrProductDefinitionCodes.Normalize(definitionCode);
         if (company.Length == 0 || product.Length == 0)
         {
             return ProductDefinitionLoadResult.Fail(
@@ -74,19 +74,23 @@ public sealed class ProductDefinitionSnapshotLoader : IProductDefinitionSnapshot
                 "Company code and product code are required to resolve a Product Definition revision.");
         }
 
-        var effectiveDate = definitionEffectiveDate.Date;
+        if (definition.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(definition))
+        {
+            return ProductDefinitionLoadResult.Fail(
+                ProductionReadinessErrorCodes.DefinitionRevisionNotFound,
+                "A valid Product Definition code is required to resolve an ACTIVE revision.");
+        }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
         var matches = await Graph(db.PrBomHdrs.AsNoTracking())
             .Where(h => h.CompanyCode == company
                         && h.ProdCode == product
-                        && h.Status == PrBomStatuses.Active
-                        && (h.EffectiveFrom == null || h.EffectiveFrom <= effectiveDate)
-                        && (h.EffectiveTo == null || h.EffectiveTo > effectiveDate))
+                        && h.DefinitionCode == definition
+                        && h.Status == PrBomStatuses.Active)
             .ToListAsync(cancellationToken);
 
-        return Interpret(matches, company, product, effectiveDate);
+        return Interpret(matches, company, product, definition);
     }
 
     public async Task<ProductDefinitionLoadResult> LoadRevisionAsync(
@@ -113,25 +117,25 @@ public sealed class ProductDefinitionSnapshotLoader : IProductDefinitionSnapshot
         List<PrBomHdr> matches,
         string company,
         string product,
-        DateTime effectiveDate)
+        string definition)
     {
         if (matches.Count == 0)
         {
             return ProductDefinitionLoadResult.Fail(
                 ProductionReadinessErrorCodes.DefinitionRevisionNotFound,
-                $"No active Product Definition revision for {company}/{product} covers {effectiveDate:yyyy-MM-dd}.");
+                $"No ACTIVE Product Definition revision for {company}/{product}/{definition}.");
         }
 
         if (matches.Count > 1)
         {
-            // Never break an overlap by choosing a revision. Activation must reject the overlap
-            // before a Work Order can encounter it.
+            // Never break a multi-ACTIVE collision by choosing a revision. Activation must reject
+            // the overlap before a Work Order can encounter it.
             var versions = string.Join(", ", matches.Select(m => m.Version).OrderBy(v => v));
             return ProductDefinitionLoadResult.Fail(
                 ProductionReadinessErrorCodes.DefinitionRevisionAmbiguous,
-                $"{matches.Count} active Product Definition revisions for {company}/{product} cover "
-                + $"{effectiveDate:yyyy-MM-dd} (versions {versions}). Resolve the effective-date overlap "
-                + "before creating or refreshing a Work Order.",
+                $"{matches.Count} ACTIVE Product Definition revisions for {company}/{product}/{definition} "
+                + $"(versions {versions}). Resolve the multi-ACTIVE collision before creating or "
+                + "refreshing a Work Order.",
                 matches.Count);
         }
 

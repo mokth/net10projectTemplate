@@ -76,9 +76,9 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var explode = CreateExplosion();
         var result = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A",
             Quantity = 1m,
-            AsOfDate = DateTime.UtcNow.Date,
             Mode = BomExplosionMode.MaterialRequirement
         });
 
@@ -107,6 +107,7 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var explode = CreateExplosion();
         var result = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A",
             Quantity = 1m,
             Mode = BomExplosionMode.ProductionIssueRequirement
@@ -129,10 +130,12 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var explode = CreateExplosion();
         var a = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A", Quantity = 1m, Mode = BomExplosionMode.MaterialRequirement
         });
         var c = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "C", Quantity = 1m, Mode = BomExplosionMode.MaterialRequirement
         });
 
@@ -154,6 +157,7 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var explode = CreateExplosion();
         var mat = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A", Quantity = 1m, Mode = BomExplosionMode.MaterialRequirement
         });
         Assert.True(mat.Succeeded, mat.Message);
@@ -163,6 +167,7 @@ public class BomExplosionServiceTests : IAsyncLifetime
 
         var issue = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A", Quantity = 1m, Mode = BomExplosionMode.ProductionIssueRequirement
         });
         Assert.DoesNotContain(issue.Data!.Nodes, x => x.ItemCode == "P");
@@ -179,6 +184,7 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var explode = CreateExplosion();
         var result = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A", Quantity = 1m, Mode = BomExplosionMode.MaterialRequirement
         });
         Assert.False(result.Succeeded);
@@ -187,52 +193,51 @@ public class BomExplosionServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Effective_date_selects_correct_version()
+    public async Task Explicit_version_selects_historical_revision()
     {
         var defs = CreateDefs();
         var v1 = await defs.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "A",
             BaseQty = 1m,
-            EffectiveFrom = new DateTime(2026, 1, 1),
-            EffectiveTo = new DateTime(2026, 4, 1),
             Lines = [new PrProductDefLineVm { ICode = "AA", StdQty = 1m, Warehouse = "WH01", SeqNo = 1 }]
         }, true, true);
         Assert.True(v1.Succeeded, v1.Message);
 
-        var draft = await defs.CreateNewVersionAsync("A");
+        var draft = await defs.CreateNewVersionAsync("A", PrProductDefinitionCodes.Standard);
         draft.Data!.Lines[0].StdQty = 5m;
         var v2 = await defs.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "A",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             Version = draft.Data.Version,
             BomHdrId = draft.Data.BomHdrId,
             HeaderRowVersion = draft.Data.HeaderRowVersion,
             Status = draft.Data.Status,
             BaseQty = 1m,
-            EffectiveFrom = new DateTime(2026, 4, 1),
             Lines = draft.Data.Lines
         }, false, true);
         Assert.True(v2.Succeeded, v2.Message);
 
         var explode = CreateExplosion();
-        var early = await explode.ExplodeAsync(new BomExplosionRequest
+        var historical = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A",
             Quantity = 1m,
-            AsOfDate = new DateTime(2026, 3, 31),
+            Version = 1,
             Mode = BomExplosionMode.ProductionIssueRequirement
         });
-        Assert.Equal(1m, early.Data!.Nodes.Single().ExtendedQty);
+        Assert.Equal(1m, historical.Data!.Nodes.Single().ExtendedQty);
 
-        var late = await explode.ExplodeAsync(new BomExplosionRequest
+        var active = await explode.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "A",
             Quantity = 1m,
-            AsOfDate = new DateTime(2026, 4, 1),
             Mode = BomExplosionMode.ProductionIssueRequirement
         });
-        Assert.Equal(5m, late.Data!.Nodes.Single().ExtendedQty);
+        Assert.Equal(5m, active.Data!.Nodes.Single().ExtendedQty);
     }
 
     private async Task SaveBom(IPrProductDefService defs, string prod, params (string Code, decimal Qty)[] lines)
@@ -240,8 +245,8 @@ public class BomExplosionServiceTests : IAsyncLifetime
         var result = await defs.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = prod,
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
-            EffectiveFrom = DateTime.UtcNow.Date.AddYears(-1),
             Lines = lines.Select((x, i) => new PrProductDefLineVm
             {
                 ICode = x.Code,

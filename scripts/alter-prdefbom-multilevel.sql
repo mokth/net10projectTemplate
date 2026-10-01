@@ -14,8 +14,12 @@ BEGIN
         UID bigint IDENTITY(1,1) NOT NULL,
         CompanyCode nvarchar(5) NOT NULL,
         ProdCode nvarchar(30) NOT NULL,
+        DefinitionCode nvarchar(30) NOT NULL,
+        DefinitionName nvarchar(100) NULL,
+        IsDefaultDefinition bit NOT NULL CONSTRAINT DF_PrBomHdr_IsDefaultDefinition DEFAULT (0),
         Version int NOT NULL CONSTRAINT DF_PrBomHdr_Version DEFAULT (1),
-        Status nvarchar(20) NOT NULL CONSTRAINT DF_PrBomHdr_Status DEFAULT (N'ACTIVE'),
+        Status nvarchar(20) NOT NULL CONSTRAINT DF_PrBomHdr_Status DEFAULT (N'DRAFT'),
+        -- Deprecated: retained for historical hash-version-1 compatibility only.
         EffectiveFrom datetime2 NULL,
         EffectiveTo datetime2 NULL,
         BaseQty decimal(18,4) NOT NULL CONSTRAINT DF_PrBomHdr_BaseQty DEFAULT (1),
@@ -28,10 +32,22 @@ BEGIN
         UpdatedUID nvarchar(10) NULL,
         RowVersion rowversion NOT NULL,
         CONSTRAINT PK_PrBomHdr PRIMARY KEY CLUSTERED (UID),
-        CONSTRAINT UQ_PrBomHdr_Company_Prod_Version UNIQUE (CompanyCode, ProdCode, Version),
+        CONSTRAINT UQ_PrBomHdr_Company_Prod_Definition_Version UNIQUE (CompanyCode, ProdCode, DefinitionCode, Version),
         CONSTRAINT CK_PrBomHdr_BaseQty_Positive CHECK (BaseQty > 0),
-        CONSTRAINT CK_PrBomHdr_Status CHECK (Status IN (N'DRAFT', N'ACTIVE', N'SUPERSEDED', N'INACTIVE'))
+        CONSTRAINT CK_PrBomHdr_Status CHECK (Status IN (N'DRAFT', N'ACTIVE', N'SUPERSEDED', N'INACTIVE')),
+        CONSTRAINT CK_PrBomHdr_DefinitionCode_NotBlank CHECK (LEN(LTRIM(RTRIM(DefinitionCode))) > 0)
     );
+
+    CREATE UNIQUE INDEX UX_PrBomHdr_OneActiveRevision
+        ON dbo.PrBomHdr (CompanyCode, ProdCode, DefinitionCode)
+        WHERE Status = N'ACTIVE';
+
+    CREATE UNIQUE INDEX UX_PrBomHdr_OneActiveDefault
+        ON dbo.PrBomHdr (CompanyCode, ProdCode)
+        WHERE Status = N'ACTIVE' AND IsDefaultDefinition = 1;
+
+    CREATE INDEX IX_PrBomHdr_Company_Prod_Definition_Status
+        ON dbo.PrBomHdr (CompanyCode, ProdCode, DefinitionCode, Status);
 
     CREATE INDEX IX_PrBomHdr_Company_Prod_Status
         ON dbo.PrBomHdr (CompanyCode, ProdCode, Status);

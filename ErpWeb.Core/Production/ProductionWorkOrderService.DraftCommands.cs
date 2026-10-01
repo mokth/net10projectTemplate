@@ -85,7 +85,7 @@ public sealed partial class ProductionWorkOrderService
                 throw new WorkOrderCommandException(
                     IvMasterErrorCode.Validation,
                     ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                    + ": Refresh this legacy Draft from its Product Definition before editing it.");
+                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
             }
 
             var qtyChanged = entity.PlannedQty != request.PlannedQty;
@@ -248,8 +248,18 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can refresh from its Product Definition.");
         }
 
+        var header = HeaderRequest(entity);
+        if (string.IsNullOrWhiteSpace(header.DefinitionCode) && entity.SourceBomHdrId > 0)
+        {
+            var source = await db.PrBomHdrs.AsNoTracking()
+                .Where(x => x.Uid == entity.SourceBomHdrId)
+                .Select(x => x.DefinitionCode)
+                .FirstOrDefaultAsync(cancellationToken);
+            header.DefinitionCode = source ?? string.Empty;
+        }
+
         var built = await BuildCurrentSnapshotAsync(
-            auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
+            auth.Scope!, header, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderRefreshPreview>.Fail(
@@ -290,8 +300,18 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            var header = HeaderRequest(entity);
+            if (string.IsNullOrWhiteSpace(header.DefinitionCode) && entity.SourceBomHdrId > 0)
+            {
+                var source = await db.PrBomHdrs.AsNoTracking()
+                    .Where(x => x.Uid == entity.SourceBomHdrId)
+                    .Select(x => x.DefinitionCode)
+                    .FirstOrDefaultAsync(cancellationToken);
+                header.DefinitionCode = source ?? string.Empty;
+            }
+
             var built = await BuildCurrentSnapshotAsync(
-                auth.Scope!, HeaderRequest(entity), entity.SnapshotRevision + 1,
+                auth.Scope!, header, entity.SnapshotRevision + 1,
                 entity.ScheduleAnchorDateTime, cancellationToken);
             if (built.WorkOrder is null)
             {
@@ -313,6 +333,197 @@ public sealed partial class ProductionWorkOrderService
             ReplaceSnapshot(db, entity, built.WorkOrder);
             entity.SnapshotRevision += 1;
             StampDraftAudit(entity, auth.Scope!, ProductionAuditEventTypes.Refreshed, request.Reason.Trim());
+            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return Concurrency<ProductionWorkOrderDetail>();
+        }
+    }
+
+    public async Task<IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>> PreviewChangeDefinitionAsync(
+        string workOrderNo,
+        string targetDefinitionCode,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                auth.Error.Value.Code, auth.Error.Value.Message);
+        }
+
+        var targetCode = PrProductDefinitionCodes.Normalize(targetDefinitionCode);
+        if (targetCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(targetCode))
+        {
+            return ValidationFailure<ProductionWorkOrderChangeDefinitionPreview>(
+                "A valid target Product Definition code is required.", "TargetDefinitionCode");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await LoadAggregateAsync(db, auth.Scope!, Normalize(workOrderNo), tracking: false, cancellationToken);
+        if (entity is null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.NotFound, "Work Order not found.");
+        }
+
+        if (!ProductionWorkOrderRules.CanEdit(entity.Status))
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.Validation, "Only a Draft Work Order can change its Product Definition.");
+        }
+
+        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+        }
+
+        if (string.Equals(entity.SourceDefinitionCode, targetCode, StringComparison.Ordinal))
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.Validation,
+                "The Work Order already uses that Product Definition. Choose a different definition.");
+        }
+
+        var request = HeaderRequest(entity);
+        request.DefinitionCode = targetCode;
+        var built = await BuildCurrentSnapshotAsync(
+            auth.Scope!, request, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
+        if (built.WorkOrder is null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+        }
+
+        var diff = DiffSnapshot(entity, built.WorkOrder);
+        return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Ok(
+            new ProductionWorkOrderChangeDefinitionPreview
+            {
+                RowVersion = entity.RowVersion.ToArray(),
+                TargetDefinitionCode = built.WorkOrder.SourceDefinitionCode,
+                TargetDefinitionName = built.WorkOrder.SourceDefinitionName,
+                TargetSourceProductDefinitionRevisionId = built.WorkOrder.SourceProductDefinitionRevisionId,
+                TargetSourceBomVersion = built.WorkOrder.SourceBomVersion,
+                TargetDefinitionSourceHashVersion =
+                    built.WorkOrder.DefinitionSourceHashVersion ?? ProductionDefinitionSourceHashVersions.Current,
+                TargetDefinitionSourceHash = built.WorkOrder.DefinitionSourceHash ?? string.Empty,
+                Added = diff.Added,
+                Removed = diff.Removed,
+                Changed = diff.Changed
+            });
+    }
+
+    public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ConfirmChangeDefinitionAsync(
+        ProductionWorkOrderChangeDefinitionConfirm request,
+        CancellationToken cancellationToken = default)
+    {
+        request ??= new ProductionWorkOrderChangeDefinitionConfirm();
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return ValidationFailure<ProductionWorkOrderDetail>("A reason is required to change the Product Definition.", "Reason");
+        }
+
+        var targetCode = PrProductDefinitionCodes.Normalize(request.TargetDefinitionCode);
+        if (targetCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(targetCode))
+        {
+            return ValidationFailure<ProductionWorkOrderDetail>(
+                "A valid target Product Definition code is required.", "TargetDefinitionCode");
+        }
+
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(auth.Error.Value.Code, auth.Error.Value.Message);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+            }
+
+            var oldDefinitionCode = entity.SourceDefinitionCode;
+            var oldDefinitionName = entity.SourceDefinitionName;
+            var oldRevisionId = entity.SourceProductDefinitionRevisionId;
+            var oldBomVersion = entity.SourceBomVersion;
+            var oldSnapshotRevision = entity.SnapshotRevision;
+
+            var header = HeaderRequest(entity);
+            header.DefinitionCode = targetCode;
+            var built = await BuildCurrentSnapshotAsync(
+                auth.Scope!, header, entity.SnapshotRevision + 1,
+                entity.ScheduleAnchorDateTime, cancellationToken);
+            if (built.WorkOrder is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+            }
+
+            if (!string.Equals(built.WorkOrder.SourceDefinitionCode, targetCode, StringComparison.Ordinal)
+                || built.WorkOrder.SourceProductDefinitionRevisionId != request.TargetSourceProductDefinitionRevisionId
+                || built.WorkOrder.DefinitionSourceHashVersion != request.TargetDefinitionSourceHashVersion
+                || !string.Equals(
+                    built.WorkOrder.DefinitionSourceHash,
+                    request.TargetDefinitionSourceHash,
+                    StringComparison.Ordinal))
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Concurrency,
+                    ProductionReadinessErrorCodes.DefinitionSourceStale
+                    + ": The Product Definition changed after the change-definition preview. Preview it again.");
+            }
+
+            ReplaceSnapshot(db, entity, built.WorkOrder);
+            entity.SnapshotRevision += 1;
+
+            var now = DateTime.UtcNow;
+            entity.ModifiedDate = now;
+            entity.ModifiedBy = auth.Scope!.UserId;
+            entity.AuditEvents.Add(new ProductionAuditEvent
+            {
+                EventType = ProductionAuditEventTypes.DefinitionChanged,
+                FromStatus = ProductionWorkOrderStatuses.Draft,
+                ToStatus = ProductionWorkOrderStatuses.Draft,
+                SnapshotRevision = entity.SnapshotRevision,
+                Reason = request.Reason.Trim(),
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    OldDefinitionCode = oldDefinitionCode,
+                    OldDefinitionName = oldDefinitionName,
+                    OldSourceProductDefinitionRevisionId = oldRevisionId,
+                    OldSourceBomVersion = oldBomVersion,
+                    OldSnapshotRevision = oldSnapshotRevision,
+                    NewDefinitionCode = entity.SourceDefinitionCode,
+                    NewDefinitionName = entity.SourceDefinitionName,
+                    NewSourceProductDefinitionRevisionId = entity.SourceProductDefinitionRevisionId,
+                    NewSourceBomVersion = entity.SourceBomVersion,
+                    NewSnapshotRevision = entity.SnapshotRevision
+                }),
+                OccurredDate = now,
+                ActorUserId = auth.Scope.UserId
+            });
+
             TouchSqliteRowVersions(db, entity);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -506,7 +717,7 @@ public sealed partial class ProductionWorkOrderService
             return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": Refresh this legacy Draft from its Product Definition before editing it.");
+                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
         }
 
         var material = entity.Materials.FirstOrDefault(m => m.Uid == workOrderMaterialId);
@@ -548,7 +759,10 @@ public sealed partial class ProductionWorkOrderService
                 AlternateGroupCode = PrBomAlternateGroups.Normalize(x.AlternateGroupCode),
                 ComponentQtyPerParent = x.StdQty,
                 StandardUom = x.StdUom,
-                SupplySource = x.SupplySource
+                SupplySource = x.SupplySource,
+                ComponentDefinitionCode = string.IsNullOrWhiteSpace(x.ComponentDefinitionCode)
+                    ? null
+                    : PrProductDefinitionCodes.Normalize(x.ComponentDefinitionCode)
             })
             .ToList();
 
@@ -833,9 +1047,12 @@ public sealed partial class ProductionWorkOrderService
             return new BuiltSnapshot { Error = "Planned quantity must be positive." };
         }
 
-        var effective = request.SnapshotAsOfDate == default
-            ? request.PlannedStartDate.Date
-            : request.SnapshotAsOfDate.Date;
+        var definitionCode = PrProductDefinitionCodes.Normalize(request.DefinitionCode);
+        if (definitionCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(definitionCode))
+        {
+            return new BuiltSnapshot { Error = "A valid Product Definition code is required." };
+        }
+
         var direction = string.IsNullOrWhiteSpace(request.SchedulingDirection)
             ? ProductionSchedulingDirections.Forward
             : Normalize(request.SchedulingDirection);
@@ -857,7 +1074,7 @@ public sealed partial class ProductionWorkOrderService
             LocationCode = scope.LocationCode,
             ProductCode = request.ProductCode,
             PlannedQty = request.PlannedQty,
-            DefinitionEffectiveDate = effective,
+            DefinitionCode = definitionCode,
             PlannedStartDateTime = request.PlannedStartDate,
             PlannedCompletionDateTime = request.PlannedCompletionDate,
             ScheduleAnchorDateTime = anchor,
@@ -918,8 +1135,8 @@ public sealed partial class ProductionWorkOrderService
     {
         WorkOrderNo = entity.WorkOrderNo,
         ProductCode = entity.ProductCode,
+        DefinitionCode = entity.SourceDefinitionCode,
         PlannedQty = entity.PlannedQty,
-        SnapshotAsOfDate = entity.DefinitionEffectiveDate,
         PlannedStartDate = entity.PlannedStartDateTime,
         PlannedCompletionDate = entity.PlannedCompletionDateTime,
         SchedulingDirection = entity.SchedulingDirection,
@@ -957,10 +1174,13 @@ public sealed partial class ProductionWorkOrderService
         target.ProductCode = source.ProductCode;
         target.ProductDescription = source.ProductDescription;
         target.OutputUom = source.OutputUom;
+        target.SourceDefinitionCode = source.SourceDefinitionCode;
+        target.SourceDefinitionName = source.SourceDefinitionName;
         target.SourceBomHdrId = source.SourceBomHdrId;
         target.SourceBomVersion = source.SourceBomVersion;
         target.BomBaseQty = source.BomBaseQty;
         target.BomBaseUom = source.BomBaseUom;
+        target.DefinitionEffectiveDate = source.DefinitionEffectiveDate;
         target.SourceEffectiveFrom = source.SourceEffectiveFrom;
         target.SourceProductDefinitionRevisionId = source.SourceProductDefinitionRevisionId;
         target.DefinitionSourceHash = source.DefinitionSourceHash;
@@ -1069,7 +1289,7 @@ public sealed partial class ProductionWorkOrderService
             throw new WorkOrderCommandException(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": Refresh this legacy Draft from its Product Definition before editing it.");
+                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
         }
     }
 

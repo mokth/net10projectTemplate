@@ -78,12 +78,15 @@ public partial class PrProductDefList : PageBase, IDisposable
     [
         new() { Caption = "Product Code", FieldName = nameof(PrProductDefListRow.ProdCode), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
         new() { Caption = "Product Description", FieldName = nameof(PrProductDefListRow.ProdDesc), VisibleIndex = 2 },
-        new() { Caption = "Mfg Type", FieldName = nameof(PrProductDefListRow.MfgType), Width = "90px", VisibleIndex = 3 },
-        new() { Caption = "Version", FieldName = nameof(PrProductDefListRow.BomVersion), DataType = "number", Width = "90px", VisibleIndex = 4 },
-        new() { Caption = "Status", FieldName = nameof(PrProductDefListRow.BomStatus), Width = "110px", VisibleIndex = 5 },
-        new() { Caption = "BOM Item Count", FieldName = nameof(PrProductDefListRow.BomItemCount), DataType = "number", Width = "120px", VisibleIndex = 6 },
-        new() { Caption = "Active", FieldName = nameof(PrProductDefListRow.IsActive), DataType = "bool", Width = "90px", VisibleIndex = 7 },
-        ..AuditColumns.For(startVisibleIndex: 8)
+        new() { Caption = "Definition Code", FieldName = nameof(PrProductDefListRow.DefinitionCode), Width = "130px", VisibleIndex = 3 },
+        new() { Caption = "Definition Name", FieldName = nameof(PrProductDefListRow.DefinitionName), Width = "160px", VisibleIndex = 4 },
+        new() { Caption = "Default", FieldName = nameof(PrProductDefListRow.IsDefaultDefinition), DataType = "bool", Width = "90px", VisibleIndex = 5 },
+        new() { Caption = "Active", FieldName = nameof(PrProductDefListRow.ActiveVersion), DataType = "number", Width = "90px", VisibleIndex = 6 },
+        new() { Caption = "Latest", FieldName = nameof(PrProductDefListRow.LatestVersion), DataType = "number", Width = "90px", VisibleIndex = 7 },
+        new() { Caption = "Status", FieldName = nameof(PrProductDefListRow.BomStatus), Width = "110px", VisibleIndex = 8 },
+        new() { Caption = "Mfg Type", FieldName = nameof(PrProductDefListRow.MfgType), Width = "90px", VisibleIndex = 9 },
+        new() { Caption = "BOM Item Count", FieldName = nameof(PrProductDefListRow.BomItemCount), DataType = "number", Width = "120px", VisibleIndex = 10 },
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -148,7 +151,7 @@ public partial class PrProductDefList : PageBase, IDisposable
                 }
 
                 ConfirmMessage = _selectedRows.Count == 1
-                    ? $"Delete product definition for {_selectedRows[0].ProdCode}?"
+                    ? $"Delete product definition {_selectedRows[0].ProdCode}[{_selectedRows[0].DefinitionCode}]?"
                     : $"Delete {_selectedRows.Count} product definitions?";
                 ConfirmVisible = true;
                 break;
@@ -165,21 +168,22 @@ public partial class PrProductDefList : PageBase, IDisposable
             return;
         }
 
+        var row = info.SelectedRow;
         var mode = (info.SelectedButton.Text ?? string.Empty).ToUpperInvariant();
         switch (mode)
         {
             case "VIEW":
-                OpenView(info.SelectedRow.ProdCode);
+                OpenDefinition("view", row.ProdCode, row.DefinitionCode);
                 break;
             case "EDIT / REVISE":
-                if (string.Equals(info.SelectedRow.BomStatus, PrBomStatuses.Draft, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(row.BomStatus, PrBomStatuses.Draft, StringComparison.OrdinalIgnoreCase))
                 {
                     if (!CanEdit)
                     {
                         StatusMessage = "Access Denied!!";
                         break;
                     }
-                    Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(info.SelectedRow.ProdCode)}");
+                    OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
                     break;
                 }
 
@@ -189,23 +193,28 @@ public partial class PrProductDefList : PageBase, IDisposable
                     break;
                 }
                 var revision = await ProductDefs.CreateNewVersionAsync(
-                    info.SelectedRow.ProdCode, info.SelectedRow.BomVersion);
+                    row.ProdCode, row.DefinitionCode, row.LatestVersion);
                 if (!revision.Succeeded)
                 {
                     ErrorMessage = revision.Message ?? "Unable to create a new Product Definition version.";
                     break;
                 }
-                Navigation.NavigateTo($"/planning/product-definitions/edit/{Uri.EscapeDataString(info.SelectedRow.ProdCode)}");
+                OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
                 break;
             case "EXPLODE":
-                Navigation.NavigateTo($"/planning/product-definitions/explode/{Uri.EscapeDataString(info.SelectedRow.ProdCode)}");
+                Navigation.NavigateTo(
+                    $"/planning/product-definitions/explode/{Uri.EscapeDataString(row.ProdCode)}/{Uri.EscapeDataString(row.DefinitionCode)}");
                 break;
         }
 
     }
 
-    protected void OpenView(string prodCode) =>
-        Navigation.NavigateTo($"/planning/product-definitions/view/{Uri.EscapeDataString(prodCode)}");
+    protected void OpenDefinition(string mode, string prodCode, string definitionCode) =>
+        Navigation.NavigateTo(
+            $"/planning/product-definitions/{mode}/{Uri.EscapeDataString(prodCode)}/{Uri.EscapeDataString(definitionCode)}");
+
+    protected void OpenView(PrProductDefListRow row) =>
+        OpenDefinition("view", row.ProdCode, row.DefinitionCode);
 
     protected void OpenFilterPopup()
     {
@@ -273,7 +282,11 @@ public partial class PrProductDefList : PageBase, IDisposable
         IsSubmitting = true;
         try
         {
-            var codes = _selectedRows.Select(x => x.ProdCode).ToList();
+            var codes = _selectedRows.Select(x => new PrProductDefinitionKey
+            {
+                ProdCode = x.ProdCode,
+                DefinitionCode = x.DefinitionCode
+            }).ToList();
             var result = await ProductDefs.DeleteAsync(codes);
             if (!result.Succeeded)
             {
@@ -282,7 +295,7 @@ public partial class PrProductDefList : PageBase, IDisposable
             }
 
             StatusMessage = codes.Count == 1
-                ? $"Deleted product definition {codes[0]}."
+                ? $"Deleted product definition {codes[0].ProdCode}[{codes[0].DefinitionCode}]."
                 : $"Deleted {codes.Count} product definitions.";
             ConfirmVisible = false;
             _selectedRows.Clear();

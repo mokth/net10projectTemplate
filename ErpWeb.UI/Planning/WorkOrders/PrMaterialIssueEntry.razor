@@ -1,0 +1,82 @@
+@page "/planning/material-issues/new"
+@page "/planning/material-issues/new/{WorkOrderNo}"
+@page "/planning/material-issues/{BatchNo:int}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMaterialIssue">
+    <div class="iv-page pr-issue-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="iv-toast iv-toast--ok" role="status"><span>@StatusMessage</span><button type="button" class="iv-toast__close" @onclick="DismissStatus">×</button></div> }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert"><span>@ErrorMessage</span><button type="button" class="iv-toast__close" @onclick="DismissError">×</button></div> }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-dolly"></i></div>
+            <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">@PageHeading</h1><div class="iv-chips"><span class="iv-chip">@(IsViewMode ? $"IP {BatchNo}" : "New")</span><span class="iv-chip">@HeaderStatus</span></div></div>
+            <div class="iv-hero__kpi"><span>Materials selected</span><strong>@SelectedLineCount</strong></div>
+        </header>
+
+        @if (IsLoading) { <section class="iv-card"><div class="iv-skeleton"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section> }
+        else if (IsViewMode && Document is not null)
+        {
+            <section class="iv-card pr-issue-summary">
+                <div><span>Work Order</span><strong>@Document.WorkOrderNo</strong></div><div><span>Product</span><strong>@Document.ProductCode</strong><small>@Document.ProductDescription</small></div>
+                <div><span>Issue date</span><strong>@Document.IssueDate.ToString("dd MMM yyyy")</strong></div><div><span>Planned</span><strong>@Document.PlannedQty.ToString("n4") @Document.OutputUom</strong></div>
+                <div><span>Posted by</span><strong>@Document.PostedBy</strong><small>@Document.PostedDate?.ToString("dd MMM yyyy HH:mm")</small></div><div><span>Remark</span><strong>@(Document.Remark ?? "—")</strong></div>
+            </section>
+            <section class="iv-card">
+                <div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>#</th><th>Item</th><th>Issue</th><th>Base qty</th><th>Warehouse</th><th>Location</th><th>Lot</th><th>Status</th>@if (Document.CanViewCost) { <th>Unit cost</th><th>Total cost</th> }</tr></thead>
+                    <tbody>@foreach (var line in Document.Lines) { <tr><td>@line.InventoryLineNo</td><td><strong>@line.ItemCode</strong></td><td class="text-end">@line.IssueQty.ToString("n4") @line.Uom</td><td class="text-end">@line.BaseQty.ToString("n4") @line.BaseUom</td><td>@line.Warehouse</td><td>@line.Location</td><td>@(string.IsNullOrWhiteSpace(line.LotNo) ? "—" : line.LotNo)</td><td>@line.ItemStatus</td>@if (Document.CanViewCost) { <td class="text-end">@line.UnitCost?.ToString("n4")</td><td class="text-end">@line.TotalCost?.ToString("n4")</td> }</tr> }</tbody>
+                </table></div>
+            </section>
+            <div class="pr-issue-actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Back to list" Click="@BackToList" /></div>
+        }
+        else
+        {
+            <section class="iv-card pr-issue-header">
+                <div class="pr-issue-header__load">
+                    <label>Work Order</label><DxTextBox @bind-Text="@WorkOrderInput" ReadOnly="@(Workspace is not null)" NullText="Enter released Work Order" CssClass="required-field" />
+                    @if (Workspace is null) { <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Load" Click="@LoadWorkspaceFromInputAsync" Enabled="@(!IsSubmitting)" /> }
+                    else { <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Change" Click="@ClearWorkspace" Enabled="@(!IsSubmitting)" /> }
+                </div>
+                @if (Workspace is not null)
+                {
+                    <div class="pr-issue-summary pr-issue-summary--embedded">
+                        <div><span>Status</span><strong>@Workspace.Status</strong></div><div><span>Product</span><strong>@Workspace.ProductCode</strong><small>@Workspace.ProductDescription</small></div>
+                        <div><span>Planned</span><strong>@Workspace.PlannedQty.ToString("n4") @Workspace.OutputUom</strong></div>
+                        <div><span>Issue date</span><DxDateEdit @bind-Date="@IssueDate" DisplayFormat="dd MMM yyyy" Enabled="@(!IsSubmitting)" /></div>
+                    </div>
+                    <label class="mt-3">Remark</label><DxMemo @bind-Text="@Remark" Rows="2" Enabled="@(!IsSubmitting)" />
+                }
+            </section>
+
+            @if (Workspace is not null)
+            {
+                <section class="iv-card">
+                    <div class="pr-issue-filters">
+                        <div><label>Route / Work Centre</label><select class="form-select" @bind="SelectedWorkCentre"><option value="">All work centres</option>@foreach (var wc in WorkCentreOptions) { <option value="@wc">@wc</option> }</select></div>
+                        <div><label>Operation</label><select class="form-select" @bind="SelectedOperationId"><option value="">All operations</option>@foreach (var op in OperationOptions) { <option value="@op.WorkOrderOperationId">@op.OperationCode — @op.OperationDescription</option> }</select></div>
+                        <label class="form-check pr-issue-shortage"><InputCheckbox class="form-check-input" @bind-Value="ShowShortageOnly" /><span class="form-check-label">Show shortage only</span></label>
+                    </div>
+                    <div class="pr-issue-toolbar"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Auto Fill Outstanding" IconCssClass="fa-solid fa-fill-drip" Click="@AutoFillOutstanding" Enabled="@(!IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Allocate Lots" IconCssClass="fa-solid fa-layer-group" Click="@AllocateAllAsync" Enabled="@(!IsSubmitting && Lines.Any(x => x.IssueQty > 0))" /></div>
+                    <div class="table-responsive"><table class="table table-hover align-middle pr-issue-materials"><thead><tr><th>Item / description</th><th>Required</th><th>Issued</th><th>Returned</th><th>Net issued</th><th>Outstanding</th><th>Available</th><th>Issue now</th><th>UOM</th><th>Warehouse</th><th>Status</th><th></th></tr></thead>
+                        <tbody>@foreach (var line in VisibleLines) { <tr class="@(!line.Material.CanManualIssue ? "table-light text-muted" : null)"><td><strong>@line.Material.ComponentCode</strong><small>@line.Material.Description</small><small>@line.Material.OperationCode · @line.Material.WorkCentreCode</small></td><td class="text-end">@line.Material.RequiredQty.ToString("n4")</td><td class="text-end">@line.Material.IssuedQty.ToString("n4")</td><td class="text-end">@line.Material.ReturnedQty.ToString("n4")</td><td class="text-end">@line.Material.NetIssuedQty.ToString("n4")</td><td class="text-end">@line.Material.OutstandingQty.ToString("n4")</td><td class="text-end @(line.Material.ShortageQty > 0 ? "text-warning fw-semibold" : null)">@line.Material.AvailableQty.ToString("n4")</td>
+                            <td><InputNumber TValue="decimal" class="form-control form-control-sm text-end pr-issue-qty" @bind-Value="line.IssueQty" min="0" step="0.0001" disabled="@(!line.Material.CanManualIssue || IsSubmitting)" /></td><td>@line.Material.RequiredUom</td><td>@line.Material.WarehouseCode</td><td>@if (line.Material.CanManualIssue) { <span class="badge text-bg-success">Ready</span> } else { <span class="badge text-bg-secondary" title="@line.Material.BlockingReason">Blocked</span> }</td>
+                            <td><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Allocate" Click="@(() => OpenAllocation(line))" Enabled="@(line.Material.CanManualIssue && line.IssueQty > 0 && !IsSubmitting)" /><small class="d-block text-nowrap mt-1">@line.Allocations.Count allocation(s)</small></td></tr> }</tbody>
+                    </table></div>
+                </section>
+                <div class="pr-issue-actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@BackToList" Enabled="@(!IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Post Issue" IconCssClass="fa-solid fa-check" Click="@OpenPostConfirmation" Enabled="@(CanPostDocument && !IsSubmitting)" /></div>
+            }
+        }
+    </div>
+
+    <PrMaterialAllocationDialog @bind-Visible="@AllocationVisible" Material="@AllocationLine?.Material" IssueDate="@IssueDate"
+                                RequestedQty="@(AllocationLine?.IssueQty ?? 0m)" Allocations="@(AllocationLine?.Allocations ?? [])" Applied="@ApplyAllocations" />
+
+    <DxPopup HeaderText="Confirm Issue to Production" CloseOnOutsideClick="false" Width="560px" CssClass="common-popup" @bind-Visible="@PostConfirmationVisible">
+        <Content><div class="pr-confirm"><dl><dt>Work Order</dt><dd>@Workspace?.WorkOrderNo</dd><dt>Issue date</dt><dd>@IssueDate.ToString("dd MMM yyyy")</dd><dt>Materials</dt><dd>@SelectedLineCount</dd><dt>Allocation rows</dt><dd>@AllocationRowCount</dd></dl>
+            @foreach (var warning in PostWarnings) { <div class="alert alert-warning py-2"><i class="fa-solid fa-triangle-exclamation"></i> @warning</div> }
+            <p class="mb-0">Stock will be issued immediately and the posted document will be read-only.</p></div></Content>
+        <FooterContentTemplate><div class="d-flex gap-2 justify-content-end w-100"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => PostConfirmationVisible = false)" Enabled="@(!IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Post now" Click="@PostAsync" Enabled="@(!IsSubmitting)" /></div></FooterContentTemplate>
+    </DxPopup>
+</MenuAuthorize>

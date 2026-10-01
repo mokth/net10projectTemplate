@@ -923,7 +923,7 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
             {
                 ProductCode = ProductCode,
                 PlannedQty = 10m,
-                SnapshotAsOfDate = new DateTime(2026, 9, 28),
+                DefinitionCode = PrProductDefinitionCodes.Standard,
                 PlannedStartDate = new DateTime(2026, 10, 1, 8, 0, 0),
                 PlannedCompletionDate = new DateTime(2026, 10, 3, 17, 0, 0),
                 SchedulingDirection = ProductionSchedulingDirections.Forward,

@@ -75,26 +75,76 @@ public sealed class CanonicalHashWriter
 }
 
 /// <summary>
-/// Canonical hashers for the version-2 Work Order snapshot and for the Product Definition
-/// revision payload it was built from (plan §4.2).
+/// Canonical hashers for the Work Order snapshot and for the Product Definition revision payload
+/// it was built from (plan §4.2).
 /// <para>
 /// Both hashers are pure functions of their input graph. They never read a clock, never read the
 /// database, and never depend on collection ordering: callers hand over an unordered graph and the
 /// hasher orders it by stable authored keys. That is what makes a stored hash a usable staleness
 /// token instead of a coincidence.
 /// </para>
+/// <para>
+/// Hash algorithm versions are immutable executable contracts. Dispatch by the stored
+/// <c>SnapshotHashVersion</c> / <c>DefinitionSourceHashVersion</c>; never recompute a stored V1
+/// hash with the V2 field set.
+/// </para>
 /// </summary>
 public static class WorkOrderSnapshotHasher
 {
     /// <summary>
-    /// Hash of the complete manufacturing snapshot plus its planned schedule
-    /// (<see cref="ProductionSnapshotHashVersions.Current"/>).
+    /// Hash of the complete manufacturing snapshot plus its planned schedule, using the algorithm
+    /// named by <see cref="ProductionWorkOrder.SnapshotHashVersion"/>.
     /// </summary>
     public static string ComputeSnapshotHash(ProductionWorkOrder workOrder)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
 
+        return workOrder.SnapshotHashVersion switch
+        {
+            ProductionSnapshotHashVersions.V1 => ComputeSnapshotHashV1(workOrder),
+            ProductionSnapshotHashVersions.DefinitionIdentityV2 => ComputeSnapshotHashV2(workOrder),
+            _ => throw new InvalidOperationException(
+                $"Unsupported SnapshotHashVersion {workOrder.SnapshotHashVersion}."),
+        };
+    }
+
+    /// <summary>
+    /// Hash-version 1 (byte-for-byte legacy algorithm). Includes
+    /// <see cref="ProductionWorkOrder.DefinitionEffectiveDate"/> and
+    /// <see cref="ProductionWorkOrder.SourceEffectiveFrom"/>.
+    /// </summary>
+    public static string ComputeSnapshotHashV1(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+
         var w = new CanonicalHashWriter();
+        WriteSnapshotHeaderCommon(w, workOrder);
+        w.AddDate(workOrder.DefinitionEffectiveDate);
+        w.AddDate(workOrder.SourceEffectiveFrom);
+        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: false);
+        return w.ComputeHash();
+    }
+
+    /// <summary>
+    /// Hash-version 2 (definition identity). Uses
+    /// <see cref="ProductionWorkOrder.SourceDefinitionCode"/> and
+    /// <see cref="ProductionWorkOrder.SourceProductDefinitionRevisionId"/>; omits date-selection
+    /// fields; includes material <see cref="ProductionWorkOrderMaterial.ComponentDefinitionCode"/>.
+    /// </summary>
+    public static string ComputeSnapshotHashV2(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+
+        var w = new CanonicalHashWriter();
+        WriteSnapshotHeaderCommon(w, workOrder);
+        w.Add(workOrder.SourceDefinitionCode);
+        w.Add(workOrder.SourceProductDefinitionRevisionId);
+        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: true);
+        return w.ComputeHash();
+    }
+
+    private static void WriteSnapshotHeaderCommon(CanonicalHashWriter w, ProductionWorkOrder workOrder)
+    {
         w.Section("HEADER");
 
         // Identity that changes the meaning of the snapshot. The work order number is deliberately
@@ -108,8 +158,13 @@ public static class WorkOrderSnapshotHasher
         w.Add(workOrder.BomBaseQty);
         w.Add(workOrder.BomBaseUom);
         w.Add(workOrder.PlannedQty);
-        w.AddDate(workOrder.DefinitionEffectiveDate);
-        w.AddDate(workOrder.SourceEffectiveFrom);
+    }
+
+    private static void WriteSnapshotScheduleAndBody(
+        CanonicalHashWriter w,
+        ProductionWorkOrder workOrder,
+        bool includeComponentDefinitionCode)
+    {
         w.AddTimestamp(workOrder.ScheduleAnchorDateTime);
         w.AddTimestamp(workOrder.PlannedStartDateTime);
         w.AddTimestamp(workOrder.PlannedCompletionDateTime);
@@ -181,6 +236,11 @@ public static class WorkOrderSnapshotHasher
             w.Add(material.Tolerance);
             w.Add(material.IssueMethod);
             w.Add(material.SupplySource);
+            if (includeComponentDefinitionCode)
+            {
+                w.Add(material.ComponentDefinitionCode);
+            }
+
             w.Add(material.RequiredQty);
             w.Add(material.RequiredUom);
             w.Add(material.RequiredBaseQty);
@@ -203,8 +263,6 @@ public static class WorkOrderSnapshotHasher
             w.Add(material.WorkOrderOperation?.SourceOperationKey);
             w.Add(material.WorkOrderOperation?.ProcessSequence);
         }
-
-        return w.ComputeHash();
     }
 
     private static void AddOperation(CanonicalHashWriter w, ProductionWorkOrderOperation operation)
@@ -310,16 +368,37 @@ public static class WorkOrderSnapshotHasher
     }
 
     /// <summary>
-    /// Hash of the exact Product Definition payload used to build a snapshot
-    /// (<c>DefinitionSourceHashVersion = 1</c>).
+    /// Hash of the exact Product Definition payload used to build a snapshot, using
+    /// <see cref="ProductionDefinitionSourceHashVersions.Current"/>.
+    /// </summary>
+    public static string ComputeDefinitionSourceHash(PrBomHdr revision) =>
+        ComputeDefinitionSourceHash(revision, ProductionDefinitionSourceHashVersions.Current);
+
+    /// <summary>
+    /// Hash of the exact Product Definition payload used to build a snapshot, dispatched by
+    /// <paramref name="version"/>.
     /// <para>
     /// Deliberately excludes volatile audit metadata (created/modified stamps, <c>RowVersion</c>,
-    /// descriptions that cannot reach the snapshot, and validation bookkeeping). Including those
-    /// would make Refresh report a "changed definition" every time someone re-saved an untouched
-    /// revision.
+    /// descriptions that cannot reach the snapshot, validation bookkeeping, and
+    /// <c>IsDefaultDefinition</c>). Including those would make Refresh report a "changed
+    /// definition" every time someone re-saved an untouched revision or flipped the default flag.
     /// </para>
     /// </summary>
-    public static string ComputeDefinitionSourceHash(PrBomHdr revision)
+    public static string ComputeDefinitionSourceHash(PrBomHdr revision, int version)
+    {
+        ArgumentNullException.ThrowIfNull(revision);
+
+        return version switch
+        {
+            ProductionDefinitionSourceHashVersions.V1 => ComputeDefinitionSourceHashV1(revision),
+            ProductionDefinitionSourceHashVersions.DefinitionIdentityV2 => ComputeDefinitionSourceHashV2(revision),
+            _ => throw new InvalidOperationException(
+                $"Unsupported DefinitionSourceHashVersion {version}."),
+        };
+    }
+
+    /// <summary>Source-hash V1: includes EffectiveFrom/To (legacy date-window selection).</summary>
+    public static string ComputeDefinitionSourceHashV1(PrBomHdr revision)
     {
         ArgumentNullException.ThrowIfNull(revision);
 
@@ -334,6 +413,35 @@ public static class WorkOrderSnapshotHasher
         w.Add(revision.Status);
         w.AddDate(revision.EffectiveFrom);
         w.AddDate(revision.EffectiveTo);
+        WriteDefinitionSourceBody(w, revision, includeComponentDefinitionCode: false);
+        return w.ComputeHash();
+    }
+
+    /// <summary>
+    /// Source-hash V2: uses <see cref="PrBomHdr.DefinitionCode"/>; omits EffectiveFrom/To and
+    /// never includes <see cref="PrBomHdr.IsDefaultDefinition"/>.
+    /// </summary>
+    public static string ComputeDefinitionSourceHashV2(PrBomHdr revision)
+    {
+        ArgumentNullException.ThrowIfNull(revision);
+
+        var w = new CanonicalHashWriter();
+        w.Section("REVISION");
+
+        w.Add(revision.CompanyCode);
+        w.Add(revision.ProdCode);
+        w.Add(revision.DefinitionCode);
+        w.Add(revision.Version);
+        w.Add(revision.Status);
+        WriteDefinitionSourceBody(w, revision, includeComponentDefinitionCode: true);
+        return w.ComputeHash();
+    }
+
+    private static void WriteDefinitionSourceBody(
+        CanonicalHashWriter w,
+        PrBomHdr revision,
+        bool includeComponentDefinitionCode)
+    {
         w.Add(revision.BaseQty);
         w.Add(revision.BaseUom);
         w.Add(revision.Prefix);
@@ -368,7 +476,7 @@ public static class WorkOrderSnapshotHasher
 
             foreach (var operation in operations)
             {
-                AddDefinitionOperation(w, operation);
+                AddDefinitionOperation(w, operation, includeComponentDefinitionCode);
             }
         }
 
@@ -383,7 +491,7 @@ public static class WorkOrderSnapshotHasher
         w.Count(unownedOperations.Count);
         foreach (var operation in unownedOperations)
         {
-            AddDefinitionOperation(w, operation);
+            AddDefinitionOperation(w, operation, includeComponentDefinitionCode);
         }
 
         // Lines that are not owned by an operation still reach the snapshot, so they must still
@@ -397,13 +505,14 @@ public static class WorkOrderSnapshotHasher
         w.Count(unowned.Count);
         foreach (var material in unowned)
         {
-            AddDefinitionMaterial(w, material);
+            AddDefinitionMaterial(w, material, includeComponentDefinitionCode);
         }
-
-        return w.ComputeHash();
     }
 
-    private static void AddDefinitionOperation(CanonicalHashWriter w, PrBomOperation operation)
+    private static void AddDefinitionOperation(
+        CanonicalHashWriter w,
+        PrBomOperation operation,
+        bool includeComponentDefinitionCode)
     {
         w.Add(operation.OperationKey);
         w.Add(operation.OperationCode);
@@ -471,11 +580,14 @@ public static class WorkOrderSnapshotHasher
         w.Count(materials.Count);
         foreach (var material in materials)
         {
-            AddDefinitionMaterial(w, material);
+            AddDefinitionMaterial(w, material, includeComponentDefinitionCode);
         }
     }
 
-    private static void AddDefinitionMaterial(CanonicalHashWriter w, PrDefBOM material)
+    private static void AddDefinitionMaterial(
+        CanonicalHashWriter w,
+        PrDefBOM material,
+        bool includeComponentDefinitionCode)
     {
         w.Add(material.ICode);
         w.Add(material.SeqNo);
@@ -489,5 +601,9 @@ public static class WorkOrderSnapshotHasher
         w.Add(material.BomDefault);
         w.Add(material.AlternateGroupCode);
         w.Add(material.ProducingRouteStepId);
+        if (includeComponentDefinitionCode)
+        {
+            w.Add(material.ComponentDefinitionCode);
+        }
     }
 }

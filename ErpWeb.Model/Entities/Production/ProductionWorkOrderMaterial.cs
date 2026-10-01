@@ -85,6 +85,12 @@ public class ProductionWorkOrderMaterial
     public string SupplySource { get; set; } = string.Empty;
 
     /// <summary>
+    /// Frozen <c>PrDefBOM.ComponentDefinitionCode</c> when supply is SEPARATE_PRODUCT_DEFINITION.
+    /// Identifies which child Product Definition produces this component; not a child revision UID.
+    /// </summary>
+    public string? ComponentDefinitionCode { get; set; }
+
+    /// <summary>
     /// Unique in-house producer for <see cref="PrMaterialSupplySources.InternalRouteWip"/> material.
     /// Required whenever <see cref="SupplySource"/> is INTERNAL_ROUTE_WIP and null otherwise,
     /// enforced by a NULL-safe check constraint (plan §6.3).

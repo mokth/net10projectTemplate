@@ -73,7 +73,7 @@
                                       Columns="@Columns"
                                       Buttons="@Buttons"
                                       ActionButtons="@ActionButtons"
-                                      KeyName="@nameof(PrProductDefListRow.ProdCode)"
+                                      KeyName="@nameof(PrProductDefListRow.DefinitionKey)"
                                       GridKey="pln-product-def-list"
                                       Title="Product Definitions"
                                       CustomDataSource="@DataSource"
@@ -99,14 +99,16 @@
                     {
                         @foreach (var row in CompactRows)
                         {
-                            <button type="button" class="iv-compact-row" @onclick="@(() => OpenView(row.ProdCode))">
+                            <button type="button" class="iv-compact-row" @onclick="@(() => OpenView(row))">
                                 <div class="iv-compact-row__title">
                                     <span class="code-style">@row.ProdCode</span>
-                                    <span>@row.ProdDesc</span>
+                                    <span class="code-style">[@row.DefinitionCode]</span>
+                                    <span>@(string.IsNullOrWhiteSpace(row.DefinitionName) ? row.ProdDesc : row.DefinitionName)</span>
                                 </div>
                                 <div class="iv-compact-row__meta">
-                                    <span>@row.BomItemCount components</span>
-                                    <span>@(row.IsActive ? "Active" : "Inactive")</span>
+                                    <span>Latest V@(row.LatestVersion)</span>
+                                    <span>@(row.ActiveVersion is int av ? $"Active V{av}" : "No ACTIVE")</span>
+                                    <span>@(row.IsDefaultDefinition ? "Default" : "Alt")</span>
                                 </div>
                             </button>
                         }

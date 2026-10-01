@@ -159,6 +159,33 @@
     font-size: .78rem;
 }
 
+.pwo-execution-summary {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    margin: 4px 0 14px;
+}
+
+.pwo-execution-summary > div {
+    background: var(--iv-card-bg);
+    border: 1px solid var(--iv-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 11px;
+}
+
+.pwo-execution-summary span {
+    color: var(--iv-muted);
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.pwo-execution-summary strong { color: var(--iv-text); font-size: 1rem; }
+
 .pwo-tabs { overflow: hidden; }
 
 .pwo-overview-sections {
@@ -252,9 +279,11 @@
 @media (max-width: 980px) {
     .pwo-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pwo-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pwo-execution-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
+    .pwo-execution-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pwo-commandbar,
     .pwo-section-head { align-items: stretch; flex-direction: column; }
     .pwo-commandbar__left,

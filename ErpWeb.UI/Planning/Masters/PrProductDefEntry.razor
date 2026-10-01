@@ -1,5 +1,6 @@
 @page "/planning/product-definitions/{Mode:regex(^(new|edit|view)$)}"
 @page "/planning/product-definitions/{Mode:regex(^(new|edit|view)$)}/{ProdCode}"
+@page "/planning/product-definitions/{Mode:regex(^(new|edit|view)$)}/{ProdCode}/{DefinitionCode}"
 @inherits PageBase
 @using ErpWeb.Core.Planning
 @using ErpWeb.Model.Entities.Planning
@@ -63,6 +64,25 @@
                 </div>
             </section>
         }
+        else if (NeedsDefinitionChoice)
+        {
+            <section class="iv-card">
+                <header class="pdf-section__head">
+                    <div>
+                        <h2 class="iv-card__title mb-0">Choose a Production Definition</h2>
+                        <p>Product <span class="code-style">@ProdCode</span> has more than one definition and no single default.</p>
+                    </div>
+                </header>
+                <div class="pdf-editor__actions" style="flex-wrap:wrap;gap:.5rem">
+                    @foreach (var row in DefinitionChoices)
+                    {
+                        <DxButton RenderStyle="@(row.IsDefaultDefinition ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                  Text="@(row.IsDefaultDefinition ? $"{row.DefinitionCode} (Default)" : row.DefinitionCode)"
+                                  Click="@(() => ChooseDefinition(row.DefinitionCode))" />
+                    }
+                </div>
+            </section>
+        }
         else
         {
             <div class="pdf-form">
@@ -72,7 +92,7 @@
                             <span class="pdf-section-title__icon" aria-hidden="true"><i class="fa-solid fa-cube"></i></span>
                             <div>
                                 <h2 class="iv-card__title mb-0">Product details</h2>
-                                <p>Identity, revision dates, and standard output.</p>
+                                <p>Identity, production definition, and standard output.</p>
                             </div>
                         </div>
                         @if (!string.IsNullOrWhiteSpace(OwnerBreadcrumb))
@@ -85,25 +105,24 @@
                             <div class="iv-field pdf-head__code pdf-field-product-code">
                                 <label class="iv-field__label code-style">Product code</label>
                                 <div class="pdf-code-row">
-                                    @if (IsNewMode && IsEditingRoot)
+                                    @if (IsNewMode && IsEditingRoot && Model.BomHdrId == 0)
                                     {
                                         <IvStockMasterPicker ICode="@Model.ProdCode"
                                                              ICodeChanged="OnProdCodeChanged"
                                                              Selected="OnProductSelectedAsync"
                                                              InputCssClass="required-field code-style" />
                                     }
-                                    else if (IsViewMode || IsReadOnlyStatus)
+                                    else
                                     {
                                         <DxTextBox @bind-Text="@Model.ProdCode" ReadOnly="true" InputCssClass="code-style" />
                                     }
-                                    else
+                                    @if (IsNewMode && IsEditingRoot && Model.BomHdrId == 0)
                                     {
-                                        <DxTextBox @bind-Text="@UpdateProdCode" InputCssClass="required-field code-style" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Load product"
+                                                  Click="@UpdateProductAsync"
+                                                  Enabled="@(!IsSubmitting)" />
                                     }
-                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                              Text="Load product"
-                                              Click="@UpdateProductAsync"
-                                              Enabled="@(!IsSubmitting)" />
                                 </div>
                                 @FieldError("ProdCode")
                             </div>
@@ -180,14 +199,20 @@
                     </div>
                     <div class="pdf-product-info__meta">
                         <div class="iv-field">
-                            <label class="iv-field__label">Effective from</label>
-                            <DxDateEdit @bind-Date="@Model.EffectiveFrom" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" />
-                            @FieldError("EffectiveFrom")
+                            <label class="iv-field__label">Definition code</label>
+                            <DxTextBox @bind-Text="@Model.DefinitionCode"
+                                       ReadOnly="@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot)"
+                                       NullText="STANDARD" />
+                            @FieldError("DefinitionCode")
                         </div>
                         <div class="iv-field">
-                            <label class="iv-field__label">Effective to</label>
-                            <DxDateEdit @bind-Date="@Model.EffectiveTo" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" />
-                            @FieldError("EffectiveTo")
+                            <label class="iv-field__label">Definition name</label>
+                            <DxTextBox @bind-Text="@Model.DefinitionName" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" />
+                            @FieldError("DefinitionName")
+                        </div>
+                        <div class="iv-field">
+                            <label class="iv-field__label">Default definition</label>
+                            <DxCheckBox @bind-Checked="@Model.IsDefaultDefinition" Enabled="@(!IsViewMode && !IsReadOnlyStatus)" />
                         </div>
                         <div class="iv-field">
                             <label class="iv-field__label">Base UOM</label>
@@ -616,7 +641,8 @@
                                         <div class="iv-field pdf-field-code">
                                             <label class="iv-field__label">Supply source</label>
                                             <DxComboBox Data="@SupplySourceOptions"
-                                                        @bind-Value="@LineSupplySource"
+                                                        Value="@LineSupplySource"
+                                                        ValueChanged="@((string? v) => OnLineSupplySourceChanged(v))"
                                                         TextFieldName="@nameof(Option.Text)"
                                                         ValueFieldName="@nameof(Option.Value)"
                                                         SearchMode="ListSearchMode.AutoSearch" />
@@ -631,6 +657,20 @@
                                                             ValueFieldName="@nameof(ProducerOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
                                                             NullText="@(ProducerOptionsForLine.Count == 0 ? "Save draft first" : "Select producer")" />
+                                            </div>
+                                        }
+                                        @if (string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
+                                        {
+                                            <div class="iv-field pdf-field-code">
+                                                <label class="iv-field__label">Component Production Definition</label>
+                                                <DxComboBox Data="@ComponentDefinitionOptions"
+                                                            Value="@LineComponentDefinitionCode"
+                                                            ValueChanged="@((string? v) => LineComponentDefinitionCode = v)"
+                                                            TextFieldName="@nameof(DefinitionOption.Text)"
+                                                            ValueFieldName="@nameof(DefinitionOption.Value)"
+                                                            SearchMode="ListSearchMode.AutoSearch"
+                                                            NullText="@(ComponentDefinitionOptions.Count == 0 ? "No definitions for item" : "Select definition")"
+                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                             </div>
                                         }
                                         <div class="pdf-editor__actions">
@@ -987,7 +1027,19 @@
                     </section>
 
                     <section>
-                        <h3>2. Product Definition status</h3>
+                        <h3>2. Production Definition vs revision vs default</h3>
+                        <dl class="pdf-help__actions">
+                            <dt>Production Definition</dt>
+                            <dd>A named manufacturing method for the same product (for example STANDARD, LINE-B, SUBCON). Identity is Product Code + Definition Code.</dd>
+                            <dt>Revision</dt>
+                            <dd>A numbered Draft/Active/Superseded copy of that definition. Create a New Version when an Active recipe must change.</dd>
+                            <dt>Default definition</dt>
+                            <dd>The ACTIVE definition Work Orders and BOM Explorer pick when the user does not choose one explicitly. Only one ACTIVE default is allowed per product.</dd>
+                        </dl>
+                    </section>
+
+                    <section>
+                        <h3>3. Product Definition status</h3>
                         <dl class="pdf-help__actions">
                             <dt>Draft</dt>
                             <dd>Editable working definition. Save and continue preparing the recipe.</dd>
@@ -1000,7 +1052,7 @@
                     </section>
 
                     <section>
-                        <h3>3. Route / Work Center</h3>
+                        <h3>4. Route / Work Center</h3>
                         <p>Work Center = where the work happens (Cutting, Mixing, Assembly, Packing).</p>
                         <ul>
                             <li>Stage Sequence = order of manufacturing stages. Lower numbers happen earlier.</li>
@@ -1010,7 +1062,7 @@
                     </section>
 
                     <section>
-                        <h3>4. Process</h3>
+                        <h3>5. Process</h3>
                         <p>Process = what work is done inside the Work Center.</p>
                         <ul>
                             <li>Process Sequence = order inside the selected Work Center.</li>
@@ -1022,19 +1074,20 @@
                     </section>
 
                     <section>
-                        <h3>5. Materials / BOM</h3>
+                        <h3>6. Materials / BOM</h3>
                         <p>BOM = materials consumed by the selected Process.</p>
                         <ul>
                             <li>Std Qty = material required for the Product Definition Standard Output Quantity.</li>
                             <li>Example: Standard Output = 5 PCS and RM001 Std Qty = 1 KG means 1 KG is required to produce 5 PCS.</li>
                             <li>Warehouse = preferred material source (not a guaranteed reservation warehouse).</li>
                             <li>Scrap % = extra material allowance for expected waste.</li>
-                            <li>Supply Source = where the material comes from (normal stock or Internal Route WIP).</li>
+                            <li>Supply Source = where the material comes from (Purchased, Internal Route WIP, Separate Product Definition, or External).</li>
+                            <li>Component Production Definition = required when Supply Source is Separate Product Definition; selects the child product's definition to explode.</li>
                         </ul>
                     </section>
 
                     <section>
-                        <h3>6. Alternate Materials</h3>
+                        <h3>7. Alternate Materials</h3>
                         <p>
                             Materials with the same Alternate Group are interchangeable.
                             One item is marked Default. The Default material is the normal material copied into the Work Order.
@@ -1048,7 +1101,7 @@
                     </section>
 
                     <section>
-                        <h3>7. WIP from earlier route</h3>
+                        <h3>8. WIP from earlier route</h3>
                         <p>
                             Use Internal Route WIP when this Process consumes an item produced by an earlier route step.
                             Then select Producing route step for the earlier Work Center that produces that WIP.
@@ -1057,7 +1110,7 @@
                     </section>
 
                     <section>
-                        <h3>8. Machine</h3>
+                        <h3>9. Machine</h3>
                         <p>Machine = equipment used by the Process.</p>
                         <ul>
                             <li>Output / Cycle = units produced each machine cycle.</li>
@@ -1072,7 +1125,7 @@
                     </section>
 
                     <section>
-                        <h3>9. Machine alternatives</h3>
+                        <h3>10. Machine alternatives</h3>
                         <p>
                             Current Product Definition supports one assigned Machine per Process.
                             To change the normal Machine, edit or replace the assigned Machine.
@@ -1081,7 +1134,7 @@
                     </section>
 
                     <section>
-                        <h3>10. Labour</h3>
+                        <h3>11. Labour</h3>
                         <p>
                             Labour = operator / labour category assigned to the Process Machine.
                             Cost / Output = labour cost applied to each output unit.
@@ -1090,7 +1143,7 @@
                     </section>
 
                     <section>
-                        <h3>11. Save actions</h3>
+                        <h3>12. Save actions</h3>
                         <dl class="pdf-help__actions">
                             <dt>Preview BOM / Explode BOM</dt>
                             <dd>Inspect the full material structure, including lower-level Make or Phantom items, before activating.</dd>
@@ -1104,7 +1157,7 @@
                     </section>
 
                     <section>
-                        <h3>12. Tips</h3>
+                        <h3>13. Tips</h3>
                         <ul>
                             <li>Define Route before Processes.</li>
                             <li>Define Processes before Materials / Machines.</li>
@@ -1135,7 +1188,7 @@
                 <p class="iv-confirm__copy">
                     @if (!string.IsNullOrWhiteSpace(PendingOwnerProdCode))
                     {
-                        <text>You have unsaved changes on @CurrentOwnerProdCode. Discard them and switch to @PendingOwnerProdCode?</text>
+                        <text>You have unsaved changes on @CurrentOwnerProdCode [@CurrentOwnerDefinitionCode]. Discard them and switch to @PendingOwnerProdCode [@PendingOwnerDefinitionCode]?</text>
                     }
                     else if (_pendingSelectionAction is not null)
                     {

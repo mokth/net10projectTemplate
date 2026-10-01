@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Planning;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 
@@ -97,6 +98,12 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             workOrders = workOrders.Where(x => x.ProductCode.Contains(product));
         }
 
+        if (!string.IsNullOrWhiteSpace(query.DefinitionCode))
+        {
+            var definition = query.DefinitionCode.Trim();
+            workOrders = workOrders.Where(x => x.SourceDefinitionCode.Contains(definition));
+        }
+
         if (!string.IsNullOrWhiteSpace(query.Status))
         {
             var status = Normalize(query.Status);
@@ -140,6 +147,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             WorkOrderNo = x.WorkOrderNo,
             ProductCode = x.ProductCode,
             ProductDescription = x.ProductDescription,
+            SourceDefinitionCode = x.SourceDefinitionCode,
+            SourceDefinitionName = x.SourceDefinitionName,
             OutputUom = x.OutputUom,
             Status = x.Status,
             BomVersion = x.SourceBomVersion,
@@ -228,6 +237,14 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                     IvMasterErrorCode.Validation,
                     "Only Draft Work Orders can be reprocessed. Use a Change Order after release.");
             }
+
+            if (existing.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+            {
+                return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(
+                    IvMasterErrorCode.Validation,
+                    ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+            }
         }
 
         var built = await BuildCurrentSnapshotAsync(
@@ -244,18 +261,20 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             ProductCode = detail.ProductCode,
             ProductDescription = detail.ProductDescription,
             OutputUom = detail.OutputUom,
+            SourceDefinitionCode = detail.SourceDefinitionCode,
+            SourceDefinitionName = detail.SourceDefinitionName,
             SourceBomHdrId = detail.SourceBomHdrId,
             SourceBomVersion = detail.SourceBomVersion,
             BomBaseQty = detail.BomBaseQty,
             BomBaseUom = detail.BomBaseUom,
             PlannedQty = detail.PlannedQty,
-            SnapshotAsOfDate = detail.SnapshotAsOfDate,
             PlannedStartDate = detail.PlannedStartDate,
             PlannedCompletionDate = detail.PlannedCompletionDate,
             SchedulingDirection = detail.SchedulingDirection,
             ScheduleAnchorDateTime = detail.ScheduleAnchorDateTime
                 ?? throw new InvalidOperationException("A current snapshot must have a schedule anchor."),
             SnapshotHash = detail.SnapshotHash,
+            SourceProductDefinitionRevisionId = detail.SourceProductDefinitionRevisionId,
             RouteSteps = detail.RouteSteps,
             Materials = detail.Materials,
             Operations = detail.Operations,
@@ -269,129 +288,45 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
     {
         request ??= new ProductionWorkOrderDraftRequest();
         var isNew = string.IsNullOrWhiteSpace(request.WorkOrderNo);
-        var permission = isNew ? PermissionCodes.Add : PermissionCodes.Edit;
-        var auth = await AuthorizeAsync(permission, requireWriteScope: true, cancellationToken);
+        if (isNew)
+        {
+            // New drafts always go through the format-3 snapshot builder.
+            return await CreateDraftAsync(request, cancellationToken);
+        }
+
+        var auth = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
         if (auth.Error is not null)
         {
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(auth.Error.Value.Code, auth.Error.Value.Message);
         }
 
-        var scope = auth.Scope!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var number = Normalize(request.WorkOrderNo);
+        var entity = await LoadAggregateAsync(db, auth.Scope!, number, tracking: false, cancellationToken);
+        if (entity is null)
         {
-            ProductionWorkOrder entity;
-            if (isNew)
-            {
-                var number = await AllocateWorkOrderNoAsync(db, scope.CompanyCode, cancellationToken);
-                entity = new ProductionWorkOrder
-                {
-                    CompanyCode = scope.CompanyCode,
-                    BranchCode = scope.BranchCode!,
-                    LocationCode = scope.LocationCode,
-                    WorkOrderNo = number,
-                    SnapshotRevision = 1,
-                    Status = ProductionWorkOrderStatuses.Draft
-                };
-                db.ProductionWorkOrders.Add(entity);
-            }
-            else
-            {
-                var number = Normalize(request.WorkOrderNo);
-                entity = await LoadAggregateAsync(db, scope, number, tracking: true, cancellationToken)
-                    ?? throw new WorkOrderCommandException(IvMasterErrorCode.NotFound, "Work Order not found.");
-
-                if (!ProductionWorkOrderRules.CanEdit(entity.Status))
-                {
-                    throw new WorkOrderCommandException(
-                        IvMasterErrorCode.Validation,
-                        "Only Draft Work Orders can be edited. Use a Change Order after release.");
-                }
-
-                if (request.RowVersion is not { Length: > 0 })
-                {
-                    throw new WorkOrderCommandException(
-                        IvMasterErrorCode.Concurrency,
-                        "The Work Order version is missing. Reload before saving.");
-                }
-
-                db.Entry(entity).Property(x => x.RowVersion).OriginalValue = request.RowVersion;
-            }
-
-            var built = await BuildSnapshotAsync(db, scope, request, cancellationToken);
-            if (!built.Succeeded || built.Data is null)
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return CopyFailure<PreparedSnapshot, ProductionWorkOrderDetail>(built);
-            }
-
-            var prepared = built.Data;
-            var oldHash = entity.SnapshotHash;
-            var now = DateTime.UtcNow;
-            var previousStatus = entity.Status;
-
-            if (!isNew)
-            {
-                db.ProductionWorkOrderMaterials.RemoveRange(entity.Materials);
-                db.ProductionWorkOrderOperations.RemoveRange(entity.Operations);
-                entity.Materials.Clear();
-                entity.Operations.Clear();
-            }
-
-            ApplyPreparedSnapshot(entity, prepared, scope, now, isNew);
-            if (!isNew && !string.Equals(oldHash, prepared.Preview.SnapshotHash, StringComparison.Ordinal))
-            {
-                entity.SnapshotRevision += 1;
-            }
-
-            var audit = new ProductionAuditEvent
-            {
-                WorkOrder = entity,
-                EventType = isNew ? ProductionAuditEventTypes.Created : ProductionAuditEventTypes.DraftUpdated,
-                FromStatus = isNew ? null : previousStatus,
-                ToStatus = ProductionWorkOrderStatuses.Draft,
-                SnapshotRevision = entity.SnapshotRevision,
-                DetailsJson = JsonSerializer.Serialize(new
-                {
-                    entity.ProductCode,
-                    entity.SourceBomVersion,
-                    entity.PlannedQty,
-                    MaterialCount = prepared.Preview.Materials.Count,
-                    OperationCount = prepared.Preview.Operations.Count,
-                    entity.SnapshotHash
-                }),
-                OccurredDate = now,
-                ActorUserId = scope.UserId
-            };
-            entity.AuditEvents.Add(audit);
-
-            AddSnapshotChildren(entity, prepared.Preview, scope, now, db);
-            TouchSqliteRowVersions(db, entity);
-            await db.SaveChangesAsync(cancellationToken);
-            await tx.CommitAsync(cancellationToken);
-
-            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(IvMasterErrorCode.NotFound, "Work Order not found.");
         }
-        catch (WorkOrderCommandException ex)
+
+        if (!ProductionWorkOrderRules.CanEdit(entity.Status))
         {
-            await tx.RollbackAsync(cancellationToken);
-            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            await tx.RollbackAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                IvMasterErrorCode.Concurrency,
-                "This Work Order was changed by another user. Reload the latest version before saving.");
+                IvMasterErrorCode.Validation,
+                "Only Draft Work Orders can be edited. Use a Change Order after release.");
         }
-        catch (DbUpdateException ex) when (IsUniqueConstraint(ex))
+
+        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                IvMasterErrorCode.DuplicateKey,
-                "A Work Order with the allocated number already exists. Try saving again.");
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
         }
+
+        return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+            IvMasterErrorCode.Validation,
+            "Structural draft rebuild via SaveDraft is no longer supported. "
+            + "Use UpdateDraftHeader, Refresh, Change Definition, Select Machine, or Substitute Material.");
     }
 
     public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseAsync(
@@ -626,8 +561,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 new BomExplosionRequest
                 {
                     ProdCode = normalized.ProductCode,
+                    DefinitionCode = normalized.DefinitionCode,
                     Quantity = normalized.PlannedQty,
-                    AsOfDate = normalized.SnapshotAsOfDate,
                     Mode = BomExplosionMode.ProductionIssueRequirement
                 }, cancellationToken);
         }
@@ -712,6 +647,10 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 BomOutputUom = TrimTo(source?.BomOutputUom, 10),
                 ScrapPercent = source?.ScrapPercent ?? node.ScrapPercent,
                 Tolerance = source?.Tolerance ?? 0m,
+                SupplySource = TrimTo(node.SupplySource, 30),
+                ComponentDefinitionCode = string.IsNullOrWhiteSpace(node.ComponentDefinitionCode)
+                    ? null
+                    : PrProductDefinitionCodes.Normalize(node.ComponentDefinitionCode),
                 RequiredQty = node.ExtendedQty,
                 RequiredUom = TrimTo(source?.ComponentUom ?? node.Uom, 10),
                 WarehouseCode = TrimTo(source?.WarehouseCode ?? node.Warehouse, 20),
@@ -755,6 +694,9 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
 
         var outputUom = TrimTo(product.StdUom ?? exploded.RootBaseUom, 10);
+        // Legacy ProductionSnapshotHasher still fingerprints DefinitionEffectiveDate (date column).
+        // Stamp the same UTC calendar day that ApplyPreparedSnapshot writes onto the entity.
+        var definitionEffectiveDate = DateTime.UtcNow.Date;
         var hashLines = materials.Select(ToHashLine).ToList();
         var hashOps = operations.Select(ToHashOperation).ToList();
         var hash = ProductionSnapshotHasher.Compute(
@@ -766,7 +708,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             rootBaseQty,
             exploded.RootBaseUom,
             normalized.PlannedQty,
-            normalized.SnapshotAsOfDate,
+            definitionEffectiveDate,
             plannedStart,
             plannedCompletion,
             normalized.SchedulingDirection,
@@ -786,7 +728,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             BomBaseQty = rootBaseQty,
             BomBaseUom = exploded.RootBaseUom,
             PlannedQty = normalized.PlannedQty,
-            SnapshotAsOfDate = normalized.SnapshotAsOfDate,
+            SourceDefinitionCode = normalized.DefinitionCode,
             SnapshotHash = hash,
             Materials = materials,
             Operations = operations,
@@ -808,19 +750,24 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         out NormalizedDraft normalized)
     {
         var productCode = Normalize(request.ProductCode);
+        var definitionCode = string.IsNullOrWhiteSpace(request.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : PrProductDefinitionCodes.Normalize(request.DefinitionCode);
         var plannedQty = IvQty.Round(request.PlannedQty);
         var direction = Normalize(request.SchedulingDirection);
         var sourceType = Normalize(request.SourceType);
         var sourceReference = NullIfEmpty(request.SourceReference);
         var remark = NullIfEmpty(request.Remark);
-        var snapshotDate = request.SnapshotAsOfDate == default ? DateTime.UtcNow.Date : request.SnapshotAsOfDate.Date;
-        var startDate = request.PlannedStartDate == default ? snapshotDate : request.PlannedStartDate.Date;
+        var today = DateTime.UtcNow.Date;
+        var startDate = request.PlannedStartDate == default ? today : request.PlannedStartDate.Date;
         var completionDate = request.PlannedCompletionDate == default ? startDate : request.PlannedCompletionDate.Date;
 
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (productCode.Length == 0) errors["ProductCode"] = "Product code is required.";
         else if (productCode.Length > ProductCodeMax)
             errors["ProductCode"] = $"Product code must be {ProductCodeMax} characters or fewer.";
+        if (definitionCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(definitionCode))
+            errors["DefinitionCode"] = "A valid Product Definition code is required.";
         if (plannedQty <= 0m) errors["PlannedQty"] = "Planned quantity must be at least 0.0001.";
         else if (plannedQty > MaxStoredQuantity)
             errors["PlannedQty"] = "Planned quantity exceeds the supported quantity range.";
@@ -842,8 +789,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
 
         normalized = new NormalizedDraft(
             productCode,
+            definitionCode,
             plannedQty,
-            snapshotDate,
             startDate,
             completionDate,
             direction,
@@ -870,7 +817,9 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         entity.SourceBomVersion = preview.SourceBomVersion;
         entity.BomBaseQty = preview.BomBaseQty;
         entity.BomBaseUom = preview.BomBaseUom;
-        entity.DefinitionEffectiveDate = preview.SnapshotAsOfDate;
+        entity.DefinitionEffectiveDate = DateTime.UtcNow.Date;
+        entity.SourceDefinitionCode = preview.SourceDefinitionCode;
+        entity.SourceDefinitionName = preview.SourceDefinitionName;
         entity.SnapshotHash = preview.SnapshotHash;
         entity.PlannedQty = preview.PlannedQty;
         entity.GoodQty = 0m;
@@ -921,6 +870,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 BomOutputUom = row.BomOutputUom,
                 ScrapPercent = row.ScrapPercent,
                 Tolerance = row.Tolerance,
+                SupplySource = row.SupplySource ?? string.Empty,
+                ComponentDefinitionCode = row.ComponentDefinitionCode,
                 RequiredQty = row.RequiredQty,
                 RequiredUom = row.RequiredUom,
                 WarehouseCode = row.WarehouseCode,
@@ -991,7 +942,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         LocationCode = entity.LocationCode,
         SnapshotRevision = entity.SnapshotRevision,
         SnapshotHash = entity.SnapshotHash,
-        SnapshotAsOfDate = entity.DefinitionEffectiveDate,
+        SourceDefinitionCode = entity.SourceDefinitionCode,
+        SourceDefinitionName = entity.SourceDefinitionName,
         ProductCode = entity.ProductCode,
         ProductDescription = entity.ProductDescription,
         OutputUom = entity.OutputUom,
@@ -1084,6 +1036,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         AlternateGroupCode = row.AlternateGroupCode,
         IssueMethod = row.IssueMethod,
         SupplySource = row.SupplySource,
+        ComponentDefinitionCode = row.ComponentDefinitionCode,
         RequiredBaseQty = row.RequiredBaseQty,
         BaseUom = row.BaseUom,
         StandardUom = row.StandardUom,
@@ -1656,6 +1609,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         {
             ("PRODUCTCODE", true) => query.OrderByDescending(x => x.ProductCode).ThenByDescending(x => x.WorkOrderNo),
             ("PRODUCTCODE", false) => query.OrderBy(x => x.ProductCode).ThenBy(x => x.WorkOrderNo),
+            ("SOURCEDEFINITIONCODE", true) => query.OrderByDescending(x => x.SourceDefinitionCode).ThenByDescending(x => x.WorkOrderNo),
+            ("SOURCEDEFINITIONCODE", false) => query.OrderBy(x => x.SourceDefinitionCode).ThenBy(x => x.WorkOrderNo),
             ("STATUS", true) => query.OrderByDescending(x => x.Status).ThenByDescending(x => x.WorkOrderNo),
             ("STATUS", false) => query.OrderBy(x => x.Status).ThenBy(x => x.WorkOrderNo),
             ("PLANNEDQTY", true) => query.OrderByDescending(x => x.PlannedQty).ThenByDescending(x => x.WorkOrderNo),
@@ -1717,8 +1672,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
 
     private sealed record NormalizedDraft(
         string ProductCode,
+        string DefinitionCode,
         decimal PlannedQty,
-        DateTime SnapshotAsOfDate,
         DateTime PlannedStartDate,
         DateTime PlannedCompletionDate,
         string SchedulingDirection,

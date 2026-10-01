@@ -21,8 +21,11 @@ public enum BomExplosionMode
 public sealed class BomExplosionRequest
 {
     public string ProdCode { get; set; } = string.Empty;
+
+    /// <summary>Logical Production Definition code within the product.</summary>
+    public string DefinitionCode { get; set; } = PrProductDefinitionCodes.Standard;
+
     public decimal Quantity { get; set; } = 1m;
-    public DateTime AsOfDate { get; set; } = DateTime.UtcNow.Date;
 
     /// <summary>When set, use this version even if DRAFT/SUPERSEDED (preview / historical).</summary>
     public int? Version { get; set; }
@@ -40,11 +43,14 @@ public sealed class BomExplosionNode
     public decimal ExtendedQty { get; init; }
     public string? Uom { get; init; }
     public string MfgType { get; init; } = PrMfgTypes.Buy;
+    public string? DefinitionCode { get; init; }
     public int? BomVersion { get; init; }
     public long? BomHdrId { get; init; }
     public long? SourceLineUid { get; init; }
     public decimal ScrapPercent { get; init; }
     public string? Warehouse { get; init; }
+    public string? SupplySource { get; init; }
+    public string? ComponentDefinitionCode { get; init; }
     public string Path { get; init; } = string.Empty;
     public bool IsLeafRequirement { get; init; }
     public bool IsIssueLine { get; init; }
@@ -53,8 +59,8 @@ public sealed class BomExplosionNode
 public sealed class BomExplosionResult
 {
     public string RootProdCode { get; init; } = string.Empty;
+    public string RootDefinitionCode { get; init; } = string.Empty;
     public decimal RootQuantity { get; init; }
-    public DateTime AsOfDate { get; init; }
     public BomExplosionMode Mode { get; init; }
     public long? RootBomHdrId { get; init; }
     public int? RootBomVersion { get; init; }

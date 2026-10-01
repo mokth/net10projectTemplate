@@ -74,6 +74,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var result = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "MISSING",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = [new PrProductDefLineVm { ICode = "RM001", StdQty = 0.2m, Warehouse = "WH01" }]
         }, isNew: true, activate: false);
@@ -87,12 +88,18 @@ public class PrProductDefServiceTests : IAsyncLifetime
     {
         var sut = CreateSut();
 
-        var empty = await sut.SaveAsync(new PrProductDefEditVm { ProdCode = "FG001", Lines = [] }, true, true);
+        var empty = await sut.SaveAsync(new PrProductDefEditVm
+        {
+            ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            Lines = []
+        }, true, true);
         Assert.False(empty.Succeeded);
 
         var self = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = [new PrProductDefLineVm { ICode = "FG001", StdQty = 1m, Warehouse = "WH01" }]
         }, true, true);
@@ -101,6 +108,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var zero = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = [new PrProductDefLineVm { ICode = "RM001", StdQty = 0m, Warehouse = "WH01" }]
         }, true, true);
@@ -109,6 +117,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var dup = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines =
             [
@@ -126,6 +135,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var create = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines =
             [
@@ -156,19 +166,19 @@ public class PrProductDefServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var get = await sut.GetAsync("FG001");
+        var get = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(get.Succeeded);
         Assert.Equal("Flour", get.Data!.Lines.First(x => x.ICode == "RM001").IName);
 
         var update = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             Version = get.Data.Version,
             BomHdrId = get.Data.BomHdrId,
             HeaderRowVersion = get.Data.HeaderRowVersion,
             Status = get.Data.Status,
             BaseQty = 1m,
-            EffectiveFrom = get.Data.EffectiveFrom,
             Lines =
             [
                 new PrProductDefLineVm
@@ -185,9 +195,9 @@ public class PrProductDefServiceTests : IAsyncLifetime
         Assert.True(list.Succeeded);
         Assert.Contains(list.Data!.Rows, x => x.ProdCode == "FG001" && x.BomItemCount == 1);
 
-        var del = await sut.DeleteAsync(["FG001"]);
+        var del = await sut.DeleteAsync([new PrProductDefinitionKey { ProdCode = "FG001", DefinitionCode = PrProductDefinitionCodes.Standard }]);
         Assert.True(del.Succeeded, del.Message);
-        Assert.False((await sut.GetAsync("FG001")).Succeeded);
+        Assert.False((await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard)).Succeeded);
     }
 
     [Fact]
@@ -207,12 +217,12 @@ public class PrProductDefServiceTests : IAsyncLifetime
         Assert.Equal("WO", create.Data!.Prefix);
         Assert.Equal("Legacy remark text", create.Data.Remark);
 
-        var get = await sut.GetAsync("FG001");
+        var get = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(get.Succeeded);
         Assert.Equal("WO", get.Data!.Prefix);
         Assert.Equal("Legacy remark text", get.Data.Remark);
 
-        var versioned = await sut.CreateNewVersionAsync("FG001");
+        var versioned = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(versioned.Succeeded, versioned.Message);
         Assert.Equal("WO", versioned.Data!.Prefix);
         Assert.Equal("Legacy remark text", versioned.Data.Remark);
@@ -243,6 +253,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var save = await otherSut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = [new PrProductDefLineVm { ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }]
         }, true, false);
@@ -260,6 +271,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var create = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = [new PrProductDefLineVm { ICode = "RM001", StdQty = 0.2m, Warehouse = "WH01" }]
         }, true, false);
@@ -272,16 +284,16 @@ public class PrProductDefServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var get = await sut.GetAsync("FG001");
+        var get = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard);
         var update = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             Version = get.Data!.Version,
             BomHdrId = get.Data.BomHdrId,
             HeaderRowVersion = get.Data.HeaderRowVersion,
             Status = get.Data.Status,
             BaseQty = 1m,
-            EffectiveFrom = get.Data.EffectiveFrom,
             Lines =
             [
                 new PrProductDefLineVm
@@ -321,7 +333,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
 
         Assert.False(edit.Succeeded);
         Assert.Contains("immutable", edit.Message!, StringComparison.OrdinalIgnoreCase);
-        var draft = await sut.CreateNewVersionAsync("FG001", active.Data.Version);
+        var draft = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard, active.Data.Version);
         Assert.True(draft.Succeeded, draft.Message);
         Assert.Equal(PrBomStatuses.Draft, draft.Data!.Status);
     }
@@ -347,13 +359,11 @@ public class PrProductDefServiceTests : IAsyncLifetime
         {
             ProdCode = "FG001",
             BaseQty = 1m,
-            EffectiveFrom = new DateTime(2026, 1, 1),
-            EffectiveTo = null,
             Lines = [new PrProductDefLineVm { ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }]
         }, true, true);
         Assert.True(v1.Succeeded, v1.Message);
 
-        var draft = await sut.CreateNewVersionAsync("FG001");
+        var draft = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(draft.Succeeded, draft.Message);
 
         var activate = await sut.SaveAsync(new PrProductDefEditVm
@@ -364,13 +374,12 @@ public class PrProductDefServiceTests : IAsyncLifetime
             HeaderRowVersion = draft.Data.HeaderRowVersion,
             Status = draft.Data.Status,
             BaseQty = 1m,
-            EffectiveFrom = new DateTime(2026, 1, 15),
             Lines = draft.Data.Lines
         }, false, activate: true);
 
         // Activate should supersede V1 — succeed
         Assert.True(activate.Succeeded, activate.Message);
-        var getV1 = await sut.GetAsync("FG001", 1);
+        var getV1 = await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard, 1);
         Assert.Equal(PrBomStatuses.Superseded, getV1.Data!.Status);
     }
 
@@ -406,6 +415,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var save = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 5m,
             BaseUom = "PCS",
             Lines = [new PrProductDefLineVm { OperationKey = processKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
@@ -453,7 +463,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         Assert.Equal(30m, machine.CycleSeconds);
         Assert.Equal(1.25m, Assert.Single(machine.Labours).CostPerOutputUnit);
 
-        var clone = await sut.CreateNewVersionAsync("FG001", save.Data.Version);
+        var clone = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard, save.Data.Version);
         Assert.True(clone.Succeeded, clone.Message);
         Assert.Equal(2, clone.Data!.Version);
         Assert.Single(clone.Data.Lines);
@@ -547,11 +557,12 @@ public class PrProductDefServiceTests : IAsyncLifetime
             InventoryTenantTestHelper.CreateTenantContext(location: "SITE"), CreateAccess(true, true, true, true).Object);
         var issue = await explosion.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "FG001", Quantity = 10, Mode = BomExplosionMode.ProductionIssueRequirement
         });
         Assert.True(issue.Succeeded, issue.Message);
         Assert.Equal(20m, Assert.Single(issue.Data!.Nodes).ExtendedQty);
-        var clone = await sut.CreateNewVersionAsync("FG001");
+        var clone = await sut.CreateNewVersionAsync("FG001", PrProductDefinitionCodes.Standard);
         Assert.True(clone.Succeeded, clone.Message);
         Assert.Equal(assemblyKey, Assert.Single(clone.Data!.Lines).OperationKey);
         // A later process can independently consume the same item.
@@ -565,6 +576,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         Assert.Equal(2, second.Data!.Lines.Count);
         var twoProcesses = await explosion.ExplodeAsync(new BomExplosionRequest
         {
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             ProdCode = "FG001", Version = second.Data.Version, Quantity = 10,
             Mode = BomExplosionMode.ProductionIssueRequirement
         });
@@ -594,6 +606,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         new()
         {
             ProdCode = prod,
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             BaseQty = 1m,
             Lines = lines.Select((x, i) => new PrProductDefLineVm
             {
