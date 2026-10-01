@@ -18,17 +18,20 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _access;
     private readonly ICurrentDateService _clock;
+    private readonly IInventoryAsOfStockService _asOfStock;
 
     public ProductionMaterialAllocationService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
-        ICurrentDateService clock)
+        ICurrentDateService clock,
+        IInventoryAsOfStockService? asOfStock = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _clock = clock;
+        _asOfStock = asOfStock ?? new InventoryAsOfStockService();
     }
 
     public async Task<IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>> GetStockCandidatesAsync(
@@ -95,7 +98,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         var scope = _tenant.TryBranchScope();
         if (scope is null || string.IsNullOrWhiteSpace(scope.BranchCode))
             return PreparedResult.Fail(IvMasterErrorCode.InvalidScope, "A company and branch scope is required.");
-        if (issueDate.Date > _clock.Today)
+        if (issueDate > _clock.Now)
             return PreparedResult.Fail(IvMasterErrorCode.Validation, "Future issue dates are not allowed.");
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -160,6 +163,18 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
             })
             .ToListAsync(cancellationToken);
 
+        var availability = await _asOfStock.GetAsync(db, scope.CompanyCode, scope.BranchCode!,
+            raw.Select(x => x.FromBalLocId).ToArray(), issueDate, cancellationToken);
+        foreach (var row in raw)
+        {
+            if (!availability.TryGetValue(row.FromBalLocId, out var stock))
+                continue;
+            row.CurrentBaseQty = stock.CurrentBaseQty;
+            row.AsOfBaseQty = stock.AsOfBaseQty;
+            row.AvailableBaseQty = stock.UsableBaseQty;
+        }
+        raw.RemoveAll(x => x.AvailableBaseQty <= 0m);
+
         var ordered = raw
             .OrderBy(x => x.LotControl && x.ExpiryDate is null ? 1 : 0)
             .ThenBy(x => x.LotControl ? x.ExpiryDate : null)
@@ -183,6 +198,9 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         ExpiryDate = row.ExpiryDate,
         StockDate = row.StockDate,
         AvailableBaseQty = IvQty.Round(row.AvailableBaseQty),
+        CurrentBaseQty = IvQty.Round(row.CurrentBaseQty),
+        AsOfBaseQty = IvQty.Round(row.AsOfBaseQty),
+        UsableBaseQty = IvQty.Round(row.AvailableBaseQty),
         BaseUom = row.BaseUom,
         SuggestedBaseQty = suggested,
         UnitPrice = canViewCost ? row.UnitPrice : null
@@ -201,7 +219,9 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         public string LotNo { get; init; } = string.Empty;
         public DateTime? ExpiryDate { get; init; }
         public DateTime? StockDate { get; init; }
-        public decimal AvailableBaseQty { get; init; }
+        public decimal AvailableBaseQty { get; set; }
+        public decimal CurrentBaseQty { get; set; }
+        public decimal AsOfBaseQty { get; set; }
         public string BaseUom { get; init; } = string.Empty;
         public decimal? UnitPrice { get; init; }
         public bool LotControl { get; init; }

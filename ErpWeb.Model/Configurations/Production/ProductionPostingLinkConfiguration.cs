@@ -20,6 +20,7 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.ProductionDocumentNo).HasMaxLength(40);
         builder.Property(x => x.ProductionDocumentLineId).HasColumnName("ProductionDocumentLineID");
         builder.Property(x => x.PostingOperationId).HasColumnName("PostingOperationID").HasMaxLength(64);
+        builder.Property(x => x.SnapshotHash).HasMaxLength(64);
         builder.Property(x => x.OriginalPostingLinkId).HasColumnName("OriginalPostingLinkID");
         builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ResultCode).HasMaxLength(50);
@@ -30,6 +31,10 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
             .HasDatabaseName("UQ_PrProductionPostingLink_Idempotency");
         builder.HasIndex(x => new { x.WorkOrderId, x.CommandType, x.Status })
             .HasDatabaseName("IX_PrProductionPostingLink_Order_Command_Status");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo })
+            .IsUnique()
+            .HasFilter("[InventoryBatchNo] IS NOT NULL AND [CommandType] = 'MATERIAL_ISSUE_POST'")
+            .HasDatabaseName("UQ_PrProductionPostingLink_MaterialIssueBatch");
         builder.HasOne(x => x.OriginalPostingLink)
             .WithMany()
             .HasForeignKey(x => x.OriginalPostingLinkId)

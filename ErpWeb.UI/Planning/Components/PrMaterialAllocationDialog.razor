@@ -17,13 +17,13 @@
             {
                 <div class="table-responsive">
                     <table class="table table-sm align-middle pr-allocation__table">
-                        <thead><tr><th>Warehouse</th><th>Location</th><th>Lot</th><th>On hand</th><th>Expiry</th><th>Stock date</th><th>Suggested</th><th>Issue base qty</th><th>Base UOM</th>@if (CanViewCost) { <th>Unit cost</th> }</tr></thead>
+                        <thead><tr><th>Warehouse</th><th>Location</th><th>Lot</th><th>Current on hand</th><th>Available as-of</th><th>Usable</th><th>Expiry</th><th>Stock date</th><th>Suggested</th><th>Issue base qty</th><th>Base UOM</th>@if (CanViewCost) { <th>Unit cost</th> }</tr></thead>
                         <tbody>
                         @foreach (var row in Rows)
                         {
                             <tr class="@(row.IssueBaseQty > 0 ? "table-primary" : null)">
                                 <td>@row.Warehouse</td><td>@row.Location</td><td>@(string.IsNullOrWhiteSpace(row.LotNo) ? "—" : row.LotNo)</td>
-                                <td class="text-end">@row.AvailableBaseQty.ToString("n4")</td><td>@DateText(row.ExpiryDate)</td><td>@DateText(row.StockDate)</td>
+                                <td class="text-end">@row.CurrentBaseQty.ToString("n4")</td><td class="text-end">@row.AsOfBaseQty.ToString("n4")</td><td class="text-end">@row.UsableBaseQty.ToString("n4")</td><td>@DateText(row.ExpiryDate)</td><td>@DateText(row.StockDate)</td>
                                 <td class="text-end">@row.SuggestedBaseQty.ToString("n4")</td>
                                 <td><InputNumber TValue="decimal" class="form-control form-control-sm text-end" @bind-Value="row.IssueBaseQty" min="0" step="0.0001" /></td>
                                 <td>@row.BaseUom</td>@if (CanViewCost) { <td class="text-end">@row.UnitPrice?.ToString("n4")</td> }
@@ -68,14 +68,14 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        if (Visible && Material is not null && (_loadedMaterialId != Material.WorkOrderMaterialId || _loadedDate != IssueDate.Date))
+        if (Visible && Material is not null && (_loadedMaterialId != Material.WorkOrderMaterialId || _loadedDate != IssueDate))
             await LoadAsync();
     }
 
     private async Task LoadAsync()
     {
         IsLoading = true; DialogError = null; Rows = [];
-        _loadedMaterialId = Material!.WorkOrderMaterialId; _loadedDate = IssueDate.Date;
+        _loadedMaterialId = Material!.WorkOrderMaterialId; _loadedDate = IssueDate;
         var result = await AllocationService.GetStockCandidatesAsync(Material.WorkOrderMaterialId, IssueDate);
         if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to load eligible stock.";
         else
@@ -104,7 +104,7 @@
     private void Clear() { foreach (var row in Rows) row.IssueBaseQty = 0m; DialogError = null; }
     private async Task ApplyAsync()
     {
-        if (Rows.Any(x => x.IssueBaseQty < 0m || x.IssueBaseQty > x.AvailableBaseQty)) { DialogError = "Issue quantities must be between zero and the current on-hand quantity."; return; }
+        if (Rows.Any(x => x.IssueBaseQty < 0m || x.IssueBaseQty > x.UsableBaseQty)) { DialogError = "Issue quantities must be between zero and the usable as-of quantity."; return; }
         if (Math.Abs(AllocatedBaseQty - RequestedBaseQty) > 0.0001m) { DialogError = $"Allocate exactly {RequestedBaseQty:n4} {Material?.BaseUom}."; return; }
         await Applied.InvokeAsync(Rows.Where(x => x.IssueBaseQty > 0m).Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = IvQty.Round(x.IssueBaseQty) }).ToList());
         await CloseAsync();
@@ -116,14 +116,16 @@
 
     private sealed class AllocationRow
     {
-        public AllocationRow(ProductionMaterialStockCandidate x) { FromBalLocId = x.FromBalLocId; Warehouse = x.Warehouse; Location = x.Location; LotNo = x.LotNo; ExpiryDate = x.ExpiryDate; StockDate = x.StockDate; AvailableBaseQty = x.AvailableBaseQty; BaseUom = x.BaseUom; SuggestedBaseQty = x.SuggestedBaseQty; UnitPrice = x.UnitPrice; }
+        public AllocationRow(ProductionMaterialStockCandidate x) { FromBalLocId = x.FromBalLocId; Warehouse = x.Warehouse; Location = x.Location; LotNo = x.LotNo; ExpiryDate = x.ExpiryDate; StockDate = x.StockDate; CurrentBaseQty = x.CurrentBaseQty; AsOfBaseQty = x.AsOfBaseQty; UsableBaseQty = x.UsableBaseQty; BaseUom = x.BaseUom; SuggestedBaseQty = x.SuggestedBaseQty; UnitPrice = x.UnitPrice; }
         public int FromBalLocId { get; }
         public string Warehouse { get; }
         public string Location { get; }
         public string LotNo { get; }
         public DateTime? ExpiryDate { get; }
         public DateTime? StockDate { get; }
-        public decimal AvailableBaseQty { get; }
+        public decimal CurrentBaseQty { get; }
+        public decimal AsOfBaseQty { get; }
+        public decimal UsableBaseQty { get; }
         public string BaseUom { get; }
         public decimal SuggestedBaseQty { get; }
         public decimal? UnitPrice { get; }

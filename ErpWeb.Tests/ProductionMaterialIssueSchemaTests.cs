@@ -25,6 +25,10 @@ public sealed class ProductionMaterialIssueSchemaTests
         Model.FindEntityType(typeof(ProductionMaterialMovement))
         ?? throw new InvalidOperationException("ProductionMaterialMovement is not mapped.");
 
+    private static IEntityType DraftLineEntity =>
+        Model.FindEntityType(typeof(ProductionMaterialIssueLine))
+        ?? throw new InvalidOperationException("ProductionMaterialIssueLine is not mapped.");
+
     [Fact]
     public void Movement_has_required_table_key_precision_and_constraints()
     {
@@ -70,5 +74,31 @@ public sealed class ProductionMaterialIssueSchemaTests
         Assert.Contains("IX_PrMaterialMovement_InventoryBatch", indexes.Keys);
         Assert.Contains("IX_PrMaterialMovement_OriginalMovement", indexes.Keys);
         Assert.True(indexes["UQ_PrMaterialMovement_PostingLine"].IsUnique);
+    }
+
+    [Fact]
+    public void Draft_line_has_allocation_grain_constraints_indexes_and_restrict_foreign_keys()
+    {
+        Assert.Equal("PrMaterialIssueLine", DraftLineEntity.GetTableName());
+        Assert.Equal(18, DraftLineEntity.FindProperty(nameof(ProductionMaterialIssueLine.IssueQty))!.GetPrecision());
+        Assert.Equal(4, DraftLineEntity.FindProperty(nameof(ProductionMaterialIssueLine.BaseQty))!.GetScale());
+        Assert.All(DraftLineEntity.GetForeignKeys(), x => Assert.Equal(DeleteBehavior.Restrict, x.DeleteBehavior));
+        Assert.Equal(6, DraftLineEntity.GetForeignKeys().Count());
+        var indexes = DraftLineEntity.GetIndexes().ToDictionary(x => x.GetDatabaseName()!);
+        Assert.True(indexes["UQ_PrMaterialIssueLine_InventoryDetail"].IsUnique);
+        Assert.True(indexes["UQ_PrMaterialIssueLine_PostingLine"].IsUnique);
+        Assert.Contains("IX_PrMaterialIssueLine_Batch", indexes.Keys);
+        Assert.Contains("IX_PrMaterialIssueLine_Material", indexes.Keys);
+        Assert.Contains("IX_PrMaterialIssueLine_Operation", indexes.Keys);
+    }
+
+    [Fact]
+    public void Posting_link_has_snapshot_fingerprint_and_one_material_issue_link_per_batch()
+    {
+        var link = Model.FindEntityType(typeof(ProductionPostingLink))!;
+        Assert.Equal(64, link.FindProperty(nameof(ProductionPostingLink.SnapshotHash))!.GetMaxLength());
+        var index = link.GetIndexes().Single(x => x.GetDatabaseName() == "UQ_PrProductionPostingLink_MaterialIssueBatch");
+        Assert.True(index.IsUnique);
+        Assert.Contains("MATERIAL_ISSUE_POST", index.GetFilter());
     }
 }

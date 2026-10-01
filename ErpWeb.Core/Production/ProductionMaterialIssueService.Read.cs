@@ -85,6 +85,11 @@ public sealed partial class ProductionMaterialIssueService
         var batchNos = page.Select(x => x.BatchNo).ToList();
         if (batchNos.Count > 0)
         {
+            var mapRows = await db.ProductionMaterialIssueLines.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && batchNos.Contains(x.InventoryBatchNo))
+                .Select(x => new { x.InventoryBatchNo, x.WorkOrderMaterialId })
+                .ToListAsync(cancellationToken);
             var movements = await db.ProductionMaterialMovements.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
                     && batchNos.Contains(x.InventoryBatchNo)
@@ -93,6 +98,8 @@ public sealed partial class ProductionMaterialIssueService
                 .ToListAsync(cancellationToken);
             var counts = movements.GroupBy(x => x.InventoryBatchNo)
                 .ToDictionary(x => x.Key, x => x.Select(y => y.WorkOrderMaterialId).Distinct().Count());
+            foreach (var group in mapRows.GroupBy(x => x.InventoryBatchNo))
+                counts[group.Key] = group.Select(x => x.WorkOrderMaterialId).Distinct().Count();
             foreach (var row in page)
                 row.LineCount = counts.GetValueOrDefault(row.BatchNo);
         }
@@ -133,38 +140,70 @@ public sealed partial class ProductionMaterialIssueService
             .Where(x => x.PostingLinkId == link.Uid && x.MovementType == ProductionMaterialMovementTypes.Issue)
             .OrderBy(x => x.InventoryTrxLineNo)
             .ToListAsync(cancellationToken);
+        var mapRows = await db.ProductionMaterialIssueLines.AsNoTracking()
+            .Where(x => x.PostingLinkId == link.Uid)
+            .OrderBy(x => x.InventoryTrxLineNo)
+            .ToListAsync(cancellationToken);
+        IReadOnlyList<ProductionMaterialIssueDocumentLine> documentLines;
+        if (mapRows.Count > 0)
+        {
+            var detailIds = mapRows.Select(x => x.InventoryBatchDetailId).ToArray();
+            var materialIds = mapRows.Select(x => x.WorkOrderMaterialId).Distinct().ToArray();
+            var details = await db.IvTrxBatchDetails.AsNoTracking().Where(x => detailIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
+            var materials = await db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => materialIds.Contains(x.Uid)).ToDictionaryAsync(x => x.Uid, cancellationToken);
+            var postedByDetail = movements.ToDictionary(x => x.InventoryBatchDetailId);
+            documentLines = mapRows.Select(x =>
+            {
+                var detail = details[x.InventoryBatchDetailId];
+                var material = materials[x.WorkOrderMaterialId];
+                postedByDetail.TryGetValue(detail.Id, out var movement);
+                var unitCost = movement?.UnitCost ?? detail.UnitPrice ?? 0m;
+                return new ProductionMaterialIssueDocumentLine
+                {
+                    WorkOrderMaterialId = x.WorkOrderMaterialId, InventoryLineNo = x.InventoryTrxLineNo,
+                    FromBalLocId = detail.FromBalLocId ?? 0,
+                    ItemCode = material.ComponentCode, IssueQty = x.IssueQty, Uom = material.RequiredUom ?? string.Empty,
+                    BaseQty = x.BaseQty, BaseUom = material.BaseUom ?? string.Empty,
+                    Warehouse = detail.FrWarehouse ?? string.Empty, Location = detail.FrLocation ?? string.Empty,
+                    LotNo = detail.FrLotNo ?? string.Empty, ItemStatus = detail.IStatus ?? string.Empty,
+                    UnitCost = canViewCost ? unitCost : null, TotalCost = canViewCost ? IvQty.Round(x.BaseQty * unitCost) : null
+                };
+            }).ToList();
+        }
+        else
+        {
+            documentLines = movements.Select(x => new ProductionMaterialIssueDocumentLine
+            {
+                WorkOrderMaterialId = x.WorkOrderMaterialId, InventoryLineNo = x.InventoryTrxLineNo,
+                FromBalLocId = x.FromBalLocId,
+                ItemCode = x.ItemCode, IssueQty = x.Qty, Uom = x.Uom, BaseQty = x.BaseQty,
+                BaseUom = x.BaseUom, Warehouse = x.WarehouseCode, Location = x.LocationCode,
+                LotNo = x.LotNo, ItemStatus = x.ItemStatus, UnitCost = canViewCost ? x.UnitCost : null,
+                TotalCost = canViewCost ? x.TotalCost : null
+            }).ToList();
+        }
 
         return IvMasterOperationResult<ProductionMaterialIssueDocument>.Ok(new ProductionMaterialIssueDocument
         {
             BatchNo = batch.BatchNo,
             IssueDate = batch.TrxDtTime,
+            RefNo = batch.RefNo,
             Status = batch.BatchStatus,
             WorkOrderNo = order.WorkOrderNo,
             ProductCode = order.ProductCode,
             ProductDescription = order.ProductDescription,
             PlannedQty = order.PlannedQty,
             OutputUom = order.OutputUom,
+            WorkOrderId = order.Uid,
+            WorkOrderOperationId = mapRows.Select(x => x.WorkOrderOperationId).FirstOrDefault(),
+            SnapshotRevision = link.SnapshotRevision,
+            SnapshotHash = link.SnapshotHash,
             Remark = batch.Remarks,
             PostedBy = batch.PostedBy,
             PostedDate = batch.PostedDate,
             RollbackDate = batch.RollbackDate,
             CanViewCost = canViewCost,
-            Lines = movements.Select(x => new ProductionMaterialIssueDocumentLine
-            {
-                WorkOrderMaterialId = x.WorkOrderMaterialId,
-                InventoryLineNo = x.InventoryTrxLineNo,
-                ItemCode = x.ItemCode,
-                IssueQty = x.Qty,
-                Uom = x.Uom,
-                BaseQty = x.BaseQty,
-                BaseUom = x.BaseUom,
-                Warehouse = x.WarehouseCode,
-                Location = x.LocationCode,
-                LotNo = x.LotNo,
-                ItemStatus = x.ItemStatus,
-                UnitCost = canViewCost ? x.UnitCost : null,
-                TotalCost = canViewCost ? x.TotalCost : null
-            }).ToList()
+            Lines = documentLines
         });
     }
 

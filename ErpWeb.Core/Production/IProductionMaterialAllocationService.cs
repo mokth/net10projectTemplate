@@ -31,6 +31,9 @@ public sealed class ProductionMaterialStockCandidate
     public DateTime? ExpiryDate { get; init; }
     public DateTime? StockDate { get; init; }
     public decimal AvailableBaseQty { get; init; }
+    public decimal CurrentBaseQty { get; init; }
+    public decimal AsOfBaseQty { get; init; }
+    public decimal UsableBaseQty { get; init; }
     public string BaseUom { get; init; } = string.Empty;
     public decimal SuggestedBaseQty { get; init; }
     public decimal? UnitPrice { get; init; }

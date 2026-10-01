@@ -17,6 +17,8 @@ public class ProductionPostingLink
     public string? ProductionDocumentNo { get; set; }
     public long? ProductionDocumentLineId { get; set; }
     public int? InventoryBatchNo { get; set; }
+    public int? SnapshotRevision { get; set; }
+    public string? SnapshotHash { get; set; }
     public string? PostingOperationId { get; set; }
     public long? OriginalPostingLinkId { get; set; }
     public ProductionPostingLink? OriginalPostingLink { get; set; }

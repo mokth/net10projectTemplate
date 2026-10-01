@@ -1,0 +1,74 @@
+<DxPopup HeaderText="Process BOM calculation" CloseOnOutsideClick="false" Width="1050px"
+         CssClass="common-popup" Visible="@Visible" VisibleChanged="@OnVisibleChanged">
+    <Content>
+        @if (Operation is not null)
+        {
+            <div class="row g-3 mb-3">
+                <div class="col-md-3"><label>Work Order</label><div class="form-control bg-light">@Operation.WorkOrderNo</div></div>
+                <div class="col-md-3"><label>Process</label><div class="form-control bg-light">@Operation.OperationCode</div></div>
+                <div class="col-md-3"><label>Operation planned output</label><div class="form-control bg-light">@Operation.PlannedOutputQty.ToString("n4") @Operation.PlannedOutputUom</div></div>
+                <div class="col-md-3"><label>Production Qty for This Issue</label><InputNumber TValue="decimal" class="form-control" @bind-Value="ProductionQty" min="0" step="0.0001" /></div>
+            </div>
+            <p class="text-muted">Used only to calculate suggested material quantity for this issue. It does not record production output.</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(DialogError)) { <div class="alert alert-danger">@DialogError</div> }
+        @if (Preview is not null)
+        {
+            <div class="table-responsive"><table class="table table-sm align-middle">
+                <thead><tr><th>Material</th><th>Requested for this issue</th><th>Available to draft</th><th>Suggested issue</th><th>Status</th></tr></thead>
+                <tbody>@foreach (var line in Preview.Lines)
+                {
+                    <tr class="@(!line.CanManualIssue ? "table-light text-muted" : null)">
+                        <td><strong>@line.ItemCode</strong></td><td class="text-end">@line.RequestedMaterialQty.ToString("n4")</td>
+                        <td class="text-end">@line.AvailableToDraft.ToString("n4")</td><td class="text-end">@line.SuggestedIssueQty.ToString("n4")</td>
+                        <td>@(line.CanManualIssue ? "Ready" : line.BlockingReason)</td>
+                    </tr>
+                }</tbody>
+            </table></div>
+        }
+    </Content>
+    <FooterContentTemplate><div class="d-flex gap-2 justify-content-end w-100">
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Calculate" Click="@CalculateAsync" Enabled="@(!IsLoading)" />
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CloseAsync" />
+        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply Suggestions" Click="@ApplyAsync" Enabled="@(Preview is not null && !IsLoading)" />
+    </div></FooterContentTemplate>
+</DxPopup>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public ProductionMaterialIssueOperationRow? Operation { get; set; }
+    [Parameter] public DateTime TrxDateTime { get; set; }
+    [Parameter] public EventCallback<IReadOnlyDictionary<long, decimal>> Applied { get; set; }
+    [Inject] private IProductionMaterialIssueService MaterialIssues { get; set; } = default!;
+    private decimal ProductionQty;
+    private bool IsLoading;
+    private string? DialogError;
+    private ProductionMaterialIssueBomPreview? Preview;
+    private long? _operationId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || Operation is null || _operationId == Operation.WorkOrderOperationId) return;
+        _operationId = Operation.WorkOrderOperationId; ProductionQty = Operation.PlannedOutputQty; Preview = null;
+        await CalculateAsync();
+    }
+    private async Task CalculateAsync()
+    {
+        if (Operation is null) return;
+        IsLoading = true; DialogError = null;
+        var result = await MaterialIssues.GetBomPreviewAsync(Operation.WorkOrderOperationId, ProductionQty, TrxDateTime);
+        if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to calculate Process BOM.";
+        else Preview = result.Data;
+        IsLoading = false;
+    }
+    private async Task ApplyAsync()
+    {
+        if (Preview is null) return;
+        await Applied.InvokeAsync(Preview.Lines.Where(x => x.CanManualIssue && x.SuggestedIssueQty > 0m)
+            .ToDictionary(x => x.WorkOrderMaterialId, x => x.SuggestedIssueQty));
+        await CloseAsync();
+    }
+    private async Task CloseAsync() { _operationId = null; await VisibleChanged.InvokeAsync(false); }
+    private Task OnVisibleChanged(bool value) => VisibleChanged.InvokeAsync(value);
+}

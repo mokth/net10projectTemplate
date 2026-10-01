@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Timers;
 using DevExpress.Blazor;
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
@@ -25,6 +26,10 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
     protected string SearchText = string.Empty;
     protected int TotalCount;
     protected bool CanAdd;
+    protected bool CanPost;
+    protected bool CanEdit;
+    protected bool CanCancel;
+    protected bool CanDelete;
     protected List<ProductionMaterialIssueListRow> CompactRows { get; set; } = [];
     protected ProductionMaterialIssueGridDataSource DataSource { get; private set; } = default!;
     protected string? AppliedWorkOrderNo;
@@ -45,7 +50,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
         || AppliedBatchNo.HasValue || AppliedDateFrom.HasValue || AppliedDateTo.HasValue;
     protected IReadOnlyList<FilterOption> StatusOptions { get; } =
     [
-        new(string.Empty, "All statuses"), new("POSTED", "Posted"), new("CANCELLED", "Reversed")
+        new(string.Empty, "All statuses"), new("NEW", "New"), new("POSTED", "Posted"), new("CANCELLED", "Cancelled")
     ];
     protected List<GridColumnData> Columns { get; } =
     [
@@ -67,11 +72,18 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
     {
         DataSource = new ProductionMaterialIssueGridDataSource(LoadPageAsync);
         CanAdd = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
+        CanPost = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Post);
+        CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Edit);
+        CanCancel = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Cancel);
+        CanDelete = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Delete);
         Buttons = [new() { Text = "NEW ISSUE", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd }];
         ActionButtons =
         [
             new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View" },
-            new() { Text = "ROLLBACK", IConClass = "fas fa-rotate-left", Style = "warning", ToolTip = "Rollback is enabled in Phase 7", Enabled = false }
+            new() { Text = "EDIT", IConClass = "fas fa-pen", Style = "secondary", ToolTip = "Edit NEW draft", Enabled = CanEdit },
+            new() { Text = "POST", IConClass = "fas fa-check", Style = "success", ToolTip = "Post NEW draft", Enabled = CanPost },
+            new() { Text = "CANCEL", IConClass = "fas fa-ban", Style = "warning", ToolTip = "Cancel NEW draft", Enabled = CanCancel },
+            new() { Text = "DELETE", IConClass = "fas fa-trash", Style = "danger", ToolTip = "Delete NEW draft", Enabled = CanDelete }
         ];
         SyncFilters();
         await RefreshCompactAsync();
@@ -84,12 +96,31 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
         if (CanAdd) Navigation.NavigateTo("/planning/material-issues/new"); else StatusMessage = "Access denied.";
         return Task.CompletedTask;
     }
-    protected Task OnActionClick(SelectedButtonInfo<ProductionMaterialIssueListRow> info)
+    protected async Task OnActionClick(SelectedButtonInfo<ProductionMaterialIssueListRow> info)
     {
-        if (info.SelectedRow is { } row && string.Equals(info.SelectedButton.Text, "VIEW", StringComparison.OrdinalIgnoreCase)) OpenView(row.BatchNo);
-        return Task.CompletedTask;
+        if (info.SelectedRow is not { } row) return;
+        var action = info.SelectedButton.Text.ToUpperInvariant();
+        if (action == "VIEW") { OpenView(row.BatchNo); return; }
+        if (action == "EDIT")
+        {
+            if (row.Status == "NEW") Navigation.NavigateTo($"/planning/material-issues/edit/{row.BatchNo}");
+            else ErrorMessage = "Only NEW drafts can be edited.";
+            return;
+        }
+        if (row.Status != "NEW") { ErrorMessage = $"Only NEW drafts can be {action.ToLowerInvariant()}ed."; return; }
+        IvMasterOperationResult<ProductionMaterialIssueBatchActionResult> result = action switch
+        {
+            "POST" => await MaterialIssues.PostAsync([row.BatchNo]),
+            "CANCEL" => await MaterialIssues.CancelAsync([row.BatchNo]),
+            "DELETE" => await MaterialIssues.DeleteAsync([row.BatchNo]),
+            _ => IvMasterOperationResult<ProductionMaterialIssueBatchActionResult>.Fail(IvMasterErrorCode.Validation, "Unsupported action.")
+        };
+        if (!result.Succeeded || result.Data?.FailedCount > 0)
+            ErrorMessage = result.Message ?? result.Data?.Batches.FirstOrDefault(x => !x.Succeeded)?.Message ?? $"Unable to {action.ToLowerInvariant()} draft.";
+        else StatusMessage = action == "POST" ? $"IP {row.BatchNo} posted." : $"IP {row.BatchNo} {action.ToLowerInvariant()}d.";
+        await ReloadAsync();
     }
-    protected void OpenView(int batchNo) => Navigation.NavigateTo($"/planning/material-issues/{batchNo}");
+    protected void OpenView(int batchNo) => Navigation.NavigateTo($"/planning/material-issues/view/{batchNo}");
     protected void OpenFilterPopup()
     {
         DraftWorkOrderNo = AppliedWorkOrderNo ?? string.Empty; DraftProductCode = AppliedProductCode ?? string.Empty;

@@ -109,6 +109,12 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty),
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty),
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty)));
+        var draftRows = await (from map in db.ProductionMaterialIssueLines.AsNoTracking()
+            join link in db.ProductionPostingLinks.AsNoTracking() on map.PostingLinkId equals link.Uid
+            join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id
+            where materialIds.Contains(map.WorkOrderMaterialId)
+                && link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New
+            select new { map.WorkOrderMaterialId, map.IssueQty }).ToListAsync(cancellationToken);
 
         var itemCodes = materialEntities.Select(x => x.ComponentCode).Distinct().ToList();
         var stockMasters = await db.IvStockMasters.AsNoTracking()
@@ -143,6 +149,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             var issued = ProductionMaterialExecutionCalc.MovementEffectiveIssue(movement.Issue, movement.IssueReversal);
             var returned = IvQty.Round(movement.Returned);
             var netIssued = ProductionWorkOrderCalc.NetIssuedQty(issued, returned);
+            var otherOpenDraft = IvQty.Round(draftRows.Where(x => x.WorkOrderMaterialId == material.Uid).Sum(x => x.IssueQty));
+            var maxAllowed = ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance);
+            var availableToDraft = IvQty.Round(Math.Max(maxAllowed - netIssued - otherOpenDraft, 0m));
             var outstanding = ProductionMaterialExecutionCalc.Outstanding(material.RequiredQty, issued, returned);
             var availableQty = material.ConversionFactorToBase > 0m
                 ? ProductionMaterialExecutionCalc.IssueQtyForBaseQty(availableBaseQty, material.ConversionFactorToBase)
@@ -170,7 +179,10 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 ConsumedQty = IvQty.Round(movement.Consumed),
                 OutstandingQty = outstanding,
                 TolerancePercent = material.Tolerance,
-                MaxAllowedNetIssue = ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance),
+                MaxAllowedNetIssue = maxAllowed,
+                OtherOpenDraftQty = otherOpenDraft,
+                StandardRemaining = IvQty.Round(Math.Max(material.RequiredQty - netIssued, 0m)),
+                AvailableToDraft = availableToDraft,
                 AvailableBaseQty = availableBaseQty,
                 AvailableQty = availableQty,
                 ShortageQty = IvQty.Round(Math.Max(outstanding - availableQty, 0m)),
@@ -196,6 +208,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 OperationCode = x.OperationCode,
                 OperationDescription = x.OperationDescription,
                 WorkCentreCode = x.WorkCentreCode
+                ,PlannedOutputQty = x.PlannedOutputQty
+                ,PlannedOutputUom = x.PlannedOutputUom
             }).ToList();
         var routeIds = operations.Where(x => x.RouteStepId.HasValue).Select(x => x.RouteStepId!.Value).ToHashSet();
         var routeSteps = order.RouteSteps
@@ -220,7 +234,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             OutputUom = order.OutputUom,
             SnapshotRevision = order.SnapshotRevision,
             SnapshotHash = order.SnapshotHash,
-            IssueDate = _clock.Today,
+            IssueDate = _clock.Now,
             RouteSteps = routeSteps,
             Operations = operations,
             Materials = materials,

@@ -18,10 +18,11 @@ public partial class PrMaterialIssueEntry : PageBase
     protected bool IsLoading = true;
     protected bool IsSubmitting;
     protected bool AllocationVisible;
+    protected bool BomVisible;
     protected bool PostConfirmationVisible;
     protected bool ShowShortageOnly;
     protected bool CanAdd;
-    protected bool CanPost;
+    protected bool CanEdit;
     protected string? StatusMessage;
     protected string WorkOrderInput = string.Empty;
     protected string Remark = string.Empty;
@@ -30,18 +31,28 @@ public partial class PrMaterialIssueEntry : PageBase
     protected DateTime IssueDate;
     protected ProductionMaterialIssueWorkspace? Workspace;
     protected ProductionMaterialIssueDocument? Document;
+    protected List<ProductionMaterialIssueOperationRow> OperationRows { get; set; } = [];
+    protected ProductionMaterialIssueOperationRow? SelectedOperationRow;
+    protected string SearchWo = string.Empty;
+    protected string SearchProduct = string.Empty;
+    protected string SearchWorkCentre = string.Empty;
+    protected string SearchProcess = string.Empty;
+    protected string SearchOutputItem = string.Empty;
+    protected string SearchRawMaterial = string.Empty;
+    protected string SearchMachine = string.Empty;
     protected List<MaterialLineVm> Lines { get; set; } = [];
     protected MaterialLineVm? AllocationLine;
     protected List<string> PostWarnings { get; set; } = [];
     private string? _loadedKey;
     private string? _postingRequestId;
 
-    protected bool IsViewMode => BatchNo is > 0;
-    protected string PageHeading => IsViewMode ? "View Issue to Production" : "New Issue to Production";
+    protected bool IsEditMode => BatchNo is > 0 && Navigation.Uri.Contains("/edit/", StringComparison.OrdinalIgnoreCase);
+    protected bool IsViewMode => BatchNo is > 0 && !IsEditMode;
+    protected string PageHeading => IsViewMode ? "View Issue to Production" : IsEditMode ? "Edit Issue to Production" : "New Issue to Production";
     protected string HeaderStatus => IsViewMode ? Document?.Status ?? "View" : Workspace?.Status ?? "Draft";
     protected int SelectedLineCount => IsViewMode ? Document?.Lines.Select(x => x.WorkOrderMaterialId).Distinct().Count() ?? 0 : Lines.Count(x => x.IssueQty > 0m);
     protected int AllocationRowCount => Lines.Where(x => x.IssueQty > 0m).Sum(x => x.Allocations.Count);
-    protected bool CanPostDocument => Workspace is not null && CanAdd && CanPost && Lines.Any(x => x.IssueQty > 0m);
+    protected bool CanSaveDocument => Workspace is not null && (IsEditMode ? CanEdit : CanAdd) && Lines.Any(x => x.IssueQty > 0m);
     protected IEnumerable<string> WorkCentreOptions => Workspace?.Operations.Select(x => x.WorkCentreCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().OrderBy(x => x) ?? Enumerable.Empty<string>();
     protected IEnumerable<ProductionMaterialIssueOperation> OperationOptions => Workspace?.Operations.Where(x => string.IsNullOrWhiteSpace(SelectedWorkCentre) || x.WorkCentreCode == SelectedWorkCentre).OrderBy(x => x.ProcessSequence) ?? Enumerable.Empty<ProductionMaterialIssueOperation>();
     protected IEnumerable<MaterialLineVm> VisibleLines => Lines.Where(x => (!SelectedOperationId.HasValue || x.Material.WorkOrderOperationId == SelectedOperationId)
@@ -56,8 +67,9 @@ public partial class PrMaterialIssueEntry : PageBase
         if (_loadedKey == key) return;
         _loadedKey = key; IsLoading = true; ErrorMessage = null;
         CanAdd = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
-        CanPost = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Post);
+        CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Edit);
         if (IsViewMode) await LoadDocumentAsync();
+        else if (IsEditMode) await LoadEditAsync();
         else
         {
             WorkOrderInput = WorkOrderNo ?? string.Empty;
@@ -67,15 +79,50 @@ public partial class PrMaterialIssueEntry : PageBase
     }
 
     protected Task LoadWorkspaceFromInputAsync() => LoadWorkspaceAsync(WorkOrderInput);
+    protected async Task SearchOperationsAsync()
+    {
+        IsSubmitting = true; ErrorMessage = null;
+        try
+        {
+            var result = await MaterialIssues.SearchEligibleOperationsAsync(new ProductionMaterialIssueOperationQuery
+            {
+                WorkOrderNo = SearchWo, Product = SearchProduct, WorkCentre = SearchWorkCentre,
+                Process = SearchProcess, OutputItem = SearchOutputItem, RawMaterial = SearchRawMaterial,
+                Machine = SearchMachine, Take = 50
+            });
+            if (!result.Succeeded || result.Data is null) ErrorMessage = result.Message ?? "Unable to search eligible operations.";
+            else OperationRows = result.Data.Rows.ToList();
+        }
+        finally { IsSubmitting = false; }
+    }
+    protected async Task ApplyOperationAsync(ProductionMaterialIssueOperationRow operation)
+    {
+        var result = await MaterialIssues.GetWorkspaceAsync(operation.WorkOrderNo, operation.WorkOrderOperationId);
+        if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to load operation."; return; }
+        SelectedOperationRow = operation; Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
+        IssueDate = result.Data.IssueDate; SelectedOperationId = operation.WorkOrderOperationId;
+        SelectedWorkCentre = operation.WorkCentreCode ?? string.Empty; Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
+    }
+    protected void OpenBom() { if (SelectedOperationRow is not null) BomVisible = true; }
+    protected Task ApplyBomSuggestions(IReadOnlyDictionary<long, decimal> suggestions)
+    {
+        foreach (var line in Lines)
+        {
+            line.IssueQty = suggestions.GetValueOrDefault(line.Material.WorkOrderMaterialId);
+            line.Allocations = [];
+        }
+        return Task.CompletedTask;
+    }
     private async Task LoadWorkspaceAsync(string workOrderNo)
     {
         ErrorMessage = null;
         if (!CanAdd) { ErrorMessage = "You do not have permission to create material issues."; return; }
         var result = await MaterialIssues.GetWorkspaceAsync(workOrderNo);
         if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to load Work Order."; return; }
-        Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo; IssueDate = result.Data.IssueDate.Date;
+        Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo; IssueDate = result.Data.IssueDate;
         Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
-        SelectedWorkCentre = string.Empty; SelectedOperationId = null; Remark = string.Empty; _postingRequestId = null;
+        SelectedWorkCentre = string.Empty; SelectedOperationId = result.Data.Operations.OrderBy(x => x.ProcessSequence).Select(x => (long?)x.WorkOrderOperationId).FirstOrDefault(); Remark = string.Empty; _postingRequestId = null;
+        if (SelectedOperationId.HasValue) SelectedOperationRow = ToOperationRow(result.Data, result.Data.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId.Value));
     }
     private async Task LoadDocumentAsync()
     {
@@ -83,10 +130,31 @@ public partial class PrMaterialIssueEntry : PageBase
         if (!result.Succeeded || result.Data is null) ErrorMessage = result.Message ?? "Unable to load material issue.";
         else Document = result.Data;
     }
-    protected void ClearWorkspace() { Workspace = null; Lines = []; WorkOrderInput = string.Empty; SelectedWorkCentre = string.Empty; SelectedOperationId = null; _postingRequestId = null; }
+    private async Task LoadEditAsync()
+    {
+        if (!CanEdit) { ErrorMessage = "You do not have permission to edit material issues."; return; }
+        var documentResult = await MaterialIssues.GetAsync(BatchNo!.Value);
+        if (!documentResult.Succeeded || documentResult.Data is null) { ErrorMessage = documentResult.Message ?? "Unable to load draft."; return; }
+        if (documentResult.Data.Status != "NEW") { ErrorMessage = "Only NEW drafts can be edited."; return; }
+        Document = documentResult.Data;
+        var workspaceResult = await MaterialIssues.GetWorkspaceAsync(Document.WorkOrderNo, Document.WorkOrderOperationId);
+        if (!workspaceResult.Succeeded || workspaceResult.Data is null) { ErrorMessage = workspaceResult.Message ?? "Unable to load Work Order."; return; }
+        Workspace = workspaceResult.Data; WorkOrderInput = Workspace.WorkOrderNo; IssueDate = Document.IssueDate; Remark = Document.Remark ?? string.Empty;
+        SelectedOperationId = Document.WorkOrderOperationId;
+        SelectedOperationRow = ToOperationRow(Workspace, Workspace.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId));
+        Lines = Workspace.Materials.Select(x => new MaterialLineVm(x)).ToList();
+        foreach (var group in Document.Lines.GroupBy(x => x.WorkOrderMaterialId))
+        {
+            var line = Lines.Single(x => x.Material.WorkOrderMaterialId == group.Key);
+            line.IssueQty = IvQty.Round(group.Sum(x => x.IssueQty));
+            line.OriginalIssueQty = line.IssueQty;
+            line.Allocations = group.Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.BaseQty }).ToList();
+        }
+    }
+    protected void ClearWorkspace() { Workspace = null; Lines = []; WorkOrderInput = string.Empty; SelectedWorkCentre = string.Empty; SelectedOperationId = null; SelectedOperationRow = null; _postingRequestId = null; }
     protected void AutoFillOutstanding()
     {
-        foreach (var line in VisibleLines.Where(x => x.Material.CanManualIssue)) { line.IssueQty = IvQty.Round(Math.Min(line.Material.OutstandingQty, line.Material.AvailableQty)); line.Allocations = []; }
+        foreach (var line in VisibleLines.Where(x => x.Material.CanManualIssue)) { line.IssueQty = IvQty.Round(Math.Min(line.Material.OutstandingQty, Math.Min(line.Material.AvailableToDraft + line.OriginalIssueQty, line.Material.AvailableQty))); line.Allocations = []; }
     }
     protected async Task AllocateAllAsync()
     {
@@ -119,31 +187,37 @@ public partial class PrMaterialIssueEntry : PageBase
     private string? ValidatePosting()
     {
         if (Workspace is null) return "Load a Work Order first.";
-        var selected = Lines.Where(x => x.IssueQty > 0m).ToList();
+        if (!SelectedOperationId.HasValue) return "Select one operation for this material issue.";
+        var selected = Lines.Where(x => x.IssueQty > 0m && x.Material.WorkOrderOperationId == SelectedOperationId.Value).ToList();
         if (selected.Count == 0) return "Enter an issue quantity for at least one material.";
         foreach (var line in selected)
         {
             if (!line.Material.CanManualIssue) return $"{line.Material.ComponentCode} cannot be issued manually.";
-            if (line.Material.NetIssuedQty + line.IssueQty > line.Material.MaxAllowedNetIssue) return $"{line.Material.ComponentCode} exceeds its permitted tolerance.";
+            if (line.IssueQty > line.Material.AvailableToDraft + line.OriginalIssueQty) return $"{line.Material.ComponentCode} exceeds its available draft allowance.";
             var expected = IvQty.Round(line.IssueQty * line.Material.ConversionFactorToBase);
             if (Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty)) - expected) > 0.0001m) return $"Allocate exactly {expected:n4} {line.Material.BaseUom} for {line.Material.ComponentCode}.";
         }
         return null;
     }
-    protected async Task PostAsync()
+    protected async Task SaveAsync()
     {
         var validation = ValidatePosting(); if (validation is not null) { ErrorMessage = validation; PostConfirmationVisible = false; return; }
         _postingRequestId ??= Guid.NewGuid().ToString("N"); IsSubmitting = true; ErrorMessage = null;
         try
         {
-            var result = await MaterialIssues.PostAsync(new ProductionMaterialIssuePostRequest
+            var request = new ProductionMaterialIssueSaveRequest
             {
-                PostingRequestId = _postingRequestId, WorkOrderNo = Workspace!.WorkOrderNo, SnapshotRevision = Workspace.SnapshotRevision,
-                SnapshotHash = Workspace.SnapshotHash, IssueDate = IssueDate, Remark = Remark,
-                Lines = Lines.Where(x => x.IssueQty > 0m).Select(x => new ProductionMaterialIssueLineRequest { WorkOrderMaterialId = x.Material.WorkOrderMaterialId, IssueQty = IvQty.Round(x.IssueQty), Allocations = x.Allocations }).ToList()
-            });
-            if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to post material issue."; return; }
-            PostConfirmationVisible = false; Navigation.NavigateTo($"/planning/material-issues/{result.Data.BatchNo}");
+                WorkOrderNo = Workspace!.WorkOrderNo, WorkOrderOperationId = SelectedOperationId!.Value,
+                SnapshotRevision = Workspace.SnapshotRevision, SnapshotHash = Workspace.SnapshotHash,
+                TrxDateTime = IssueDate, RefNo = "AUTO", Remark = Remark,
+                Lines = Lines.Where(x => x.IssueQty > 0m && x.Material.WorkOrderOperationId == SelectedOperationId.Value)
+                    .Select(x => new ProductionMaterialIssueLineRequest { WorkOrderMaterialId = x.Material.WorkOrderMaterialId, IssueQty = IvQty.Round(x.IssueQty), Allocations = x.Allocations }).ToList()
+            };
+            var result = IsEditMode
+                ? await MaterialIssues.UpdateAsync(BatchNo!.Value, request)
+                : await MaterialIssues.CreateAsync(request);
+            if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to save material issue draft."; return; }
+            Navigation.NavigateTo($"/planning/material-issues/view/{result.Data.BatchNo}");
         }
         finally { IsSubmitting = false; }
     }
@@ -155,7 +229,18 @@ public partial class PrMaterialIssueEntry : PageBase
     {
         public MaterialLineVm(ProductionMaterialIssueMaterial material) => Material = material;
         public ProductionMaterialIssueMaterial Material { get; }
-        public decimal IssueQty { get; set; }
+        private decimal _issueQty;
+        public decimal IssueQty { get => _issueQty; set { if (_issueQty != value) Allocations = []; _issueQty = value; } }
+        public decimal OriginalIssueQty { get; set; }
         public List<ProductionMaterialIssueAllocationRequest> Allocations { get; set; } = [];
     }
+
+    private static ProductionMaterialIssueOperationRow ToOperationRow(ProductionMaterialIssueWorkspace workspace, ProductionMaterialIssueOperation operation) => new()
+    {
+        WorkOrderOperationId = operation.WorkOrderOperationId, WorkOrderNo = workspace.WorkOrderNo,
+        ProductCode = workspace.ProductCode, ProductDescription = workspace.ProductDescription,
+        WorkCentreCode = operation.WorkCentreCode, OperationCode = operation.OperationCode,
+        OperationDescription = operation.OperationDescription, OutputItemCode = workspace.ProductCode,
+        PlannedOutputQty = operation.PlannedOutputQty, PlannedOutputUom = operation.PlannedOutputUom
+    };
 }

@@ -89,6 +89,8 @@ public static class ProductionChangeOrderStatuses
 
 public static class ProductionPostingLinkStatuses
 {
+    public const string Draft = "DRAFT";
+    public const string Cancelled = "CANCELLED";
     public const string Pending = "PENDING";
     public const string Succeeded = "SUCCEEDED";
     public const string Failed = "FAILED";

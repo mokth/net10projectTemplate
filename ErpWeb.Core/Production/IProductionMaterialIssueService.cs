@@ -8,6 +8,23 @@ namespace ErpWeb.Core.Production;
 /// </summary>
 public interface IProductionMaterialIssueService
 {
+    Task<IvMasterOperationResult<int>> PeekNextBatchNoAsync(CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueSaveResult>> CreateAsync(
+        ProductionMaterialIssueSaveRequest request, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueSaveResult>> UpdateAsync(
+        int batchNo, ProductionMaterialIssueSaveRequest request, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueBatchActionResult>> DeleteAsync(
+        IReadOnlyList<int> batchNos, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueBatchActionResult>> CancelAsync(
+        IReadOnlyList<int> batchNos, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueBatchActionResult>> PostAsync(
+        IReadOnlyList<int> batchNos, CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<ProductionMaterialIssueListPage>> SearchAsync(
         ProductionMaterialIssueListQuery query,
         CancellationToken cancellationToken = default);
@@ -21,6 +38,13 @@ public interface IProductionMaterialIssueService
         long? operationId = null,
         CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<ProductionMaterialIssueOperationPage>> SearchEligibleOperationsAsync(
+        ProductionMaterialIssueOperationQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionMaterialIssueBomPreview>> GetBomPreviewAsync(
+        long workOrderOperationId, decimal productionQtyThisIssue, DateTime trxDateTime,
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<ProductionMaterialIssuePostResult>> PostAsync(
         ProductionMaterialIssuePostRequest request,
         CancellationToken cancellationToken = default);
@@ -28,6 +52,39 @@ public interface IProductionMaterialIssueService
     Task<IvMasterOperationResult<ProductionMaterialIssueRollbackResult>> RollbackAsync(
         ProductionMaterialIssueRollbackRequest request,
         CancellationToken cancellationToken = default);
+}
+
+public sealed class ProductionMaterialIssueSaveRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public long WorkOrderOperationId { get; set; }
+    public int SnapshotRevision { get; set; }
+    public string SnapshotHash { get; set; } = string.Empty;
+    public DateTime TrxDateTime { get; set; }
+    public string? RefNo { get; set; }
+    public string? Remark { get; set; }
+    public IReadOnlyList<ProductionMaterialIssueLineRequest> Lines { get; set; } = [];
+}
+
+public sealed class ProductionMaterialIssueSaveResult
+{
+    public int BatchNo { get; init; }
+    public string PostingRequestId { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+}
+
+public sealed class ProductionMaterialIssueBatchActionResult
+{
+    public int SucceededCount { get; init; }
+    public int FailedCount { get; init; }
+    public IReadOnlyList<ProductionMaterialIssueBatchActionItem> Batches { get; init; } = [];
+}
+
+public sealed class ProductionMaterialIssueBatchActionItem
+{
+    public int BatchNo { get; init; }
+    public bool Succeeded { get; init; }
+    public string? Message { get; init; }
 }
 
 public sealed class ProductionMaterialIssueListQuery
@@ -69,12 +126,17 @@ public sealed class ProductionMaterialIssueDocument
 {
     public int BatchNo { get; init; }
     public DateTime IssueDate { get; init; }
+    public string? RefNo { get; init; }
     public string Status { get; init; } = string.Empty;
     public string WorkOrderNo { get; init; } = string.Empty;
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
     public decimal PlannedQty { get; init; }
     public string? OutputUom { get; init; }
+    public long WorkOrderId { get; init; }
+    public long WorkOrderOperationId { get; init; }
+    public int? SnapshotRevision { get; init; }
+    public string? SnapshotHash { get; init; }
     public string? Remark { get; init; }
     public string? PostedBy { get; init; }
     public DateTime? PostedDate { get; init; }
@@ -85,6 +147,7 @@ public sealed class ProductionMaterialIssueDocument
 
 public sealed class ProductionMaterialIssueDocumentLine
 {
+    public int FromBalLocId { get; init; }
     public long WorkOrderMaterialId { get; init; }
     public short InventoryLineNo { get; init; }
     public string ItemCode { get; init; } = string.Empty;
@@ -134,6 +197,8 @@ public sealed class ProductionMaterialIssueOperation
     public string OperationCode { get; init; } = string.Empty;
     public string? OperationDescription { get; init; }
     public string? WorkCentreCode { get; init; }
+    public decimal PlannedOutputQty { get; init; }
+    public string? PlannedOutputUom { get; init; }
 }
 
 public sealed class ProductionMaterialIssueMaterial
@@ -158,12 +223,68 @@ public sealed class ProductionMaterialIssueMaterial
     public decimal OutstandingQty { get; init; }
     public decimal TolerancePercent { get; init; }
     public decimal MaxAllowedNetIssue { get; init; }
+    public decimal OtherOpenDraftQty { get; init; }
+    public decimal StandardRemaining { get; init; }
+    public decimal AvailableToDraft { get; init; }
     public decimal AvailableBaseQty { get; init; }
     public decimal AvailableQty { get; init; }
     public decimal ShortageQty { get; init; }
     public string? WarehouseCode { get; init; }
     public string? LocationCode { get; init; }
     public bool LotControl { get; init; }
+    public bool CanManualIssue { get; init; }
+    public string? BlockingReason { get; init; }
+}
+
+public sealed class ProductionMaterialIssueOperationQuery
+{
+    public string? WorkOrderNo { get; set; }
+    public string? Product { get; set; }
+    public string? WorkCentre { get; set; }
+    public string? Process { get; set; }
+    public string? OutputItem { get; set; }
+    public string? RawMaterial { get; set; }
+    public string? Machine { get; set; }
+    public int Skip { get; set; }
+    public int Take { get; set; } = 20;
+}
+
+public sealed class ProductionMaterialIssueOperationPage
+{
+    public IReadOnlyList<ProductionMaterialIssueOperationRow> Rows { get; init; } = [];
+    public int TotalCount { get; init; }
+}
+
+public sealed class ProductionMaterialIssueOperationRow
+{
+    public long WorkOrderOperationId { get; init; }
+    public string WorkOrderNo { get; init; } = string.Empty;
+    public string ProductCode { get; init; } = string.Empty;
+    public string? ProductDescription { get; init; }
+    public string? WorkCentreCode { get; init; }
+    public string OperationCode { get; init; } = string.Empty;
+    public string? OperationDescription { get; init; }
+    public string? OutputItemCode { get; init; }
+    public string? SelectedMachineCode { get; init; }
+    public decimal PlannedOutputQty { get; init; }
+    public string? PlannedOutputUom { get; init; }
+}
+
+public sealed class ProductionMaterialIssueBomPreview
+{
+    public long WorkOrderOperationId { get; init; }
+    public decimal OperationPlannedOutputQty { get; init; }
+    public decimal ProductionQtyThisIssue { get; init; }
+    public IReadOnlyList<ProductionMaterialIssueBomPreviewLine> Lines { get; init; } = [];
+}
+
+public sealed class ProductionMaterialIssueBomPreviewLine
+{
+    public long WorkOrderMaterialId { get; init; }
+    public string ItemCode { get; init; } = string.Empty;
+    public decimal RequestedMaterialQty { get; init; }
+    public decimal SuggestedIssueQty { get; init; }
+    public decimal AvailableToDraft { get; init; }
     public bool CanManualIssue { get; init; }
     public string? BlockingReason { get; init; }
 }
