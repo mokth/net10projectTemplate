@@ -135,6 +135,10 @@ public sealed partial class ProductionMaterialIssueService
                 || balance.ICode != material.ComponentCode || balance.WhCode != material.WarehouseCode
                 || (!string.IsNullOrWhiteSpace(material.LocationCode) && balance.LocCode != material.LocationCode))
                 return DraftFail(IvMasterErrorCode.Validation, $"Stock balance {balance.Id} is not eligible for {material.ComponentCode}.");
+            if (!string.IsNullOrWhiteSpace(balance.StdUom)
+                && !string.Equals(balance.StdUom, material.BaseUom, StringComparison.OrdinalIgnoreCase))
+                return DraftFail(IvMasterErrorCode.Validation,
+                    $"Stock balance {balance.Id} UOM '{balance.StdUom}' does not match material base UOM '{material.BaseUom}'.");
             if (balance.StockMaster.LotControl && (balance.LotId is null || balance.Lot is null || !balance.Lot.IsActive
                 || string.IsNullOrWhiteSpace(balance.LotNo) || balance.Lot.ExpiryDate?.Date < request.TrxDateTime.Date))
                 return DraftFail(IvMasterErrorCode.Validation, $"Stock balance {balance.Id} has an invalid or expired lot.");

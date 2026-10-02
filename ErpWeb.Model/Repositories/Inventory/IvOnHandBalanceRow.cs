@@ -13,6 +13,7 @@ public sealed class IvOnHandBalanceRow
     public string? StdUom { get; init; }
     public string IStatus { get; init; } = string.Empty;
     public DateTime? ExpiryDate { get; init; }
+    public DateTime? TransDate { get; init; }
     public string? IClassCode { get; init; }
     public bool LotControl { get; init; }
     public decimal? PurchasePrice { get; init; }

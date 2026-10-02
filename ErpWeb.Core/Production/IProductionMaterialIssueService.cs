@@ -41,6 +41,9 @@ public interface IProductionMaterialIssueService
     Task<IvMasterOperationResult<ProductionMaterialIssueOperationPage>> SearchEligibleOperationsAsync(
         ProductionMaterialIssueOperationQuery query, CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<ProductionMaterialIssueFilterOptions>> GetEligibleOperationFilterOptionsAsync(
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<ProductionMaterialIssueBomPreview>> GetBomPreviewAsync(
         long workOrderOperationId, decimal productionQtyThisIssue, DateTime trxDateTime,
         CancellationToken cancellationToken = default);
@@ -245,6 +248,7 @@ public sealed class ProductionMaterialIssueOperationQuery
     public string? OutputItem { get; set; }
     public string? RawMaterial { get; set; }
     public string? Machine { get; set; }
+    public bool ExactMatch { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 20;
 }
@@ -254,6 +258,19 @@ public sealed class ProductionMaterialIssueOperationPage
     public IReadOnlyList<ProductionMaterialIssueOperationRow> Rows { get; init; } = [];
     public int TotalCount { get; init; }
 }
+
+public sealed class ProductionMaterialIssueFilterOptions
+{
+    public IReadOnlyList<ProductionMaterialIssueFilterChoice> WorkOrders { get; init; } = [];
+    public IReadOnlyList<string> Products { get; init; } = [];
+    public IReadOnlyList<string> WorkCentres { get; init; } = [];
+    public IReadOnlyList<ProductionMaterialIssueFilterChoice> Processes { get; init; } = [];
+    public IReadOnlyList<string> OutputItems { get; init; } = [];
+    public IReadOnlyList<string> RawMaterials { get; init; } = [];
+    public IReadOnlyList<string> Machines { get; init; } = [];
+}
+
+public sealed record ProductionMaterialIssueFilterChoice(string Code, string Label);
 
 public sealed class ProductionMaterialIssueOperationRow
 {
@@ -266,6 +283,7 @@ public sealed class ProductionMaterialIssueOperationRow
     public string? OperationDescription { get; init; }
     public string? OutputItemCode { get; init; }
     public string? SelectedMachineCode { get; init; }
+    public string RawMaterialCodes { get; set; } = string.Empty;
     public decimal PlannedOutputQty { get; init; }
     public string? PlannedOutputUom { get; init; }
 }

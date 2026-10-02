@@ -331,6 +331,7 @@ public class IvStockCountSqlServerConcurrencyTests
 
             var adjustment = new IvStockAdjustmentService(
                 factory, tenant, access.Object, new RunningNumberService(),
+                clock,
                 new IvStockMasterRepository(factory), common, new IvStockTransactionRepository(),
                 postingRepo, posting, NullLogger<IvStockAdjustmentService>.Instance);
 

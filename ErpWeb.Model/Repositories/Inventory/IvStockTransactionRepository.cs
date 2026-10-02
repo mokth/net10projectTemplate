@@ -158,14 +158,24 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
         {
             var detailRows = await db.IvTrxBatchDetails.AsNoTracking()
                 .Where(d => ids.Contains(d.BatchId))
-                .Select(d => new { d.BatchId, d.TrxType, d.ToStdQty, d.FrStdQty, d.UnitPrice })
+                .Select(d => new
+                {
+                    d.BatchId,
+                    d.TrxType,
+                    d.ToStdQty,
+                    d.FrStdQty,
+                    d.ToPurQty,
+                    d.FrPurQty,
+                    d.UnitPrice
+                })
                 .ToListAsync(cancellationToken);
 
             amountByBatchId = detailRows
                 .GroupBy(d => d.BatchId)
                 .ToDictionary(
                     g => g.Key,
-                    g => g.Sum(d => QtyForAmount(d.TrxType, d.ToStdQty, d.FrStdQty) * (d.UnitPrice ?? 0m)));
+                    g => g.Sum(d => QtyForAmount(d.TrxType, d.ToPurQty ?? d.ToStdQty, d.FrPurQty ?? d.FrStdQty)
+                                   * (d.UnitPrice ?? 0m)));
         }
 
         var rows = page.Select(x => new IvTrxBatchListRow
@@ -253,11 +263,15 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
             (nameof(IvTrxBatchListRow.CreatedDate), false) => query.OrderBy(x => x.CreatedDate).ThenBy(x => x.BatchNo),
             (nameof(IvTrxBatchListRow.TotalAmount), true) => query
                 .OrderByDescending(x => x.Details.Sum(d =>
-                    (d.TrxType == "MI" ? (d.FrStdQty ?? 0m) : (d.ToStdQty ?? 0m)) * (d.UnitPrice ?? 0m)))
+                    (d.TrxType == "MI"
+                        ? (d.FrPurQty ?? d.FrStdQty ?? 0m)
+                        : (d.ToPurQty ?? d.ToStdQty ?? 0m)) * (d.UnitPrice ?? 0m)))
                 .ThenByDescending(x => x.BatchNo),
             (nameof(IvTrxBatchListRow.TotalAmount), false) => query
                 .OrderBy(x => x.Details.Sum(d =>
-                    (d.TrxType == "MI" ? (d.FrStdQty ?? 0m) : (d.ToStdQty ?? 0m)) * (d.UnitPrice ?? 0m)))
+                    (d.TrxType == "MI"
+                        ? (d.FrPurQty ?? d.FrStdQty ?? 0m)
+                        : (d.ToPurQty ?? d.ToStdQty ?? 0m)) * (d.UnitPrice ?? 0m)))
                 .ThenBy(x => x.BatchNo),
             (nameof(IvTrxBatchListRow.LineCount), true) => query.OrderByDescending(x => x.Details.Count).ThenByDescending(x => x.BatchNo),
             (nameof(IvTrxBatchListRow.LineCount), false) => query.OrderBy(x => x.Details.Count).ThenBy(x => x.BatchNo),

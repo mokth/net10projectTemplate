@@ -144,6 +144,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
                 && x.StdQty > 0m
                 && x.StockMaster.IsActive
                 && x.StockMaster.StockControl
+                && (x.StdUom == null || x.StdUom == "" || x.StdUom == material.BaseUom)
                 && (!x.StockMaster.LotControl
                     || (x.LotId != null && x.Lot != null && x.Lot.IsActive && x.LotNo != ""
                         && (x.Lot.ExpiryDate == null || x.Lot.ExpiryDate.Value.Date >= issueDate.Date))))
@@ -167,12 +168,12 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
             raw.Select(x => x.FromBalLocId).ToArray(), issueDate, cancellationToken);
         foreach (var row in raw)
         {
-            if (!availability.TryGetValue(row.FromBalLocId, out var stock))
-                continue;
+            if (!availability.TryGetValue(row.FromBalLocId, out var stock)) continue;
             row.CurrentBaseQty = stock.CurrentBaseQty;
             row.AsOfBaseQty = stock.AsOfBaseQty;
             row.AvailableBaseQty = stock.UsableBaseQty;
         }
+
         raw.RemoveAll(x => x.AvailableBaseQty <= 0m);
 
         var ordered = raw

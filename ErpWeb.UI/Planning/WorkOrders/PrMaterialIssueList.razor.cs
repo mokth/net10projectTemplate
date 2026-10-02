@@ -22,6 +22,17 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
 
     protected bool IsBootstrapping = true;
     protected bool FilterPopupVisible;
+    protected bool ActionPopupVisible;
+    protected bool IsApplyingAction;
+    protected ProductionMaterialIssueListRow? PendingActionRow;
+    protected string PendingAction = string.Empty;
+    protected string PendingActionDescription => PendingAction switch
+    {
+        "POST" => "Posting moves stock and cannot be edited afterward.",
+        "CANCEL" => "Cancelling closes this NEW draft without moving stock.",
+        "DELETE" => "Deleting permanently removes this NEW draft.",
+        _ => string.Empty
+    };
     protected string? StatusMessage;
     protected string SearchText = string.Empty;
     protected int TotalCount;
@@ -107,7 +118,16 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
             else ErrorMessage = "Only NEW drafts can be edited.";
             return;
         }
-        if (row.Status != "NEW") { ErrorMessage = $"Only NEW drafts can be {action.ToLowerInvariant()}ed."; return; }
+        if (row.Status != "NEW") { ErrorMessage = "Only NEW drafts can be posted, cancelled, or deleted."; return; }
+        PendingActionRow = row; PendingAction = action; ActionPopupVisible = true;
+    }
+    protected async Task ConfirmActionAsync()
+    {
+        if (PendingActionRow is not { } row || IsApplyingAction) return;
+        IsApplyingAction = true; ErrorMessage = null;
+        var action = PendingAction;
+        try
+        {
         IvMasterOperationResult<ProductionMaterialIssueBatchActionResult> result = action switch
         {
             "POST" => await MaterialIssues.PostAsync([row.BatchNo]),
@@ -117,8 +137,11 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
         };
         if (!result.Succeeded || result.Data?.FailedCount > 0)
             ErrorMessage = result.Message ?? result.Data?.Batches.FirstOrDefault(x => !x.Succeeded)?.Message ?? $"Unable to {action.ToLowerInvariant()} draft.";
-        else StatusMessage = action == "POST" ? $"IP {row.BatchNo} posted." : $"IP {row.BatchNo} {action.ToLowerInvariant()}d.";
+        else StatusMessage = action switch { "POST" => $"IP {row.BatchNo} posted.", "CANCEL" => $"IP {row.BatchNo} cancelled.", _ => $"IP {row.BatchNo} deleted." };
+        ActionPopupVisible = false; PendingActionRow = null; PendingAction = string.Empty;
         await ReloadAsync();
+        }
+        finally { IsApplyingAction = false; }
     }
     protected void OpenView(int batchNo) => Navigation.NavigateTo($"/planning/material-issues/view/{batchNo}");
     protected void OpenFilterPopup()

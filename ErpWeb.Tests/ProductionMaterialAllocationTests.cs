@@ -330,12 +330,13 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.False(result.Succeeded);
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 31)).StdQty);
-        Assert.Empty(await verify.IvTrxBatches.ToListAsync());
+        var savedBatch = await verify.IvTrxBatches.SingleAsync();
+        Assert.Equal(IvBatchStatuses.New, savedBatch.BatchStatus);
         Assert.Empty(await verify.IvTrxHistories.ToListAsync());
         Assert.Empty(await verify.ProductionMaterialMovements.ToListAsync());
-        Assert.Empty(await verify.ProductionPostingLinks.ToListAsync());
+        Assert.Equal(ProductionPostingLinkStatuses.Draft, (await verify.ProductionPostingLinks.SingleAsync()).Status);
         Assert.Empty(await verify.ProductionAuditEvents.ToListAsync());
-        Assert.Empty(await verify.MsRunningNos.ToListAsync());
+        Assert.Single(await verify.MsRunningNos.ToListAsync());
         Assert.Equal(0m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
         Assert.Equal(ProductionWorkOrderStatuses.Released, (await verify.ProductionWorkOrders.SingleAsync()).Status);
     }
@@ -528,6 +529,16 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             command.CommandText = command.CommandText.Replace("N'", "'", StringComparison.Ordinal);
             return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            command.CommandText = command.CommandText.Replace("N'", "'", StringComparison.Ordinal);
+            return ValueTask.FromResult(result);
         }
     }
 }

@@ -21,6 +21,7 @@ public partial class PrMaterialIssueEntry : PageBase
     protected bool BomVisible;
     protected bool PostConfirmationVisible;
     protected bool ShowShortageOnly;
+    protected bool MoreFiltersVisible;
     protected bool CanAdd;
     protected bool CanEdit;
     protected string? StatusMessage;
@@ -32,6 +33,10 @@ public partial class PrMaterialIssueEntry : PageBase
     protected ProductionMaterialIssueWorkspace? Workspace;
     protected ProductionMaterialIssueDocument? Document;
     protected List<ProductionMaterialIssueOperationRow> OperationRows { get; set; } = [];
+    protected ProductionMaterialIssueFilterOptions FilterOptions { get; set; } = new();
+    protected int OperationTotalCount;
+    protected int OperationPage;
+    protected const int OperationPageSize = 20;
     protected ProductionMaterialIssueOperationRow? SelectedOperationRow;
     protected string SearchWo = string.Empty;
     protected string SearchProduct = string.Empty;
@@ -49,7 +54,10 @@ public partial class PrMaterialIssueEntry : PageBase
     protected bool IsEditMode => BatchNo is > 0 && Navigation.Uri.Contains("/edit/", StringComparison.OrdinalIgnoreCase);
     protected bool IsViewMode => BatchNo is > 0 && !IsEditMode;
     protected string PageHeading => IsViewMode ? "View Issue to Production" : IsEditMode ? "Edit Issue to Production" : "New Issue to Production";
+    protected string ModeChip => IsViewMode ? "VIEW" : IsEditMode ? "EDIT" : "NEW";
     protected string HeaderStatus => IsViewMode ? Document?.Status ?? "View" : Workspace?.Status ?? "Draft";
+    protected string? ActiveWorkOrderNo => IsViewMode ? Document?.WorkOrderNo : Workspace?.WorkOrderNo;
+    protected string? ActiveProductCode => IsViewMode ? Document?.ProductCode : Workspace?.ProductCode;
     protected int SelectedLineCount => IsViewMode ? Document?.Lines.Select(x => x.WorkOrderMaterialId).Distinct().Count() ?? 0 : Lines.Count(x => x.IssueQty > 0m);
     protected int AllocationRowCount => Lines.Where(x => x.IssueQty > 0m).Sum(x => x.Allocations.Count);
     protected bool CanSaveDocument => Workspace is not null && (IsEditMode ? CanEdit : CanAdd) && Lines.Any(x => x.IssueQty > 0m);
@@ -58,6 +66,17 @@ public partial class PrMaterialIssueEntry : PageBase
     protected IEnumerable<MaterialLineVm> VisibleLines => Lines.Where(x => (!SelectedOperationId.HasValue || x.Material.WorkOrderOperationId == SelectedOperationId)
         && (string.IsNullOrWhiteSpace(SelectedWorkCentre) || x.Material.WorkCentreCode == SelectedWorkCentre)
         && (!ShowShortageOnly || x.Material.ShortageQty > 0m));
+    protected List<MaterialLineVm> VisibleLineList => VisibleLines.ToList();
+    protected int OperationPageCount => Math.Max(1, (OperationTotalCount + OperationPageSize - 1) / OperationPageSize);
+    protected string OperationResultLabel => OperationTotalCount == 1 ? "1 operation" : $"{OperationTotalCount:N0} operations";
+    protected decimal TotalIssueQty => Lines.Where(x => x.IssueQty > 0m).Sum(x => x.IssueQty);
+    protected int UnallocatedLineCount => Lines.Count(x => x.IssueQty > 0m && !IsFullyAllocated(x));
+    protected bool IsFullyAllocated(MaterialLineVm line) => Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty))
+        - IvQty.Round(line.IssueQty * line.Material.ConversionFactorToBase)) <= 0.0001m;
+    protected string AllocationHint(MaterialLineVm line) => IsFullyAllocated(line)
+        ? $"Ready · {line.Allocations.Count}"
+        : "Allocation needed";
+    protected void ToggleMoreFilters() => MoreFiltersVisible = !MoreFiltersVisible;
 
     protected override Task OnPageInitializedAsync() => Task.CompletedTask;
     protected override async Task OnParametersSetAsync()
@@ -74,11 +93,18 @@ public partial class PrMaterialIssueEntry : PageBase
         {
             WorkOrderInput = WorkOrderNo ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(WorkOrderInput)) await LoadWorkspaceAsync(WorkOrderInput);
+            else { await LoadFilterOptionsAsync(); await SearchOperationsAsync(); }
         }
         IsLoading = false;
     }
 
     protected Task LoadWorkspaceFromInputAsync() => LoadWorkspaceAsync(WorkOrderInput);
+    private async Task LoadFilterOptionsAsync()
+    {
+        var result = await MaterialIssues.GetEligibleOperationFilterOptionsAsync();
+        if (result.Succeeded && result.Data is not null) FilterOptions = result.Data;
+        else ErrorMessage = result.Message ?? "Unable to load operation choices.";
+    }
     protected async Task SearchOperationsAsync()
     {
         IsSubmitting = true; ErrorMessage = null;
@@ -88,12 +114,24 @@ public partial class PrMaterialIssueEntry : PageBase
             {
                 WorkOrderNo = SearchWo, Product = SearchProduct, WorkCentre = SearchWorkCentre,
                 Process = SearchProcess, OutputItem = SearchOutputItem, RawMaterial = SearchRawMaterial,
-                Machine = SearchMachine, Take = 50
+                Machine = SearchMachine, ExactMatch = true, Skip = OperationPage * OperationPageSize, Take = OperationPageSize
             });
             if (!result.Succeeded || result.Data is null) ErrorMessage = result.Message ?? "Unable to search eligible operations.";
-            else OperationRows = result.Data.Rows.ToList();
+            else { OperationRows = result.Data.Rows.ToList(); OperationTotalCount = result.Data.TotalCount; }
         }
         finally { IsSubmitting = false; }
+    }
+    protected async Task ApplyOperationFiltersAsync() { OperationPage = 0; await SearchOperationsAsync(); }
+    protected async Task ChangeOperationPageAsync(int change)
+    {
+        OperationPage = Math.Clamp(OperationPage + change, 0, OperationPageCount - 1);
+        await SearchOperationsAsync();
+    }
+    protected async Task ClearOperationFilters()
+    {
+        SearchWo = SearchProduct = SearchWorkCentre = SearchProcess = SearchOutputItem = SearchRawMaterial = SearchMachine = string.Empty;
+        OperationPage = 0;
+        await SearchOperationsAsync();
     }
     protected async Task ApplyOperationAsync(ProductionMaterialIssueOperationRow operation)
     {
@@ -102,6 +140,7 @@ public partial class PrMaterialIssueEntry : PageBase
         SelectedOperationRow = operation; Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
         IssueDate = result.Data.IssueDate; SelectedOperationId = operation.WorkOrderOperationId;
         SelectedWorkCentre = operation.WorkCentreCode ?? string.Empty; Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
+        Remark = string.Empty;
     }
     protected void OpenBom() { if (SelectedOperationRow is not null) BomVisible = true; }
     protected Task ApplyBomSuggestions(IReadOnlyDictionary<long, decimal> suggestions)
@@ -151,7 +190,14 @@ public partial class PrMaterialIssueEntry : PageBase
             line.Allocations = group.Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.BaseQty }).ToList();
         }
     }
-    protected void ClearWorkspace() { Workspace = null; Lines = []; WorkOrderInput = string.Empty; SelectedWorkCentre = string.Empty; SelectedOperationId = null; SelectedOperationRow = null; _postingRequestId = null; }
+    protected async Task ClearWorkspace()
+    {
+        Workspace = null; Lines = []; WorkOrderInput = string.Empty; SelectedWorkCentre = string.Empty;
+        SelectedOperationId = null; SelectedOperationRow = null; _postingRequestId = null;
+        await LoadFilterOptionsAsync();
+        OperationPage = 0;
+        await SearchOperationsAsync();
+    }
     protected void AutoFillOutstanding()
     {
         foreach (var line in VisibleLines.Where(x => x.Material.CanManualIssue)) { line.IssueQty = IvQty.Round(Math.Min(line.Material.OutstandingQty, Math.Min(line.Material.AvailableToDraft + line.OriginalIssueQty, line.Material.AvailableQty))); line.Allocations = []; }
@@ -229,6 +275,11 @@ public partial class PrMaterialIssueEntry : PageBase
     {
         public MaterialLineVm(ProductionMaterialIssueMaterial material) => Material = material;
         public ProductionMaterialIssueMaterial Material { get; }
+        public long Key => Material.WorkOrderMaterialId;
+        public string ComponentCode => Material.ComponentCode;
+        public decimal RequiredQty => Material.RequiredQty;
+        public decimal NetIssuedQty => Material.NetIssuedQty;
+        public decimal AvailableToDraft => Material.AvailableToDraft;
         private decimal _issueQty;
         public decimal IssueQty { get => _issueQty; set { if (_issueQty != value) Allocations = []; _issueQty = value; } }
         public decimal OriginalIssueQty { get; set; }

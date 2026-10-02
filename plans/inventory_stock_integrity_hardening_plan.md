@@ -11,33 +11,51 @@
 
 # 1. Executive Decision
 
-Implement the hardening in three priority bands.
+## 1.1 First ship (implement now)
 
-## P0 — Must complete before inventory/production is considered production-ready
+Ship a focused chronology + quantity-meaning release. Do not implement the full P1/P2 catalogue in the same change set.
 
-1. Future-stock / as-of-date rule.
-2. Backdated transaction versus later movement protection.
-3. Rollback chronology protection.
-4. Standard-UOM / base-quantity integrity.
-5. One common stock movement date policy.
-6. Central locked-row stock posting validation.
-7. Legacy `IvBalLoc.TransDate` cleanup policy.
+### Chronology
 
-## P1 — Strongly recommended for normal ERP use
+- Shared stock-date rules and one business-date source (`ICurrentDateService`), plus existing `IvPeriodCloseGuard`.
+- Candidate / picker eligibility: `IvBalLoc.TransDate IS NOT NULL AND TransDate <= DocumentDate`.
+- Central locked-row future-stock guards in posting cores.
+- Date-aware balance picker; Stock Count as-of filter; Production Material Issue `TransDate` filter.
+- NEW POST: reject only later **calendar-day** history (INV-04).
+- ROLLBACK: same-day order by `(TrxDtTime.Date, IvTrxHistory.Id)` (INV-05); latest-only rollback.
+- `GetLatestRemainingMovementAsync` + tracking / RowVersion-safe `SetBalLocTransDateAsync` (including zero-net BalLocs).
 
-8. Expired-lot transaction policy.
-9. Stock-status transaction matrix.
-10. Lot identity consistency.
-11. Source-document quantity ceilings.
-12. Available stock versus physical on-hand.
-13. Posted stock history immutability.
+### Quantity / UOM
 
-## P2 — Add after P0/P1 are stable
+- Misc Receipt conversion via `IvUomConversionService` into item `StdUom`.
+- Entered Qty/UOM in existing `ToPurQty` / `ToPurUom`; converted values in `ToStdQty` / `ToStdUom`.
+- UnitPrice = price per **entered** UOM; document and list totals use entered qty × UnitPrice.
+- Reload prefers Pur fields with Std fallback for legacy rows.
+- History copies both Pur and Std pairs.
+- PMI: allocate from current `IvBalLoc.StdQty`; revalidate `IvBalLoc.StdUom == WorkOrderMaterial.BaseUom` at candidate and post.
+- Minimal item-master structural lock for `StdUom` / `StockControl` / `LotControl` (see §12).
 
-14. FEFO allocation for expiry-controlled stock.
-15. Item-master mutation protection.
-16. Stronger reconciliation/pre-close integrity checks.
-17. Zero/obsolete balance cleanup policy.
+### Cutover / integrity readiness
+
+- Gate A / B / C cutover (see §14): hard P0s zero; opening-baseline MISMATCH classified; true mismatches zero; live DB constraint verify.
+- Reconciliation additions: positive/null TransDate, negative qty, StdUom mismatch.
+- Automated tests + manual UAT matrix.
+- Repository race safeguard (not business-rule authority); period-close unchanged.
+
+## 1.2 Deferred (do not expand first ship)
+
+- Full expired-lot transaction matrix.
+- Full stock-status transaction matrix.
+- Sales FEFO.
+- Advanced reservation / ATP / availability model.
+- Source-document ceiling hardening beyond already implemented controls.
+- New `EnteredQty` / `EnteredUom` schema columns.
+- FG receipt redesign (path not implemented yet).
+- Advanced item-master migration UX / override permission.
+- Full lot-metadata conflict workflow at `FindOrCreateLotAsync` (P1 unless a first customer already requires lot traceability).
+- Zero/obsolete balance physical deletion as normal posting behavior.
+
+Keep the long-term invariants below as the contract; deferred items are follow-up hardening, not blockers for the chronology/UOM slice.
 
 ---
 
@@ -51,497 +69,273 @@ The following are already present and should be preserved:
 - active item/warehouse/location checks;
 - row/database locking in critical posting paths;
 - lot-control fields and `IvLot`;
-- stock count workflow;
-- reconciliation service;
-- Sales shipment reservation/allocation logic;
-- Sales shipment as-of-date eligibility;
-- Production Material Issue lot/expiry validation;
-- Goods Receipt PO quantity validation;
-- posted/new document status controls.
+- stock count workflow (`MaxBackdateDays` operational window);
+- reconciliation service (`DUPLICATE_SLICE`, `ORPHAN_HISTORY`, `MISMATCH`, `UNEXPECTED_BALANCE`, stock-count batch checks);
+- Sales shipment reservation/allocation and `TransDate <= document date` eligibility;
+- Production Material Issue lot/expiry validation and WO conversion factor;
+- Goods Receipt PO pack-size → standard qty and quantity ceilings;
+- posted/new document status controls;
+- `InventoryAsOfStockService` (committed; currently used by PMI as issue allowance — **must change** in first ship).
 
-Important gaps confirmed in the current `production` branch:
+Important gaps confirmed on the current `production` branch:
 
 ### 2.1 Future stock is not consistently blocked
 
-Sales shipment already applies:
+Sales shipment already applies `IvBalLoc.TransDate <= document date`, but MI/SC/VR/TR/ADJ, common balance lookup, and stock-count candidate generation do not.
 
-```text
-IvBalLoc.TransDate <= document date
-```
-
-but MI/SC/VR/TR/ADJ, common balance lookup, stock count, and Production Material Issue candidate discovery are not consistently protected by the same rule.
+Production Material Issue currently uses `InventoryAsOfStockService.UsableBaseQty` (ledger reconstruction) rather than Sales-style `TransDate` eligibility. First ship replaces that with `TransDate <= IssueDate` and current `IvBalLoc.StdQty`.
 
 ### 2.2 `IvBalLoc.TransDate` can be moved backwards
 
-Several posting paths eventually assign:
+Posting helpers assign `TransDate = batch.TrxDtTime` on every quantity change (`IncreaseBalLocQtyAsync` / `DecreaseBalLocQtyAsync` and stock-in paths). An older document can rewind FIFO position. Stock Count already documents this side effect under `IvStockCountLimits.MaxBackdateDays`.
 
-```csharp
-bal.TransDate = batch.TrxDtTime;
-```
+### 2.3 Rollback does not enforce reverse chronology
 
-Therefore posting an older transaction against an existing balance can rewind the balance chronology.
+`IvInventoryPostingService` reverses quantities without proving no later `IvTrxHistory` exists on the affected BalLoc. Rollback also stamps the rolled-back batch date via quantity helpers instead of repairing from remaining history.
 
-### 2.3 Rollback does not yet enforce reverse chronology
+### 2.4 Misc Receipt standard-UOM gap
 
-`IvInventoryPostingService` loads the original history and reverses the movement, but it does not first prove that no later movement exists on the affected stock slice.
+`IvMiscReceiptService` validates an active UOM then writes entered quantity into `ToStdQty` / `ToStdUom` without `IvUomConversionService`. That can store BOX counts in a PCS balance.
 
-### 2.4 Misc Receipt has a standard-UOM integrity gap
+Goods Receipt already converts via PO pack size; Production Issue via WO `ConversionFactorToBase`. Do **not** wrap those paths in `IvUomConversionService`.
 
-`IvMiscReceiptService` validates that the entered UOM exists, then writes the entered quantity into:
+### 2.5 Item Master allows structural changes after stock exists
 
-```text
-ToStdQty
-ToStdUom
-```
+`IvStockMasterService` maps updates directly to `StdUom`, `StockControl`, `LotControl` with no balance/history/draft gate. Deactivation also skips on-hand checks (deactivation workflow remains deferred; structural lock is first-ship).
 
-without necessarily converting through `IvUomConversionService`.
+### 2.6 Lot identity
 
-That can corrupt `IvBalLoc.StdQty` semantics when the user enters BOX, CTN, KG, etc. instead of the item's standard UOM.
+`FindOrCreateLotAsync` returns an existing lot unchanged; it does **not** silently overwrite expiry. The gap is missing conflict rejection when incoming metadata disagrees. Lot conflict UX stays deferred (P1).
 
-### 2.5 Item Master allows dangerous structural changes
+### 2.7 List TotalAmount uses standard qty × UnitPrice
 
-`IvStockMasterService` currently maps updates directly to:
-
-```text
-StdUom
-StockControl
-LotControl
-```
-
-without first blocking changes when stock balance/history already exists.
+`IvStockTransactionRepository` computes list `TotalAmount` / sort as `ToStdQty × UnitPrice` (or `FrStdQty` for MI). Once MR UnitPrice is per entered UOM, 10 BOX @ RM24 would wrongly show RM2,880 instead of RM240. First ship must fix this with the MR UOM change.
 
 ---
 
 # 3. Inventory Invariants
 
-These invariants should become the contract for the whole ERP.
-
 ## INV-01 — `IvBalLoc` always stores standard/base quantity
-
-For every balance:
 
 ```text
 IvBalLoc.StdQty = quantity in IvStockMaster.StdUom
 IvBalLoc.StdUom = IvStockMaster.StdUom
 ```
 
-Document entry UOM may be BOX/CTN/KG/etc., but it must be converted before stock mutation.
-
-Example:
-
-```text
-Item RM001
-StdUom = PCS
-1 BOX = 12 PCS
-
-MR 10 BOX
-
-Document:
-EnteredQty = 10
-EnteredUom = BOX
-Conversion = 12
-StdQty = 120
-StdUom = PCS
-
-IvBalLoc:
-StdQty = 120
-StdUom = PCS
-```
-
-Never allow one `IvBalLoc` row in BOX while another is in PCS for the same item.
-
----
+Document entry UOM may be BOX/CTN/KG/etc., but posting mutates stock only after conversion. Never allow one BalLoc row in BOX while another is in PCS for the same item slice.
 
 ## INV-02 — Positive stock must have a usable stock date
 
-Target rule after data cleanup:
-
 ```text
-IvBalLoc.StdQty > 0
-=> IvBalLoc.TransDate IS NOT NULL
+IvBalLoc.StdQty > 0  =>  IvBalLoc.TransDate IS NOT NULL
 ```
 
-Do not silently treat an unknown stock date as valid forever.
+Activate only after Gate A cutover (legacy null dates repaired). Do not silently treat unknown stock date as valid forever.
 
-Legacy rows with `TransDate = NULL` should be repaired before the strict rule is activated.
+## INV-03 — No future stock (candidate eligibility)
 
----
-
-## INV-03 — No future stock
-
-For a document date `D`, an existing stock balance used or modified by the transaction must satisfy:
+For document date `D`, an existing balance used or modified must satisfy:
 
 ```text
-IvBalLoc.TransDate.Date <= D.Date
+IvBalLoc.TransDate IS NOT NULL
+AND IvBalLoc.TransDate.Date <= D.Date
 ```
 
-Same-day stock is allowed.
+Same-day stock is allowed. Applies to pickers, Stock Count sheet generation, PMI candidates, and locked-row posting revalidation.
 
----
+## INV-04 — NEW POST: no later-day movement mutation
 
-## INV-04 — No backdated mutation after a later posted movement
-
-Before modifying an existing stock slice for a backdated transaction, prove that there is no posted stock movement on that slice with:
+Before mutating an existing balance for a new post, reject when any remaining posted history on that BalLoc has:
 
 ```text
-IvTrxHistory.TrxDtTime.Date > documentDate.Date
+existingHistory.TrxDtTime.Date > documentDate.Date
 ```
 
-If one exists, reject the transaction.
+Same-day existing history does **not** block the new posting. The new post appends after same-day movements.
 
-This avoids historical balance rewriting and removes the need for a retrospective stock rebuild engine.
+Critical regression: Batch A posts 05-Oct, then Batch B also posts 05-Oct → Batch B **allowed**.
 
----
+## INV-05 — ROLLBACK: reverse persisted movement order
 
-## INV-05 — Rollback must follow reverse movement order
-
-A posted batch may be rolled back only if none of its affected balance slices has a later posted movement.
-
-Example:
+Rollback is different because history Ids already exist. Order key:
 
 ```text
-01-Oct GR +100
-05-Oct MI -20
-08-Oct TR -30
+(TrxDtTime.Date, IvTrxHistory.Id)
 ```
 
-Allowed rollback order:
+For every BalLoc touched by the rollback batch, reject if a remaining history row has a key later than that batch’s **max** history Id on that balance.
 
-```text
-08-Oct TR
-05-Oct MI
-01-Oct GR
-```
+`IvBalLoc.TransDate` is stock availability / latest movement **date**, not authoritative same-day sequence. Same-day rollback order comes from persisted `IvTrxHistory.Id`.
 
-Attempting to rollback the 01-Oct GR first must fail.
+> `IvTrxHistory.Id` is used only as the persisted same-day tie-breaker for the same affected balance; the inventory lock order serializes competing mutations on that balance.
 
----
+Document dates are stored at midnight on `IvTrxBatch.TrxDtTime`, so date-only cannot order same-day posts for rollback.
 
 ## INV-06 — No normal future-dated stock movement
 
-For stock-driving transactions:
-
 ```text
-TransactionDate > BusinessDate
-=> reject
+TransactionDate > BusinessDate  =>  reject
 ```
 
-Applies to:
-
-```text
-GR MR CR MI SC VR TR ADJ IP SP
-```
-
-Planning dates such as PO required date or Work Order planned date are not stock movements and are outside this rule.
-
----
+Plus existing period-close. Applies to GR, MR, CR, MI, SC, VR, TR, ADJ, IP, SP, Stock Count posting date. Planning dates (PO required date, WO planned date) are outside this rule.
 
 ## INV-07 — Posted history is immutable
 
-Once posted:
-
-```text
-IvTrxHistory
-```
-
-must not be edited in place.
-
-Correction must be:
-
-```text
-Rollback / reversal
-+
-new corrected transaction
-```
-
----
+Correction = rollback / reversal + new corrected transaction. No in-place edit of `IvTrxHistory`.
 
 ## INV-08 — Stock availability is not always physical on-hand
 
-Define:
-
-```text
-PhysicalOnHand
-ReservedSales
-ReservedProduction
-OtherDraftAllocation
-AvailableToIssue
-```
-
-with:
-
-```text
-AvailableToIssue =
-PhysicalOnHand
-- ReservedSales
-- ReservedProduction
-- OtherBlockingAllocations
-```
-
-The first implementation may remain simple, but screens must stop assuming `IvBalLoc.StdQty` always equals freely available stock.
+Long-term: distinguish PhysicalOnHand, ReservedSales, ReservedProduction, AvailableToIssue. **Deferred** from first ship except: do not treat Work Order BOM demand alone as a reservation; do not use `UsableBaseQty` reconstruction as issue allowance.
 
 ---
 
-# 4. Phase 0 — Shared Policy Infrastructure
-
-Create shared policy helpers under:
+# 4. Eligibility vs Posting Authority
 
 ```text
-ErpWeb.Core/Inventory/
+Candidate / picker eligibility
+  IvBalLoc.TransDate <= DocumentDate
+
+Authoritative posting permission
+  no later posted movement (NEW POST = later calendar day only)
+
+Rollback authority
+  latest persisted movement order (Date, History.Id)
+
+InventoryAsOfStockService / UsableBaseQty
+  NOT permission to allocate or post
 ```
 
-Recommended files:
+### Slice vs BalLocId
+
+Posting business rules reason by the 7-part stock slice (`CompanyCode`, `BranchCode`, `ICode`, `WhCode`, `LocCode`, `LotNo`, `IStatus`). Rollback history ordering/repair uses the persisted `BalLocId` referenced by history. Unique slice constraint `UQ_IvBalLoc_StockSlice` is a cutover prerequisite so these concepts cannot diverge.
+
+### Service vs repository
+
+- **Service / posting layer** = business authority after locks (clear user-facing errors).
+- **Repository conditional UPDATE** = race safeguard only — not the sole chronology source.
+- Prefer posting-specific guarded mutations, an explicit mutation mode/policy, or service-layer chronology + repository predicates for concurrent change. Do not make rollback depend on a predicate designed only for normal posting.
+- Rollback TransDate repair uses tracking-safe `SetBalLocTransDateAsync`, not quantity helpers alone.
+
+---
+
+# 5. Phase 0 — Shared Policy Infrastructure
+
+Create small deterministic helpers under `ErpWeb.Core/Inventory/`:
 
 ```text
 IvStockDateRules.cs
-IvStockStatusRules.cs
-IvLotRules.cs
 IvStockMovementRules.cs
 ```
 
-Keep helpers small and deterministic.
+(Stock-status and lot-policy helpers remain deferred with P1 matrices.)
 
-## 4.1 `IvStockDateRules`
-
-Suggested responsibilities:
+### `IvStockDateRules`
 
 ```csharp
 internal static class IvStockDateRules
 {
-    public static bool IsAvailableOn(
-        DateTime? stockDate,
-        DateTime documentDate);
-
-    public static bool IsFutureMovementDate(
-        DateTime documentDate,
-        DateTime businessDate);
-
+    public static bool IsAvailableOn(DateTime? stockDate, DateTime documentDate);
+    public static bool IsFutureMovementDate(DateTime documentDate, DateTime businessDate);
     public static string FutureStockMessage(...);
 }
 ```
 
-After legacy cleanup, use strict stock-date semantics:
+Strict semantics after cutover:
 
 ```csharp
 return stockDate.HasValue
     && stockDate.Value.Date <= documentDate.Date;
 ```
 
-Do not permanently allow `NULL` positive stock as eligible.
+### Business-date source
 
-## 4.2 Business-date source
-
-Do not scatter `DateTime.Today` through transaction services.
-
-Use the existing date/clock abstraction where available and add a small central validator if necessary:
+Do not scatter `DateTime.Today` through transaction services. Use `ICurrentDateService` / existing clock abstraction:
 
 ```text
 IvStockMovementRules.EnsureValidMovementDate(...)
-```
-
-Required rule:
-
-```text
 documentDate <= businessDate
+AND period open (IvPeriodCloseGuard)
 ```
-
-plus the existing period-close rule.
 
 ---
 
-# 5. Phase 1 — Future-Stock / As-Of-Date Protection
+# 6. Phase 1 — Future-Stock / As-Of-Date Protection
 
-This phase implements the previously agreed future-stock fix.
+## 6.1 Authoritative posting guard
 
-## 5.1 Authoritative posting guard
-
-Modify:
-
-```text
-ErpWeb.Core/Inventory/IvInventoryPostingService.cs
-```
-
-Add locked-row date validation to:
-
-```text
-PostInventoryMICoreAsync
-PostInventoryTRAsync
-PostInventoryADJCoreAsync
-PostInventoryMRCoreAsync
-```
+Modify `ErpWeb.Core/Inventory/IvInventoryPostingService.cs` locked-row validation for MI, TR, ADJ, MR (and stock-in destinations that already exist), covering SC/VR/IP via shared MI/ADJ cores where applicable.
 
 Rules:
 
-### MI / SC / VR / IP
+- **MI / SC / VR / IP:** after locking `FromBalLocId`, `source.TransDate <= batch.TrxDtTime` (date grain).
+- **TR:** source and existing destination must satisfy the same.
+- **ADJ:** existing BalLoc must satisfy the same.
+- **MR / CR / GR:** new destination allowed; existing destination must satisfy `existing.TransDate <= receipt date`.
 
-After locking `FromBalLocId`:
+Also apply INV-04 later-day history check before quantity mutation.
 
-```text
-source.TransDate <= batch.TrxDtTime
-```
+## 6.2 Repository final safeguard
 
-otherwise fail.
+Harden `DecreaseBalLocQtyAsync` / `IncreaseBalLocQtyAsync` (or posting-specific variants) as race protection so a concurrent change cannot silently rewind chronology. Service layer remains the source of user-facing reasons.
 
-### TR
+## 6.3 Date-aware balance picker
 
-Check:
+Path: `IvBalLocPicker` → `IvBalLocSearchPopup` → `IvInventoryLookupService` → `IvStockCommonRepository`.
 
-```text
-source.TransDate <= batch.TrxDtTime
-```
-
-and if the destination slice already exists:
-
-```text
-destination.TransDate <= batch.TrxDtTime
-```
-
-Do not allow a 05-Oct transfer to rewrite a destination balance last moved on 10-Oct.
-
-### ADJ
-
-For both positive and negative adjustment against an existing `IvBalLoc`:
-
-```text
-existing.TransDate <= adjustment date
-```
-
-### MR / CR / GR
-
-For a newly created destination balance:
-
-```text
-allowed
-```
-
-For an existing destination balance:
-
-```text
-existing.TransDate <= receipt date
-```
-
-## 5.2 Repository final safeguard
-
-Modify:
-
-```text
-ErpWeb.Model/Repositories/Inventory/IvStockPostingRepository.cs
-```
-
-Harden:
-
-```text
-DecreaseBalLocQtyAsync
-IncreaseBalLocQtyAsync
-```
-
-The service layer should still provide the user-facing reason.
-
-The repository should refuse to mutate a balance when the expected chronology condition is not true.
-
-Do not depend on UI filtering as the final protection.
-
-## 5.3 Date-aware balance picker
-
-Modify the lookup path:
-
-```text
-IvBalLocPicker
-  -> IvBalLocSearchPopup
-  -> IvInventoryLookupService
-  -> IvStockCommonRepository
-```
-
-Add:
-
-```csharp
-DateTime? AsOfDate
-```
-
-to balance-search requests and picker parameters.
-
-Filter:
+Add `DateTime? AsOfDate` to search requests. Filter:
 
 ```text
 TransDate IS NOT NULL
 AND TransDate < AsOfDate.Date + 1 day
 ```
 
-Pass the document date from:
+Pass document date from MI, SC, VR, TR, ADJ. Show Stock Date in the popup.
+
+## 6.4 Production Material Issue
+
+**Current (must change):** allocation / draft / lifecycle / search use `UsableBaseQty` from `InventoryAsOfStockService`.
+
+**First ship:**
 
 ```text
-IvMiscIssue
-IvScrap
-IvVendorReturn
-IvStockTransfer
-IvStockAdjustment
+Candidate filter: TransDate IS NOT NULL AND TransDate <= IssueDate
+Allocation qty:   current IvBalLoc.StdQty (after ACTIVE / expiry / other existing filters)
+Posting:          INV-04 later-day guard + locked StdQty check
+Also revalidate:  IvBalLoc.StdUom == WorkOrderMaterial.BaseUom
+                  at candidate discovery and at post
 ```
 
-Show `Stock Date` in the popup.
+Files:
 
-## 5.4 Production Material Issue
+- `ErpWeb.Core/Production/ProductionMaterialAllocationService.cs`
+- `ErpWeb.Core/Production/ProductionMaterialIssueService.Draft.cs`
+- `ErpWeb.Core/Production/ProductionMaterialIssueService.Lifecycle.cs`
+- `ErpWeb.Core/Production/ProductionMaterialIssueService.Search.cs`
+- (and posting path as needed)
 
-Modify:
+Do not use ledger reconstruction as issue allowance. If `InventoryAsOfStockService` is retained, inject via DI (no `new InventoryAsOfStockService()`) and treat as diagnostic/read only. Keep central MI posting guard too.
+
+## 6.5 Stock Count
+
+Generate count sheet as of `CountDate`: exclude balances whose stock date is later than `CountDate`. Revalidate locked balance during post before creating the ADJ batch.
+
+`MaxBackdateDays` remains an **extra** operational window. It does not replace chronology:
 
 ```text
-ErpWeb.Core/Production/ProductionMaterialAllocationService.cs
-ErpWeb.Core/Production/ProductionMaterialIssueService.Posting.cs
+CountDate must satisfy MaxBackdateDays
+AND stock used by the count must be valid as of CountDate
+AND posting must pass INV-04 later-day chronology
 ```
 
-Candidate discovery must include:
-
-```text
-TransDate <= IssueDate
-```
-
-Posting must revalidate the locked balance before building/posting `IP`.
-
-Keep the central `PostInventoryMICoreAsync` guard too.
-
-This gives:
-
-```text
-candidate filter
--> production locked-row validation
--> inventory posting validation
--> repository safeguard
-```
-
-## 5.5 Stock Count
-
-Modify:
-
-```text
-ErpWeb.Core/Inventory/IvStockCountService.cs
-ErpWeb.Model/Repositories/Inventory/IvStockCommonRepository.cs
-```
-
-Generate the count sheet as of:
-
-```text
-CountDate
-```
-
-Exclude balances whose stock date is later than the count date.
-
-Revalidate the locked balance during post before creating the ADJ batch.
+Under INV-03, a backdated count must not rewrite a pile whose `TransDate` is later than `CountDate`.
 
 ---
 
-# 6. Phase 2 — Backdated Transaction Protection
+# 7. Phase 2 — Later-Day Movement Protection (NEW POST)
 
-This is separate from future-stock filtering.
+## 7.1 Query
 
-## 6.1 Add later-movement query
-
-Extend:
-
-```text
-IIvStockPostingRepository
-IvStockPostingRepository
-```
-
-with a query such as:
+Extend `IIvStockPostingRepository` / `IvStockPostingRepository`:
 
 ```csharp
 Task<IReadOnlyList<IvLaterMovementHit>> FindLaterMovementsAsync(
@@ -554,41 +348,19 @@ Task<IReadOnlyList<IvLaterMovementHit>> FindLaterMovementsAsync(
     CancellationToken cancellationToken);
 ```
 
-Use `IvTrxHistory` and both:
-
-```text
-FromBalLocId
-ToBalLocId
-```
-
-A movement is "later" when:
+Use `IvTrxHistory` From/To BalLoc. For **NEW POST**, a movement is later when:
 
 ```text
 TrxDtTime.Date > documentDate.Date
 ```
 
-and it is posted/valid history.
+(and it is posted/valid history). Same-day history is not later for NEW POST.
 
-## 6.2 Apply before existing-balance mutation
+## 7.2 Apply before existing-balance mutation
 
-Use the later-movement guard in the central posting cores before quantity is changed.
+Minimum coverage: MR, GR, CR, MI, SC, VR, TR, ADJ, IP, SP.
 
-Minimum coverage:
-
-```text
-MR
-GR
-CR
-MI
-SC
-VR
-TR
-ADJ
-IP
-SP
-```
-
-If a later movement exists, fail with a clear message:
+Clear message example:
 
 ```text
 Item RM001 / WH01 / LOT001 has a later posted stock movement
@@ -596,725 +368,266 @@ dated 10/10/2026. A transaction dated 05/10/2026 cannot modify
 this stock balance.
 ```
 
-## 6.3 Keep period close independent
-
-Do not replace:
-
-```text
-IvPeriodCloseGuard
-```
-
-The rules are different:
-
-```text
-Period close
-= accounting/operational period lock
-
-Later-movement guard
-= stock chronology protection
-```
-
-Both must pass.
+Keep `IvPeriodCloseGuard` independent (period lock ≠ chronology).
 
 ---
 
-# 7. Phase 3 — Rollback Chronology Protection
+# 8. Phase 3 — Rollback Chronology + TransDate Repair
 
-Modify:
+## 8.1 Helpers
 
 ```text
-ErpWeb.Core/Inventory/IvInventoryPostingService.cs
+GetLatestRemainingMovementAsync(db, company, branch, balLocId, excludeBatchNo)
+  FromBalLocId == balLocId OR ToBalLocId == balLocId
+  AND BatchNo != excludeBatchNo
+  ORDER BY TrxDtTime DESC, Id DESC
+  → latest remaining TrxDtTime (or null)
 ```
 
-Apply to every rollback core.
+Query with `BatchNo != rollbackBatchNo` (or exclude target history Ids) **before** deleting history — EF still sees unmarked-for-delete rows until `SaveChanges`.
 
-Before applying reversal quantities:
+```text
+SetBalLocTransDateAsync(db, balLocId, companyCode, branchCode, DateTime? transDate, ct)
+  If IvBalLoc already tracked in this DbContext:
+    set tracked.TransDate + ModifiedDate
+    return 1   // persistence deferred to caller's SaveChanges
+    NEVER bump RowVersion behind an already-modified tracked IvBalLoc
+  Else:
+    perform scoped direct update (+ ModifiedDate)
+    return affected row count
+  Identical intent on SQL Server and SQLite/tests
+```
 
-1. load the original batch;
-2. load original `IvTrxHistory`;
-3. collect all affected `FromBalLocId` / `ToBalLocId`;
-4. lock affected balances in deterministic order;
-5. check `IvTrxHistory` for later posted movement excluding the batch being rolled back;
-6. reject if any later movement exists;
-7. only then perform reversal.
+**Why a dedicated setter:** ADJ +10/−10 on one BalLoc can have net inverse qty = 0 while removing history still changes which movement is latest. Quantity helpers alone cannot guarantee TransDate repair; they also write `TransDate = batch.TrxDtTime` and can detach entities on the SQLite/test path.
+
+## 8.2 Rollback sequence (one transaction)
+
+1. Lock batch.
+2. Load and validate authoritative history.
+3. Build affected BalLoc set.
+4. Lock affected balances in deterministic slice/id order.
+5. Validate no later movement: later date **OR** same date + higher `History.Id` than the batch’s max Id on that BalLoc.
+6. Compute latest remaining history date per BalLoc excluding rollback batch.
+7. Compute all inverse quantity deltas.
+8. Validate all quantity results.
+9. Apply inverse quantities.
+10. Repair TransDate for every affected BalLoc (including zero-net) via tracking-safe `SetBalLocTransDateAsync`.
+11. Remove rollback-batch history.
+12. Update batch rollback audit/status.
+13. Save.
+14. Commit.
+
+No balance mutated before all chronology and quantity validations succeed.
+
+## 8.3 Null after rollback
+
+- Zero qty + null `TransDate` → fine.
+- `StdQty > 0` + null `TransDate` → integrity / opening-balance condition: reconciliation Gate A P0; not eligible under strict candidate rule.
 
 Error example:
 
 ```text
-Batch 123 cannot be rolled back because stock balance 456
-has a later posted movement dated 08/10/2026.
-Rollback the later transaction first.
+Batch 123 cannot be rolled back because this stock balance has a
+later posted transaction. Roll back the later transaction first.
 ```
 
-Do not simply reset `IvBalLoc.TransDate` to the rolled-back batch date.
-
-For the current ERP design, use the simpler and safer policy:
-
-```text
-rollback only the latest movement chain
-```
-
-rather than implementing historical re-cost/rebuild.
+Policy: rollback only the latest movement chain — no historical re-cost/rebuild.
 
 ---
 
-# 8. Phase 4 — Standard-UOM Integrity
+# 9. Phase 4 — Standard-UOM Integrity (Misc Receipt first)
 
-This is a P0 fix.
+## 9.1 Hard invariant
 
-## 8.1 Hard invariant
+All `IvBalLoc` quantities in `IvStockMaster.StdUom`. Document entry UOM retained separately; posting uses standard quantity.
 
-All `IvBalLoc` quantities must be in:
+## 9.2 Misc Receipt dual Qty/UOM (no new columns)
 
-```text
-IvStockMaster.StdUom
-```
+Modify `ErpWeb.Core/Inventory/IvMiscReceiptService.cs`.
 
-Every stock-driving document should retain entered UOM separately if required, but posting uses standard quantity.
-
-## 8.2 Fix Misc Receipt first
-
-Modify:
-
-```text
-ErpWeb.Core/Inventory/IvMiscReceiptService.cs
-```
-
-Current behavior allows an active UOM but can persist entered quantity directly as standard quantity.
-
-New flow:
+Flow:
 
 ```text
 Entered Qty/UOM
-    |
-    v
-IvUomConversionService
-    |
-    v
-StdQty + StdUom
-    |
-    v
-IvTrxBatchDetail
-    |
-    v
-IvBalLoc
+    → IvUomConversionService
+    → StdQty + StdUom
 ```
 
-If selected UOM equals `item.StdUom`:
+Persist using existing fields (document the MR convention in a code comment):
 
 ```text
-factor = 1
-```
-
-Otherwise require an active item-UOM conversion.
-
-If none exists:
-
-```text
-block save/post
-```
-
-Do not guess conversion factors.
-
-## 8.3 Review all stock-in entry points
-
-Verify and normalize:
-
-```text
-IvGoodsReceiptService
-IvMiscReceiptService
-IvStockReturnService
-Production finished-goods receipt path
-any future stock opening/import path
-```
-
-`IvGoodsReceiptService` already derives standard quantity from PO pack size; ensure the resulting `ToStdUom` is the item standard UOM.
-
-## 8.4 Review stock-out entry points
-
-Stock-out must always subtract standard/base quantity.
-
-Verify:
-
-```text
-MI
-SC
-VR
-TR
-IP
-SP
-ADJ decrease
-```
-
-No document UOM should reach `IvBalLoc.StdQty` without conversion.
-
-## 8.5 Persist conversion evidence
-
-Where the existing transaction schema permits, retain:
-
-```text
-EnteredQty
-EnteredUom
-StdQty
-StdUom
-ConversionFactorUsed
-```
-
-If adding a new conversion-rate column to the legacy `IvTrxBatchDetail` is too invasive now, at minimum ensure:
-
-```text
-FrStdQty / ToStdQty
-FrStdUom / ToStdUom
-```
-
-are truly standard quantities/UOMs.
-
----
-
-# 9. Phase 5 — Common Stock Movement Date Rule
-
-Create one rule used by every stock-driving service.
-
-Before saving/posting:
-
-```text
-TransactionDate <= BusinessDate
-AND
-TransactionDate is outside closed period
-```
-
-Apply to:
-
-```text
-GR
-MR
-CR
-MI
-SC
-VR
-TR
-ADJ
-IP
-SP
-Stock Count posting date
-```
-
-Planning/reference documents are not included.
-
-Replace inconsistent direct `DateTime.Today` checks with the common date source.
-
----
-
-# 10. Phase 6 — Expired-Lot Policy
-
-Do not use one blanket "expired stock cannot move" rule.
-
-Create transaction-specific rules.
-
-## 10.1 Recommended matrix
-
-| Transaction | Expired lot |
-|---|---|
-| Sales Shipment (`SP`) | Block |
-| Issue to Production (`IP`) | Block |
-| Misc Issue (`MI`) | Block by default |
-| Transfer (`TR`) | Allow |
-| Scrap (`SC`) | Allow |
-| Vendor Return (`VR`) | Allow |
-| Stock Adjustment (`ADJ`) | Allow |
-| Stock Count | Allow |
-| Customer Return (`CR`) | Allow receipt, retaining status/lot rules |
-| Goods Receipt (`GR`) | Expiry must be valid relative to receipt date |
-| Misc Receipt (`MR`) | Expiry must be valid relative to receipt date |
-
-## 10.2 Sales shipment
-
-Extend:
-
-```text
-ErpWeb.Core/Inventory/IvSpFifoEligibility.cs
-IvSpShipmentService.cs
-```
-
-to validate lot activity/expiry for lot-controlled items.
-
-Do not allocate an expired lot to customer shipment.
-
-## 10.3 Receipt expiry comparison
-
-Current receipt validation should not rely only on "today".
-
-Preferred receipt rule:
-
-```text
-ExpiryDate >= TransactionDate
+ToPurQty / ToPurUom = user-entered Qty/UOM
+ToStdQty / ToStdUom = converted item-standard Qty/UOM
+IvBalLoc mutates only using ToStdQty / ToStdUom
+UnitPrice = price per ENTERED UOM (same idea as GR purchase-UOM price)
+LineAmount = entered Qty × UnitPrice
 ```
 
 Example:
 
 ```text
-GR date   01-Sep
-Expiry    15-Sep
-Today     01-Oct
+Item RM001, StdUom = PCS, 1 BOX = 12 PCS
+User: 10 BOX @ RM24 / BOX
+
+ToPurQty = 10, ToPurUom = BOX
+ToStdQty = 120, ToStdUom = PCS
+UnitPrice = 24, LineAmount = 240
+IvBalLoc += 120 PCS
 ```
 
-A historical GR dated 01-Sep should not fail simply because today's date is later.
+Never interpret as 120 × 24.
 
-The backdated/later-movement rules separately determine whether the historical transaction may still be posted.
+If selected UOM equals `item.StdUom`, factor = 1. Otherwise require an active item-UOM conversion; if none, block save/post. Do not guess factors.
+
+Reload:
+
+```text
+Quantity = ToPurQty ?? ToStdQty
+Uom      = ToPurUom ?? ToStdUom
+```
+
+Legacy rows without `ToPur*` continue to open. Posting copies both Pur and Std pairs into `IvTrxHistory` (already has both column pairs).
+
+**Explicit non-goal:** MR UOM hardening changes quantity representation and transaction audit only. It does **not** introduce a new costing/valuation algorithm or set BalLoc UnitPrice from the MR line.
+
+## 9.3 List TotalAmount / sort (required with MR UOM)
+
+`IvStockTransactionRepository` must stop using `ToStdQty × UnitPrice` for MR (and any dual-UOM trx that stores entered qty in `ToPur*`). Use:
+
+```text
+(ToPurQty ?? ToStdQty) × UnitPrice   // stock-in / MR
+(FrPurQty ?? FrStdQty) × UnitPrice   // stock-out if FrPur* used
+```
+
+Legacy fallback when Pur fields are null. Document-level Amount in `IvMiscReceiptService` must match.
+
+## 9.4 Other stock-in / stock-out paths
+
+Audit only — do not re-convert:
+
+- `IvGoodsReceiptService` (PO pack size / `PoOrderCalc`) — keep; ensure `ToStdUom` is item standard UOM.
+- Production Issue (WO conversion snapshot) — keep.
+- Outbound paths that already key off BalLoc / item StdUom — verify they never write entered UOM into `IvBalLoc.StdQty`.
+- FG receipt posting does not exist yet — out of scope.
 
 ---
 
-# 11. Phase 7 — Stock-Status Transaction Matrix
+# 10. Phase 5 — Common Stock Movement Date Rule
 
-Create:
-
-```text
-IvStockStatusRules.cs
-```
-
-Do not treat "status exists and is active" as equivalent to "status is usable for every transaction".
-
-Recommended initial behavior:
-
-| Transaction | ACTIVE | QCHOLD | DAMAGED |
-|---|---:|---:|---:|
-| Sales Shipment | Yes | No | No |
-| Production Issue | Yes | No | No |
-| Misc Issue | Yes | No by default | No by default |
-| Transfer | Yes | Yes | Yes |
-| Scrap | Yes | Yes | Yes |
-| Vendor Return | Yes | Yes | Yes |
-| Stock Adjustment | Yes | Yes | Yes |
-| Stock Count | Yes | Yes | Yes |
-
-Keep this simple and central.
-
-Later, the status master can carry flags such as:
+Before save/post:
 
 ```text
-CanSell
-CanIssueProduction
-CanTransfer
+TransactionDate <= BusinessDate
+AND TransactionDate is outside closed period
 ```
 
-only if customers need configurable behavior.
+Apply to GR, MR, CR, MI, SC, VR, TR, ADJ, IP, SP, Stock Count posting date. Replace inconsistent `DateTime.Today` defaults with `ICurrentDateService`.
 
 ---
 
-# 12. Phase 8 — Lot Identity Consistency
+# 11. Deferred Policy Matrices (P1+)
 
-Use `IvLot` as the authoritative lot identity.
+Documented for later; **not** first ship:
 
-When receiving/reusing an existing:
-
-```text
-ItemCode + LotNo
-```
-
-do not silently overwrite critical lot metadata.
-
-At minimum validate:
-
-```text
-ExpiryDate
-MfgDate, when supplied
-SupplierCode, when business policy requires it
-```
-
-Recommended first rule:
-
-```text
-same Item + same LotNo
-=> ExpiryDate must match existing lot
-```
-
-If the existing lot has no expiry and the new receipt supplies one, allow filling it only through an explicit, controlled rule.
-
-Do not silently change:
-
-```text
-31-Dec-2026
-```
-
-to:
-
-```text
-30-Jun-2027
-```
-
-for the same lot.
-
-Implement the check centrally around:
-
-```text
-FindOrCreateLotAsync
-```
-
-in the stock posting repository/service path.
+| Deferred topic | Notes |
+|---|---|
+| Expired-lot matrix | SP/IP block; TR/SC/VR/ADJ/Count allow; GR/MR expiry vs transaction date |
+| Stock-status matrix | SP/IP ACTIVE only today; full trx×status matrix later |
+| Lot identity conflict | Reject receipt whose expiry disagrees with existing `IvLot` |
+| FEFO for Sales | Production already orders by expiry; Sales remains FIFO by TransDate |
+| Availability / reservation | Common `IvAvailabilityResult`; WO BOM is not a reservation; MI drafts do not soft-reserve like SP |
+| Source ceilings | Keep existing GR/PO, VR, SO→DO, WO BOM ceilings; harden later |
+| EnteredQty schema | Not required; use `ToPur*` / `ToStd*` |
+| Zero-balance lifecycle | Keep zero BalLoc by default; hide from on-hand lookup |
 
 ---
 
-# 13. Phase 9 — Source-Document Quantity Ceilings
+# 12. Phase 6 — Item Master Structural Lock (first ship)
 
-Treat this as a common downstream-document invariant.
+Modify `ErpWeb.Core/Inventory/IvStockMasterService.cs`.
 
-Generic equation:
+Before updating `StdUom`, `StockControl`, or `LotControl` on an existing item, block if **any** of:
 
-```text
-AlreadyProcessed
-+ CurrentDraft/PostQty
-<= SourceQty + AllowedTolerance
-```
+1. Posted `IvTrxHistory` for the item exists.
+2. **Any** `IvBalLoc` row exists for the item (including `StdQty = 0` — zero balances still carry UOM/slice semantics and history FKs).
+3. Inventory `IvTrxBatch` / `IvTrxBatchDetail` exists for the item in **NEW** or **rolled-back** status (unposted drafts still encode UOM/lot-control assumptions).
 
-Required flows:
-
-## Purchase
-
-```text
-PO -> GR
-GR -> Vendor Return
-```
-
-Goods Receipt PO quantity validation already exists; keep it under the same locked transaction.
-
-Vendor Return must not exceed quantity legitimately received/available against the source relationship.
-
-## Sales
-
-```text
-SO -> DO
-DO/Sales -> Customer Return
-```
-
-Return quantity must not exceed eligible sold/delivered quantity when linked to a source document.
-
-## Production
-
-```text
-Work Order BOM -> Issue to Production
-```
-
-Use:
-
-```text
-Required BOM Qty
-+ configured tolerance
-- already issued
-```
-
-as the remaining maximum.
-
-Support multiple partial issues.
-
-Always re-check under lock at posting.
-
----
-
-# 14. Phase 10 — Available Stock / Reservation Model
-
-Do not replace the existing Sales reservation logic immediately.
-
-First introduce a common read model.
-
-Suggested result:
-
-```csharp
-public sealed class IvAvailabilityResult
-{
-    public decimal PhysicalOnHand { get; init; }
-    public decimal ReservedSales { get; init; }
-    public decimal ReservedProduction { get; init; }
-    public decimal OtherBlockingAllocation { get; init; }
-    public decimal AvailableToIssue { get; init; }
-}
-```
-
-Initially:
-
-```text
-ReservedSales
-= existing NEW SP / shipment allocation logic
-
-ReservedProduction
-= NEW/PENDING Production Material Issue allocations, if/when production drafts reserve stock
-```
-
-Important design decision:
-
-```text
-Work Order BOM requirement alone is NOT a stock reservation.
-```
-
-Reserve stock only when the business explicitly allocates/reserves it.
-
-This keeps the SME workflow simple.
-
----
-
-# 15. Phase 11 — FEFO for Expiry-Controlled Stock
-
-Production allocation already orders lot-controlled candidates by expiry before stock date.
-
-Apply the same principle to Sales shipment.
-
-Recommended order:
-
-## Lot-controlled item with expiry
-
-```text
-ExpiryDate ASC
-TransDate ASC
-LotNo ASC
-BalLocId ASC
-```
-
-## Non-expiry stock
-
-```text
-TransDate ASC
-LotNo ASC
-BalLocId ASC
-```
-
-This is FEFO for expiring stock and FIFO otherwise.
-
-Manual lot override may still be allowed if the lot passes all eligibility rules.
-
----
-
-# 16. Phase 12 — Item Master Structural-Change Protection
-
-Modify:
-
-```text
-ErpWeb.Core/Inventory/IvStockMasterService.cs
-```
-
-Before updating an existing item, compare original and requested values.
-
-Structural fields:
-
-```text
-StdUom
-StockControl
-LotControl
-```
-
-If any changed, check whether the item has:
-
-```text
-non-zero IvBalLoc
-OR
-posted IvTrxHistory
-```
-
-Recommended policy:
-
-## `StdUom`
-
-If any stock history or balance exists:
-
-```text
-block direct change
-```
-
-Message:
+Message example:
 
 ```text
 Standard UOM cannot be changed because this item already has inventory history.
 Use a controlled inventory conversion/migration process.
 ```
 
-## `StockControl`
-
-If history/balance exists:
-
-```text
-block direct true <-> false change
-```
-
-## `LotControl`
-
-If history/balance exists:
-
-```text
-block direct true <-> false change
-```
-
-Lot semantics cannot be changed safely for existing history.
-
-## 16.1 Deactivation
-
-`SetActiveAsync` currently allows deactivation without checking live stock.
-
-Recommended practical policy:
-
-```text
-on-hand > 0
-=> block deactivation
-```
-
-or, if the business strongly prefers it:
-
-```text
-require explicit override permission + warning
-```
-
-Default should be block.
+Advanced migration UX / override permission / deactivation-on-hand workflow remain deferred.
 
 ---
 
-# 17. Phase 13 — Reconciliation Hardening
+# 13. Phase 7 — Reconciliation Hardening
 
-The current:
+Keep existing diagnostics in `IvInventoryReconciliationService`. Add:
 
-```text
-IvInventoryReconciliationService
-```
+| Code | Check |
+|---|---|
+| REC-01 | `StdQty > 0 AND TransDate IS NULL` |
+| REC-02 | `IvBalLoc.StdUom != IvStockMaster.StdUom` |
+| REC-03 | `StdQty < 0` (legacy/corrupt) |
 
-already detects:
-
-```text
-duplicate slices
-orphan history
-balance vs history mismatch
-unexpected balance
-stock-count/batch divergence
-```
-
-Keep it.
-
-Enhance with:
-
-## REC-01 — Positive stock missing date
-
-```text
-StdQty > 0 AND TransDate IS NULL
-```
-
-## REC-02 — Standard-UOM mismatch
-
-```text
-IvBalLoc.StdUom != IvStockMaster.StdUom
-```
-
-## REC-03 — Negative balance
-
-Even though posting blocks this, detect legacy/corrupt rows:
-
-```text
-StdQty < 0
-```
-
-## REC-04 — Lot mismatch
-
-For lot-controlled items:
-
-```text
-LotNo empty
-LotId missing
-inactive/missing IvLot
-IvBalLoc lot data inconsistent with IvLot
-```
-
-## REC-05 — Non-lot item carrying lot data
-
-Detect legacy corruption.
-
-## REC-06 — Future stock date anomaly
-
-Optionally report:
-
-```text
-TransDate > business date
-```
-
-for operational review.
-
-## 17.1 Period close
-
-Continue using reconciliation as a period-close precondition.
-
-P0/P1 integrity errors should block period close.
-
-Do not allow period close to silently snapshot known corrupt inventory.
+Continue using reconciliation as a period-close precondition. Do not allow period close to silently snapshot known corrupt inventory.
 
 ---
 
-# 18. Phase 14 — Legacy Data Preflight / Migration
+# 14. Phase 8 — Cutover Gates (opening-baseline aware)
 
-Before activating strict rules, run a read-only data audit.
+Current reconciliation assumes `OpeningQty = 0` and is not a full production audit until opening baseline exists. Period Close already treats first-close `UNEXPECTED_BALANCE` + corresponding MISMATCH as opening baseline. Do **not** require blind “zero MISMATCH.”
 
-Check:
+## Gate A — structural / data corruption (must be zero)
 
-```sql
--- Positive stock with no stock date
-StdQty > 0 AND TransDate IS NULL
+- Negative `IvBalLoc`
+- StdUom mismatch
+- `DUPLICATE_SLICE`
+- `ORPHAN_HISTORY`
+- Positive stock + null `TransDate`
 
--- Negative stock
-StdQty < 0
+Verify live SQL Server has:
 
--- Balance UOM differs from Stock Master StdUom
+- `UQ_IvBalLoc_StockSlice`
+- `CK_IvBalLoc_StdQty_NonNegative`
 
--- Duplicate stock slices
+## Gate B — ledger / baseline
 
--- Lot-controlled stock without valid lot
+For every MISMATCH:
 
--- Non-lot items carrying lot values
+- If legitimate opening-baseline slice (positive BalLoc, no posted history → `UNEXPECTED_BALANCE` + OpeningQty=0 MISMATCH): establish/classify opening baseline first.
+  - Preferred: explicit opening-stock baseline preserving qty, StdUom, stock/opening date, WH/loc/lot/status.
+  - Or: first-close Period Close as baseline authority.
+  - Or: ledger-only/dev DBs may require zero MISMATCH immediately.
+- Else (history exists and BalLoc ≠ history/opening-adjusted total): **true** MISMATCH — block cutover.
 
--- Balance/history mismatch
+After baseline: zero unresolved **true** MISMATCH.
 
--- Future TransDate
+## Gate C — chronology
 
--- Same Item/Lot with conflicting expiry metadata
-```
+- No positive stock with unknown date.
+- Candidate as-of filters enabled.
+- Posting later-day guards enabled.
+- Rollback same-day ordering enabled.
 
-## 18.1 `NULL TransDate` handling
+## Deployment sequence
 
-Preferred repair order:
-
-1. derive latest posted date from `IvTrxHistory` for the balance;
-2. if no history exists but the balance is legitimate opening stock, require an explicit opening-stock date;
-3. do not silently set everything to today.
-
-After repair, enforce:
-
-```text
-positive stock => non-null TransDate
-```
-
----
-
-# 19. Phase 15 — Zero-Balance Lifecycle
-
-Do not immediately delete every zero balance.
-
-A zero `IvBalLoc` may still be referenced by history.
-
-Recommended policy:
-
-```text
-keep zero balances by default
-```
-
-Hide them from normal on-hand lookup.
-
-Optionally add a maintenance/archive process later for rows that:
-
-```text
-StdQty = 0
-AND no active draft reservation
-AND old enough
-AND safe for historical references
-```
-
-Do not make physical deletion part of normal posting.
+1. Read-only preflight report.
+2. Resolve every `StdQty > 0 AND TransDate IS NULL` (prefer latest posted `IvTrxHistory.TrxDtTime`; no history → explicit opening date; never auto-stamp today).
+3. Classify/establish opening baselines (Gate B).
+4. Re-run reconciliation.
+5. Require Gate A zero; Gate B true-MISMATCH zero.
+6. Verify DB constraints.
+7. Deploy strict candidate/posting rules (Gate C).
 
 ---
 
-# 20. Files Expected to Change
+# 15. Files Expected to Change (first ship)
 
-## Core Inventory
+### Core Inventory
 
 ```text
 ErpWeb.Core/Inventory/IvInventoryPostingService.cs
@@ -1322,45 +635,36 @@ ErpWeb.Core/Inventory/IvInventoryLookupService.cs
 ErpWeb.Core/Inventory/IvInventoryReconciliationService.cs
 ErpWeb.Core/Inventory/IvMiscIssueService.cs
 ErpWeb.Core/Inventory/IvMiscReceiptService.cs
-ErpWeb.Core/Inventory/IvGoodsReceiptService.cs
-ErpWeb.Core/Inventory/IvStockReturnService.cs
+ErpWeb.Core/Inventory/IvGoodsReceiptService.cs   (audit only unless gap found)
 ErpWeb.Core/Inventory/IvScrapService.cs
 ErpWeb.Core/Inventory/IvVendorReturnService.cs
 ErpWeb.Core/Inventory/IvStockTransferService.cs
 ErpWeb.Core/Inventory/IvStockAdjustmentService.cs
 ErpWeb.Core/Inventory/IvStockCountService.cs
-ErpWeb.Core/Inventory/IvSpFifoEligibility.cs
-ErpWeb.Core/Inventory/IvSpShipmentService.cs
 ErpWeb.Core/Inventory/IvStockMasterService.cs
-ErpWeb.Core/Inventory/IvUomConversionService.cs
+ErpWeb.Core/Inventory/IvUomConversionService.cs  (consume; avoid double-convert elsewhere)
+ErpWeb.Core/Inventory/IvStockDateRules.cs        (new)
+ErpWeb.Core/Inventory/IvStockMovementRules.cs    (new)
 ```
 
-## New shared rule files
-
-```text
-ErpWeb.Core/Inventory/IvStockDateRules.cs
-ErpWeb.Core/Inventory/IvStockMovementRules.cs
-ErpWeb.Core/Inventory/IvStockStatusRules.cs
-ErpWeb.Core/Inventory/IvLotRules.cs
-```
-
-## Repositories
+### Repositories
 
 ```text
 ErpWeb.Model/Repositories/Inventory/IvStockPostingRepository.cs
 ErpWeb.Model/Repositories/Inventory/IvStockCommonRepository.cs
-ErpWeb.Model/Repositories/Inventory/IvStockHistoryRepository.cs
-ErpWeb.Model/Repositories/Inventory/IvOnHandBalanceRow.cs
+ErpWeb.Model/Repositories/Inventory/IvStockTransactionRepository.cs  (list TotalAmount / sort)
 ```
 
-## Production
+### Production
 
 ```text
 ErpWeb.Core/Production/ProductionMaterialAllocationService.cs
-ErpWeb.Core/Production/ProductionMaterialIssueService.Posting.cs
+ErpWeb.Core/Production/ProductionMaterialIssueService.Draft.cs
+ErpWeb.Core/Production/ProductionMaterialIssueService.Lifecycle.cs
+ErpWeb.Core/Production/ProductionMaterialIssueService.Search.cs
 ```
 
-## UI lookup
+### UI lookup / date-aware selection
 
 ```text
 ErpWeb.UI/Inventory/Lookups/IvBalLocPicker.razor
@@ -1369,82 +673,58 @@ ErpWeb.UI/Inventory/Lookups/IvBalLocSearchPopup.razor
 ErpWeb.UI/Inventory/Lookups/IvBalLocSearchPopup.razor.cs
 ```
 
-## Inventory transaction UI
+Plus date-aware selection/revalidation in MI, SC, VR, TR, ADJ, Stock Count screens as needed.
 
-Date-aware balance selection/revalidation is expected in:
+### Tests
 
 ```text
-IvMiscIssue
-IvScrap
-IvVendorReturn
-IvStockTransfer
-IvStockAdjustment
-IvStockCount
+ErpWeb.Tests/   (chronology, rollback, MR UOM/price/list, PMI eligibility, item-master lock, SQL Server concurrency)
 ```
 
 ---
 
-# 21. Recommended Implementation Sequence
+# 16. Recommended Implementation Sequence
 
-Do not implement all rules simultaneously.
+1. Shared stock-date / movement-date rules + business-date source.
+2. Null-TransDate / Gate A–B preflight scripts and opening-baseline classification (cutover gate before strict picker).
+3. Central posting future-stock + INV-04 later-day guards.
+4. Date-aware balance lookup; Stock Count as-of; PMI TransDate + StdQty + StdUom==BaseUom (remove UsableBaseQty allocation).
+5. INV-05 rollback chronology + `GetLatestRemainingMovementAsync` + tracking-safe `SetBalLocTransDateAsync`.
+6. Repository race safeguards (posting-aware; do not break rollback).
+7. Misc Receipt UOM / ToPur* / UnitPrice + list TotalAmount fix.
+8. Expanded item-master structural lock.
+9. Reconciliation REC-01/02/03 + Gate C enablement.
+10. Automated tests + manual UAT.
 
-## Sprint / Batch A — Core chronology
-
-1. Add shared stock-date rules.
-2. Repair positive `IvBalLoc` rows with null dates.
-3. Add future-stock locked-row checks.
-4. Add date-aware balance lookup.
-5. Fix Production Material Issue candidate date filtering.
-6. Fix Stock Count as-of filtering.
-7. Add common future transaction-date rule.
-
-**Exit condition:** no transaction can consume or rewrite stock from a later date.
-
-## Sprint / Batch B — Historical integrity
-
-8. Add later-movement repository query.
-9. Block backdated mutation after later movement.
-10. Block rollback when later movements exist.
-11. Harden repository quantity updates.
-12. Extend reconciliation for chronology errors.
-
-**Exit condition:** posting/rollback can no longer reorder stock history.
-
-## Sprint / Batch C — Quantity integrity
-
-13. Fix Misc Receipt UOM conversion.
-14. Audit every stock-in/out path for standard UOM.
-15. Block StdUom/StockControl/LotControl master changes after stock history exists.
-16. Add reconciliation check for UOM mismatches.
-
-**Exit condition:** `IvBalLoc.StdQty` has one mathematical meaning everywhere.
-
-## Sprint / Batch D — Lot/status integrity
-
-17. Centralize lot-expiry rules.
-18. Centralize stock-status rules.
-19. Enforce lot identity consistency.
-20. Add FEFO to Sales shipment.
-21. Strengthen lot reconciliation.
-
-**Exit condition:** lot-controlled stock is traceable and only eligible transactions can consume it.
-
-## Sprint / Batch E — Availability / document ceilings
-
-22. Complete source-document quantity limits.
-23. Add common availability read model.
-24. Integrate Sales reservation.
-25. Integrate Production allocation/reservation only where explicitly reserved.
-
-**Exit condition:** "available" stock is no longer confused with physical on-hand.
+**Exit condition (first ship):** no transaction can consume future-dated stock; same-day second post remains legal; backdating cannot rewrite after a later business day; rollback follows persisted history order and repairs TransDate; `IvBalLoc.StdQty` means standard UOM; MR audit preserves entered Qty/UOM and list totals; item master cannot invalidate UOM/control semantics after stock/draft/history exists.
 
 ---
 
-# 22. Manual Acceptance Matrix
+# 17. Automated Tests + Manual UAT
 
-No separate new unit-test project is required for this plan; use the existing automated suite as regression protection and perform the following transaction-level verification.
+Keep a transaction-level manual acceptance matrix. Also add `ErpWeb.Tests` coverage (including existing SQL Server concurrency area where appropriate).
 
-## Date / chronology
+| Area | Cases |
+|---|---|
+| Normal posting | stock date before/same → allow; after → reject; later-day history → reject backdate |
+| Same-day post | A then B on 05-Oct → B **allowed** |
+| Rollback order | same-day A then B → rollback A reject; B then A allow |
+| TransDate repair | 01-Oct GR + 05-Oct MI, rollback MI → TransDate = 01-Oct |
+| Zero-net repair | ADJ +10/−10 same BalLoc; rollback → TransDate repaired |
+| RowVersion-safe repair | SQL Server: tracked BalLoc + qty rollback + TransDate repair → success, no concurrency exception |
+| Opening baseline | BalLoc +100 no history → classified opening-baseline; chronology off until date set |
+| True MISMATCH | BalLoc +100, history net +80 → cutover blocked |
+| Null legacy | positive + null TransDate → Gate A P0; not eligible under strict candidate |
+| PMI eligibility | TransDate after IssueDate excluded; allocation uses StdQty not UsableBaseQty |
+| PMI UOM | BalLoc StdUom ≠ material BaseUom → reject at candidate/post |
+| MR UOM | 10 BOX → 120 PCS; missing conversion → reject |
+| MR reload | reopen 10 BOX not 120 PCS; legacy Std-only rows open |
+| MR price | 10 BOX @ RM24 → UnitPrice 24, LineAmount 240; list TotalAmount **240** not 2880 |
+| Item master lock | zero-qty BalLoc blocks StdUom change; NEW/rolled-back batch detail blocks; posted history blocks |
+| Future movement date | Today 01-Oct, stock movement dated 02-Oct → reject |
+| Concurrency | same BalLoc, same DocumentDate, two concurrent posts → serialize; later history order; rollback earlier rejected while later remains |
+
+### Manual UAT highlights
 
 | Scenario | Expected |
 |---|---|
@@ -1452,86 +732,20 @@ No separate new unit-test project is required for this plan; use the existing au
 | Stock 05-Oct, MI 05-Oct | Allow |
 | Stock 06-Oct, MI 05-Oct | Reject |
 | Existing destination 10-Oct, TR 05-Oct | Reject |
-| Existing balance 10-Oct, GR 05-Oct | Reject |
-| Existing balance 10-Oct, ADJ 05-Oct | Reject |
 | IP 05-Oct, lot stock date 06-Oct | Not selectable / reject |
 | Count 05-Oct, stock date 10-Oct | Exclude / reject |
-| Today 01-Oct, stock movement dated 02-Oct | Reject |
-
-## Backdating
-
-| Scenario | Expected |
-|---|---|
-| Last movement 10-Oct, new transaction 12-Oct | Allow |
-| Last movement 10-Oct, new transaction 10-Oct | Allow if other rules pass |
-| Last movement 10-Oct, new transaction 05-Oct | Reject |
-
-## Rollback
-
-| Scenario | Expected |
-|---|---|
-| 01-Oct GR, no later movement, rollback GR | Allow |
-| 01-Oct GR, 05-Oct MI exists, rollback GR | Reject |
-| Rollback 05-Oct MI first, then rollback 01-Oct GR | Allow |
-
-## UOM
-
-| Scenario | Expected |
-|---|---|
-| StdUom PCS, MR 10 PCS | StdQty 10 PCS |
-| StdUom PCS, 1 BOX=12 PCS, MR 10 BOX | StdQty 120 PCS |
-| StdUom PCS, MR BOX without conversion | Reject |
-| Existing balance PCS receives another UOM | Convert; balance remains PCS |
-
-## Lot / expiry
-
-| Scenario | Expected |
-|---|---|
-| Expired lot -> Sales Shipment | Reject |
-| Expired lot -> Production Issue | Reject |
-| Expired lot -> Scrap | Allow |
-| Expired lot -> Vendor Return | Allow |
-| Existing LOT001 expiry 31-Dec, receipt LOT001 expiry 30-Jun | Reject conflict |
-| FEFO lot B expires before A | Suggest B first |
-
-## Status
-
-| Scenario | Expected |
-|---|---|
-| QCHOLD -> Sales | Reject |
-| DAMAGED -> Production Issue | Reject |
-| DAMAGED -> Scrap | Allow |
-| QCHOLD -> Transfer to quarantine warehouse/location | Allow |
-
-## Master data
-
-| Scenario | Expected |
-|---|---|
-| No history, change StdUom | Allow |
-| Has posted history, change StdUom | Reject |
-| Has stock/history, change LotControl | Reject |
-| Has stock/history, change StockControl | Reject |
-| On-hand > 0, deactivate item | Reject by default |
-
-## Reconciliation
-
-Must report:
-
-```text
-duplicate slice
-orphan history
-balance/history mismatch
-positive stock without TransDate
-negative balance
-StdUom mismatch
-invalid lot relationship
-```
+| Last movement 10-Oct, new txn 05-Oct | Reject |
+| Last movement 10-Oct, new txn 10-Oct | Allow if other rules pass |
+| 01-Oct GR, 05-Oct MI, rollback GR first | Reject |
+| Rollback MI then GR | Allow |
+| StdUom PCS, MR 10 BOX with 1 BOX=12 | StdQty 120 PCS; reopen 10 BOX |
+| Has any BalLoc (incl. 0) or NEW batch, change StdUom | Reject |
 
 ---
 
-# 23. Error Message Standard
+# 18. Error Message Standard
 
-Use specific business messages.
+Use specific business messages. Do not return generic `Inventory error.` for integrity failures.
 
 ### Future stock
 
@@ -1540,7 +754,7 @@ Stock lot LOT001 is dated 10/10/2026 and cannot be used for
 transaction date 05/10/2026.
 ```
 
-### Later movement
+### Later movement (NEW POST)
 
 ```text
 This stock balance has a later posted movement dated 10/10/2026.
@@ -1561,43 +775,32 @@ No active conversion exists from BOX to PCS for item RM001.
 The transaction cannot be saved.
 ```
 
-### Lot conflict
+### Item master
 
 ```text
-Lot LOT001 already exists for item RM001 with expiry 31/12/2026.
-The entered expiry 30/06/2027 does not match.
+Standard UOM cannot be changed because this item already has inventory history.
+Use a controlled inventory conversion/migration process.
 ```
-
-Do not return generic:
-
-```text
-Inventory error.
-```
-
-for integrity failures.
 
 ---
 
-# 24. Transaction Coverage Checklist
-
-Every new inventory-producing/consuming feature must be reviewed against this table.
+# 19. Transaction Coverage Checklist (first ship)
 
 | Rule | GR | MR | CR | MI | SC | VR | TR | ADJ | SP | IP | Count |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Transaction date valid | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Future stock blocked | existing dest | existing dest | existing dest | ✓ | ✓ | ✓ | source+dest | existing | ✓ | ✓ | ✓ |
-| Later movement blocked | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Standard UOM | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Lot policy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Status policy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Source ceiling | PO | optional | sales source | — | — | GR/PO | — | — | SO/DO | WO BOM | — |
+| Later-day movement blocked | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Standard UOM | ✓ | ✓ (convert+ToPur*) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (+ BaseUom match) | ✓ |
 | Rollback chronology | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | generated ADJ |
+
+Deferred from checklist for first ship: full lot/status matrices, source ceilings beyond existing, FEFO, reservation model.
 
 ---
 
-# 25. Non-Goals
+# 20. Non-Goals
 
-Do not add these during this hardening project unless a real customer requires them:
+Do not add during this hardening project unless a real customer requires them:
 
 ```text
 full WMS wave picking
@@ -1609,59 +812,65 @@ SAP-style inventory revaluation/rebuild
 complex quarantine workflow engine
 advanced landed-cost allocation
 consignment ownership layers
+new MR costing/valuation algorithm
+historical quantity rebuild for posting permission
 ```
 
 The objective is reliable SME ERP inventory, not warehouse-management-system scope.
 
 ---
 
-# 26. Definition of Done
+# 21. Definition of Done — First Ship
 
-The hardening project is complete when:
+The first ship is complete only when all of the following are true:
 
-1. `IvBalLoc.StdQty` always means standard/base quantity.
-2. Positive balances have valid stock dates.
-3. No transaction can consume future-dated stock.
-4. No old transaction can rewrite a balance after a later posted movement.
-5. Rollback follows reverse chronology.
-6. No normal stock movement can be posted in the future.
-7. Expired/blocked-status stock cannot be sold or issued to production.
-8. Lots cannot silently change critical identity data.
-9. Downstream documents cannot exceed legitimate source quantities.
-10. Item structural inventory settings cannot be changed after live history exists.
-11. Reconciliation can detect all key integrity violations.
-12. Inventory, Sales and Production use the same core stock rules rather than separate copies.
+1. No stock may be consumed before its stock date.
+2. Same-day normal posting remains legal.
+3. Later-day stock movement blocks unsafe backdating.
+4. Same-day rollback respects persisted history order (`IvTrxHistory.Id`).
+5. Rollback cannot bypass a later movement.
+6. Rollback repairs `IvBalLoc.TransDate` even when net quantity change is zero; repair is RowVersion-safe (SQL Server and SQLite).
+7. PMI uses `TransDate <= IssueDate` + current `StdQty`; does not allocate via `UsableBaseQty`.
+8. PMI rejects BalLoc when `StdUom ≠ WorkOrderMaterial.BaseUom`.
+9. Gate A hard P0s zero; Gate B opening baselines classified then true MISMATCH zero; Gate C chronology enabled.
+10. Live target DB has unique stock-slice and non-negative constraints.
+11. MR converts entered UOM to item standard UOM; preserves entered Qty/UOM in `ToPur*`; UnitPrice per entered UOM; document and list totals use entered qty × UnitPrice; reload shows original entry.
+12. No new MR costing/valuation algorithm.
+13. Item master blocks `StdUom` / `StockControl` / `LotControl` when any BalLoc (incl. zero), any NEW/rolled-back batch detail, or posted history exists.
+14. Reconciliation detects null stock dates, negative balances, and StdUom mismatch.
+15. Period-close and concurrency protection are not weakened.
+16. Stock Count respects CountDate (as-of + MaxBackdateDays + chronology).
+17. Automated tests cover the matrix in §17.
+18. Inventory, Sales eligibility, and Production Material Issue use the same stock-date eligibility rule (not separate as-of rebuild permission).
+
+## Longer-term DoD (deferred milestones)
+
+Expired/blocked-status matrix, lot identity conflict rejection, FEFO for Sales, common availability/reservation model, source-ceiling hardening, posted-history immutability polish, zero-balance lifecycle policy.
 
 ---
 
-# 27. Recommended First Coding Target
-
-Start with **Batch A + Batch B**, not with FEFO or reservations.
-
-The highest-value implementation path is:
+# 22. Recommended First Coding Target
 
 ```text
 Shared stock-date policy
         ↓
-central posting guards
+central posting guards (INV-03 + INV-04)
         ↓
-as-of stock picker
+as-of stock picker + Stock Count
         ↓
-Production IP + Stock Count
+PMI: TransDate filter + StdQty + StdUom==BaseUom
         ↓
-later-movement guard
+rollback INV-05 + GetLatestRemainingMovementAsync
         ↓
-rollback chronology guard
+SetBalLocTransDateAsync (tracking / RowVersion safe)
         ↓
-repository defensive update
+repository race safeguard
+        ↓
+Misc Receipt UOM + ToPur* + list TotalAmount
+        ↓
+item-master structural lock
+        ↓
+Gate A/B/C cutover + reconciliation + tests
 ```
 
-Immediately after that, implement the **standard-UOM fix**, starting with:
-
-```text
-IvMiscReceiptService
-```
-
-because quantity-unit inconsistency is capable of corrupting the stock balance even when date controls are perfect.
-
-This order gives the strongest integrity improvement with the least architectural churn.
+This order gives the strongest integrity improvement with the least architectural churn. After implementing this first ship, stop expanding scope into FEFO, reservations, or status matrices until chronology and UOM meaning are stable in production.

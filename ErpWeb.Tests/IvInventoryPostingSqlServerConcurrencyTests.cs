@@ -124,6 +124,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockTransactionRepository(),
             postingRepo, posting,
             new PoSupplierRepository(factory),
+            new IvUomConversionService(factory),
             NullLogger<IvMiscReceiptService>.Instance);
 
         var save = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
@@ -217,6 +218,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockTransactionRepository(),
             postingRepo, posting,
             new PoSupplierRepository(factory),
+            new IvUomConversionService(factory),
             NullLogger<IvMiscReceiptService>.Instance);
         var mi = new IvMiscIssueService(
             factory, tenant, access.Object, new RunningNumberService(),
@@ -457,9 +459,11 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             new IvStockTransactionRepository(),
             postingRepo, posting,
             new PoSupplierRepository(factory),
+            new IvUomConversionService(factory),
             NullLogger<IvMiscReceiptService>.Instance);
         var adj = new IvStockAdjustmentService(
             factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(DateTime.Today),
             new IvStockMasterRepository(factory),
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),

@@ -23,6 +23,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
     private readonly IIvStockPostingRepository _postingRepo;
     private readonly IIvInventoryPostingService _posting;
     private readonly IPoSupplierRepository _suppliers;
+    private readonly IUomConversionService _uomConversion;
     private readonly ILogger<IvMiscReceiptService> _logger;
 
     public IvMiscReceiptService(
@@ -37,6 +38,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         IIvStockPostingRepository postingRepo,
         IIvInventoryPostingService posting,
         IPoSupplierRepository suppliers,
+        IUomConversionService uomConversion,
         ILogger<IvMiscReceiptService> logger)
     {
         _dbFactory = dbFactory;
@@ -50,6 +52,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         _postingRepo = postingRepo;
         _posting = posting;
         _suppliers = suppliers;
+        _uomConversion = uomConversion;
         _logger = logger;
     }
 
@@ -248,8 +251,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                     ToWarehouse = d.ToWarehouse ?? string.Empty,
                     ToLocation = d.ToLocation,
                     ToLotNo = d.ToLotNo,
-                    Quantity = d.ToStdQty ?? 0m,
-                    Uom = d.ToStdUom,
+                    Quantity = d.ToPurQty ?? d.ToStdQty ?? 0m,
+                    Uom = d.ToPurUom ?? d.ToStdUom,
                     IClassCode = d.IClassCode,
                     IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
                     UnitPrice = d.UnitPrice ?? 0m,
@@ -332,7 +335,15 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
         var refNo = NormalizeRefNo(request.RefNo, batchNo);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+
+        if (movementDateError is not null)
+
+        {
+
+            return IvMiscReceiptOperationResult.Fail(movementDateError);
+
+        }
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
@@ -455,7 +466,11 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvMiscReceiptOperationResult.Fail(movementDateError);
+        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvMiscReceiptOperationResult.Fail(periodGuard);
@@ -697,8 +712,11 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 ToWarehouse = row.ToWarehouse,
                 ToLocation = row.ToLocation,
                 ToLotNo = row.ToLotNo,
-                ToStdQty = IvQty.Round(row.Quantity),
-                ToStdUom = row.Uom,
+                // MR dual-UOM convention: ToPur* = entered Qty/UOM; ToStd* = item StdUom quantity.
+                ToPurQty = IvQty.Round(row.EnteredQty),
+                ToPurUom = row.EnteredUom,
+                ToStdQty = IvQty.Round(row.StdQty),
+                ToStdUom = row.StdUom,
                 IStatus = row.IStatus,
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
@@ -897,6 +915,21 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
 
+        var stdUom = (item.StdUom ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(stdUom))
+        {
+            return ($"Line {lineNo}: item '{item.ICode}' has no standard UOM.", null);
+        }
+
+        var conversion = await _uomConversion.ConvertAsync(
+            companyCode, item.ICode, line.Quantity, uom, stdUom, cancellationToken);
+        if (!conversion.Succeeded)
+        {
+            return (
+                $"Line {lineNo}: {conversion.FailureMessage ?? $"No active conversion exists from {uom} to {stdUom} for item {item.ICode}."}",
+                null);
+        }
+
         return (null, new ValidatedLine(
             item,
             desc,
@@ -905,6 +938,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             toLotNo,
             line.Quantity,
             uom,
+            conversion.Quantity,
+            stdUom,
             iStatus,
             iClassCode,
             expiry,
@@ -970,8 +1005,10 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string ToWarehouse,
         string ToLocation,
         string ToLotNo,
-        decimal Quantity,
-        string Uom,
+        decimal EnteredQty,
+        string EnteredUom,
+        decimal StdQty,
+        string StdUom,
         string IStatus,
         string IClassCode,
         DateTime? ExpiryDate,

@@ -276,6 +276,61 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
             }
         }
 
+        // Gate A chronology / UOM integrity (first-ship hardening)
+        var integrityRows = await (
+            from bal in db.IvBalLocs.AsNoTracking()
+            join sm in db.IvStockMasters.AsNoTracking()
+                on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode } into sms
+            from sm in sms.DefaultIfEmpty()
+            where bal.CompanyCode == company && bal.BranchCode == branch
+                  && (itemFilter == null || bal.ICode == itemFilter)
+                  && (whFilter == null || bal.WhCode == whFilter)
+            select new { bal, StdUomMaster = sm == null ? null : sm.StdUom })
+            .ToListAsync(cancellationToken);
+
+        foreach (var row in integrityRows)
+        {
+            var bal = row.bal;
+            if (bal.StdQty < 0m)
+            {
+                findings.Add(new IvInventoryReconcileFinding
+                {
+                    Code = "NEGATIVE_BALANCE",
+                    Message = $"BalLoc {bal.Id} has negative StdQty {bal.StdQty}.",
+                    BalLocId = bal.Id,
+                    BalLocQty = bal.StdQty,
+                    Slice = $"{bal.ICode}/{bal.WhCode}/{bal.LocCode}/{bal.LotNo}/{bal.IStatus}"
+                });
+            }
+
+            if (bal.StdQty > 0m && bal.TransDate is null)
+            {
+                findings.Add(new IvInventoryReconcileFinding
+                {
+                    Code = "NULL_TRANSDATE",
+                    Message = $"BalLoc {bal.Id} has positive StdQty {bal.StdQty} with null TransDate.",
+                    BalLocId = bal.Id,
+                    BalLocQty = bal.StdQty,
+                    Slice = $"{bal.ICode}/{bal.WhCode}/{bal.LocCode}/{bal.LotNo}/{bal.IStatus}"
+                });
+            }
+
+            var masterUom = (row.StdUomMaster ?? string.Empty).Trim();
+            var balUom = (bal.StdUom ?? string.Empty).Trim();
+            if (masterUom.Length > 0 && balUom.Length > 0
+                && !string.Equals(masterUom, balUom, StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(new IvInventoryReconcileFinding
+                {
+                    Code = "STDUOM_MISMATCH",
+                    Message = $"BalLoc {bal.Id} StdUom '{balUom}' differs from stock master StdUom '{masterUom}'.",
+                    BalLocId = bal.Id,
+                    BalLocQty = bal.StdQty,
+                    Slice = $"{bal.ICode}/{bal.WhCode}/{bal.LocCode}/{bal.LotNo}/{bal.IStatus}"
+                });
+            }
+        }
+
         // ── Stock-count document vs. its ADJ batch ────────────────────────────────────────────────
         // Two rollback routes exist on purpose (the count screen and the Stock Adjustment list), and
         // D8 says that is safe BECAUSE divergence is detected. This is that detector.

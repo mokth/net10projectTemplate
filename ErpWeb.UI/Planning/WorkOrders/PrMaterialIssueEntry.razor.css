@@ -1,17 +1,357 @@
-.pr-issue-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-.pr-issue-summary div { display: flex; flex-direction: column; min-width: 0; }
-.pr-issue-summary span, .pr-issue-summary small { color: var(--bs-secondary-color); }
-.pr-issue-summary--embedded { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--bs-border-color); }
-.pr-issue-header__load { display: grid; grid-template-columns: 120px minmax(220px, 420px) auto; gap: .75rem; align-items: end; }
-.pr-issue-filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.5fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
-.pr-issue-filters > div { display: flex; flex-direction: column; gap: .3rem; }
-.pr-issue-shortage { margin-bottom: .55rem; display: flex; gap: .45rem; }
-.pr-issue-toolbar { display: flex; gap: .5rem; margin-bottom: .75rem; }
-.pr-issue-materials th { white-space: nowrap; font-size: .76rem; text-transform: uppercase; color: var(--bs-secondary-color); }
-.pr-issue-materials td:first-child { min-width: 190px; }
-.pr-issue-materials td:first-child small { display: block; color: var(--bs-secondary-color); }
-.pr-issue-qty { min-width: 110px; }
-.pr-issue-actions { display: flex; justify-content: flex-end; gap: .6rem; padding: .75rem 0 1.5rem; }
-.pr-confirm dl { display: grid; grid-template-columns: 150px 1fr; gap: .35rem .75rem; }
-.pr-confirm dt { color: var(--bs-secondary-color); }
-@media (max-width: 800px) { .pr-issue-summary, .pr-issue-filters { grid-template-columns: 1fr; } .pr-issue-header__load { grid-template-columns: 1fr; } }
+.pr-issue-page {
+    max-width: 1480px;
+    margin-inline: auto;
+}
+
+.pr-issue-commandbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.pr-issue-commandbar__left,
+.pr-issue-commandbar__right,
+.pr-issue-filter-actions,
+.pr-issue-filter-actions__right,
+.pr-issue-pager,
+.pr-issue-footer__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pr-issue-commandbar__right,
+.pr-issue-filter-actions__right {
+    justify-content: flex-end;
+}
+
+.pr-issue-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.pr-issue-section-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.pr-issue-section-head strong {
+    font-size: 1rem;
+    color: var(--iv-ink);
+}
+
+.pr-issue-section-head small {
+    color: var(--iv-muted);
+    font-size: 0.82rem;
+}
+
+.pr-issue-form {
+    margin: 0;
+}
+
+.pr-issue-filter-actions {
+    justify-content: space-between;
+    margin-top: 12px;
+}
+
+.pr-issue-meta {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px 16px;
+}
+
+.pr-issue-meta__item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.pr-issue-meta__item strong {
+    color: var(--iv-ink);
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+}
+
+.pr-issue-meta__item small {
+    color: var(--iv-muted);
+    font-size: 0.78rem;
+}
+
+.pr-issue-meta__item--wide {
+    grid-column: span 2;
+}
+
+.pr-issue-pill {
+    border: 1px solid var(--iv-line);
+    border-radius: 999px;
+    color: var(--iv-muted);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 5px 10px;
+    white-space: nowrap;
+}
+
+.pr-issue-lines {
+    display: flex;
+    flex-direction: column;
+    min-height: 240px;
+}
+
+.pr-issue-lines__head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.pr-issue-lines__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--iv-ink);
+}
+
+.pr-issue-count {
+    color: var(--iv-muted);
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
+
+.pr-issue-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--iv-muted);
+    font-size: 0.86rem;
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.pr-issue-grid {
+    width: 100%;
+}
+
+.pr-issue-page ::deep .pr-issue-grid {
+    --dxbl-grid-border-color: var(--iv-line);
+}
+
+.pr-issue-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.pr-issue-cell--end {
+    align-items: flex-end;
+    text-align: right;
+}
+
+.pr-issue-cell--muted {
+    opacity: 0.72;
+}
+
+.pr-issue-cell__primary {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--iv-ink);
+}
+
+.pr-issue-cell__secondary {
+    font-size: 0.78rem;
+    color: var(--iv-muted);
+}
+
+.pr-issue-cell__warn {
+    font-size: 0.76rem;
+    color: var(--danger, #b42318);
+}
+
+.pr-issue-ops {
+    display: grid;
+    gap: 8px;
+}
+
+.pr-issue-op {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--iv-line);
+    border-radius: 14px;
+    background: var(--iv-soft);
+}
+
+.pr-issue-op__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.pr-issue-op__qty {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: right;
+}
+
+.pr-issue-op__qty strong {
+    color: var(--iv-ink);
+    font-size: 0.92rem;
+    white-space: nowrap;
+}
+
+.pr-issue-pager {
+    justify-content: flex-end;
+    margin-top: 12px;
+    color: var(--iv-muted);
+    font-size: 0.84rem;
+}
+
+.pr-issue-empty {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    padding: 36px 16px 28px;
+    text-align: center;
+    color: var(--iv-muted);
+}
+
+.pr-issue-empty__icon {
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    background: var(--iv-soft);
+    color: var(--accent, #2f6fed);
+    font-size: 1.2rem;
+    margin-bottom: 4px;
+}
+
+.pr-issue-empty h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--iv-ink);
+}
+
+.pr-issue-empty p {
+    margin: 0;
+    max-width: 40ch;
+    font-size: 0.9rem;
+}
+
+.pr-issue-qty {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pr-issue-qty span {
+    color: var(--iv-muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.pr-issue-page ::deep .pr-issue-qty__input {
+    width: 112px;
+    min-width: 112px;
+}
+
+.pr-issue-alloc {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.pr-issue-alloc__ok {
+    color: var(--iv-ok);
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.pr-issue-alloc__warn {
+    color: var(--iv-hold);
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.pr-issue-footer {
+    position: sticky;
+    bottom: -20px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 -4px -4px;
+    padding: 12px 4px 4px;
+    background: linear-gradient(180deg, transparent, var(--bg, #edf0f3) 28%);
+}
+
+.pr-issue-footer__hint {
+    margin: 0;
+    color: var(--iv-muted);
+    font-size: 0.86rem;
+}
+
+@media (max-width: 1100px) {
+    .pr-issue-meta {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pr-issue-meta__item--wide {
+        grid-column: 1 / -1;
+    }
+
+    .pr-issue-op__main {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pr-issue-op__qty {
+        text-align: left;
+    }
+}
+
+@media (max-width: 760px) {
+    .pr-issue-commandbar,
+    .pr-issue-filter-actions,
+    .pr-issue-lines__head,
+    .pr-issue-footer,
+    .pr-issue-op {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .pr-issue-commandbar__left,
+    .pr-issue-commandbar__right,
+    .pr-issue-filter-actions__right,
+    .pr-issue-footer__actions {
+        width: 100%;
+    }
+
+    .pr-issue-meta,
+    .pr-issue-op__main {
+        grid-template-columns: 1fr;
+    }
+
+    .pr-issue-op__qty {
+        text-align: left;
+    }
+}

@@ -205,6 +205,16 @@ public class AppDbContext : DbContext
                         entityType.RemoveIndex(index.Properties);
                     }
                 }
+
+                // SQL Server Unicode literals in legacy check expressions are not portable to
+                // SQLite's test DDL. SQL Server retains these database constraints; services
+                // validate the same invariants in SQLite-backed tests.
+                foreach (var check in entityType.GetCheckConstraints().ToList())
+                {
+                    if (check.Sql?.Contains("N'", StringComparison.Ordinal) == true
+                        || check.Name == "CK_PrMaterialMovement_Type")
+                        entityType.RemoveCheckConstraint(check.Name);
+                }
             }
         }
 

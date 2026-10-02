@@ -114,6 +114,12 @@ PRINT N'Issue-to-Production material movement schema verified successfully.';
 GO
 
 /* Draft allocation map and immutable snapshot identity (save-first IP lifecycle). */
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET ARITHABORT ON;
 IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotRevision') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD SnapshotRevision int NULL;
 IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotHash') IS NULL

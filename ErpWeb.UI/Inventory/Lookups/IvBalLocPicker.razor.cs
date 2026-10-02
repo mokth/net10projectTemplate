@@ -11,6 +11,7 @@ public partial class IvBalLocPicker
     [Parameter] public EventCallback<int?> BalLocIdChanged { get; set; }
     [Parameter] public EventCallback<IvBalLocLookupRow> Selected { get; set; }
     [Parameter] public string? ICodeFilter { get; set; }
+    [Parameter] public DateTime? AsOfDate { get; set; }
     [Parameter] public string? DisplayLotNo { get; set; }
     [Parameter] public bool Enabled { get; set; } = true;
     [Parameter] public string? InputCssClass { get; set; }

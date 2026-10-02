@@ -508,7 +508,11 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         var batchNo = await _runningNumbers.GetNextAsync(db, context.CompanyCode!, RunningNumberKeys.IvBatch, cancellationToken);
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var trxDate = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(movementDateError);
+        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvGoodsReceiptOperationResult.Fail(periodGuard);
@@ -591,7 +595,11 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var trxDate = request.TrxDate == default ? _dates.Today.Date : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(movementDateError);
+        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvGoodsReceiptOperationResult.Fail(periodGuard);

@@ -23,6 +23,7 @@ public partial class IvBalLocSearchPopup
     [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
     [Parameter] public EventCallback<IvBalLocLookupRow> Selected { get; set; }
     [Parameter] public string? ICodeFilter { get; set; }
+    [Parameter] public DateTime? AsOfDate { get; set; }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -66,7 +67,8 @@ public partial class IvBalLocSearchPopup
             ICode = ICodeFilter,
             SearchText = _searchText,
             Skip = _skip,
-            Take = _pageSize
+            Take = _pageSize,
+            AsOfDate = AsOfDate
         });
 
         if (!result.Succeeded)

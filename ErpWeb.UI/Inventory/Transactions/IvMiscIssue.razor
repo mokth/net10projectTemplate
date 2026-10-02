@@ -319,6 +319,7 @@
                                     <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
                                                     ICodeFilter="@Popup.ICode"
+                                                    AsOfDate="@Header.TrxDate"
                                                     Selected="OnBalLocSelectedAsync"
                                                     Enabled="@(!string.IsNullOrWhiteSpace(Popup.ICode) && !IsSubmitting)"
                                                     InputCssClass="required-field" />

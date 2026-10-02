@@ -546,6 +546,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
             scope,
             skip: 0,
             take: IvStockCountLimits.MaxCountLines + 1,
+            asOfDate: header.CountDate,
             cancellationToken);
 
         if (total > IvStockCountLimits.MaxCountLines)

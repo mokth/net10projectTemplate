@@ -121,6 +121,53 @@ public interface IIvStockPostingRepository
         DateTime? transDate,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// NEW POST (INV-04): posted history on the BalLoc with TrxDtTime.Date after documentDate.Date.
+    /// Same-day history is not returned.
+    /// </summary>
+    Task<IReadOnlyList<IvLaterMovementHit>> FindLaterDayMovementsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyCollection<int> balLocIds,
+        DateTime documentDate,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Latest remaining history TrxDtTime for a BalLoc excluding a batch (rollback TransDate repair).
+    /// </summary>
+    Task<DateTime?> GetLatestRemainingMovementAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int balLocId,
+        int excludeBatchNo,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Tracking / RowVersion-safe TransDate repair. When the BalLoc is already tracked, mutates the
+    /// tracked entity and defers persistence to the caller's SaveChanges; otherwise direct UPDATE.
+    /// </summary>
+    Task<int> SetBalLocTransDateAsync(
+        AppDbContext db,
+        int balLocId,
+        string companyCode,
+        string branchCode,
+        DateTime? transDate,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// ROLLBACK (INV-05): remaining history later than (targetDate, targetMaxHistoryId) per BalLoc.
+    /// </summary>
+    Task<IReadOnlyList<IvLaterMovementHit>> FindLaterRollbackMovementsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyCollection<(int BalLocId, DateTime TargetDate, int TargetMaxHistoryId)> targets,
+        int excludeBatchNo,
+        CancellationToken cancellationToken = default);
+
     Task<IvLot?> TryLockLotAsync(
         AppDbContext db,
         string companyCode,
@@ -649,6 +696,210 @@ WHERE ID = {id}
         await db.SaveChangesAsync(cancellationToken);
         db.Entry(row).State = EntityState.Detached;
         return 1;
+    }
+
+    public async Task<IReadOnlyList<IvLaterMovementHit>> FindLaterDayMovementsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyCollection<int> balLocIds,
+        DateTime documentDate,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        if (balLocIds.Count == 0)
+            return Array.Empty<IvLaterMovementHit>();
+
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var ids = balLocIds.Distinct().ToArray();
+        var dayEnd = documentDate.Date.AddDays(1);
+
+        var query = db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.BranchCode == branch
+                        && x.TrxDtTime >= dayEnd
+                        && ((x.FromBalLocId.HasValue && ids.Contains(x.FromBalLocId.Value))
+                            || (x.ToBalLocId.HasValue && ids.Contains(x.ToBalLocId.Value))));
+
+        if (excludeBatchNo is int exclude)
+            query = query.Where(x => x.BatchNo != exclude);
+
+        var rows = await query
+            .OrderBy(x => x.TrxDtTime)
+            .ThenBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.BatchNo,
+                x.TrxDtTime,
+                x.ICode,
+                x.FrWarehouse,
+                x.ToWarehouse,
+                x.FrLotNo,
+                x.ToLotNo,
+                x.FromBalLocId,
+                x.ToBalLocId
+            })
+            .ToListAsync(cancellationToken);
+
+        var hits = new List<IvLaterMovementHit>();
+        foreach (var row in rows)
+        {
+            if (row.FromBalLocId is int fromId && ids.Contains(fromId))
+            {
+                hits.Add(new IvLaterMovementHit(
+                    fromId, row.Id, row.BatchNo, row.TrxDtTime, row.ICode,
+                    row.FrWarehouse, row.FrLotNo));
+            }
+
+            if (row.ToBalLocId is int toId && ids.Contains(toId) && toId != row.FromBalLocId)
+            {
+                hits.Add(new IvLaterMovementHit(
+                    toId, row.Id, row.BatchNo, row.TrxDtTime, row.ICode,
+                    row.ToWarehouse, row.ToLotNo));
+            }
+        }
+
+        return hits;
+    }
+
+    public async Task<DateTime?> GetLatestRemainingMovementAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int balLocId,
+        int excludeBatchNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+
+        return await db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.BranchCode == branch
+                        && x.BatchNo != excludeBatchNo
+                        && ((x.FromBalLocId == balLocId) || (x.ToBalLocId == balLocId)))
+            .OrderByDescending(x => x.TrxDtTime)
+            .ThenByDescending(x => x.Id)
+            .Select(x => (DateTime?)x.TrxDtTime)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<int> SetBalLocTransDateAsync(
+        AppDbContext db,
+        int balLocId,
+        string companyCode,
+        string branchCode,
+        DateTime? transDate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var now = DateTime.UtcNow;
+
+        var tracked = db.IvBalLocs.Local
+            .FirstOrDefault(x => x.Id == balLocId
+                                 && string.Equals(x.CompanyCode, company, StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals(x.BranchCode, branch, StringComparison.OrdinalIgnoreCase));
+        if (tracked is not null)
+        {
+            tracked.TransDate = transDate;
+            tracked.ModifiedDate = now;
+            return 1;
+        }
+
+        if (db.Database.IsSqlServer())
+        {
+            return await db.Database.ExecuteSqlInterpolatedAsync($@"
+UPDATE dbo.IvBalLoc
+SET TransDate = {transDate},
+    Updated = {now}
+WHERE ID = {balLocId}
+  AND CompanyCode = {company}
+  AND BranchCode = {branch}", cancellationToken);
+        }
+
+        var row = await db.IvBalLocs
+            .FirstOrDefaultAsync(
+                x => x.Id == balLocId && x.CompanyCode == company && x.BranchCode == branch,
+                cancellationToken);
+        if (row is null)
+            return 0;
+
+        row.TransDate = transDate;
+        row.ModifiedDate = now;
+        await db.SaveChangesAsync(cancellationToken);
+        db.Entry(row).State = EntityState.Detached;
+        return 1;
+    }
+
+    public async Task<IReadOnlyList<IvLaterMovementHit>> FindLaterRollbackMovementsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyCollection<(int BalLocId, DateTime TargetDate, int TargetMaxHistoryId)> targets,
+        int excludeBatchNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        if (targets.Count == 0)
+            return Array.Empty<IvLaterMovementHit>();
+
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        var ids = targets.Select(x => x.BalLocId).Distinct().ToArray();
+        var byId = targets.ToDictionary(x => x.BalLocId, x => x);
+
+        var candidates = await db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.BranchCode == branch
+                        && x.BatchNo != excludeBatchNo
+                        && ((x.FromBalLocId.HasValue && ids.Contains(x.FromBalLocId.Value))
+                            || (x.ToBalLocId.HasValue && ids.Contains(x.ToBalLocId.Value))))
+            .Select(x => new
+            {
+                x.Id,
+                x.BatchNo,
+                x.TrxDtTime,
+                x.ICode,
+                x.FrWarehouse,
+                x.ToWarehouse,
+                x.FrLotNo,
+                x.ToLotNo,
+                x.FromBalLocId,
+                x.ToBalLocId
+            })
+            .ToListAsync(cancellationToken);
+
+        var hits = new List<IvLaterMovementHit>();
+        foreach (var row in candidates)
+        {
+            void Consider(int balLocId, string? wh, string? lot)
+            {
+                if (!byId.TryGetValue(balLocId, out var target))
+                    return;
+
+                var laterDate = row.TrxDtTime.Date > target.TargetDate.Date;
+                var laterSameDay = row.TrxDtTime.Date == target.TargetDate.Date
+                                   && row.Id > target.TargetMaxHistoryId;
+                if (!laterDate && !laterSameDay)
+                    return;
+
+                hits.Add(new IvLaterMovementHit(
+                    balLocId, row.Id, row.BatchNo, row.TrxDtTime, row.ICode, wh, lot));
+            }
+
+            if (row.FromBalLocId is int fromId)
+                Consider(fromId, row.FrWarehouse, row.FrLotNo);
+            if (row.ToBalLocId is int toId && toId != row.FromBalLocId)
+                Consider(toId, row.ToWarehouse, row.ToLotNo);
+        }
+
+        return hits;
     }
 
     private static async Task<IvBalLoc?> LockBalLocExactAsync(

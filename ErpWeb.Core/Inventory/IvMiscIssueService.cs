@@ -313,7 +313,11 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
         var refNo = NormalizeRefNo(request.RefNo, batchNo);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvMiscIssueOperationResult.Fail(movementDateError);
+        }
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
@@ -414,7 +418,11 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvMiscIssueOperationResult.Fail(movementDateError);
+        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvMiscIssueOperationResult.Fail(periodGuard);

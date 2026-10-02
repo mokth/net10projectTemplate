@@ -50,6 +50,7 @@ public sealed class IvBalLocLookupRow
     public string? StdUom { get; init; }
     public string IStatus { get; init; } = string.Empty;
     public DateTime? ExpiryDate { get; init; }
+    public DateTime? TransDate { get; init; }
     public string? IClassCode { get; init; }
     public bool LotControl { get; init; }
     public decimal? PurchasePrice { get; init; }
@@ -63,6 +64,8 @@ public sealed class IvOnHandSearchRequest
     public string? SearchText { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 20;
+    /// <summary>When set, only balances with TransDate on or before this date are returned (INV-03).</summary>
+    public DateTime? AsOfDate { get; set; }
 }
 
 public sealed class IvItemResolveResult
@@ -245,6 +248,7 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             request.SearchText,
             request.Skip,
             request.Take,
+            request.AsOfDate,
             cancellationToken);
 
         return IvOnHandSearchResult.Ok(
@@ -563,6 +567,7 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             StdUom = x.StdUom,
             IStatus = x.IStatus,
             ExpiryDate = x.ExpiryDate,
+            TransDate = x.TransDate,
             IClassCode = x.IClassCode,
             LotControl = x.LotControl,
             PurchasePrice = x.PurchasePrice,

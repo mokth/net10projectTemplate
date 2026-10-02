@@ -12,8 +12,8 @@ public class PrDefBomConfiguration : IEntityTypeConfiguration<PrDefBOM>
         {
             table.HasCheckConstraint(
                 "CK_PrDefBOM_ComponentDefinitionCode",
-                "([SupplySource] = N'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NOT NULL) "
-                + "OR ([SupplySource] <> N'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NULL)");
+                "([SupplySource] = 'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NOT NULL) "
+                + "OR ([SupplySource] <> 'SEPARATE_PRODUCT_DEFINITION' AND [ComponentDefinitionCode] IS NULL)");
         });
         builder.HasKey(e => e.Uid);
 

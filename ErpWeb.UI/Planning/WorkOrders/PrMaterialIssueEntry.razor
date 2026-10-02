@@ -9,94 +9,561 @@
 
 <MenuAuthorize MenuCode="@MenuCodes.PlanningMaterialIssue">
     <div class="iv-page pr-issue-page">
-        @if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="iv-toast iv-toast--ok" role="status"><span>@StatusMessage</span><button type="button" class="iv-toast__close" @onclick="DismissStatus">×</button></div> }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert"><span>@ErrorMessage</span><button type="button" class="iv-toast__close" @onclick="DismissError">×</button></div> }
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
 
         <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-dolly"></i></div>
-            <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">@PageHeading</h1><div class="iv-chips"><span class="iv-chip">@(IsViewMode ? $"IP {BatchNo}" : "New")</span><span class="iv-chip">@HeaderStatus</span></div></div>
-            <div class="iv-hero__kpi"><span>Materials selected</span><strong>@SelectedLineCount</strong></div>
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-dolly"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Production</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    @if (IsViewMode && BatchNo is > 0)
+                    {
+                        <span class="iv-chip code-style">IP @BatchNo</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(ActiveWorkOrderNo))
+                    {
+                        <span class="iv-chip code-style">@ActiveWorkOrderNo</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(ActiveProductCode))
+                    {
+                        <span class="iv-chip code-style">@ActiveProductCode</span>
+                    }
+                    <span class="iv-chip">@HeaderStatus</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>@(IsViewMode ? "Materials" : "Selected")</span>
+                <strong>@SelectedLineCount</strong>
+            </div>
         </header>
 
-        @if (IsLoading) { <section class="iv-card"><div class="iv-skeleton"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section> }
+        <section class="iv-card pr-issue-commandbar">
+            <div class="pr-issue-commandbar__left">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="BACK"
+                          IconCssClass="fa-solid fa-arrow-left"
+                          Click="@BackToList"
+                          Enabled="@(!IsSubmitting)" />
+                @if (Workspace is not null && !IsViewMode && !IsEditMode)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CHANGE OPERATION"
+                              IconCssClass="fa-solid fa-right-left"
+                              Click="@ClearWorkspace"
+                              Enabled="@(!IsSubmitting)" />
+                }
+            </div>
+            <div class="pr-issue-commandbar__right">
+                @if (Workspace is not null && !IsViewMode)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="BOM / CALCULATE"
+                              IconCssClass="fa-solid fa-calculator"
+                              Click="@OpenBom"
+                              Enabled="@(SelectedOperationRow is not null && !IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="FILL OUTSTANDING"
+                              IconCssClass="fa-solid fa-fill-drip"
+                              Click="@AutoFillOutstanding"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="AUTO ALLOCATE"
+                              IconCssClass="fa-solid fa-layer-group"
+                              Click="@AllocateAllAsync"
+                              Enabled="@(!IsSubmitting && Lines.Any(x => x.IssueQty > 0))" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="SAVE DRAFT"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@SaveAsync"
+                              Enabled="@(CanSaveDocument && !IsSubmitting)" />
+                }
+            </div>
+        </section>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card">
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            </section>
+        }
         else if (IsViewMode && Document is not null)
         {
-            <section class="iv-card pr-issue-summary">
-                <div><span>Work Order</span><strong>@Document.WorkOrderNo</strong></div><div><span>Product</span><strong>@Document.ProductCode</strong><small>@Document.ProductDescription</small></div>
-                <div><span>Issue date</span><strong>@Document.IssueDate.ToString("dd MMM yyyy")</strong></div><div><span>Planned</span><strong>@Document.PlannedQty.ToString("n4") @Document.OutputUom</strong></div>
-                <div><span>Posted by</span><strong>@Document.PostedBy</strong><small>@Document.PostedDate?.ToString("dd MMM yyyy HH:mm")</small></div><div><span>Remark</span><strong>@(Document.Remark ?? "—")</strong></div>
-            </section>
             <section class="iv-card">
-                <div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>#</th><th>Item</th><th>Issue</th><th>Base qty</th><th>Warehouse</th><th>Location</th><th>Lot</th><th>Status</th>@if (Document.CanViewCost) { <th>Unit cost</th><th>Total cost</th> }</tr></thead>
-                    <tbody>@foreach (var line in Document.Lines) { <tr><td>@line.InventoryLineNo</td><td><strong>@line.ItemCode</strong></td><td class="text-end">@line.IssueQty.ToString("n4") @line.Uom</td><td class="text-end">@line.BaseQty.ToString("n4") @line.BaseUom</td><td>@line.Warehouse</td><td>@line.Location</td><td>@(string.IsNullOrWhiteSpace(line.LotNo) ? "—" : line.LotNo)</td><td>@line.ItemStatus</td>@if (Document.CanViewCost) { <td class="text-end">@line.UnitCost?.ToString("n4")</td><td class="text-end">@line.TotalCost?.ToString("n4")</td> }</tr> }</tbody>
-                </table></div>
+                <h2 class="iv-card__title">Document</h2>
+                <div class="pr-issue-meta">
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Work Order</span>
+                        <strong class="code-style">@Document.WorkOrderNo</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Product</span>
+                        <strong class="code-style">@Document.ProductCode</strong>
+                        <small>@Document.ProductDescription</small>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Issue date</span>
+                        <strong>@Document.IssueDate.ToString("dd MMM yyyy HH:mm")</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Planned</span>
+                        <strong>@Document.PlannedQty.ToString("n4") @Document.OutputUom</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Posted by</span>
+                        <strong>@(string.IsNullOrWhiteSpace(Document.PostedBy) ? "—" : Document.PostedBy)</strong>
+                        <small>@(Document.PostedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
+                    </div>
+                    <div class="pr-issue-meta__item pr-issue-meta__item--wide">
+                        <span class="iv-field__label">Remark</span>
+                        <strong>@(string.IsNullOrWhiteSpace(Document.Remark) ? "—" : Document.Remark)</strong>
+                    </div>
+                </div>
             </section>
-            <div class="pr-issue-actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Back to list" Click="@BackToList" /></div>
+
+            <section class="iv-card pr-issue-lines">
+                <div class="pr-issue-lines__head">
+                    <div>
+                        <p class="iv-eyebrow">Lines</p>
+                        <h2 class="pr-issue-lines__title">Issued materials</h2>
+                    </div>
+                </div>
+                <DxGrid Data="@Document.Lines"
+                        KeyFieldName="@nameof(ProductionMaterialIssueDocumentLine.InventoryLineNo)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="pr-issue-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.InventoryLineNo)" Caption="#" Width="56px" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.ItemCode)" Caption="Item" MinWidth="180">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (ProductionMaterialIssueDocumentLine)context.DataItem;
+                                }
+                                <div class="pr-issue-cell">
+                                    <span class="pr-issue-cell__primary code-style">@line.ItemCode</span>
+                                    <span class="pr-issue-cell__secondary">@line.Warehouse / @line.Location · @(string.IsNullOrWhiteSpace(line.LotNo) ? "No lot" : line.LotNo)</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.IssueQty)" Caption="Issue qty" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                            <CellDisplayTemplate>
+                                @{
+                                    var qtyLine = (ProductionMaterialIssueDocumentLine)context.DataItem;
+                                }
+                                <span>@qtyLine.IssueQty.ToString("n4") @qtyLine.Uom</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.BaseQty)" Caption="Base qty" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                            <CellDisplayTemplate>
+                                @{
+                                    var baseLine = (ProductionMaterialIssueDocumentLine)context.DataItem;
+                                }
+                                <span>@baseLine.BaseQty.ToString("n4") @baseLine.BaseUom</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.ItemStatus)" Caption="Status" Width="100px">
+                            <CellDisplayTemplate>
+                                <span class="iv-status">@(((ProductionMaterialIssueDocumentLine)context.DataItem).ItemStatus)</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        @if (Document.CanViewCost)
+                        {
+                            <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.UnitCost)" Caption="Unit cost" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.TotalCost)" Caption="Total cost" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        }
+                    </Columns>
+                </DxGrid>
+            </section>
+        }
+        else if (Workspace is null)
+        {
+            <section class="iv-card">
+                <header class="pr-issue-section-head">
+                    <div>
+                        <strong>Find Work Order operation</strong>
+                        <small>Select an eligible released operation to issue materials against.</small>
+                    </div>
+                </header>
+
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-issue-form">
+                    <DxFormLayoutItem Caption="Work Order" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.WorkOrders"
+                                        TextFieldName="@nameof(ProductionMaterialIssueFilterChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionMaterialIssueFilterChoice.Code)"
+                                        @bind-Value="@SearchWo"
+                                        NullText="All eligible Work Orders"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Work Centre" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.WorkCentres"
+                                        @bind-Value="@SearchWorkCentre"
+                                        NullText="All work centres"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Process" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.Processes"
+                                        TextFieldName="@nameof(ProductionMaterialIssueFilterChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionMaterialIssueFilterChoice.Code)"
+                                        @bind-Value="@SearchProcess"
+                                        NullText="All processes"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    @if (MoreFiltersVisible)
+                    {
+                        <DxFormLayoutItem Caption="Product" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.Products"
+                                            @bind-Value="@SearchProduct"
+                                            NullText="All products"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Output Item" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.OutputItems"
+                                            @bind-Value="@SearchOutputItem"
+                                            NullText="All output items"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Raw Material" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.RawMaterials"
+                                            @bind-Value="@SearchRawMaterial"
+                                            NullText="All raw materials"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Machine" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.Machines"
+                                            @bind-Value="@SearchMachine"
+                                            NullText="All machines"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                </DxFormLayout>
+
+                <div class="pr-issue-filter-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(MoreFiltersVisible ? "Fewer filters" : "More filters")"
+                              IconCssClass="fa-solid fa-sliders"
+                              Click="@ToggleMoreFilters" />
+                    <div class="pr-issue-filter-actions__right">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CLEAR"
+                                  Click="@ClearOperationFilters"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="FIND"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  Click="@ApplyOperationFiltersAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card pr-issue-lines">
+                <div class="pr-issue-lines__head">
+                    <div>
+                        <p class="iv-eyebrow">Results</p>
+                        <h2 class="pr-issue-lines__title">Matching operations</h2>
+                    </div>
+                    <span class="pr-issue-count">@OperationResultLabel · page @(OperationPage + 1) / @OperationPageCount</span>
+                </div>
+
+                @if (IsSubmitting)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else if (OperationRows.Count == 0)
+                {
+                    <div class="pr-issue-empty">
+                        <div class="pr-issue-empty__icon" aria-hidden="true">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </div>
+                        <h3>No eligible operations</h3>
+                        <p>Change or clear the filters to see more Work Orders.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="pr-issue-ops">
+                        @foreach (var op in OperationRows)
+                        {
+                            <article class="pr-issue-op">
+                                <div class="pr-issue-op__main">
+                                    <div class="pr-issue-cell">
+                                        <span class="pr-issue-cell__primary code-style">@op.WorkOrderNo</span>
+                                        <span class="pr-issue-cell__secondary">@op.ProductCode · @op.ProductDescription</span>
+                                    </div>
+                                    <div class="pr-issue-cell">
+                                        <span class="pr-issue-cell__primary">@(op.WorkCentreCode ?? "—") / @op.OperationCode</span>
+                                        <span class="pr-issue-cell__secondary">@(op.OperationDescription ?? "—")</span>
+                                    </div>
+                                    <div class="pr-issue-cell">
+                                        <span class="pr-issue-cell__primary code-style">@(op.OutputItemCode ?? "—")</span>
+                                        <span class="pr-issue-cell__secondary">@(string.IsNullOrWhiteSpace(op.SelectedMachineCode) ? "No machine" : op.SelectedMachineCode)</span>
+                                    </div>
+                                    <div class="pr-issue-op__qty">
+                                        <span class="iv-field__label">Planned</span>
+                                        <strong>@op.PlannedOutputQty.ToString("n4") @op.PlannedOutputUom</strong>
+                                    </div>
+                                </div>
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="SELECT"
+                                          Click="@(() => ApplyOperationAsync(op))"
+                                          Enabled="@(!IsSubmitting)" />
+                            </article>
+                        }
+                    </div>
+
+                    <div class="pr-issue-pager">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Previous"
+                                  Click="@(() => ChangeOperationPageAsync(-1))"
+                                  Enabled="@(OperationPage > 0 && !IsSubmitting)" />
+                        <span>Page @(OperationPage + 1) of @OperationPageCount</span>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Next"
+                                  Click="@(() => ChangeOperationPageAsync(1))"
+                                  Enabled="@(OperationPage + 1 < OperationPageCount && !IsSubmitting)" />
+                    </div>
+                }
+            </section>
         }
         else
         {
-            <section class="iv-card pr-issue-header">
-                <div class="pr-issue-header__load">
-                    <label>Work Order</label><DxTextBox @bind-Text="@WorkOrderInput" ReadOnly="@(Workspace is not null)" NullText="Enter released Work Order" CssClass="required-field" />
-                    @if (Workspace is null) { <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Load" Click="@LoadWorkspaceFromInputAsync" Enabled="@(!IsSubmitting)" /> }
-                    else { <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Change" Click="@ClearWorkspace" Enabled="@(!IsSubmitting)" /> }
-                </div>
-                @if (Workspace is not null)
-                {
-                    <div class="pr-issue-summary pr-issue-summary--embedded">
-                        <div><span>Status</span><strong>@Workspace.Status</strong></div><div><span>Product</span><strong>@Workspace.ProductCode</strong><small>@Workspace.ProductDescription</small></div>
-                        <div><span>Planned</span><strong>@Workspace.PlannedQty.ToString("n4") @Workspace.OutputUom</strong></div>
-                        <div><span>Date &amp; time</span><InputDate TValue="DateTime" Type="InputDateType.DateTimeLocal" class="form-control" @bind-Value="IssueDate" disabled="@IsSubmitting" /></div>
+            <section class="iv-card">
+                <header class="pr-issue-section-head">
+                    <div>
+                        <strong>Operation</strong>
+                        <small>@Workspace.WorkOrderNo · @SelectedOperationRow?.OperationCode — @SelectedOperationRow?.OperationDescription</small>
                     </div>
-                    <label class="mt-3">Remark</label><DxMemo @bind-Text="@Remark" Rows="2" Enabled="@(!IsSubmitting)" />
-                }
+                    <span class="pr-issue-pill">@Workspace.Status</span>
+                </header>
+
+                <div class="pr-issue-meta">
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Product</span>
+                        <strong class="code-style">@Workspace.ProductCode</strong>
+                        <small>@Workspace.ProductDescription</small>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Work Centre</span>
+                        <strong>@(SelectedOperationRow?.WorkCentreCode ?? "—")</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Planned output</span>
+                        <strong>@SelectedOperationRow?.PlannedOutputQty.ToString("n4") @SelectedOperationRow?.PlannedOutputUom</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Issue date &amp; time</span>
+                        <DxDateEdit @bind-Date="@IssueDate"
+                                    DisplayFormat="dd/MM/yyyy HH:mm"
+                                    TimeSectionVisible="true"
+                                    Enabled="@(!IsSubmitting)" />
+                    </div>
+                    <div class="pr-issue-meta__item pr-issue-meta__item--wide">
+                        <span class="iv-field__label">Remark</span>
+                        <DxMemo @bind-Text="@Remark"
+                                Rows="2"
+                                Enabled="@(!IsSubmitting)"
+                                NullText="Optional note for this issue draft" />
+                    </div>
+                </div>
             </section>
 
-            @if (Workspace is null)
-            {
-                <section class="iv-card">
-                    <h2 class="h5">Find Work Order operation</h2>
-                    <div class="row g-2">
-                        <div class="col-md-3"><label>WO</label><DxTextBox @bind-Text="SearchWo" /></div>
-                        <div class="col-md-3"><label>Product</label><DxTextBox @bind-Text="SearchProduct" /></div>
-                        <div class="col-md-3"><label>Work Centre</label><DxTextBox @bind-Text="SearchWorkCentre" /></div>
-                        <div class="col-md-3"><label>Process</label><DxTextBox @bind-Text="SearchProcess" /></div>
-                        <div class="col-md-3"><label>Output Item</label><DxTextBox @bind-Text="SearchOutputItem" /></div>
-                        <div class="col-md-3"><label>Raw Material</label><DxTextBox @bind-Text="SearchRawMaterial" /></div>
-                        <div class="col-md-3"><label>Selected Machine</label><DxTextBox @bind-Text="SearchMachine" /></div>
-                        <div class="col-md-3 d-flex align-items-end"><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Search" Click="SearchOperationsAsync" Enabled="@(!IsSubmitting)" /></div>
+            <section class="iv-card pr-issue-lines">
+                <div class="pr-issue-lines__head">
+                    <div>
+                        <p class="iv-eyebrow">Materials</p>
+                        <h2 class="pr-issue-lines__title">Choose what to issue</h2>
                     </div>
-                    @if (OperationRows.Count > 0)
-                    {
-                        <div class="table-responsive mt-3"><table class="table table-sm align-middle"><thead><tr><th>WO</th><th>Product</th><th>WC</th><th>Process</th><th>Output Item</th><th>Machine</th><th>Planned Qty</th><th></th></tr></thead>
-                            <tbody>@foreach (var op in OperationRows) { <tr><td>@op.WorkOrderNo</td><td>@op.ProductCode</td><td>@op.WorkCentreCode</td><td>@op.OperationCode</td><td>@op.OutputItemCode</td><td>@op.SelectedMachineCode</td><td class="text-end">@op.PlannedOutputQty.ToString("n4") @op.PlannedOutputUom</td><td><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Apply" Click="@(() => ApplyOperationAsync(op))" /></td></tr> }</tbody>
-                        </table></div>
-                    }
-                </section>
-            }
+                    <label class="pr-issue-toggle">
+                        <DxCheckBox @bind-Checked="@ShowShortageOnly" AllowIndeterminateState="false" />
+                        <span>Shortage only</span>
+                    </label>
+                </div>
 
-            @if (Workspace is not null)
-            {
-                <section class="iv-card">
-                    <div class="pr-issue-filters">
-                        <div><label>Route / Work Centre</label><select class="form-select" @bind="SelectedWorkCentre"><option value="">All work centres</option>@foreach (var wc in WorkCentreOptions) { <option value="@wc">@wc</option> }</select></div>
-                        <div><label>Operation</label><select class="form-select" @bind="SelectedOperationId"><option value="">All operations</option>@foreach (var op in OperationOptions) { <option value="@op.WorkOrderOperationId">@op.OperationCode — @op.OperationDescription</option> }</select></div>
-                        <label class="form-check pr-issue-shortage"><InputCheckbox class="form-check-input" @bind-Value="ShowShortageOnly" /><span class="form-check-label">Show shortage only</span></label>
-                    </div>
-                    <div class="pr-issue-toolbar"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="BOM / Calculate" IconCssClass="fa-solid fa-calculator" Click="@OpenBom" Enabled="@(SelectedOperationRow is not null && !IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Auto Fill Outstanding" IconCssClass="fa-solid fa-fill-drip" Click="@AutoFillOutstanding" Enabled="@(!IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Allocate Lots" IconCssClass="fa-solid fa-layer-group" Click="@AllocateAllAsync" Enabled="@(!IsSubmitting && Lines.Any(x => x.IssueQty > 0))" /></div>
-                    <div class="table-responsive"><table class="table table-hover align-middle pr-issue-materials"><thead><tr><th>Item / description</th><th>Required</th><th>Net issued</th><th>Other NEW</th><th>Std remaining</th><th>Tolerance %</th><th>Max allowed</th><th>Available to draft</th><th>Current issue</th><th>UOM</th><th>Warehouse</th><th>Status</th><th></th></tr></thead>
-                        <tbody>@foreach (var line in VisibleLines) { <tr class="@(!line.Material.CanManualIssue ? "table-light text-muted" : null)"><td><strong>@line.Material.ComponentCode</strong><small>@line.Material.Description</small><small>@line.Material.OperationCode · @line.Material.WorkCentreCode</small></td><td class="text-end">@line.Material.RequiredQty.ToString("n4")</td><td class="text-end">@line.Material.NetIssuedQty.ToString("n4")</td><td class="text-end">@line.Material.OtherOpenDraftQty.ToString("n4")</td><td class="text-end">@line.Material.StandardRemaining.ToString("n4")</td><td class="text-end">@line.Material.TolerancePercent.ToString("n2")</td><td class="text-end">@line.Material.MaxAllowedNetIssue.ToString("n4")</td><td class="text-end">@line.Material.AvailableToDraft.ToString("n4")</td>
-                            <td><InputNumber TValue="decimal" class="form-control form-control-sm text-end pr-issue-qty" @bind-Value="line.IssueQty" min="0" step="0.0001" disabled="@(!line.Material.CanManualIssue || IsSubmitting)" /></td><td>@line.Material.RequiredUom</td><td>@line.Material.WarehouseCode</td><td>@if (line.Material.CanManualIssue) { <span class="badge text-bg-success">Ready</span> } else { <span class="badge text-bg-secondary" title="@line.Material.BlockingReason">Blocked</span> }</td>
-                            <td><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Allocate" Click="@(() => OpenAllocation(line))" Enabled="@(line.Material.CanManualIssue && line.IssueQty > 0 && !IsSubmitting)" /><small class="d-block text-nowrap mt-1">@line.Allocations.Count allocation(s)</small></td></tr> }</tbody>
-                    </table></div>
-                </section>
-                <div class="pr-issue-actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@BackToList" Enabled="@(!IsSubmitting)" /><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save Draft" IconCssClass="fa-solid fa-floppy-disk" Click="@SaveAsync" Enabled="@(CanSaveDocument && !IsSubmitting)" /></div>
-            }
+                <DxGrid Data="@VisibleLineList"
+                        KeyFieldName="@nameof(MaterialLineVm.Key)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="30"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="pr-issue-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.ComponentCode)" Caption="Material" MinWidth="200">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (MaterialLineVm)context.DataItem;
+                                }
+                                <div class="pr-issue-cell @(line.Material.CanManualIssue ? null : "pr-issue-cell--muted")">
+                                    <span class="pr-issue-cell__primary code-style">@line.Material.ComponentCode</span>
+                                    <span class="pr-issue-cell__secondary">@line.Material.Description</span>
+                                    <span class="pr-issue-cell__secondary">@line.Material.WarehouseCode · @line.Material.RequiredUom</span>
+                                    @if (!line.Material.CanManualIssue && !string.IsNullOrWhiteSpace(line.Material.BlockingReason))
+                                    {
+                                        <span class="pr-issue-cell__warn">@line.Material.BlockingReason</span>
+                                    }
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.RequiredQty)" Caption="Required" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.NetIssuedQty)" Caption="Issued" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.AvailableToDraft)" Caption="Available" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                            <CellDisplayTemplate>
+                                @{
+                                    var avail = (MaterialLineVm)context.DataItem;
+                                }
+                                <div class="pr-issue-cell pr-issue-cell--end">
+                                    <span class="pr-issue-cell__primary">@avail.Material.AvailableToDraft.ToString("n4")</span>
+                                    <span class="pr-issue-cell__secondary">tol @avail.Material.TolerancePercent.ToString("n2")%</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.IssueQty)" Caption="Issue now" Width="150px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var editLine = (MaterialLineVm)context.DataItem;
+                                }
+                                <div class="pr-issue-qty">
+                                    <DxSpinEdit @bind-Value="@editLine.IssueQty"
+                                                MinValue="0m"
+                                                Increment="0.0001m"
+                                                DisplayFormat="n4"
+                                                ShowSpinButtons="false"
+                                                Enabled="@(editLine.Material.CanManualIssue && !IsSubmitting)"
+                                                CssClass="pr-issue-qty__input" />
+                                    <span>@editLine.Material.RequiredUom</span>
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Allocation" Width="160px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var allocLine = (MaterialLineVm)context.DataItem;
+                                }
+                                <div class="pr-issue-alloc">
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                              Text="STOCK"
+                                              IconCssClass="fa-solid fa-layer-group"
+                                              Click="@(() => OpenAllocation(allocLine))"
+                                              Enabled="@(allocLine.Material.CanManualIssue && allocLine.IssueQty > 0 && !IsSubmitting)" />
+                                    @if (allocLine.IssueQty > 0)
+                                    {
+                                        <span class="@(IsFullyAllocated(allocLine) ? "pr-issue-alloc__ok" : "pr-issue-alloc__warn")">
+                                            @AllocationHint(allocLine)
+                                        </span>
+                                    }
+                                </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                    </Columns>
+                    <EmptyDataAreaTemplate>
+                        <div class="pr-issue-empty">
+                            <div class="pr-issue-empty__icon" aria-hidden="true">
+                                <i class="fa-solid fa-boxes-stacked"></i>
+                            </div>
+                            <h3>No materials</h3>
+                            <p>@(ShowShortageOnly ? "No shortage lines for this filter." : "This operation has no issuable materials.")</p>
+                        </div>
+                    </EmptyDataAreaTemplate>
+                </DxGrid>
+            </section>
+
+            <footer class="pr-issue-footer">
+                <p class="pr-issue-footer__hint">
+                    @if (SelectedLineCount == 0)
+                    {
+                        @:Enter issue quantities, allocate stock, then save as a NEW draft.
+                    }
+                    else if (UnallocatedLineCount > 0)
+                    {
+                        @($"{SelectedLineCount} material(s) selected · {UnallocatedLineCount} still need stock allocation")
+                    }
+                    else
+                    {
+                        @($"{SelectedLineCount} material(s) selected · all allocated")
+                    }
+                </p>
+                <div class="pr-issue-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CANCEL"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@SaveAsync"
+                              Enabled="@(CanSaveDocument && !IsSubmitting)" />
+                </div>
+            </footer>
         }
     </div>
 
-    <PrMaterialAllocationDialog @bind-Visible="@AllocationVisible" Material="@AllocationLine?.Material" IssueDate="@IssueDate"
-                                RequestedQty="@(AllocationLine?.IssueQty ?? 0m)" Allocations="@(AllocationLine?.Allocations ?? [])" Applied="@ApplyAllocations" />
-    <PrMaterialIssueBomDialog @bind-Visible="@BomVisible" Operation="@SelectedOperationRow" TrxDateTime="@IssueDate" Applied="@ApplyBomSuggestions" />
-
+    <PrMaterialAllocationDialog @bind-Visible="@AllocationVisible"
+                                Material="@AllocationLine?.Material"
+                                IssueDate="@IssueDate"
+                                RequestedQty="@(AllocationLine?.IssueQty ?? 0m)"
+                                Allocations="@(AllocationLine?.Allocations ?? [])"
+                                Applied="@ApplyAllocations" />
+    <PrMaterialIssueBomDialog @bind-Visible="@BomVisible"
+                              Operation="@SelectedOperationRow"
+                              TrxDateTime="@IssueDate"
+                              Applied="@ApplyBomSuggestions" />
 </MenuAuthorize>

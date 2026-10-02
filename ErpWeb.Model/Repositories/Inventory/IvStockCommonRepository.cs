@@ -63,6 +63,7 @@ public interface IIvStockCommonRepository
         string? searchText,
         int skip,
         int take,
+        DateTime? asOfDate = null,
         CancellationToken cancellationToken = default);
 
     Task<IvOnHandBalanceRow?> GetOnHandByIdAsync(
@@ -83,6 +84,7 @@ public interface IIvStockCommonRepository
         IvStockCountScope scope,
         int skip,
         int take,
+        DateTime? asOfDate = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -474,6 +476,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
         string? searchText,
         int skip,
         int take,
+        DateTime? asOfDate = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -495,6 +498,12 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                   && sm.IsActive
                   && sm.StockControl
             select new { bal, sm, lot };
+
+        if (asOfDate is DateTime asOf)
+        {
+            var dayEnd = asOf.Date.AddDays(1);
+            query = query.Where(x => x.bal.TransDate != null && x.bal.TransDate < dayEnd);
+        }
 
         if (!string.IsNullOrWhiteSpace(iCode))
         {
@@ -534,6 +543,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                 StdUom = x.bal.StdUom ?? x.sm.StdUom,
                 IStatus = x.bal.IStatus,
                 ExpiryDate = x.lot != null ? x.lot.ExpiryDate : null,
+                TransDate = x.bal.TransDate,
                 IClassCode = x.sm.IClassCode,
                 LotControl = x.sm.LotControl,
                 PurchasePrice = x.sm.PurchasePrice,
@@ -580,6 +590,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                 StdUom = bal.StdUom ?? sm.StdUom,
                 IStatus = bal.IStatus,
                 ExpiryDate = lot != null ? lot.ExpiryDate : null,
+                TransDate = bal.TransDate,
                 IClassCode = sm.IClassCode,
                 LotControl = sm.LotControl,
                 PurchasePrice = sm.PurchasePrice,
@@ -593,6 +604,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
         IvStockCountScope scope,
         int skip,
         int take,
+        DateTime? asOfDate = null,
         CancellationToken cancellationToken = default)
     {
         scope ??= new IvStockCountScope();
@@ -614,6 +626,12 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                   // An uncontrolled item has no balance worth adjusting — always excluded.
                   && sm.StockControl
             select new { bal, sm, lot };
+
+        if (asOfDate is DateTime asOf)
+        {
+            var dayEnd = asOf.Date.AddDays(1);
+            query = query.Where(x => x.bal.TransDate != null && x.bal.TransDate < dayEnd);
+        }
 
         if (!scope.IncludeInactive)
         {
@@ -701,6 +719,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                 StdUom = x.bal.StdUom ?? x.sm.StdUom,
                 IStatus = x.bal.IStatus,
                 ExpiryDate = x.lot != null ? x.lot.ExpiryDate : null,
+                TransDate = x.bal.TransDate,
                 IClassCode = x.sm.IClassCode,
                 LotControl = x.sm.LotControl,
                 PurchasePrice = x.sm.PurchasePrice,

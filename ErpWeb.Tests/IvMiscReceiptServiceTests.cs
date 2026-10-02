@@ -1185,6 +1185,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             postingRepo,
             posting,
             new PoSupplierRepository(_factory),
+            new IvUomConversionService(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 }

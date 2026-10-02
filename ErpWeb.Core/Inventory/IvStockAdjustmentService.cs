@@ -15,6 +15,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
     private readonly IRunningNumberService _runningNumbers;
+    private readonly ICurrentDateService _dates;
     private readonly IIvStockMasterRepository _stockMasters;
     private readonly IIvStockCommonRepository _common;
     private readonly IIvStockTransactionRepository _transactions;
@@ -27,6 +28,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         IInventoryTenantContext tenant,
         IAccessRightService accessRights,
         IRunningNumberService runningNumbers,
+        ICurrentDateService dates,
         IIvStockMasterRepository stockMasters,
         IIvStockCommonRepository common,
         IIvStockTransactionRepository transactions,
@@ -38,6 +40,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         _tenant = tenant;
         _accessRights = accessRights;
         _runningNumbers = runningNumbers;
+        _dates = dates;
         _stockMasters = stockMasters;
         _common = common;
         _transactions = transactions;
@@ -278,7 +281,15 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
         var refNo = NormalizeRefNo(request.RefNo, batchNo);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+
+        if (movementDateError is not null)
+
+        {
+
+            return IvStockAdjustmentOperationResult.Fail(movementDateError);
+
+        }
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
@@ -379,7 +390,11 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var trxDate = request.TrxDate == default ? DateTime.Today : request.TrxDate.Date;
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvStockAdjustmentOperationResult.Fail(movementDateError);
+        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvStockAdjustmentOperationResult.Fail(periodGuard);

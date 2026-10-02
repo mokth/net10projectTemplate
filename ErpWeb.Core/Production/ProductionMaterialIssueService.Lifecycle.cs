@@ -172,6 +172,9 @@ public sealed partial class ProductionMaterialIssueService
                     || (!string.IsNullOrWhiteSpace(material.LocationCode) && balance.LocCode != material.LocationCode)
                     || balance.IStatus != IvItemStatuses.Active)
                     return $"Stock balance {balance.Id} is no longer eligible for {material.ComponentCode}.";
+                if (!string.IsNullOrWhiteSpace(balance.StdUom)
+                    && !string.Equals(balance.StdUom, material.BaseUom, StringComparison.OrdinalIgnoreCase))
+                    return $"Stock balance {balance.Id} UOM '{balance.StdUom}' does not match material base UOM '{material.BaseUom}'.";
                 if (master.LotControl)
                 {
                     var lot = balance.LotId.HasValue

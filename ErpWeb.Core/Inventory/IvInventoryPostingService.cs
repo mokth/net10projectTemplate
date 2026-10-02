@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Inventory;
 
-public sealed class IvInventoryPostingService : IIvInventoryPostingService
+public sealed partial class IvInventoryPostingService : IIvInventoryPostingService
 {
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
@@ -379,6 +379,29 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                     batchNo,
                     $"Stock would go negative for {slice} (on hand {bal.StdQty}, change {deltaBySlice[slice]}).");
             }
+
+            // Existing destination: INV-03 stock-date eligibility (new BalLocs are created with batch date).
+            if (bal.StdQty > 0m || bal.TransDate.HasValue)
+            {
+                var stockDateError = ValidateBalanceStockDate(bal.Id, bal.TransDate, batch.TrxDtTime, bal.LotNo);
+                if (stockDateError is not null)
+                {
+                    return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
+                }
+            }
+        }
+
+        var laterDayError = await ValidateNoLaterDayMovementsAsync(
+            db,
+            companyCode,
+            branchCode,
+            locked.Values.Select(x => x.Id).ToList(),
+            batch.TrxDtTime,
+            excludeBatchNo: null,
+            cancellationToken);
+        if (laterDayError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
         }
 
         // Phase 4 — Apply aggregated BalLoc updates
@@ -574,6 +597,21 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             }
         }
 
+        var rollbackChronology = await ValidateRollbackChronologyAsync(
+            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        if (rollbackChronology is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
+        }
+
+        var balLocIds = locked.Values.Select(x => x.Id).ToList();
+        var repairedDates = new Dictionary<int, DateTime?>();
+        foreach (var balLocId in balLocIds)
+        {
+            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
+                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+        }
+
         // Apply all after all checks
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
@@ -582,6 +620,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             var bal = locked[slice];
             bal.StdQty -= deltaBySlice[slice];
             bal.ModifiedDate = now;
+            bal.TransDate = repairedDates[bal.Id];
         }
 
         _posting.RemoveHistory(db, history);
@@ -936,6 +975,28 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             locked[balLocId] = lockedRow;
         }
 
+        foreach (var (balLocId, lockedRow) in locked)
+        {
+            // Empty never-dated piles may receive an increase (same as stock-in new BalLoc path).
+            // Positive qty or an existing stock date must pass INV-03.
+            if (lockedRow.StdQty > 0m || lockedRow.TransDate.HasValue)
+            {
+                var stockDateError = ValidateBalanceStockDate(
+                    balLocId, lockedRow.TransDate, batch.TrxDtTime, lockedRow.LotNo);
+                if (stockDateError is not null)
+                {
+                    return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
+                }
+            }
+        }
+
+        var laterDayError = await ValidateNoLaterDayMovementsAsync(
+            db, companyCode, branchCode, balLocIds, batch.TrxDtTime, excludeBatchNo: null, cancellationToken);
+        if (laterDayError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
+        }
+
         var netByBalLoc = new Dictionary<int, decimal>();
         foreach (var detail in details)
         {
@@ -960,6 +1021,10 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
         {
             if (net == 0m)
             {
+                // Zero-net still advances chronology via TransDate repair after history written;
+                // stamp TransDate so the pile reflects this document date.
+                await _posting.SetBalLocTransDateAsync(
+                    db, balLocId, companyCode, branchCode, batch.TrxDtTime, cancellationToken);
                 continue;
             }
 
@@ -1152,17 +1217,34 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             }
         }
 
+        var rollbackChronology = await ValidateRollbackChronologyAsync(
+            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        if (rollbackChronology is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
+        }
+
+        var repairedDates = new Dictionary<int, DateTime?>();
+        foreach (var balLocId in inverseByBalLoc.Keys)
+        {
+            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
+                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+        }
+
         foreach (var (balLocId, inverse) in inverseByBalLoc.OrderBy(kv => kv.Key))
         {
             if (inverse == 0m)
             {
+                await _posting.SetBalLocTransDateAsync(
+                    db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
                 continue;
             }
 
             if (inverse > 0m)
             {
                 var affected = await _posting.IncreaseBalLocQtyAsync(
-                    db, balLocId, companyCode, branchCode, inverse, batch.TrxDtTime, cancellationToken);
+                    db, balLocId, companyCode, branchCode, inverse, repairedDates[balLocId], cancellationToken);
                 if (affected != 1)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -1175,7 +1257,7 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             {
                 var decrease = Math.Abs(inverse);
                 var affected = await _posting.DecreaseBalLocQtyAsync(
-                    db, balLocId, companyCode, branchCode, decrease, batch.TrxDtTime, cancellationToken);
+                    db, balLocId, companyCode, branchCode, decrease, repairedDates[balLocId], cancellationToken);
                 if (affected != 1)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -1184,6 +1266,9 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                         $"Stock rollback decrease failed for balance Id {balLocId}.");
                 }
             }
+
+            await _posting.SetBalLocTransDateAsync(
+                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
         _posting.RemoveHistory(db, history);
@@ -1576,6 +1661,23 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             locked[balLocId] = lockedRow;
         }
 
+        foreach (var (balLocId, lockedRow) in locked)
+        {
+            var stockDateError = ValidateBalanceStockDate(
+                balLocId, lockedRow.TransDate, batch.TrxDtTime, lockedRow.LotNo);
+            if (stockDateError is not null)
+            {
+                return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
+            }
+        }
+
+        var laterDayError = await ValidateNoLaterDayMovementsAsync(
+            db, companyCode, branchCode, orderedIds, batch.TrxDtTime, excludeBatchNo: null, cancellationToken);
+        if (laterDayError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
+        }
+
         foreach (var (balLocId, required) in deltaById)
         {
             var actual = locked[balLocId].StdQty;
@@ -1787,16 +1889,36 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             {
                 return IvInventoryPostingBatchResult.Fail(batchNo, "Tenant mismatch on balance row.");
             }
+        }
 
+        var rollbackChronology = await ValidateRollbackChronologyAsync(
+            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        if (rollbackChronology is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
+        }
+
+        var repairedDates = new Dictionary<int, DateTime?>();
+        foreach (var balLocId in orderedIds)
+        {
+            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
+                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+        }
+
+        foreach (var balLocId in orderedIds)
+        {
             var restoreQty = restoreById[balLocId];
             var affected = await _posting.IncreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, restoreQty, batch.TrxDtTime, cancellationToken);
+                db, balLocId, companyCode, branchCode, restoreQty, repairedDates[balLocId], cancellationToken);
             if (affected != 1)
             {
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Stock restore failed for balance Id {balLocId}.");
             }
+
+            await _posting.SetBalLocTransDateAsync(
+                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
         TestHookAfterMiRollbackStock?.Invoke();
@@ -1956,6 +2078,17 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             }
         }
 
+        foreach (var (balLocId, lockedRow) in lockedSources)
+        {
+            var stockDateError = ValidateBalanceStockDate(
+                balLocId, lockedRow.TransDate, batch.TrxDtTime, lockedRow.LotNo);
+            if (stockDateError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
+            }
+        }
+
         foreach (var (balLocId, required) in decreaseBySourceId)
         {
             var actual = lockedSources[balLocId].StdQty;
@@ -2039,6 +2172,31 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             }
 
             lockedDest[slice] = bal;
+        }
+
+        foreach (var bal in lockedDest.Values)
+        {
+            if (bal.StdQty > 0m || bal.TransDate.HasValue)
+            {
+                var stockDateError = ValidateBalanceStockDate(bal.Id, bal.TransDate, batch.TrxDtTime, bal.LotNo);
+                if (stockDateError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
+                }
+            }
+        }
+
+        var trBalLocIds = orderedSourceIds
+            .Concat(lockedDest.Values.Select(x => x.Id))
+            .Distinct()
+            .ToList();
+        var laterDayError = await ValidateNoLaterDayMovementsAsync(
+            db, companyCode, branchCode, trBalLocIds, batch.TrxDtTime, excludeBatchNo: null, cancellationToken);
+        if (laterDayError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
         }
 
         foreach (var balLocId in orderedSourceIds)
@@ -2281,10 +2439,25 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
             }
         }
 
+        var rollbackChronology = await ValidateRollbackChronologyAsync(
+            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        if (rollbackChronology is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
+        }
+
+        var repairedDates = new Dictionary<int, DateTime?>();
+        foreach (var balLocId in orderedIds)
+        {
+            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
+                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+        }
+
         foreach (var (balLocId, decrease) in destDecreaseById)
         {
             var affected = await _posting.DecreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, decrease, batch.TrxDtTime, cancellationToken);
+                db, balLocId, companyCode, branchCode, decrease, repairedDates[balLocId], cancellationToken);
             if (affected != 1)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -2292,12 +2465,15 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                     batchNo,
                     $"Destination stock decrease failed for balance Id {balLocId}.");
             }
+
+            await _posting.SetBalLocTransDateAsync(
+                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
         foreach (var (balLocId, restore) in sourceRestoreById)
         {
             var affected = await _posting.IncreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, restore, batch.TrxDtTime, cancellationToken);
+                db, balLocId, companyCode, branchCode, restore, repairedDates[balLocId], cancellationToken);
             if (affected != 1)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -2305,6 +2481,9 @@ public sealed class IvInventoryPostingService : IIvInventoryPostingService
                     batchNo,
                     $"Source stock restore failed for balance Id {balLocId}.");
             }
+
+            await _posting.SetBalLocTransDateAsync(
+                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
         _posting.RemoveHistory(db, history);

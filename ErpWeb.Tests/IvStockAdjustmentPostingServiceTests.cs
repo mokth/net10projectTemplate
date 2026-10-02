@@ -392,7 +392,8 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             StdQty = qty,
             StdUom = "EA",
             Cost = cost,
-            UnitPrice = unitPrice
+            UnitPrice = unitPrice,
+            TransDate = qty > 0m ? FixedToday : null
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();
@@ -435,6 +436,7 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
 
         return new IvStockAdjustmentService(
             _factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(FixedToday),
             new IvStockMasterRepository(_factory),
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),

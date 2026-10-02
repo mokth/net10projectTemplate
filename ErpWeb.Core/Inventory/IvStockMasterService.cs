@@ -389,6 +389,19 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     "This item was modified by another user. Your changes were not saved.");
             }
 
+            var structuralError = await EnsureStructuralFieldsUnlockedAsync(
+                db,
+                context.CompanyCode!,
+                existing,
+                stdUom,
+                model.StockControl,
+                model.LotControl,
+                cancellationToken);
+            if (structuralError is not null)
+            {
+                return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, structuralError);
+            }
+
             var entry = db.Entry(existing);
             entry.Property(x => x.RowVersion).OriginalValue = model.RowVersion!;
 
@@ -708,6 +721,58 @@ public sealed class IvStockMasterService : IIvStockMasterService
             Rows = rows.Select(MapListRow).ToList(),
             TotalCount = count
         });
+    }
+
+    /// <summary>
+    /// Blocks StdUom / StockControl / LotControl changes when any BalLoc (incl. zero),
+    /// posted history, or NEW batch detail exists for the item.
+    /// </summary>
+    private static async Task<string?> EnsureStructuralFieldsUnlockedAsync(
+        AppDbContext db,
+        string companyCode,
+        IvStockMaster existing,
+        string? requestedStdUom,
+        bool requestedStockControl,
+        bool requestedLotControl,
+        CancellationToken cancellationToken)
+    {
+        var stdChanged = !string.Equals(
+            (existing.StdUom ?? string.Empty).Trim(),
+            (requestedStdUom ?? string.Empty).Trim(),
+            StringComparison.OrdinalIgnoreCase);
+        var stockChanged = existing.StockControl != requestedStockControl;
+        var lotChanged = existing.LotControl != requestedLotControl;
+        if (!stdChanged && !stockChanged && !lotChanged)
+            return null;
+
+        var iCode = existing.ICode;
+        var hasBalLoc = await db.IvBalLocs.AsNoTracking()
+            .AnyAsync(x => x.CompanyCode == companyCode && x.ICode == iCode, cancellationToken);
+        if (hasBalLoc)
+        {
+            return "Standard UOM, stock control, and lot control cannot be changed because this item already has inventory balance rows. Use a controlled inventory conversion/migration process.";
+        }
+
+        var hasHistory = await db.IvTrxHistories.AsNoTracking()
+            .AnyAsync(x => x.CompanyCode == companyCode && x.ICode == iCode, cancellationToken);
+        if (hasHistory)
+        {
+            return "Standard UOM, stock control, and lot control cannot be changed because this item already has inventory history. Use a controlled inventory conversion/migration process.";
+        }
+
+        var hasDraft = await (
+            from d in db.IvTrxBatchDetails.AsNoTracking()
+            join b in db.IvTrxBatches.AsNoTracking() on d.BatchId equals b.Id
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && b.BatchStatus == IvBatchStatuses.New
+            select d.Id).AnyAsync(cancellationToken);
+        if (hasDraft)
+        {
+            return "Standard UOM, stock control, and lot control cannot be changed while this item has NEW inventory draft transactions.";
+        }
+
+        return null;
     }
 
     private static StockMasterSearchArgs ToSearchArgs(IvStockMasterListQuery query) =>

@@ -675,9 +675,10 @@ public class IvStockCountServiceTests : IAsyncLifetime
     [Fact]
     public async Task Post_refuses_a_count_that_became_too_old_between_save_and_post()
     {
-        var balId = await SeedBalLocAsync("A100", 100m);
+        var countDate = Today.AddDays(-7);
+        var balId = await SeedBalLocAsync("A100", 100m, transDate: countDate);
         var svc = CreateService(clock: Clock(Today));
-        var sheet = await NewSheetAsync(svc, Scope(date: Today.AddDays(-7)));
+        var sheet = await NewSheetAsync(svc, Scope(date: countDate));
         var line = Assert.Single(sheet.Lines);
 
         Assert.True((await svc.SaveCountsAsync(
@@ -698,8 +699,8 @@ public class IvStockCountServiceTests : IAsyncLifetime
     [Fact]
     public async Task Post_dates_the_batch_from_CountDate_and_redates_the_pile()
     {
-        var balId = await SeedBalLocAsync("A100", 100m);
         var countDate = Today.AddDays(-3);
+        var balId = await SeedBalLocAsync("A100", 100m, transDate: countDate);
         var svc = CreateService();
         var sheet = await NewSheetAsync(svc, Scope(date: countDate));
         var line = Assert.Single(sheet.Lines);
@@ -743,6 +744,11 @@ public class IvStockCountServiceTests : IAsyncLifetime
         {
             Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
             Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync()).BatchStatus);
+            // Sole ADJ history was removed; TransDate repair yields null (Gate A opening-baseline).
+            // Re-establish stock date so recount can post without a separate cutover repair step.
+            var bal = await db.IvBalLocs.SingleAsync(x => x.Id == balId);
+            bal.TransDate = Today;
+            await db.SaveChangesAsync();
         }
 
         var rolled = await LoadAsync(svc, sheet.CountNo);
@@ -810,6 +816,14 @@ public class IvStockCountServiceTests : IAsyncLifetime
         var recover = await svc.RecoverAsync(sheet.Id);
         Assert.True(recover.Succeeded, recover.ErrorMessage);
         Assert.Equal(IvStockCountStatuses.Counted, (await LoadAsync(svc, sheet.CountNo)).Status);
+
+        // Sole ADJ history was removed; re-establish opening stock date (Gate A) before re-post.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var bal = await db.IvBalLocs.SingleAsync();
+            bal.TransDate = Today;
+            await db.SaveChangesAsync();
+        }
 
         // Re-posting then works and allocates a NEW batch number.
         var repost = await svc.PostAsync(sheet.Id);
@@ -1086,7 +1100,8 @@ public class IvStockCountServiceTests : IAsyncLifetime
         string loc = "BIN1",
         string lot = "",
         string status = "ACTIVE",
-        decimal? unitPrice = null)
+        decimal? unitPrice = null,
+        DateTime? transDate = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         var bal = new IvBalLoc
@@ -1100,7 +1115,9 @@ public class IvStockCountServiceTests : IAsyncLifetime
             IStatus = status,
             StdQty = qty,
             StdUom = "EA",
-            UnitPrice = unitPrice
+            UnitPrice = unitPrice,
+            // INV-03: null TransDate is ineligible for CountDate as-of generation.
+            TransDate = transDate ?? Today
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();

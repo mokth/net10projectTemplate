@@ -572,6 +572,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             new IvStockTransactionRepository(),
             postingRepo, posting,
             new PoSupplierRepository(_factory),
+            new IvUomConversionService(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 

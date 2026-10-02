@@ -340,12 +340,13 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
 
         return new IvMiscReceiptService(
             _factory, tenant, access.Object, new RunningNumberService(),
-            new FixedCurrentDateService(InAugust),
+            new FixedCurrentDateService(AfterAugust.Date),
             new IvStockMasterRepository(_factory),
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),
             postingRepo, posting,
             new PoSupplierRepository(_factory),
+            new IvUomConversionService(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
 

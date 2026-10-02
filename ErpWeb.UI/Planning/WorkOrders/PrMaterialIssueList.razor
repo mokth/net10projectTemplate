@@ -31,6 +31,7 @@
                                NullText="Search Work Order or product…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="@OpenFilterPopup" />
+                @if (CanAdd) { <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="New issue" IconCssClass="fa-solid fa-plus" Click="@(() => Navigation.NavigateTo("/planning/material-issues/new"))" /> }
             </div>
 
             @if (IsBootstrapping)
@@ -59,6 +60,11 @@
                 </div>
             }
         </section>
+
+        <DxPopup HeaderText="Confirm material issue action" CloseOnOutsideClick="false" Width="460px" CssClass="common-popup" @bind-Visible="@ActionPopupVisible">
+            <Content><div class="iv-popup-body"><p class="mb-2">@PendingAction IP <strong>@PendingActionRow?.BatchNo</strong> for Work Order <strong>@PendingActionRow?.WorkOrderNo</strong>?</p><p class="text-muted mb-0">@PendingActionDescription</p></div></Content>
+            <FooterContentTemplate><div class="d-flex gap-2 justify-content-end w-100"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep draft" Click="@(() => ActionPopupVisible = false)" Enabled="@(!IsApplyingAction)" /><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@($"Confirm {PendingAction.ToLowerInvariant()}")" Click="@ConfirmActionAsync" Enabled="@(!IsApplyingAction)" /></div></FooterContentTemplate>
+        </DxPopup>
 
         <DxPopup HeaderText="Filter material issues" CloseOnOutsideClick="false" Width="540px" CssClass="common-popup" @bind-Visible="@FilterPopupVisible">
             <Content>
