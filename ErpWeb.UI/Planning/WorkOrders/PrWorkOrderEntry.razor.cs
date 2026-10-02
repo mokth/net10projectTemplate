@@ -32,6 +32,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsSubmitting;
     protected bool ReleaseConfirmVisible;
     protected bool CancelConfirmVisible;
+    protected bool ReopenConfirmVisible;
     protected bool HelpVisible;
     protected bool RefreshVisible;
     protected bool ChangeDefinitionVisible;
@@ -52,6 +53,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanEdit;
     protected bool CanRelease;
     protected bool CanCancel;
+    protected bool CanReopen;
     protected bool CanAccessMaterialIssue;
     protected bool CanAddMaterialIssue;
     protected int ActiveTabIndex;
@@ -60,6 +62,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected long? FocusedOperationUid { get; set; }
     protected string? StatusMessage;
     protected string CancellationReason = string.Empty;
+    protected string ReopenReason = string.Empty;
     protected Dictionary<string, string> ValidationErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     protected ProductionWorkOrderDraftRequest Request { get; set; } = NewRequest();
     protected ProductionWorkOrderDetail? DetailModel { get; set; }
@@ -88,6 +91,10 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanEditInputs => CanEditFields && !NeedsDefinitionUpgrade;
     protected bool CanEditDefinition => IsNewMode && CanEditInputs;
     protected bool CanOpenEdit => IsViewMode && IsDraft && CanEdit && DetailModel is not null;
+    protected bool CanReopenForEdit => IsViewMode
+        && DetailModel is { Status: ProductionWorkOrderStatuses.Released }
+        && CanEdit
+        && CanReopen;
     protected bool CanReleaseAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
         && CanRelease
         && IsCurrentSnapshot
@@ -351,6 +358,7 @@ public partial class PrWorkOrderEntry : PageBase
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Edit);
         CanRelease = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, ProductionPermissionCodes.Release);
         CanCancel = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Cancel);
+        CanReopen = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Reopen);
         CanAccessMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access);
         CanAddMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
 
@@ -934,6 +942,48 @@ public partial class PrWorkOrderEntry : PageBase
         CancellationReason = string.Empty;
         ValidationErrors.Remove("CancellationReason");
         CancelConfirmVisible = true;
+    }
+
+    protected void OpenReopenPopup()
+    {
+        ReopenReason = string.Empty;
+        ValidationErrors.Remove("Reason");
+        ReopenConfirmVisible = true;
+    }
+
+    protected async Task ReopenForEditAsync()
+    {
+        if (DetailModel is null || IsSubmitting)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        ValidationErrors.Clear();
+        try
+        {
+            var result = await WorkOrders.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+            {
+                WorkOrderNo = DetailModel.WorkOrderNo,
+                RowVersion = DetailModel.RowVersion,
+                Reason = ReopenReason
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            ReopenConfirmVisible = false;
+            ReopenReason = string.Empty;
+            Navigation.NavigateTo(
+                $"/planning/work-orders/edit/{Uri.EscapeDataString(result.Data.WorkOrderNo)}");
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
     }
 
     protected async Task CancelDraftAsync()

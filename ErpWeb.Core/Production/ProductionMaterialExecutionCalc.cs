@@ -11,6 +11,24 @@ public static class ProductionMaterialExecutionCalc
         return IvQty.Round(requiredQty * (1m + tolerancePercent / 100m));
     }
 
+    /// <summary>
+    /// Standard BOM quantity for a desired production quantity (tolerance not included).
+    /// </summary>
+    public static decimal RequestedForProductionQty(
+        decimal fullRequiredQty, decimal plannedOutputQty, decimal desiredOutputQty)
+    {
+        if (fullRequiredQty < 0m) throw new ArgumentOutOfRangeException(nameof(fullRequiredQty));
+        if (plannedOutputQty <= 0m) throw new ArgumentOutOfRangeException(nameof(plannedOutputQty));
+        if (desiredOutputQty < 0m) throw new ArgumentOutOfRangeException(nameof(desiredOutputQty));
+        return IvQty.Round(fullRequiredQty * desiredOutputQty / plannedOutputQty);
+    }
+
+    /// <summary>
+    /// Maximum issue for a desired-output standard quantity after configured tolerance.
+    /// </summary>
+    public static decimal MaxForProductionQty(decimal requestedQty, decimal tolerancePercent) =>
+        MaxAllowedNetIssue(requestedQty, tolerancePercent);
+
     public static decimal MovementEffectiveIssue(decimal issueQty, decimal issueReversalQty) =>
         IvQty.Round(issueQty - issueReversalQty);
 

@@ -73,7 +73,7 @@ INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p
-    ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'APPROVE', N'CANCEL')
+    ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'APPROVE', N'CANCEL', N'REOPEN')
 WHERE m.MenuCode = N'PLN_WORK_ORDER'
   AND NOT EXISTS
   (
@@ -97,6 +97,6 @@ BEGIN
     VALUES (N'DEMO', N'PR_WORK_ORDER', 0);
 END;
 
-PRINT N'PLN_WORK_ORDER menu and ACCESS/ADD/EDIT/APPROVE/CANCEL permissions ensured.';
+PRINT N'PLN_WORK_ORDER menu and ACCESS/ADD/EDIT/APPROVE/CANCEL/REOPEN permissions ensured.';
 GO
 

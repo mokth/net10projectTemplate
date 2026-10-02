@@ -1,5 +1,6 @@
 <DxPopup HeaderText="Allocate stock" CloseOnOutsideClick="false" CloseOnEscape="false" Width="980px"
-         CssClass="common-popup pr-allocation-popup" Visible="@Visible" VisibleChanged="@OnVisibleChanged">
+         CssClass="common-popup pr-allocation-popup" ShowFooter="true"
+         Visible="@Visible" VisibleChanged="@OnVisibleChanged">
     <Content>
         <div class="pr-allocation">
             @if (Material is not null)
@@ -53,6 +54,7 @@
     [Parameter] public DateTime IssueDate { get; set; }
     [Parameter] public decimal RequestedQty { get; set; }
     [Parameter] public IReadOnlyList<ProductionMaterialIssueAllocationRequest> Allocations { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<int, decimal> ReservedByOtherLines { get; set; } = new Dictionary<int, decimal>();
     [Parameter] public EventCallback<IReadOnlyList<ProductionMaterialIssueAllocationRequest>> Applied { get; set; }
     [Inject] private IProductionMaterialAllocationService AllocationService { get; set; } = default!;
 
@@ -76,7 +78,8 @@
     {
         IsLoading = true; DialogError = null; Rows = [];
         _loadedMaterialId = Material!.WorkOrderMaterialId; _loadedDate = IssueDate;
-        var result = await AllocationService.GetStockCandidatesAsync(Material.WorkOrderMaterialId, IssueDate);
+        var result = await AllocationService.GetStockCandidatesAsync(
+            Material.WorkOrderMaterialId, IssueDate, reservedBaseQtyByBalance: ReservedByOtherLines);
         if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to load eligible stock.";
         else
         {
@@ -91,7 +94,12 @@
         if (Material is null) return;
         IsLoading = true; DialogError = null;
         var result = await AllocationService.AutoAllocateAsync(new ProductionMaterialAllocationRequest
-        { WorkOrderMaterialId = Material.WorkOrderMaterialId, IssueDate = IssueDate, RequestedQty = RequestedQty });
+        {
+            WorkOrderMaterialId = Material.WorkOrderMaterialId,
+            IssueDate = IssueDate,
+            RequestedQty = RequestedQty,
+            ReservedBaseQtyByBalance = ReservedByOtherLines
+        });
         if (!result.Succeeded || result.Data is null) DialogError = result.Message ?? "Unable to allocate stock.";
         else
         {

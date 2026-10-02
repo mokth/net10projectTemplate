@@ -124,6 +124,8 @@ IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotRevision') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD SnapshotRevision int NULL;
 IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotHash') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD SnapshotHash varchar(64) NULL;
+IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'ProductionQtyThisIssue') IS NULL
+    ALTER TABLE dbo.PrProductionPostingLink ADD ProductionQtyThisIssue decimal(18,4) NULL;
 GO
 
 IF OBJECT_ID(N'dbo.PrMaterialIssueLine', N'U') IS NULL

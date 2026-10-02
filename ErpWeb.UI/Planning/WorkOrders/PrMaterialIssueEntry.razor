@@ -1,8 +1,6 @@
-@page "/planning/material-issues/new"
+@page "/planning/material-issues/{Mode:regex(^(new|edit|view)$)}"
+@page "/planning/material-issues/{Mode:regex(^(new|edit|view)$)}/{BatchNo:int}"
 @page "/planning/material-issues/new/{WorkOrderNo}"
-@page "/planning/material-issues/{BatchNo:int}"
-@page "/planning/material-issues/view/{BatchNo:int}"
-@page "/planning/material-issues/edit/{BatchNo:int}"
 @inherits PageBase
 
 <PageTitle>@PageHeading</PageTitle>
@@ -33,7 +31,7 @@
                 <h1 class="iv-title">@PageHeading</h1>
                 <div class="iv-chips">
                     <span class="iv-chip">@ModeChip</span>
-                    @if (IsViewMode && BatchNo is > 0)
+                    @if (BatchNo is > 0 && (IsViewMode || IsEditMode))
                     {
                         <span class="iv-chip code-style">IP @BatchNo</span>
                     }
@@ -71,6 +69,14 @@
                 }
             </div>
             <div class="pr-issue-commandbar__right">
+                @if (CanOpenEditFromView)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="EDIT DRAFT"
+                              IconCssClass="far fa-edit"
+                              Click="@OpenEdit"
+                              Enabled="@(!IsSubmitting)" />
+                }
                 @if (Workspace is not null && !IsViewMode)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -79,20 +85,20 @@
                               Click="@OpenBom"
                               Enabled="@(SelectedOperationRow is not null && !IsSubmitting)" />
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="APPLY &amp; AUTO ALLOCATE"
+                              IconCssClass="fa-solid fa-wand-magic-sparkles"
+                              Click="@ApplyDesiredOutputAndAllocateAsync"
+                              Enabled="@CanApplyDesiredOutput" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="FILL OUTSTANDING"
                               IconCssClass="fa-solid fa-fill-drip"
                               Click="@AutoFillOutstanding"
-                              Enabled="@(!IsSubmitting)" />
+                              Enabled="@CanFillOutstanding" />
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="AUTO ALLOCATE"
                               IconCssClass="fa-solid fa-layer-group"
                               Click="@AllocateAllAsync"
-                              Enabled="@(!IsSubmitting && Lines.Any(x => x.IssueQty > 0))" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="SAVE DRAFT"
-                              IconCssClass="fa-solid fa-floppy-disk"
-                              Click="@SaveAsync"
-                              Enabled="@(CanSaveDocument && !IsSubmitting)" />
+                              Enabled="@(CanFillOutstanding && SelectedIssueLines.Any())" />
                 }
             </div>
         </section>
@@ -128,6 +134,10 @@
                     <div class="pr-issue-meta__item">
                         <span class="iv-field__label">Planned</span>
                         <strong>@Document.PlannedQty.ToString("n4") @Document.OutputUom</strong>
+                    </div>
+                    <div class="pr-issue-meta__item">
+                        <span class="iv-field__label">Desired output</span>
+                        <strong>@(Document.ProductionQtyThisIssue?.ToString("n4") ?? "—")</strong>
                     </div>
                     <div class="pr-issue-meta__item">
                         <span class="iv-field__label">Posted by</span>
@@ -435,6 +445,36 @@
                     </label>
                 </div>
 
+                <div class="pr-issue-desired">
+                    <div class="pr-issue-desired__field">
+                        <span class="iv-field__label">Desired output qty</span>
+                        <div class="pr-issue-desired__input">
+                            <DxSpinEdit @bind-Value="@DesiredOutputInput"
+                                        MinValue="0.0001m"
+                                        MaxValue="@(SelectedOperationRow?.PlannedOutputQty ?? 0m)"
+                                        Increment="0.0001m"
+                                        DisplayFormat="n4"
+                                        ShowSpinButtons="false"
+                                        Enabled="@(!IsSubmitting)" />
+                            <span>@SelectedOperationRow?.PlannedOutputUom</span>
+                        </div>
+                        <small>Max planned @SelectedOperationRow?.PlannedOutputQty.ToString("n4") @SelectedOperationRow?.PlannedOutputUom</small>
+                        @if (DesiredOutputDirty)
+                        {
+                            <small class="pr-issue-desired__warn">Desired output changed — run APPLY &amp; AUTO ALLOCATE again.</small>
+                        }
+                        else if (AppliedProductionQtyThisIssue is > 0)
+                        {
+                            <small>Applied @AppliedProductionQtyThisIssue.Value.ToString("n4")</small>
+                        }
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="APPLY &amp; AUTO ALLOCATE"
+                              IconCssClass="fa-solid fa-wand-magic-sparkles"
+                              Click="@ApplyDesiredOutputAndAllocateAsync"
+                              Enabled="@CanApplyDesiredOutput" />
+                </div>
+
                 <DxGrid Data="@VisibleLineList"
                         KeyFieldName="@nameof(MaterialLineVm.Key)"
                         ShowFilterRow="false"
@@ -461,19 +501,10 @@
                                 </div>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.RequiredQty)" Caption="Required" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.NetIssuedQty)" Caption="Issued" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.AvailableToDraft)" Caption="Available" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
-                            <CellDisplayTemplate>
-                                @{
-                                    var avail = (MaterialLineVm)context.DataItem;
-                                }
-                                <div class="pr-issue-cell pr-issue-cell--end">
-                                    <span class="pr-issue-cell__primary">@avail.Material.AvailableToDraft.ToString("n4")</span>
-                                    <span class="pr-issue-cell__secondary">tol @avail.Material.TolerancePercent.ToString("n2")%</span>
-                                </div>
-                            </CellDisplayTemplate>
-                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.RequiredQty)" Caption="Required" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.NetIssuedQty)" Caption="Issued" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.BomRequestedQty)" Caption="For this output" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.MaxIssueQty)" Caption="Max incl. tol." Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineVm.IssueQty)" Caption="Issue now" Width="150px">
                             <CellDisplayTemplate>
                                 @{
@@ -481,7 +512,9 @@
                                 }
                                 <div class="pr-issue-qty">
                                     <DxSpinEdit @bind-Value="@editLine.IssueQty"
+                                                @bind-Value:after="OnIssueQtyEdited"
                                                 MinValue="0m"
+                                                MaxValue="@(editLine.MaxIssueQty > 0m ? editLine.MaxIssueQty : editLine.Material.AvailableToDraft + editLine.OriginalIssueQty)"
                                                 Increment="0.0001m"
                                                 DisplayFormat="n4"
                                                 ShowSpinButtons="false"
@@ -529,7 +562,7 @@
                 <p class="pr-issue-footer__hint">
                     @if (SelectedLineCount == 0)
                     {
-                        @:Enter issue quantities, allocate stock, then save as a NEW draft.
+                        @:Enter issue quantities, allocate stock, then save the draft.
                     }
                     else if (UnallocatedLineCount > 0)
                     {
@@ -550,7 +583,7 @@
                               Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
                               IconCssClass="fa-solid fa-floppy-disk"
                               Click="@SaveAsync"
-                              Enabled="@(CanSaveDocument && !IsSubmitting)" />
+                              Enabled="@(!IsViewMode && CanSaveDocument && !IsSubmitting)" />
                 </div>
             </footer>
         }
@@ -561,9 +594,11 @@
                                 IssueDate="@IssueDate"
                                 RequestedQty="@(AllocationLine?.IssueQty ?? 0m)"
                                 Allocations="@(AllocationLine?.Allocations ?? [])"
+                                ReservedByOtherLines="@ReservedByOtherLines"
                                 Applied="@ApplyAllocations" />
     <PrMaterialIssueBomDialog @bind-Visible="@BomVisible"
                               Operation="@SelectedOperationRow"
                               TrxDateTime="@IssueDate"
-                              Applied="@ApplyBomSuggestions" />
+                              ExcludeBatchNo="@(IsEditMode ? BatchNo : null)"
+                              Applied="@ApplyBomResult" />
 </MenuAuthorize>

@@ -54,7 +54,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
     public async Task<IvMasterOperationResult<ProductionMaterialIssueWorkspace>> GetWorkspaceAsync(
         string workOrderNo,
         long? operationId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? excludeBatchNo = null)
     {
         if (!await _access.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, cancellationToken))
             return Fail(IvMasterErrorCode.AccessDenied, "Access denied.");
@@ -85,6 +86,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         if (operationId.HasValue && order.Operations.All(x => x.Uid != operationId.Value))
             return Fail(IvMasterErrorCode.NotFound, "Work Order operation was not found.");
 
+        var validatedExcludeBatchNo = await ResolveValidatedExcludeBatchNoAsync(
+            db, scope.CompanyCode, scope.BranchCode!, order.Uid, operationId, excludeBatchNo, cancellationToken);
+
         var materialEntities = order.Materials
             .Where(x => !operationId.HasValue || x.WorkOrderOperationId == operationId.Value)
             .OrderBy(x => x.WorkOrderOperationId)
@@ -114,6 +118,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id
             where materialIds.Contains(map.WorkOrderMaterialId)
                 && link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New
+                && (!validatedExcludeBatchNo.HasValue || map.InventoryBatchNo != validatedExcludeBatchNo.Value)
             select new { map.WorkOrderMaterialId, map.IssueQty }).ToListAsync(cancellationToken);
 
         var itemCodes = materialEntities.Select(x => x.ComponentCode).Distinct().ToList();
@@ -241,6 +246,41 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             CanViewCost = await _access.CanAsync(
                 MenuCodes.PlanningMaterialIssue, PermissionCodes.ViewCost, cancellationToken)
         });
+    }
+
+    private static async Task<int?> ResolveValidatedExcludeBatchNoAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long workOrderId,
+        long? operationId,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        if (excludeBatchNo is not > 0) return null;
+        var link = await db.ProductionPostingLinks.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
+                && x.InventoryBatchNo == excludeBatchNo.Value
+                && x.WorkOrderId == workOrderId
+                && x.Status == ProductionPostingLinkStatuses.Draft)
+            .Select(x => new { x.Uid, x.InventoryBatchNo })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (link is null) return null;
+        var batchOk = await db.IvTrxBatches.AsNoTracking().AnyAsync(x =>
+            x.CompanyCode == companyCode && x.BranchCode == branchCode
+            && x.BatchNo == excludeBatchNo.Value
+            && x.TrxType == IvTrxTypes.IssueToProduction
+            && x.BatchStatus == IvBatchStatuses.New, cancellationToken);
+        if (!batchOk) return null;
+        if (operationId.HasValue)
+        {
+            var opMatch = await db.ProductionMaterialIssueLines.AsNoTracking()
+                .AnyAsync(x => x.PostingLinkId == link.Uid && x.WorkOrderOperationId == operationId.Value, cancellationToken);
+            if (!opMatch) return null;
+        }
+        return excludeBatchNo;
     }
 
     private static string? BlockingReason(

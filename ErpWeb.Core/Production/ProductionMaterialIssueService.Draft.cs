@@ -73,8 +73,14 @@ public sealed partial class ProductionMaterialIssueService
         if (existingBatchNo.HasValue && (link!.WorkOrderId != order.Uid
             || link.SnapshotRevision != order.SnapshotRevision || link.SnapshotHash != order.SnapshotHash))
             return DraftFail(IvMasterErrorCode.Concurrency, "The stored draft snapshot no longer matches the Work Order.");
-        if (!await db.ProductionWorkOrderOperations.AsNoTracking().AnyAsync(x => x.Uid == request.WorkOrderOperationId && x.WorkOrderId == order.Uid, ct))
+        var operation = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Uid == request.WorkOrderOperationId && x.WorkOrderId == order.Uid, ct);
+        if (operation is null)
             return DraftFail(IvMasterErrorCode.Validation, "The selected operation does not belong to the Work Order.");
+        if (operation.PlannedOutputQty <= 0m)
+            return DraftFail(IvMasterErrorCode.Validation, "The selected operation has an invalid planned output quantity.");
+        if (request.ProductionQtyThisIssue > operation.PlannedOutputQty)
+            return DraftFail(IvMasterErrorCode.Validation, "Desired output quantity cannot exceed operation planned output.");
 
         var requestedIds = request.Lines.Select(x => x.WorkOrderMaterialId).OrderBy(x => x).ToArray();
         var allLockIds = requestedIds.Concat(oldMaps.Select(x => x.WorkOrderMaterialId)).Distinct().OrderBy(x => x);
@@ -111,9 +117,14 @@ public sealed partial class ProductionMaterialIssueService
                 - facts.Where(x => x.WorkOrderMaterialId == material.Uid && x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty);
             var returned = facts.Where(x => x.WorkOrderMaterialId == material.Uid && x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty);
             var other = otherDrafts.Where(x => x.WorkOrderMaterialId == material.Uid).Sum(x => x.IssueQty);
-            var remaining = IvQty.Round(Math.Max(ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance) - (issued - returned) - other, 0m));
-            if (line.IssueQty > remaining)
-                return DraftFail(IvMasterErrorCode.Validation, $"Material {material.ComponentCode} exceeds its remaining draft allowance of {remaining:n4}.");
+            var remainingWo = IvQty.Round(Math.Max(ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance) - (issued - returned) - other, 0m));
+            var standardForDesired = ProductionMaterialExecutionCalc.RequestedForProductionQty(
+                material.RequiredQty, operation.PlannedOutputQty, request.ProductionQtyThisIssue);
+            var desiredMax = ProductionMaterialExecutionCalc.MaxForProductionQty(standardForDesired, material.Tolerance);
+            var maxIssue = IvQty.Round(Math.Min(desiredMax, remainingWo));
+            if (line.IssueQty > maxIssue)
+                return DraftFail(IvMasterErrorCode.Validation,
+                    $"Material {material.ComponentCode} exceeds the maximum allowed quantity {maxIssue:n4} for the selected desired output.");
             var expected = ProductionMaterialExecutionCalc.BaseQtyForIssueQty(line.IssueQty, material.ConversionFactorToBase);
             if (Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty)) - expected) > 0.0001m)
                 return DraftFail(IvMasterErrorCode.Validation, $"Material {material.ComponentCode} allocation does not match its issue quantity.");
@@ -151,6 +162,20 @@ public sealed partial class ProductionMaterialIssueService
 
         var now = _clock.Now;
         var user = scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
+        var allocationPlan = new List<(ProductionWorkOrderMaterial Material, decimal IssueQty, IvBalLoc Balance, decimal BaseQty)>();
+        foreach (var line in request.Lines.OrderBy(x => x.WorkOrderMaterialId))
+        {
+            var material = materials[line.WorkOrderMaterialId];
+            var parts = ProductionMaterialExecutionCalc.AllocateIssueQty(
+                line.IssueQty, line.Allocations.Select(x => x.BaseQty).ToList(), material.ConversionFactorToBase);
+            for (var i = 0; i < line.Allocations.Count; i++)
+            {
+                var allocation = line.Allocations[i];
+                allocationPlan.Add((material, parts[i], balances[allocation.FromBalLocId], IvQty.Round(allocation.BaseQty)));
+            }
+        }
+
+        var pendingMaps = new List<(IvTrxBatchDetail Detail, ProductionWorkOrderMaterial Material, decimal IssueQty)>();
         if (batch is null)
         {
             var batchNo = await _runningNumbers.GetNextAsync(db, scope.CompanyCode, RunningNumberKeys.IvBatch, ct);
@@ -161,39 +186,74 @@ public sealed partial class ProductionMaterialIssueService
             link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
                 CommandType = ProductionPostingCommandTypes.MaterialIssuePost, PostingRequestId = Guid.NewGuid().ToString("N"),
                 WorkOrderId = order.Uid, ProductionDocumentType = ProductionDocumentTypes.MaterialIssue, InventoryBatchNo = batchNo,
-                SnapshotRevision = order.SnapshotRevision, SnapshotHash = order.SnapshotHash, Status = ProductionPostingLinkStatuses.Draft,
+                SnapshotRevision = order.SnapshotRevision, SnapshotHash = order.SnapshotHash,
+                ProductionQtyThisIssue = IvQty.Round(request.ProductionQtyThisIssue),
+                Status = ProductionPostingLinkStatuses.Draft,
                 CreatedDate = now, CreatedBy = user };
             db.IvTrxBatches.Add(batch); db.ProductionPostingLinks.Add(link);
+            short trxLine = 0;
+            foreach (var row in allocationPlan)
+            {
+                trxLine++;
+                var detail = CreateIssueDetail(scope.CompanyCode, scope.BranchCode!, batch.BatchNo, trxLine, order, row.Material,
+                    row.Balance, row.BaseQty, request.Remark, scope.LocationCode);
+                batch.Details.Add(detail);
+                pendingMaps.Add((detail, row.Material, row.IssueQty));
+            }
         }
         else
         {
+            // After rollback, ISSUE/ISSUE_REVERSAL ledger rows still FK to these details.
+            // Reuse and update them in place so Save does not violate FK_PrMaterialMovement_IvTrxBatchDetail.
             db.ProductionMaterialIssueLines.RemoveRange(oldMaps);
             await db.SaveChangesAsync(ct);
-            var oldDetails = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync(ct);
-            db.IvTrxBatchDetails.RemoveRange(oldDetails);
-            await db.SaveChangesAsync(ct);
+            var oldDetails = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id)
+                .OrderBy(x => x.TrxLineNo).ToListAsync(ct);
+            var oldDetailIds = oldDetails.Select(x => x.Id).ToArray();
+            var referencedIds = oldDetailIds.Length == 0
+                ? new HashSet<int>()
+                : (await db.ProductionMaterialMovements.AsNoTracking()
+                    .Where(x => oldDetailIds.Contains(x.InventoryBatchDetailId))
+                    .Select(x => x.InventoryBatchDetailId)
+                    .Distinct()
+                    .ToListAsync(ct)).ToHashSet();
+            if (referencedIds.Count > allocationPlan.Count)
+                return DraftFail(IvMasterErrorCode.Validation,
+                    "Cannot reduce allocation lines below previously posted history for this Issue to Production. Cancel the draft or keep at least the historical line count.");
+
+            short trxLine = 0;
+            for (var i = 0; i < allocationPlan.Count; i++)
+            {
+                trxLine++;
+                var row = allocationPlan[i];
+                IvTrxBatchDetail detail;
+                if (i < oldDetails.Count)
+                {
+                    detail = oldDetails[i];
+                    ApplyIssueDetail(detail, order, row.Material, row.Balance, row.BaseQty, request.Remark, scope.LocationCode);
+                    detail.TrxLineNo = trxLine;
+                }
+                else
+                {
+                    detail = CreateIssueDetail(scope.CompanyCode, scope.BranchCode!, batch.BatchNo, trxLine, order, row.Material,
+                        row.Balance, row.BaseQty, request.Remark, scope.LocationCode);
+                    batch.Details.Add(detail);
+                }
+                pendingMaps.Add((detail, row.Material, row.IssueQty));
+            }
+            for (var i = allocationPlan.Count; i < oldDetails.Count; i++)
+            {
+                if (referencedIds.Contains(oldDetails[i].Id))
+                    return DraftFail(IvMasterErrorCode.Validation,
+                        "Cannot remove an allocation line that is still referenced by production material history.");
+                db.IvTrxBatchDetails.Remove(oldDetails[i]);
+            }
+
             batch.TrxDtTime = request.TrxDateTime; batch.RefNo = NormalizeIssueRef(request.RefNo, batch.BatchNo);
             batch.Remarks = Truncate(request.Remark, 250); batch.ModifiedDate = now; batch.ModifiedBy = user;
+            link!.ProductionQtyThisIssue = IvQty.Round(request.ProductionQtyThisIssue);
         }
 
-        short trxLine = 0;
-        var pendingMaps = new List<(IvTrxBatchDetail Detail, ProductionWorkOrderMaterial Material, decimal IssueQty)>();
-        foreach (var line in request.Lines.OrderBy(x => x.WorkOrderMaterialId))
-        {
-            var material = materials[line.WorkOrderMaterialId];
-            var parts = ProductionMaterialExecutionCalc.AllocateIssueQty(line.IssueQty, line.Allocations.Select(x => x.BaseQty).ToList(), material.ConversionFactorToBase);
-            for (var i = 0; i < line.Allocations.Count; i++)
-            {
-                var allocation = line.Allocations[i]; var balance = balances[allocation.FromBalLocId]; trxLine++;
-                var detail = new IvTrxBatchDetail { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, BatchNo = batch.BatchNo,
-                    TrxLineNo = trxLine, TrxType = IvTrxTypes.IssueToProduction, ProdCode = order.ProductCode, ProdDesc = order.ProductDescription,
-                    ICode = material.ComponentCode, IDesc = material.ComponentDescription, FromBalLocId = balance.Id, FromLotId = balance.LotId,
-                    FrWarehouse = balance.WhCode, FrLocation = balance.LocCode, FrLotNo = balance.LotNo, FrStdQty = IvQty.Round(allocation.BaseQty),
-                    FrStdUom = material.BaseUom, IStatus = balance.IStatus, UnitPrice = balance.UnitPrice ?? 0m,
-                    Remarks = Truncate(request.Remark, 250), LocationCode = scope.LocationCode };
-                batch.Details.Add(detail); pendingMaps.Add((detail, material, parts[i]));
-            }
-        }
         await db.SaveChangesAsync(ct);
         foreach (var row in pendingMaps)
             db.ProductionMaterialIssueLines.Add(new ProductionMaterialIssueLine { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
@@ -207,6 +267,43 @@ public sealed partial class ProductionMaterialIssueService
             { BatchNo = batch.BatchNo, PostingRequestId = link!.PostingRequestId, Status = batch.BatchStatus });
     }
 
+    private static IvTrxBatchDetail CreateIssueDetail(
+        string company, string branch, int batchNo, short trxLine, ProductionWorkOrder order,
+        ProductionWorkOrderMaterial material, IvBalLoc balance, decimal baseQty, string? remark, string? locationCode)
+    {
+        var detail = new IvTrxBatchDetail
+        {
+            CompanyCode = company,
+            BranchCode = branch,
+            BatchNo = batchNo,
+            TrxLineNo = trxLine,
+            TrxType = IvTrxTypes.IssueToProduction
+        };
+        ApplyIssueDetail(detail, order, material, balance, baseQty, remark, locationCode);
+        return detail;
+    }
+
+    private static void ApplyIssueDetail(
+        IvTrxBatchDetail detail, ProductionWorkOrder order, ProductionWorkOrderMaterial material,
+        IvBalLoc balance, decimal baseQty, string? remark, string? locationCode)
+    {
+        detail.ProdCode = order.ProductCode;
+        detail.ProdDesc = order.ProductDescription;
+        detail.ICode = material.ComponentCode;
+        detail.IDesc = material.ComponentDescription;
+        detail.FromBalLocId = balance.Id;
+        detail.FromLotId = balance.LotId;
+        detail.FrWarehouse = balance.WhCode;
+        detail.FrLocation = balance.LocCode;
+        detail.FrLotNo = balance.LotNo;
+        detail.FrStdQty = baseQty;
+        detail.FrStdUom = material.BaseUom;
+        detail.IStatus = balance.IStatus;
+        detail.UnitPrice = balance.UnitPrice ?? 0m;
+        detail.Remarks = Truncate(remark, 250);
+        detail.LocationCode = locationCode;
+    }
+
     private static IReadOnlyDictionary<string, string> ValidateSaveRequest(ProductionMaterialIssueSaveRequest? request, DateTime now)
     {
         var errors = new Dictionary<string, string>();
@@ -214,6 +311,7 @@ public sealed partial class ProductionMaterialIssueService
         if (string.IsNullOrWhiteSpace(request.WorkOrderNo)) errors[nameof(request.WorkOrderNo)] = "Work Order is required.";
         if (request.WorkOrderOperationId <= 0) errors[nameof(request.WorkOrderOperationId)] = "Operation is required.";
         if (request.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(request.SnapshotHash)) errors["Snapshot"] = "Snapshot fingerprint is required.";
+        if (request.ProductionQtyThisIssue <= 0m) errors[nameof(request.ProductionQtyThisIssue)] = "Desired output quantity must be greater than zero.";
         if (request.TrxDateTime == default || request.TrxDateTime > now) errors[nameof(request.TrxDateTime)] = "Transaction date/time is required and cannot be in the future.";
         if (request.Lines.Count == 0 || request.Lines.Count > ProductionMaterialIssuePostValidator.MaxMaterialLines) errors[nameof(request.Lines)] = "Provide at least one valid material line.";
         if (request.Lines.GroupBy(x => x.WorkOrderMaterialId).Any(x => x.Count() > 1)) errors[nameof(request.Lines)] = "A Work Order material may appear only once.";

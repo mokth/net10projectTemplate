@@ -37,9 +37,10 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
     public async Task<IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>> GetStockCandidatesAsync(
         long workOrderMaterialId,
         DateTime issueDate,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance = null)
     {
-        var prepared = await PrepareAsync(workOrderMaterialId, issueDate, cancellationToken);
+        var prepared = await PrepareAsync(workOrderMaterialId, issueDate, reservedBaseQtyByBalance, cancellationToken);
         if (prepared.Error is not null)
             return IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>.Fail(
                 prepared.Error.Value.Code, prepared.Error.Value.Message);
@@ -56,7 +57,8 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         if (request.RequestedQty <= 0m)
             return Fail(IvMasterErrorCode.Validation, "Requested quantity must be greater than zero.");
 
-        var prepared = await PrepareAsync(request.WorkOrderMaterialId, request.IssueDate, cancellationToken);
+        var prepared = await PrepareAsync(
+            request.WorkOrderMaterialId, request.IssueDate, request.ReservedBaseQtyByBalance, cancellationToken);
         if (prepared.Error is not null)
             return Fail(prepared.Error.Value.Code, prepared.Error.Value.Message);
 
@@ -90,6 +92,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
     private async Task<PreparedResult> PrepareAsync(
         long materialId,
         DateTime issueDate,
+        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance,
         CancellationToken cancellationToken)
     {
         if (!await _access.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, cancellationToken))
@@ -171,7 +174,11 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
             if (!availability.TryGetValue(row.FromBalLocId, out var stock)) continue;
             row.CurrentBaseQty = stock.CurrentBaseQty;
             row.AsOfBaseQty = stock.AsOfBaseQty;
-            row.AvailableBaseQty = stock.UsableBaseQty;
+            var reserved = reservedBaseQtyByBalance is not null
+                && reservedBaseQtyByBalance.TryGetValue(row.FromBalLocId, out var reservedQty)
+                ? IvQty.Round(Math.Max(reservedQty, 0m))
+                : 0m;
+            row.AvailableBaseQty = IvQty.Round(Math.Max(stock.UsableBaseQty - reserved, 0m));
         }
 
         raw.RemoveAll(x => x.AvailableBaseQty <= 0m);

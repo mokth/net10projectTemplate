@@ -917,6 +917,539 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(IvMasterErrorCode.InUse, delete.ErrorCode);
     }
 
+    [Fact]
+    public async Task Reopen_for_edit_returns_clean_released_order_to_draft_with_complete_aggregate()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var released = await ReleaseCurrentAsync(sut, created.Data!);
+        Assert.True(released.Succeeded, released.Message);
+        var before = released.Data!;
+        Assert.True(before.RouteSteps.Count > 0);
+        Assert.True(before.Materials.Count > 0);
+        Assert.True(before.Operations.Count > 0);
+        var snapshotRevision = before.SnapshotRevision;
+        var snapshotHash = before.SnapshotHash;
+        var definitionCode = before.SourceDefinitionCode;
+        var scheduleAnchor = before.ScheduleAnchorDateTime;
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = before.WorkOrderNo,
+            RowVersion = before.RowVersion,
+            Reason = "  Customer changed required quantity  "
+        });
+
+        Assert.True(reopen.Succeeded, reopen.Message);
+        var after = reopen.Data!;
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, after.Status);
+        Assert.Null(after.ReleasedDate);
+        Assert.Null(after.ReleasedBy);
+        Assert.Equal(snapshotRevision, after.SnapshotRevision);
+        Assert.Equal(snapshotHash, after.SnapshotHash);
+        Assert.Equal(definitionCode, after.SourceDefinitionCode);
+        Assert.Equal(scheduleAnchor, after.ScheduleAnchorDateTime);
+        Assert.Equal(before.RouteSteps.Count, after.RouteSteps.Count);
+        Assert.Equal(before.Materials.Count, after.Materials.Count);
+        Assert.Equal(before.Operations.Count, after.Operations.Count);
+        Assert.Equal(before.SourceBomHdrId, after.SourceBomHdrId);
+        Assert.Equal(before.SourceBomVersion, after.SourceBomVersion);
+        Assert.Equal(before.SourceProductDefinitionRevisionId, after.SourceProductDefinitionRevisionId);
+        var reopenAudit = Assert.Single(
+            after.AuditEvents,
+            x => x.EventType == ProductionAuditEventTypes.ReopenedForEdit);
+        Assert.Equal("Customer changed required quantity", reopenAudit.Reason);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, reopenAudit.FromStatus);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reopenAudit.ToStatus);
+        Assert.Contains(after.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+    }
+
+    [Theory]
+    [InlineData(ProductionWorkOrderStatuses.Draft)]
+    [InlineData(ProductionWorkOrderStatuses.InProgress)]
+    [InlineData(ProductionWorkOrderStatuses.Completed)]
+    [InlineData(ProductionWorkOrderStatuses.Closed)]
+    [InlineData(ProductionWorkOrderStatuses.Cancelled)]
+    public async Task Reopen_for_edit_rejects_non_released_status(string status)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == created.Data!.WorkOrderNo);
+            order.Status = status;
+            order.ReleasedDate = status == ProductionWorkOrderStatuses.Draft ? null : DateTime.UtcNow;
+            order.ReleasedBy = status == ProductionWorkOrderStatuses.Draft ? null : "tester";
+            order.RowVersion = Guid.NewGuid().ToByteArray();
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(created.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion,
+            Reason = "Force status matrix"
+        });
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, reopen.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_requires_reason_and_enforces_max_length()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        var blank = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "   "
+        });
+        Assert.False(blank.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, blank.ErrorCode);
+        Assert.Contains("Reason", blank.ValidationErrors.Keys);
+
+        var tooLong = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = new string('x', 501)
+        });
+        Assert.False(tooLong.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, tooLong.ErrorCode);
+
+        var accepted = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = new string('y', 500)
+        });
+        Assert.True(accepted.Succeeded, accepted.Message);
+        Assert.Equal(500, accepted.Data!.AuditEvents
+            .Single(x => x.EventType == ProductionAuditEventTypes.ReopenedForEdit)
+            .Reason!.Length);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_requires_reopen_permission()
+    {
+        await SeedManualCurrentRouteAsync();
+        var creator = CreateSut();
+        var released = await CreateReleasedAsync(creator);
+        var denied = CreateSut(deniedPermission: PermissionCodes.Reopen);
+
+        var reopen = await denied.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Need reopen"
+        });
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.AccessDenied, reopen.ErrorCode);
+        var latest = await creator.GetAsync(released.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, latest.Data!.Status);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_rejects_stale_row_version_before_in_use_blockers()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        var staleToken = released.RowVersion.ToArray();
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo);
+            order.Remark = "Changed by another user";
+            order.GoodQty = 1m; // post-lock blocker — must not win over explicit RowVersion compare
+            order.RowVersion = Guid.NewGuid().ToByteArray();
+            await db.SaveChangesAsync();
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = staleToken,
+            Reason = "Stale token with blocker present"
+        });
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, reopen.ErrorCode);
+        Assert.DoesNotContain(
+            await LoadAuditTypesAsync(released.WorkOrderNo),
+            x => x == ProductionAuditEventTypes.ReopenedForEdit);
+    }
+
+    [Theory]
+    [InlineData(ProductionPostingLinkStatuses.Draft)]
+    [InlineData(ProductionPostingLinkStatuses.Pending)]
+    [InlineData(ProductionPostingLinkStatuses.Succeeded)]
+    [InlineData(ProductionPostingLinkStatuses.Reversed)]
+    public async Task Reopen_for_edit_blocks_when_posting_link_has_execution_status(string linkStatus)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await SeedPostingLinkAsync(released.WorkOrderNo, linkStatus);
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Blocked by posting link"
+        });
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, (await sut.GetAsync(released.WorkOrderNo)).Data!.Status);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_blocks_when_any_material_movement_exists_including_net_zero_reversal()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await SeedIssueAndReversalMovementsAsync(released.WorkOrderNo);
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Net zero history"
+        });
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(nameof(ProductionWorkOrderOperation.ProcessedQty))]
+    [InlineData(nameof(ProductionWorkOrderOperation.InputQty))]
+    [InlineData(nameof(ProductionWorkOrderOperation.GoodQty))]
+    public async Task Reopen_for_edit_blocks_when_operation_execution_projection_is_nonzero(string field)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.Operations)
+                .SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo);
+            var op = order.Operations.First();
+            typeof(ProductionWorkOrderOperation).GetProperty(field)!.SetValue(op, 1m);
+            await db.SaveChangesAsync();
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Operation started"
+        });
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_blocks_when_header_execution_projection_is_nonzero()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo);
+            order.GoodQty = 1m;
+            await db.SaveChangesAsync();
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Header output"
+        });
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(nameof(ProductionWorkOrderMaterial.PickedQty))]
+    [InlineData(nameof(ProductionWorkOrderMaterial.ReservedQty))]
+    [InlineData(nameof(ProductionWorkOrderMaterial.IssuedQty))]
+    public async Task Reopen_for_edit_blocks_when_material_execution_projection_is_nonzero(string field)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var material = await db.ProductionWorkOrderMaterials
+                .FirstAsync(x => x.WorkOrder!.WorkOrderNo == released.WorkOrderNo);
+            typeof(ProductionWorkOrderMaterial).GetProperty(field)!.SetValue(material, 1m);
+            await db.SaveChangesAsync();
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Material projection"
+        });
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(ProductionChangeOrderStatuses.Draft, true)]
+    [InlineData(ProductionChangeOrderStatuses.Requested, true)]
+    [InlineData(ProductionChangeOrderStatuses.Approved, true)]
+    [InlineData(ProductionChangeOrderStatuses.Applied, true)]
+    [InlineData(ProductionChangeOrderStatuses.Rejected, false)]
+    [InlineData(ProductionChangeOrderStatuses.Cancelled, false)]
+    public async Task Reopen_for_edit_respects_change_order_status(string changeStatus, bool shouldBlock)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo);
+            db.ProductionChangeOrders.Add(new ProductionChangeOrder
+            {
+                WorkOrderId = order.Uid,
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                ChangeOrderNo = "CO-" + Guid.NewGuid().ToString("N")[..8],
+                SourceSnapshotRevision = order.SnapshotRevision,
+                ProposedSnapshotRevision = order.SnapshotRevision + 1,
+                Status = changeStatus,
+                Reason = "Test change order",
+                RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Change order check"
+        });
+
+        if (shouldBlock)
+        {
+            Assert.False(reopen.Succeeded);
+            Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+        }
+        else
+        {
+            Assert.True(reopen.Succeeded, reopen.Message);
+            Assert.Equal(ProductionWorkOrderStatuses.Draft, reopen.Data!.Status);
+        }
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_then_draft_edit_and_release_again()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        var beforeHash = released.SnapshotHash;
+        var beforeRevision = released.SnapshotRevision;
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Qty correction"
+        });
+        Assert.True(reopen.Succeeded, reopen.Message);
+        Assert.Equal(beforeRevision, reopen.Data!.SnapshotRevision);
+        Assert.Equal(beforeHash, reopen.Data.SnapshotHash);
+
+        var updated = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = reopen.Data.WorkOrderNo,
+            PlannedQty = 12m,
+            SchedulingDirection = reopen.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = reopen.Data.ScheduleAnchorDateTime,
+            Remark = "Edited after reopen",
+            RowVersion = reopen.Data.RowVersion
+        });
+        Assert.True(updated.Succeeded, updated.Message);
+        Assert.True(updated.Data!.SnapshotRevision > beforeRevision);
+        Assert.NotEqual(beforeHash, updated.Data.SnapshotHash);
+
+        var releasedAgain = await ReleaseCurrentAsync(sut, updated.Data);
+        Assert.True(releasedAgain.Succeeded, releasedAgain.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, releasedAgain.Data!.Status);
+        Assert.Equal(2, releasedAgain.Data.AuditEvents.Count(x => x.EventType == ProductionAuditEventTypes.Released));
+        Assert.Contains(releasedAgain.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.ReopenedForEdit);
+    }
+
+    private async Task<ProductionWorkOrderDetail> CreateReleasedAsync(ProductionWorkOrderService sut)
+    {
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var released = await ReleaseCurrentAsync(sut, created.Data!);
+        Assert.True(released.Succeeded, released.Message);
+        return released.Data!;
+    }
+
+    private static Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(
+        ProductionWorkOrderService sut,
+        ProductionWorkOrderDetail detail) =>
+        sut.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+        {
+            WorkOrderNo = detail.WorkOrderNo,
+            RowVersion = detail.RowVersion,
+            SnapshotRevision = detail.SnapshotRevision,
+            SnapshotHash = detail.SnapshotHash,
+            SourceProductDefinitionRevisionId = detail.SourceProductDefinitionRevisionId
+        });
+
+    private async Task SeedPostingLinkAsync(string workOrderNo, string status)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == workOrderNo);
+        db.ProductionPostingLinks.Add(new ProductionPostingLink
+        {
+            CompanyCode = order.CompanyCode,
+            BranchCode = order.BranchCode,
+            CommandType = ProductionPostingCommandTypes.MaterialIssuePost,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            WorkOrderId = order.Uid,
+            InventoryBatchNo = Random.Shared.Next(10000, 99999),
+            SnapshotRevision = order.SnapshotRevision,
+            SnapshotHash = order.SnapshotHash,
+            Status = status,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task SeedIssueAndReversalMovementsAsync(string workOrderNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+        var order = await db.ProductionWorkOrders
+            .Include(x => x.Materials)
+            .Include(x => x.Operations)
+            .SingleAsync(x => x.WorkOrderNo == workOrderNo);
+        var material = order.Materials.First();
+        var operation = order.Operations.First();
+        var link = new ProductionPostingLink
+        {
+            CompanyCode = order.CompanyCode,
+            BranchCode = order.BranchCode,
+            CommandType = ProductionPostingCommandTypes.MaterialIssuePost,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            WorkOrderId = order.Uid,
+            InventoryBatchNo = 88001,
+            SnapshotRevision = order.SnapshotRevision,
+            SnapshotHash = order.SnapshotHash,
+            Status = ProductionPostingLinkStatuses.Failed,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
+        };
+        db.ProductionPostingLinks.Add(link);
+        await db.SaveChangesAsync();
+
+        var issue = new ProductionMaterialMovement
+        {
+            CompanyCode = order.CompanyCode,
+            BranchCode = order.BranchCode,
+            WorkOrderId = order.Uid,
+            WorkOrderMaterialId = material.Uid,
+            WorkOrderOperationId = operation.Uid,
+            MovementType = ProductionMaterialMovementTypes.Issue,
+            MovementDate = DateTime.UtcNow,
+            ItemCode = material.ComponentCode,
+            Qty = 100m,
+            Uom = material.RequiredUom ?? "KG",
+            BaseQty = 100m,
+            BaseUom = material.BaseUom ?? "KG",
+            ConversionFactorToBase = 1m,
+            WarehouseCode = material.WarehouseCode ?? "WH01",
+            LocationCode = material.LocationCode ?? "",
+            LotNo = "",
+            FromBalLocId = 1,
+            ItemStatus = "A",
+            InventoryBatchId = 1,
+            InventoryBatchNo = 88001,
+            InventoryBatchDetailId = 1,
+            InventoryTrxLineNo = 1,
+            UnitCost = 1m,
+            TotalCost = 100m,
+            PostingLinkId = link.Uid,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
+        };
+        db.ProductionMaterialMovements.Add(issue);
+        await db.SaveChangesAsync();
+
+        db.ProductionMaterialMovements.Add(new ProductionMaterialMovement
+        {
+            CompanyCode = issue.CompanyCode,
+            BranchCode = issue.BranchCode,
+            WorkOrderId = issue.WorkOrderId,
+            WorkOrderMaterialId = issue.WorkOrderMaterialId,
+            WorkOrderOperationId = issue.WorkOrderOperationId,
+            MovementType = ProductionMaterialMovementTypes.IssueReversal,
+            MovementDate = DateTime.UtcNow,
+            ItemCode = issue.ItemCode,
+            Qty = 100m,
+            Uom = issue.Uom,
+            BaseQty = 100m,
+            BaseUom = issue.BaseUom,
+            ConversionFactorToBase = 1m,
+            WarehouseCode = issue.WarehouseCode,
+            LocationCode = issue.LocationCode,
+            LotNo = "",
+            FromBalLocId = 1,
+            ItemStatus = "A",
+            InventoryBatchId = 1,
+            InventoryBatchNo = 88001,
+            InventoryBatchDetailId = 2,
+            InventoryTrxLineNo = 2,
+            UnitCost = 1m,
+            TotalCost = 100m,
+            PostingLinkId = link.Uid,
+            OriginalMovementId = issue.Uid,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<IReadOnlyList<string>> LoadAuditTypesAsync(string workOrderNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var orderId = await db.ProductionWorkOrders
+            .Where(x => x.WorkOrderNo == workOrderNo)
+            .Select(x => x.Uid)
+            .SingleAsync();
+        return await db.ProductionAuditEvents
+            .Where(x => x.WorkOrderId == orderId)
+            .Select(x => x.EventType)
+            .ToListAsync();
+    }
+
     private PrProductDefService CreateProductDefinitionSut()
     {
         var access = new Mock<IAccessRightService>();

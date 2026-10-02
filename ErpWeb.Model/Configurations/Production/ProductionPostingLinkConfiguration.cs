@@ -21,6 +21,7 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.ProductionDocumentLineId).HasColumnName("ProductionDocumentLineID");
         builder.Property(x => x.PostingOperationId).HasColumnName("PostingOperationID").HasMaxLength(64);
         builder.Property(x => x.SnapshotHash).HasMaxLength(64);
+        builder.Property(x => x.ProductionQtyThisIssue).HasPrecision(18, 4);
         builder.Property(x => x.OriginalPostingLinkId).HasColumnName("OriginalPostingLinkID");
         builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ResultCode).HasMaxLength(50);

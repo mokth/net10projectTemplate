@@ -19,6 +19,11 @@ public class ProductionPostingLink
     public int? InventoryBatchNo { get; set; }
     public int? SnapshotRevision { get; set; }
     public string? SnapshotHash { get; set; }
+    /// <summary>
+    /// Desired production quantity basis for this material-issue document (not actual output).
+    /// Null for legacy drafts created before Desired Output became mandatory.
+    /// </summary>
+    public decimal? ProductionQtyThisIssue { get; set; }
     public string? PostingOperationId { get; set; }
     public long? OriginalPostingLinkId { get; set; }
     public ProductionPostingLink? OriginalPostingLink { get; set; }

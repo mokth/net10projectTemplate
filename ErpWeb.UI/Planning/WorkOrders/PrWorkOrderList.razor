@@ -121,6 +121,7 @@
                  CloseOnOutsideClick="false"
                  Width="520px"
                  CssClass="common-popup"
+                 ShowFooter="true"
                  @bind-Visible="@FilterPopupVisible">
             <Content>
                 <div class="iv-popup-body">
@@ -162,6 +163,53 @@
                 <div class="d-flex gap-2 justify-content-end w-100">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
                     <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup HeaderText="Reopen Work Order for Editing"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup"
+                 ShowFooter="true"
+                 @bind-Visible="@ReopenConfirmVisible">
+            <Content>
+                @if (ReopenTarget is not null)
+                {
+                    <div class="iv-popup-body">
+                        <p class="iv-confirm__copy">
+                            This Work Order is Released. Reopening returns it to Draft so quantity, schedule,
+                            Product Definition, machine or material settings can be edited. This is allowed only
+                            when no production activity has started.
+                        </p>
+                        <dl class="iv-confirm__meta">
+                            <div><dt>Work Order</dt><dd class="code-style">@ReopenTarget.WorkOrderNo</dd></div>
+                            <div><dt>Product</dt><dd>@ReopenTarget.ProductCode · @ReopenTarget.ProductDescription</dd></div>
+                            <div><dt>Current status</dt><dd>@ReopenTarget.Status</dd></div>
+                            <div><dt>Planned Qty</dt><dd>@ReopenTarget.PlannedQty.ToString("n4") @ReopenTarget.OutputUom</dd></div>
+                            <div><dt>Planned Start</dt><dd>@ReopenTarget.PlannedStartDate.ToString("dd MMM yyyy")</dd></div>
+                            <div><dt>Planned Completion</dt><dd>@ReopenTarget.PlannedCompletionDate.ToString("dd MMM yyyy")</dd></div>
+                        </dl>
+                        <div class="iv-field mt-3">
+                            <label class="iv-field__label">Reason *</label>
+                            <DxMemo @bind-Text="@ReopenReason"
+                                    Rows="3"
+                                    NullText="e.g. Customer changed required quantity / production date rescheduled"
+                                    Enabled="@(!IsReopening)" />
+                        </div>
+                    </div>
+                }
+            </Content>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="KEEP RELEASED"
+                              Click="@CloseReopenPopup"
+                              Enabled="@(!IsReopening)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="REOPEN &amp; EDIT"
+                              Click="@ReopenForEditAsync"
+                              Enabled="@(!IsReopening)" />
                 </div>
             </FooterContentTemplate>
         </DxPopup>

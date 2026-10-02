@@ -44,6 +44,19 @@ public sealed partial class ProductionMaterialIssueService
             if (delete)
             {
                 var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync(ct);
+                var detailIds = details.Select(x => x.Id).ToArray();
+                if (detailIds.Length > 0
+                    && await db.ProductionMaterialMovements.AsNoTracking()
+                        .AnyAsync(x => detailIds.Contains(x.InventoryBatchDetailId), ct))
+                {
+                    items.Add(new()
+                    {
+                        BatchNo = batchNo,
+                        Succeeded = false,
+                        Message = "This draft was previously posted; cancel it instead of deleting."
+                    });
+                    continue;
+                }
                 db.ProductionMaterialIssueLines.RemoveRange(maps);
                 await db.SaveChangesAsync(ct);
                 db.IvTrxBatchDetails.RemoveRange(details);
@@ -112,10 +125,20 @@ public sealed partial class ProductionMaterialIssueService
                 return "Work Order status does not allow material issue.";
             if (link.SnapshotRevision != order.SnapshotRevision || link.SnapshotHash != order.SnapshotHash)
                 return "The Work Order snapshot changed after this draft was saved.";
+            if (link.ProductionQtyThisIssue is null)
+                return "This material issue draft was created before Desired Output became mandatory. Edit the draft, apply Desired Output, and save it again before posting.";
             var maps = await db.ProductionMaterialIssueLines.Where(x => x.PostingLinkId == link.Uid).OrderBy(x => x.InventoryTrxLineNo).ToListAsync(ct);
             var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).OrderBy(x => x.TrxLineNo).ToListAsync(ct);
             if (maps.Count == 0 || maps.Count != details.Count || maps.Select(x => x.WorkOrderOperationId).Distinct().Count() != 1)
                 return "The draft allocation map is incomplete or mixes operations.";
+            var workOrderOperationId = maps[0].WorkOrderOperationId;
+            var operation = await db.ProductionWorkOrderOperations.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Uid == workOrderOperationId && x.WorkOrderId == link.WorkOrderId, ct);
+            if (operation is null || operation.PlannedOutputQty <= 0m)
+                return "The selected operation is missing or has an invalid planned output quantity.";
+            var storedDesired = IvQty.Round(link.ProductionQtyThisIssue.Value);
+            if (storedDesired <= 0m || storedDesired > operation.PlannedOutputQty)
+                return "Persisted Desired Output is invalid for the selected operation planned output.";
             var materialIds = maps.Select(x => x.WorkOrderMaterialId).Distinct().OrderBy(x => x).ToArray();
             var materials = new Dictionary<long, ProductionWorkOrderMaterial>();
             foreach (var id in materialIds)
@@ -140,7 +163,14 @@ public sealed partial class ProductionMaterialIssueService
                     - facts.Where(x => x.WorkOrderMaterialId == group.Key && x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty);
                 var returned = facts.Where(x => x.WorkOrderMaterialId == group.Key && x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty);
                 var other = otherDrafts.Where(x => x.WorkOrderMaterialId == group.Key).Sum(x => x.IssueQty);
-                if (issued - returned + other + group.Sum(x => x.IssueQty) > ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance))
+                var issueQty = IvQty.Round(group.Sum(x => x.IssueQty));
+                var remainingWo = IvQty.Round(Math.Max(ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance) - (issued - returned) - other, 0m));
+                var standardForDesired = ProductionMaterialExecutionCalc.RequestedForProductionQty(
+                    material.RequiredQty, operation.PlannedOutputQty, storedDesired);
+                var desiredMax = ProductionMaterialExecutionCalc.MaxForProductionQty(standardForDesired, material.Tolerance);
+                if (issueQty > desiredMax)
+                    return $"Material {material.ComponentCode} exceeds its Desired Output maximum of {desiredMax:n4}.";
+                if (issueQty > remainingWo)
                     return $"Material {material.ComponentCode} exceeds its issue tolerance.";
             }
             if (await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, batch.TrxDtTime, ct) is string periodError)

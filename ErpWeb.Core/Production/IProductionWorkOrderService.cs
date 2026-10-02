@@ -429,6 +429,17 @@ public sealed class ProductionWorkOrderReleaseRequest
     public string SnapshotHash { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Lifecycle-only reopen of a Released Work Order back to Draft.
+/// Status, release metadata and snapshot identity are read from the locked server entity.
+/// </summary>
+public sealed class ProductionWorkOrderReopenRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[] RowVersion { get; set; } = [];
+    public string Reason { get; set; } = string.Empty;
+}
+
 public sealed class ProductionWorkOrderMachineSelectRequest
 {
     public string WorkOrderNo { get; set; } = string.Empty;
@@ -524,6 +535,14 @@ public interface IProductionWorkOrderService
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(
         ProductionWorkOrderReleaseRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns a Released Work Order to Draft when no production execution has started.
+    /// Requires REOPEN; subsequent Draft mutations continue to require EDIT.
+    /// </summary>
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReopenForEditAsync(
+        ProductionWorkOrderReopenRequest request,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SelectDraftMachineAsync(

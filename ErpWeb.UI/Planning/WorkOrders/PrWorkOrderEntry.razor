@@ -72,6 +72,14 @@
                               IconCssClass="fa-regular fa-pen-to-square"
                               Click="@OpenEdit" />
                 }
+                @if (CanReopenForEdit)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="REOPEN FOR EDIT"
+                              IconCssClass="fa-solid fa-rotate-left"
+                              Click="@OpenReopenPopup"
+                              Enabled="@(!IsSubmitting)" />
+                }
             </div>
             <div class="pwo-commandbar__right">
                 @if (NeedsDefinitionUpgrade && CanRefreshDefinition)
@@ -605,6 +613,8 @@
                             <dd>Approves the Draft for execution and makes its production snapshot read-only. Release does not post inventory. Hidden while inputs are unsaved or the snapshot format is outdated.</dd>
                             <dt>Cancel Draft</dt>
                             <dd>Marks the Draft as Cancelled. A cancellation reason is required. Does not delete the Work Order.</dd>
+                            <dt>Reopen for Edit</dt>
+                            <dd>Returns a Released Work Order to Draft when no production activity has started. Requires EDIT and REOPEN. A reason is required. Does not reverse inventory or rewrite history. Does not upgrade legacy snapshots — Refresh Definition may still be required before structural editing or re-release.</dd>
                             <dt>More → Calculate Preview</dt>
                             <dd>Calculates route, materials, quantities, and schedule for inspection without saving.</dd>
                             <dt>More → Recalculate Schedule</dt>
@@ -622,7 +632,8 @@
                             <li>On a new Work Order, choose the Product Definition from ACTIVE definitions. After save, the definition is read-only until you use Change Definition.</li>
                             <li>Unsaved input changes hide Release and disable Recalculate Schedule / Refresh / Change Definition until the Draft is saved.</li>
                             <li>Calculate Preview is inspection-only. Save Draft persists the Work Order and applies any required recalculation.</li>
-                            <li>After Release, the Work Order is read-only for this Draft-entry workflow.</li>
+                            <li>Release freezes the Work Order for production execution. Before any production activity begins, an authorized user may use Reopen for Edit to return it to Draft. Once material issue or production activity exists, direct reopening is blocked and controlled production-change/correction processing is required.</li>
+                            <li>Reopen does not reverse inventory, does not delete history, and requires a reason. Legacy Released snapshots reopen without upgrade; Refresh Definition may still be required before structural editing or re-release.</li>
                         </ul>
                     </section>
                 </div>
@@ -667,6 +678,39 @@
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => CancelConfirmVisible = false)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Draft" Click="@CancelDraftAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Reopen Work Order for Editing"
+                 @bind-Visible="@ReopenConfirmVisible"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup">
+            <Content>
+                <p class="iv-confirm__copy">
+                    This Work Order is Released. Reopening returns it to Draft so quantity, schedule,
+                    Product Definition, machine or material settings can be edited. This is allowed only
+                    when no production activity has started.
+                </p>
+                <div class="iv-field">
+                    <label class="iv-field__label">Reason *</label>
+                    <DxMemo @bind-Text="@ReopenReason"
+                            Rows="3"
+                            NullText="e.g. Customer changed required quantity / production date rescheduled" />
+                    @FieldError("Reason")
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="KEEP RELEASED"
+                                  Click="@(() => ReopenConfirmVisible = false)"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="REOPEN &amp; EDIT"
+                                  Click="@ReopenForEditAsync"
+                                  Enabled="@(!IsSubmitting)" />
                     </div>
                 </div>
             </Content>

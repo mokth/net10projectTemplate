@@ -36,7 +36,8 @@ public interface IProductionMaterialIssueService
     Task<IvMasterOperationResult<ProductionMaterialIssueWorkspace>> GetWorkspaceAsync(
         string workOrderNo,
         long? operationId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        int? excludeBatchNo = null);
 
     Task<IvMasterOperationResult<ProductionMaterialIssueOperationPage>> SearchEligibleOperationsAsync(
         ProductionMaterialIssueOperationQuery query, CancellationToken cancellationToken = default);
@@ -46,7 +47,8 @@ public interface IProductionMaterialIssueService
 
     Task<IvMasterOperationResult<ProductionMaterialIssueBomPreview>> GetBomPreviewAsync(
         long workOrderOperationId, decimal productionQtyThisIssue, DateTime trxDateTime,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        int? excludeBatchNo = null);
 
     Task<IvMasterOperationResult<ProductionMaterialIssuePostResult>> PostAsync(
         ProductionMaterialIssuePostRequest request,
@@ -63,6 +65,8 @@ public sealed class ProductionMaterialIssueSaveRequest
     public long WorkOrderOperationId { get; set; }
     public int SnapshotRevision { get; set; }
     public string SnapshotHash { get; set; } = string.Empty;
+    /// <summary>Desired production quantity basis for this material-issue document (not actual output).</summary>
+    public decimal ProductionQtyThisIssue { get; set; }
     public DateTime TrxDateTime { get; set; }
     public string? RefNo { get; set; }
     public string? Remark { get; set; }
@@ -140,6 +144,8 @@ public sealed class ProductionMaterialIssueDocument
     public long WorkOrderOperationId { get; init; }
     public int? SnapshotRevision { get; init; }
     public string? SnapshotHash { get; init; }
+    /// <summary>Persisted desired production quantity basis for this document (null = legacy).</summary>
+    public decimal? ProductionQtyThisIssue { get; init; }
     public string? Remark { get; init; }
     public string? PostedBy { get; init; }
     public DateTime? PostedDate { get; init; }
@@ -300,11 +306,33 @@ public sealed class ProductionMaterialIssueBomPreviewLine
 {
     public long WorkOrderMaterialId { get; init; }
     public string ItemCode { get; init; } = string.Empty;
+    /// <summary>Standard BOM quantity for the desired output (no tolerance).</summary>
     public decimal RequestedMaterialQty { get; init; }
+    /// <summary>Business maximum after desired-output tolerance and remaining WO allowance.</summary>
+    public decimal MaxIssueQty { get; init; }
+    /// <summary>Suggested issue (standard, capped by remaining allowance and as-of stock).</summary>
     public decimal SuggestedIssueQty { get; init; }
     public decimal AvailableToDraft { get; init; }
+    /// <summary>Usable stock as of the preview transaction date, in required UOM.</summary>
+    public decimal AvailableForIssueDateQty { get; init; }
     public bool CanManualIssue { get; init; }
     public string? BlockingReason { get; init; }
+}
+
+/// <summary>Shared apply payload for inline Desired Output and BOM dialog.</summary>
+public sealed class ProductionMaterialIssueBomApplyResult
+{
+    public decimal ProductionQtyThisIssue { get; init; }
+    public IReadOnlyList<ProductionMaterialIssueBomApplyLine> Lines { get; init; } = [];
+}
+
+public sealed class ProductionMaterialIssueBomApplyLine
+{
+    public long WorkOrderMaterialId { get; init; }
+    public decimal RequestedMaterialQty { get; init; }
+    public decimal SuggestedIssueQty { get; init; }
+    public decimal MaxIssueQty { get; init; }
+    public decimal AvailableForIssueDateQty { get; init; }
 }
 
 public sealed class ProductionMaterialIssuePostRequest
@@ -313,6 +341,7 @@ public sealed class ProductionMaterialIssuePostRequest
     public string WorkOrderNo { get; set; } = string.Empty;
     public int SnapshotRevision { get; set; }
     public string SnapshotHash { get; set; } = string.Empty;
+    public decimal ProductionQtyThisIssue { get; set; }
     public DateTime IssueDate { get; set; }
     public string? Remark { get; set; }
     public IReadOnlyList<ProductionMaterialIssueLineRequest> Lines { get; set; } = [];

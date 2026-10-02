@@ -45,6 +45,7 @@ public static class ProductionAuditEventTypes
     public const string Created = "CREATED";
     public const string DraftUpdated = "DRAFT_UPDATED";
     public const string Released = "RELEASED";
+    public const string ReopenedForEdit = "REOPENED_FOR_EDIT";
     public const string Cancelled = "CANCELLED";
     public const string ChangeOrderRequested = "CHANGE_ORDER_REQUESTED";
     public const string ChangeOrderApproved = "CHANGE_ORDER_APPROVED";

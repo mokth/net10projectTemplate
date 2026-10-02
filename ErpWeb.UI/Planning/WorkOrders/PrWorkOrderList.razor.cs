@@ -4,6 +4,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -27,6 +28,11 @@ public partial class PrWorkOrderList : PageBase, IDisposable
     protected int TotalCount;
     protected bool CanAdd;
     protected bool CanEdit;
+    protected bool CanReopen;
+    protected bool ReopenConfirmVisible;
+    protected bool IsReopening;
+    protected string ReopenReason = string.Empty;
+    protected ProductionWorkOrderDetail? ReopenTarget;
     protected List<ProductionWorkOrderListRow> CompactRows { get; set; } = [];
     protected ProductionWorkOrderGridDataSource DataSource { get; private set; } = default!;
 
@@ -92,6 +98,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         DataSource = new ProductionWorkOrderGridDataSource(LoadPageAsync);
         CanAdd = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Add);
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Edit);
+        CanReopen = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Reopen);
         Buttons =
         [
             new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd }
@@ -99,7 +106,14 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         ActionButtons =
         [
             new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View" },
-            new() { Text = "EDIT", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit", Enabled = CanEdit }
+            new()
+            {
+                Text = "EDIT",
+                IConClass = "far fa-edit",
+                Style = "primary",
+                ToolTip = "Edit Draft, or reopen Released for edit",
+                Enabled = CanEdit
+            }
         ];
 
         SyncDataSourceFilters();
@@ -126,37 +140,158 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
-    protected Task OnActionClick(SelectedButtonInfo<ProductionWorkOrderListRow> info)
+    protected async Task OnActionClick(SelectedButtonInfo<ProductionWorkOrderListRow> info)
     {
         var row = info.SelectedRow;
         if (row is null)
         {
             StatusMessage = "No Work Order selected.";
-            return Task.CompletedTask;
+            return;
         }
 
         var action = (info.SelectedButton.Text ?? string.Empty).ToUpperInvariant();
         if (action == "VIEW")
         {
             OpenView(row.WorkOrderNo);
-        }
-        else if (action == "EDIT")
-        {
-            if (!CanEdit)
-            {
-                StatusMessage = "Access denied.";
-            }
-            else if (!string.Equals(row.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
-            {
-                StatusMessage = "Released or completed Work Orders are read-only. Use View or a controlled Change Order.";
-            }
-            else
-            {
-                Navigation.NavigateTo($"/planning/work-orders/edit/{Uri.EscapeDataString(row.WorkOrderNo)}");
-            }
+            return;
         }
 
-        return Task.CompletedTask;
+        if (action != "EDIT")
+        {
+            return;
+        }
+
+        if (!CanEdit)
+        {
+            StatusMessage = "Access denied.";
+            return;
+        }
+
+        var status = (row.Status ?? string.Empty).Trim().ToUpperInvariant();
+        if (status == ProductionWorkOrderStatuses.Draft)
+        {
+            Navigation.NavigateTo($"/planning/work-orders/edit/{Uri.EscapeDataString(row.WorkOrderNo)}");
+            return;
+        }
+
+        if (status == ProductionWorkOrderStatuses.Released)
+        {
+            if (!CanReopen)
+            {
+                StatusMessage = "This Work Order is Released. Reopen permission is required before it can be edited.";
+                return;
+            }
+
+            await BeginReopenConfirmAsync(row.WorkOrderNo);
+            return;
+        }
+
+        StatusMessage = status switch
+        {
+            ProductionWorkOrderStatuses.InProgress =>
+                "This Work Order has entered production and cannot be reopened as Draft. Use the controlled production change/correction process.",
+            ProductionWorkOrderStatuses.Completed or ProductionWorkOrderStatuses.Closed =>
+                "Completed or Closed Work Orders cannot be reopened for direct editing.",
+            ProductionWorkOrderStatuses.Cancelled =>
+                "Cancelled Work Orders cannot be edited.",
+            _ =>
+                "This Work Order cannot be edited in its current status."
+        };
+    }
+
+    private async Task BeginReopenConfirmAsync(string workOrderNo)
+    {
+        StatusMessage = null;
+        ErrorMessage = null;
+        var latest = await WorkOrders.GetAsync(workOrderNo);
+        if (!latest.Succeeded || latest.Data is null)
+        {
+            ErrorMessage = latest.Message ?? "Unable to load the Work Order for reopen.";
+            return;
+        }
+
+        if (!string.Equals(latest.Data.Status, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = latest.Data.Status switch
+            {
+                ProductionWorkOrderStatuses.Draft =>
+                    "This Work Order is already Draft. Use Edit to continue.",
+                ProductionWorkOrderStatuses.InProgress =>
+                    "This Work Order has entered production and cannot be reopened as Draft. Use the controlled production change/correction process.",
+                ProductionWorkOrderStatuses.Completed or ProductionWorkOrderStatuses.Closed =>
+                    "Completed or Closed Work Orders cannot be reopened for direct editing.",
+                ProductionWorkOrderStatuses.Cancelled =>
+                    "Cancelled Work Orders cannot be edited.",
+                _ =>
+                    "Only a Released Work Order can be reopened for editing."
+            };
+            return;
+        }
+
+        ReopenTarget = latest.Data;
+        ReopenReason = string.Empty;
+        ReopenConfirmVisible = true;
+    }
+
+    protected void CloseReopenPopup()
+    {
+        if (IsReopening)
+        {
+            return;
+        }
+
+        ReopenConfirmVisible = false;
+        ReopenTarget = null;
+        ReopenReason = string.Empty;
+    }
+
+    protected async Task ReopenForEditAsync()
+    {
+        if (ReopenTarget is null || IsReopening)
+        {
+            return;
+        }
+
+        var reason = (ReopenReason ?? string.Empty).Trim();
+        if (reason.Length == 0)
+        {
+            ErrorMessage = "Reopen reason is required.";
+            return;
+        }
+
+        if (reason.Length > 500)
+        {
+            ErrorMessage = "Reopen reason must be 500 characters or fewer.";
+            return;
+        }
+
+        IsReopening = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await WorkOrders.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+            {
+                WorkOrderNo = ReopenTarget.WorkOrderNo,
+                RowVersion = ReopenTarget.RowVersion,
+                Reason = reason
+            });
+
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to reopen the Work Order.";
+                return;
+            }
+
+            ReopenConfirmVisible = false;
+            ReopenTarget = null;
+            ReopenReason = string.Empty;
+            Navigation.NavigateTo(
+                $"/planning/work-orders/edit/{Uri.EscapeDataString(result.Data.WorkOrderNo)}");
+        }
+        finally
+        {
+            IsReopening = false;
+        }
     }
 
     protected void OpenView(string number) =>

@@ -70,6 +70,19 @@ public sealed partial class ProductionMaterialIssueService
                 return RollbackFail(IvMasterErrorCode.Validation, "The original production issue facts were not found.");
 
             var originalIds = originalMovements.Select(x => x.Uid).ToList();
+            var alreadyReversedIds = await db.ProductionMaterialMovements.AsNoTracking()
+                .Where(x => x.OriginalMovementId.HasValue
+                    && originalIds.Contains(x.OriginalMovementId.Value)
+                    && x.MovementType == ProductionMaterialMovementTypes.IssueReversal)
+                .Select(x => x.OriginalMovementId!.Value)
+                .ToListAsync(cancellationToken);
+            originalMovements = originalMovements
+                .Where(x => !alreadyReversedIds.Contains(x.Uid))
+                .ToList();
+            if (originalMovements.Count == 0)
+                return RollbackFail(IvMasterErrorCode.Validation, "This Issue to Production has already been rolled back.");
+
+            originalIds = originalMovements.Select(x => x.Uid).ToList();
             var hasDependency = await db.ProductionMaterialMovements.AsNoTracking().AnyAsync(x =>
                 x.OriginalMovementId.HasValue && originalIds.Contains(x.OriginalMovementId.Value)
                 && (x.MovementType == ProductionMaterialMovementTypes.Consume
@@ -114,7 +127,28 @@ public sealed partial class ProductionMaterialIssueService
             if (!rolledBack.Succeeded)
                 return RollbackFail(IvMasterErrorCode.Validation, rolledBack.ErrorMessage ?? "Inventory rollback failed.");
 
-            batch.BatchStatus = IvBatchStatuses.Cancelled;
+            // Inventory MI rollback restores BalLoc and returns the batch to NEW for correction/re-post.
+            // Keep that status (do not cancel) so users can adjust qty/lot and post again.
+            batch.BatchStatus = IvBatchStatuses.New;
+
+            // When this IP was the only history on a BalLoc, inventory rollback clears TransDate.
+            // Piles with quantity still need a stock date so the reopened draft can be re-posted.
+            foreach (var balLocId in originalMovements.Select(x => x.FromBalLocId).Distinct().OrderBy(x => x))
+            {
+                var locked = await _stockPosting!.LockBalLocByIdForTenantAsync(
+                    db, balLocId, scope.CompanyCode, scope.BranchCode!, cancellationToken);
+                if (locked is null)
+                    return RollbackFail(IvMasterErrorCode.NotFound, $"Stock balance {balLocId} was not found after rollback.");
+                if (locked.StdQty > 0m && locked.TransDate is null)
+                {
+                    var stockDate = originalMovements
+                        .Where(x => x.FromBalLocId == balLocId)
+                        .Min(x => x.MovementDate);
+                    await _stockPosting.SetBalLocTransDateAsync(
+                        db, balLocId, scope.CompanyCode, scope.BranchCode!, stockDate, cancellationToken);
+                }
+            }
+
             foreach (var original in originalMovements)
             {
                 db.ProductionMaterialMovements.Add(new ProductionMaterialMovement
@@ -153,6 +187,11 @@ public sealed partial class ProductionMaterialIssueService
                     CreatedDate = now,
                     CreatedBy = user
                 });
+
+                // Archive the reversed ISSUE under the rollback link so the post link can accept a new
+                // ISSUE row on the same InventoryBatchDetailId after the draft is corrected and re-posted.
+                original.PostingLinkId = rollbackLink.Uid;
+                original.InventoryHistoryId = null;
             }
 
             var facts = await db.ProductionMaterialMovements.AsNoTracking()
@@ -174,13 +213,16 @@ public sealed partial class ProductionMaterialIssueService
                 material.ModifiedBy = user;
             }
 
-            originalLink.Status = ProductionPostingLinkStatuses.Reversed;
-            originalLink.ResultCode = "REVERSED";
-            originalLink.ResultMessage = $"Reversed by request {request.PostingRequestId}.";
+            // Reopen the same post link as a NEW draft so the user can edit qty/lot and re-post.
+            originalLink.Status = ProductionPostingLinkStatuses.Draft;
+            originalLink.PostingOperationId = null;
+            originalLink.ResultCode = null;
+            originalLink.ResultMessage = $"Reopened after rollback {request.PostingRequestId}.";
+            originalLink.CompletedDate = null;
             rollbackLink.PostingOperationId = rolledBack.OperationId?.ToString("N");
             rollbackLink.Status = ProductionPostingLinkStatuses.Succeeded;
             rollbackLink.ResultCode = "OK";
-            rollbackLink.ResultMessage = $"Rolled back IP batch {request.InventoryBatchNo}.";
+            rollbackLink.ResultMessage = $"Rolled back IP batch {request.InventoryBatchNo}; draft reopened for correction.";
             rollbackLink.CompletedDate = now;
             db.ProductionAuditEvents.Add(new ProductionAuditEvent
             {

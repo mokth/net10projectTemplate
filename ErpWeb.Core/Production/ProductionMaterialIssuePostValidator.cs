@@ -26,6 +26,8 @@ internal static class ProductionMaterialIssuePostValidator
             errors[nameof(request.WorkOrderNo)] = "Work Order number is required.";
         if (request.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(request.SnapshotHash))
             errors["Snapshot"] = "A valid Work Order snapshot fingerprint is required.";
+        if (request.ProductionQtyThisIssue <= 0m)
+            errors[nameof(request.ProductionQtyThisIssue)] = "Desired output quantity must be greater than zero.";
         if (request.IssueDate == default || request.IssueDate > now)
             errors[nameof(request.IssueDate)] = "Issue date/time is required and cannot be in the future.";
         if (request.Lines.Count is 0 or > MaxMaterialLines)

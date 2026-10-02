@@ -39,6 +39,7 @@ public sealed partial class ProductionMaterialIssueService
         {
             WorkOrderNo = request.WorkOrderNo, WorkOrderOperationId = operationIds[0]!.Value,
             SnapshotRevision = request.SnapshotRevision, SnapshotHash = request.SnapshotHash,
+            ProductionQtyThisIssue = request.ProductionQtyThisIssue,
             TrxDateTime = request.IssueDate, RefNo = "AUTO", Remark = request.Remark, Lines = request.Lines
         }, cancellationToken);
         if (!saved.Succeeded || saved.Data is null)

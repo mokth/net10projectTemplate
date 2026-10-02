@@ -97,6 +97,8 @@ public sealed class ProductionMaterialIssueSchemaTests
     {
         var link = Model.FindEntityType(typeof(ProductionPostingLink))!;
         Assert.Equal(64, link.FindProperty(nameof(ProductionPostingLink.SnapshotHash))!.GetMaxLength());
+        Assert.Equal(18, link.FindProperty(nameof(ProductionPostingLink.ProductionQtyThisIssue))!.GetPrecision());
+        Assert.Equal(4, link.FindProperty(nameof(ProductionPostingLink.ProductionQtyThisIssue))!.GetScale());
         var index = link.GetIndexes().Single(x => x.GetDatabaseName() == "UQ_PrProductionPostingLink_MaterialIssueBatch");
         Assert.True(index.IsUnique);
         Assert.Contains("MATERIAL_ISSUE_POST", index.GetFilter());

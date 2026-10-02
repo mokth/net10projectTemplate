@@ -7,7 +7,8 @@ public interface IProductionMaterialAllocationService
     Task<IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>> GetStockCandidatesAsync(
         long workOrderMaterialId,
         DateTime issueDate,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance = null);
 
     Task<IvMasterOperationResult<ProductionMaterialAllocationResult>> AutoAllocateAsync(
         ProductionMaterialAllocationRequest request,
@@ -19,6 +20,12 @@ public sealed class ProductionMaterialAllocationRequest
     public long WorkOrderMaterialId { get; set; }
     public DateTime IssueDate { get; set; }
     public decimal RequestedQty { get; set; }
+    /// <summary>
+    /// Base quantities already proposed from balances by other lines in the same unsaved document.
+    /// Subtracted from usable stock before FEFO/FIFO allocation.
+    /// </summary>
+    public IReadOnlyDictionary<int, decimal> ReservedBaseQtyByBalance { get; init; }
+        = new Dictionary<int, decimal>();
 }
 
 public sealed class ProductionMaterialStockCandidate

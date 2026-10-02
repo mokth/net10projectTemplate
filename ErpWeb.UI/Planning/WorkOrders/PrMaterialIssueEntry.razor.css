@@ -355,3 +355,33 @@
         text-align: left;
     }
 }
+
+.pr-issue-desired {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.pr-issue-desired__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 240px;
+}
+
+.pr-issue-desired__input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pr-issue-desired__warn {
+    color: #b45309;
+}

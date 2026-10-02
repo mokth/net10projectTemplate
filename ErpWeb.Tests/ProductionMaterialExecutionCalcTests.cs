@@ -28,6 +28,25 @@ public sealed class ProductionMaterialExecutionCalcTests
         Assert.Equal(expected, ProductionMaterialExecutionCalc.MaxAllowedNetIssue(required, tolerance));
     }
 
+    [Theory]
+    [InlineData(100, 100, 20, 20)]
+    [InlineData(100, 100, 100, 100)]
+    [InlineData(50, 100, 40, 20)]
+    public void Requested_for_production_scales_standard_bom(
+        decimal required, decimal planned, decimal desired, decimal expected)
+    {
+        Assert.Equal(expected,
+            ProductionMaterialExecutionCalc.RequestedForProductionQty(required, planned, desired));
+    }
+
+    [Fact]
+    public void Max_for_production_applies_tolerance_to_standard_requested()
+    {
+        var requested = ProductionMaterialExecutionCalc.RequestedForProductionQty(100m, 100m, 20m);
+        Assert.Equal(20m, requested);
+        Assert.Equal(21m, ProductionMaterialExecutionCalc.MaxForProductionQty(requested, 5m));
+    }
+
     [Fact]
     public void Effective_issue_subtracts_reversal_facts()
     {

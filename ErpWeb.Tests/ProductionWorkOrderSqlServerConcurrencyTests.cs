@@ -496,6 +496,251 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
     }
 
     [Fact]
+    public async Task Reopen_racing_new_material_issue_draft_lock_order_has_exclusive_outcome()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var created = await host.CreateDraftAsync();
+        Assert.True(created.Succeeded, created.Message);
+        var released = await host.CreateService().ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+        {
+            WorkOrderNo = created.Data!.WorkOrderNo,
+            RowVersion = created.Data.RowVersion,
+            SnapshotRevision = created.Data.SnapshotRevision,
+            SnapshotHash = created.Data.SnapshotHash,
+            SourceProductDefinitionRevisionId = created.Data.SourceProductDefinitionRevisionId
+        });
+        Assert.True(released.Succeeded, released.Message);
+        var detail = released.Data!;
+        var gate = new ManualResetEventSlim(false);
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReopenAsync()
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+            {
+                WorkOrderNo = detail.WorkOrderNo,
+                RowVersion = detail.RowVersion,
+                Reason = "SQL race reopen vs new MI draft"
+            });
+        }
+
+        // Mirrors ProductionMaterialIssueService.Draft: lock Work Order first, then insert PostingLink.
+        async Task<(bool Succeeded, string? Message)> SimulateNewMaterialIssueDraftAsync()
+        {
+            gate.Wait();
+            await using var db = await host.Factory.CreateDbContextAsync();
+            await using var tx = await db.Database.BeginTransactionAsync();
+            try
+            {
+                var order = await db.ProductionWorkOrders
+                    .FromSqlInterpolated($@"
+                        SELECT *
+                        FROM dbo.PrWorkOrder WITH (UPDLOCK, HOLDLOCK)
+                        WHERE CompanyCode = {Company}
+                          AND BranchCode = {Branch}
+                          AND WorkOrderNo = {detail.WorkOrderNo}")
+                    .SingleOrDefaultAsync();
+                if (order is null)
+                {
+                    return (false, "Work Order was not found.");
+                }
+
+                if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress))
+                {
+                    return (false, "Work Order status does not allow material issue.");
+                }
+
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = order.CompanyCode,
+                    BranchCode = order.BranchCode,
+                    CommandType = ProductionPostingCommandTypes.MaterialIssuePost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"),
+                    WorkOrderId = order.Uid,
+                    InventoryBatchNo = Random.Shared.Next(200000, 299999),
+                    SnapshotRevision = order.SnapshotRevision,
+                    SnapshotHash = order.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft,
+                    CreatedDate = DateTime.UtcNow,
+                    CreatedBy = "race-mi"
+                });
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                return (false, ex.Message);
+            }
+        }
+
+        var reopenTask = Task.Run(ReopenAsync);
+        var miTask = Task.Run(SimulateNewMaterialIssueDraftAsync);
+        gate.Set();
+        await Task.WhenAll(reopenTask, miTask);
+
+        var reopen = await reopenTask;
+        var mi = await miTask;
+        await using var verify = await host.Factory.CreateDbContextAsync();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == detail.WorkOrderNo);
+        var draftLinks = await verify.ProductionPostingLinks
+            .Where(x => x.WorkOrderId == order.Uid && x.Status == ProductionPostingLinkStatuses.Draft)
+            .ToListAsync();
+
+        Assert.False(
+            order.Status == ProductionWorkOrderStatuses.Draft && draftLinks.Count > 0,
+            "Forbidden: Draft Work Order with an active Material Issue draft.");
+        Assert.True(
+            (reopen.Succeeded && !mi.Succeeded && order.Status == ProductionWorkOrderStatuses.Draft && draftLinks.Count == 0)
+            || (!reopen.Succeeded
+                && reopen.ErrorCode == IvMasterErrorCode.InUse
+                && mi.Succeeded
+                && order.Status == ProductionWorkOrderStatuses.Released
+                && draftLinks.Count == 1),
+            $"Unexpected race outcome. Reopen={reopen.ErrorCode}:{reopen.Message}; MI={(mi.Succeeded ? "ok" : mi.Message)}; Status={order.Status}; DraftLinks={draftLinks.Count}");
+    }
+
+    [Fact]
+    public async Task Reopen_racing_existing_material_issue_draft_post_cannot_leave_draft_with_execution()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var created = await host.CreateDraftAsync();
+        Assert.True(created.Succeeded, created.Message);
+        var released = await host.CreateService().ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+        {
+            WorkOrderNo = created.Data!.WorkOrderNo,
+            RowVersion = created.Data.RowVersion,
+            SnapshotRevision = created.Data.SnapshotRevision,
+            SnapshotHash = created.Data.SnapshotHash,
+            SourceProductDefinitionRevisionId = created.Data.SourceProductDefinitionRevisionId
+        });
+        Assert.True(released.Succeeded, released.Message);
+        var detail = released.Data!;
+
+        long linkId;
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == detail.WorkOrderNo);
+            var link = new ProductionPostingLink
+            {
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                CommandType = ProductionPostingCommandTypes.MaterialIssuePost,
+                PostingRequestId = Guid.NewGuid().ToString("N"),
+                WorkOrderId = order.Uid,
+                InventoryBatchNo = Random.Shared.Next(300000, 399999),
+                SnapshotRevision = order.SnapshotRevision,
+                SnapshotHash = order.SnapshotHash,
+                Status = ProductionPostingLinkStatuses.Draft,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "seed-mi"
+            };
+            db.ProductionPostingLinks.Add(link);
+            await db.SaveChangesAsync();
+            linkId = link.Uid;
+        }
+
+        var gate = new ManualResetEventSlim(false);
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReopenAsync()
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+            {
+                WorkOrderNo = detail.WorkOrderNo,
+                RowVersion = detail.RowVersion,
+                Reason = "SQL race reopen vs existing MI post"
+            });
+        }
+
+        // Mirrors posting path dependency: lock existing PostingLink, then Work Order, then mutate.
+        async Task<(bool Succeeded, string? Message)> SimulatePostExistingDraftAsync()
+        {
+            gate.Wait();
+            await using var db = await host.Factory.CreateDbContextAsync();
+            await using var tx = await db.Database.BeginTransactionAsync();
+            try
+            {
+                var link = await db.ProductionPostingLinks
+                    .FromSqlInterpolated($@"
+                        SELECT *
+                        FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK)
+                        WHERE UID = {linkId}")
+                    .SingleOrDefaultAsync();
+                if (link is null || link.Status != ProductionPostingLinkStatuses.Draft)
+                {
+                    return (false, "Draft posting link was not available.");
+                }
+
+                var order = await db.ProductionWorkOrders
+                    .FromSqlInterpolated($@"
+                        SELECT *
+                        FROM dbo.PrWorkOrder WITH (UPDLOCK, HOLDLOCK)
+                        WHERE UID = {link.WorkOrderId}")
+                    .SingleOrDefaultAsync();
+                if (order is null)
+                {
+                    return (false, "Work Order was not found.");
+                }
+
+                if (order.Status == ProductionWorkOrderStatuses.Draft)
+                {
+                    return (false, "Work Order became Draft before post.");
+                }
+
+                link.Status = ProductionPostingLinkStatuses.Succeeded;
+                link.CompletedDate = DateTime.UtcNow;
+                order.Status = ProductionWorkOrderStatuses.InProgress;
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                return (false, ex.Message);
+            }
+        }
+
+        var reopenTask = Task.Run(ReopenAsync);
+        var postTask = Task.Run(SimulatePostExistingDraftAsync);
+        gate.Set();
+        await Task.WhenAll(reopenTask, postTask);
+
+        var reopen = await reopenTask;
+        _ = await postTask;
+        await using var verify = await host.Factory.CreateDbContextAsync();
+        var latest = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == detail.WorkOrderNo);
+        var linkStatus = await verify.ProductionPostingLinks
+            .Where(x => x.Uid == linkId)
+            .Select(x => x.Status)
+            .SingleAsync();
+
+        Assert.False(reopen.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopen.ErrorCode);
+        Assert.NotEqual(ProductionWorkOrderStatuses.Draft, latest.Status);
+        Assert.False(
+            latest.Status == ProductionWorkOrderStatuses.Draft
+            && linkStatus == ProductionPostingLinkStatuses.Succeeded,
+            "Forbidden: Draft Work Order while material post succeeded.");
+    }
+
+    [Fact]
     public async Task Draft_header_update_racing_release_leaves_a_consistent_aggregate()
     {
         var cs = TryResolveScratch();

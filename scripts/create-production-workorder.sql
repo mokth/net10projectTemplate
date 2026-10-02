@@ -206,8 +206,31 @@ IF NOT EXISTS
     WHERE parent_object_id = OBJECT_ID(N'dbo.PrWorkOrder')
       AND name = N'CK_PrWorkOrder_SnapshotFormat'
 )
+BEGIN
     ALTER TABLE dbo.PrWorkOrder WITH CHECK
         ADD CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2, 3));
+END
+ELSE IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.PrWorkOrder')
+      AND name = N'CK_PrWorkOrder_SnapshotFormat'
+      AND (
+            definition LIKE N'%=(3)%'
+            OR definition LIKE N'%,(3)%'
+            OR definition LIKE N'%, 3)%'
+            OR definition LIKE N'% 3)%'
+            OR definition LIKE N'%IN (1, 2, 3)%'
+            OR definition LIKE N'%IN ((1), (2), (3))%'
+          )
+)
+BEGIN
+    -- Older deployments may still forbid format 3; widen without requiring a separate alter.
+    ALTER TABLE dbo.PrWorkOrder DROP CONSTRAINT CK_PrWorkOrder_SnapshotFormat;
+    ALTER TABLE dbo.PrWorkOrder WITH CHECK
+        ADD CONSTRAINT CK_PrWorkOrder_SnapshotFormat CHECK (SnapshotFormatVersion IN (1, 2, 3));
+END;
 GO
 
 IF NOT EXISTS
@@ -916,6 +939,7 @@ BEGIN
         ProductionDocumentNo nvarchar(40) NULL,
         ProductionDocumentLineID bigint NULL,
         InventoryBatchNo int NULL,
+        ProductionQtyThisIssue decimal(18,4) NULL,
         PostingOperationID nvarchar(64) NULL,
         OriginalPostingLinkID bigint NULL,
         Status nvarchar(20) NOT NULL,

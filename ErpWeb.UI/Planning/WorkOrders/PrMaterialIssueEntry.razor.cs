@@ -9,6 +9,7 @@ namespace ErpWeb.UI.Planning.WorkOrders;
 
 public partial class PrMaterialIssueEntry : PageBase
 {
+    [Parameter] public string Mode { get; set; } = string.Empty;
     [Parameter] public string? WorkOrderNo { get; set; }
     [Parameter] public int? BatchNo { get; set; }
     [Inject] private IProductionMaterialIssueService MaterialIssues { get; set; } = default!;
@@ -29,7 +30,19 @@ public partial class PrMaterialIssueEntry : PageBase
     protected string Remark = string.Empty;
     protected string SelectedWorkCentre = string.Empty;
     protected long? SelectedOperationId;
-    protected DateTime IssueDate;
+    private DateTime _issueDate;
+    protected DateTime IssueDate
+    {
+        get => _issueDate;
+        set
+        {
+            if (_issueDate == value) return;
+            _issueDate = value;
+            if (Workspace is null) return;
+            foreach (var line in Lines) line.Allocations = [];
+            PreviewStockDateValid = false;
+        }
+    }
     protected ProductionMaterialIssueWorkspace? Workspace;
     protected ProductionMaterialIssueDocument? Document;
     protected List<ProductionMaterialIssueOperationRow> OperationRows { get; set; } = [];
@@ -51,40 +64,82 @@ public partial class PrMaterialIssueEntry : PageBase
     private string? _loadedKey;
     private string? _postingRequestId;
 
-    protected bool IsEditMode => BatchNo is > 0 && Navigation.Uri.Contains("/edit/", StringComparison.OrdinalIgnoreCase);
-    protected bool IsViewMode => BatchNo is > 0 && !IsEditMode;
+    private decimal _desiredOutputInput;
+    protected decimal DesiredOutputInput
+    {
+        get => _desiredOutputInput;
+        set
+        {
+            if (_desiredOutputInput == value) return;
+            _desiredOutputInput = value;
+            if (AppliedProductionQtyThisIssue is > 0 && value != AppliedProductionQtyThisIssue.Value)
+                DesiredOutputDirty = true;
+        }
+    }
+    protected decimal? AppliedProductionQtyThisIssue { get; set; }
+    protected bool DesiredOutputDirty { get; set; }
+    protected bool PreviewStockDateValid { get; set; }
+
+    // Mode is a route parameter so edit→view after save always reloads (BatchNo alone does not change).
+    protected bool IsEditMode => BatchNo is > 0
+        && string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
+    protected bool IsViewMode => BatchNo is > 0
+        && string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
+    protected bool IsNewMode => !IsEditMode && !IsViewMode;
     protected string PageHeading => IsViewMode ? "View Issue to Production" : IsEditMode ? "Edit Issue to Production" : "New Issue to Production";
     protected string ModeChip => IsViewMode ? "VIEW" : IsEditMode ? "EDIT" : "NEW";
     protected string HeaderStatus => IsViewMode ? Document?.Status ?? "View" : Workspace?.Status ?? "Draft";
     protected string? ActiveWorkOrderNo => IsViewMode ? Document?.WorkOrderNo : Workspace?.WorkOrderNo;
     protected string? ActiveProductCode => IsViewMode ? Document?.ProductCode : Workspace?.ProductCode;
-    protected int SelectedLineCount => IsViewMode ? Document?.Lines.Select(x => x.WorkOrderMaterialId).Distinct().Count() ?? 0 : Lines.Count(x => x.IssueQty > 0m);
-    protected int AllocationRowCount => Lines.Where(x => x.IssueQty > 0m).Sum(x => x.Allocations.Count);
-    protected bool CanSaveDocument => Workspace is not null && (IsEditMode ? CanEdit : CanAdd) && Lines.Any(x => x.IssueQty > 0m);
-    protected IEnumerable<string> WorkCentreOptions => Workspace?.Operations.Select(x => x.WorkCentreCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().OrderBy(x => x) ?? Enumerable.Empty<string>();
-    protected IEnumerable<ProductionMaterialIssueOperation> OperationOptions => Workspace?.Operations.Where(x => string.IsNullOrWhiteSpace(SelectedWorkCentre) || x.WorkCentreCode == SelectedWorkCentre).OrderBy(x => x.ProcessSequence) ?? Enumerable.Empty<ProductionMaterialIssueOperation>();
-    protected IEnumerable<MaterialLineVm> VisibleLines => Lines.Where(x => (!SelectedOperationId.HasValue || x.Material.WorkOrderOperationId == SelectedOperationId)
+    protected int SelectedLineCount => IsViewMode
+        ? Document?.Lines.Select(x => x.WorkOrderMaterialId).Distinct().Count() ?? 0
+        : SelectedIssueLines.Count();
+    protected IEnumerable<MaterialLineVm> SelectedIssueLines => Lines.Where(x =>
+        SelectedOperationId.HasValue
+        && x.Material.WorkOrderOperationId == SelectedOperationId.Value
+        && x.IssueQty > 0m);
+    protected bool CanSaveDocument => !IsViewMode
+        && Workspace is not null
+        && (IsEditMode ? CanEdit : CanAdd)
+        && AppliedProductionQtyThisIssue is > 0
+        && !DesiredOutputDirty
+        && PreviewStockDateValid
+        && SelectedIssueLines.Any()
+        && SelectedIssueLines.All(IsFullyAllocated);
+    protected bool CanApplyDesiredOutput => Workspace is not null
+        && SelectedOperationRow is not null
+        && DesiredOutputInput > 0m
+        && DesiredOutputInput <= (SelectedOperationRow.PlannedOutputQty)
+        && !IsSubmitting;
+    protected bool CanFillOutstanding => CanApplyDesiredOutput
+        && AppliedProductionQtyThisIssue is > 0
+        && !DesiredOutputDirty
+        && PreviewStockDateValid;
+    protected IEnumerable<MaterialLineVm> VisibleLines => Lines.Where(x =>
+        (!SelectedOperationId.HasValue || x.Material.WorkOrderOperationId == SelectedOperationId)
         && (string.IsNullOrWhiteSpace(SelectedWorkCentre) || x.Material.WorkCentreCode == SelectedWorkCentre)
         && (!ShowShortageOnly || x.Material.ShortageQty > 0m));
     protected List<MaterialLineVm> VisibleLineList => VisibleLines.ToList();
     protected int OperationPageCount => Math.Max(1, (OperationTotalCount + OperationPageSize - 1) / OperationPageSize);
     protected string OperationResultLabel => OperationTotalCount == 1 ? "1 operation" : $"{OperationTotalCount:N0} operations";
-    protected decimal TotalIssueQty => Lines.Where(x => x.IssueQty > 0m).Sum(x => x.IssueQty);
-    protected int UnallocatedLineCount => Lines.Count(x => x.IssueQty > 0m && !IsFullyAllocated(x));
+    protected int UnallocatedLineCount => SelectedIssueLines.Count(x => !IsFullyAllocated(x));
     protected bool IsFullyAllocated(MaterialLineVm line) => Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty))
         - IvQty.Round(line.IssueQty * line.Material.ConversionFactorToBase)) <= 0.0001m;
     protected string AllocationHint(MaterialLineVm line) => IsFullyAllocated(line)
         ? $"Ready · {line.Allocations.Count}"
         : "Allocation needed";
+    protected Dictionary<int, decimal> ReservedByOtherLines =>
+        BuildReservationExcluding(AllocationLine?.Material.WorkOrderMaterialId);
     protected void ToggleMoreFilters() => MoreFiltersVisible = !MoreFiltersVisible;
 
     protected override Task OnPageInitializedAsync() => Task.CompletedTask;
     protected override async Task OnParametersSetAsync()
     {
         await base.OnParametersSetAsync();
-        var key = $"{BatchNo}|{WorkOrderNo}";
+        var key = $"{Mode}|{BatchNo}|{WorkOrderNo}";
         if (_loadedKey == key) return;
-        _loadedKey = key; IsLoading = true; ErrorMessage = null;
+        _loadedKey = key; IsLoading = true; ErrorMessage = null; StatusMessage = null;
+        Workspace = null; Document = null; Lines = []; SelectedOperationRow = null;
         CanAdd = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Edit);
         if (IsViewMode) await LoadDocumentAsync();
@@ -98,7 +153,6 @@ public partial class PrMaterialIssueEntry : PageBase
         IsLoading = false;
     }
 
-    protected Task LoadWorkspaceFromInputAsync() => LoadWorkspaceAsync(WorkOrderInput);
     private async Task LoadFilterOptionsAsync()
     {
         var result = await MaterialIssues.GetEligibleOperationFilterOptionsAsync();
@@ -138,30 +192,95 @@ public partial class PrMaterialIssueEntry : PageBase
         var result = await MaterialIssues.GetWorkspaceAsync(operation.WorkOrderNo, operation.WorkOrderOperationId);
         if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to load operation."; return; }
         SelectedOperationRow = operation; Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
-        IssueDate = result.Data.IssueDate; SelectedOperationId = operation.WorkOrderOperationId;
-        SelectedWorkCentre = operation.WorkCentreCode ?? string.Empty; Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
+        _issueDate = result.Data.IssueDate; SelectedOperationId = operation.WorkOrderOperationId;
+        SelectedWorkCentre = operation.WorkCentreCode ?? string.Empty;
+        Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
         Remark = string.Empty;
+        ResetDesiredOutputState(defaultDesired: operation.PlannedOutputQty);
     }
     protected void OpenBom() { if (SelectedOperationRow is not null) BomVisible = true; }
-    protected Task ApplyBomSuggestions(IReadOnlyDictionary<long, decimal> suggestions)
+
+    protected async Task ApplyDesiredOutputAndAllocateAsync()
     {
-        foreach (var line in Lines)
+        if (SelectedOperationRow is null || Workspace is null) return;
+        if (DesiredOutputInput <= 0m || DesiredOutputInput > SelectedOperationRow.PlannedOutputQty)
         {
-            line.IssueQty = suggestions.GetValueOrDefault(line.Material.WorkOrderMaterialId);
-            line.Allocations = [];
+            ErrorMessage = "Desired output must be greater than zero and not exceed planned output.";
+            return;
         }
-        return Task.CompletedTask;
+        IsSubmitting = true; ErrorMessage = null;
+        try
+        {
+            var preview = await MaterialIssues.GetBomPreviewAsync(
+                SelectedOperationRow.WorkOrderOperationId,
+                DesiredOutputInput,
+                IssueDate,
+                excludeBatchNo: IsEditMode ? BatchNo : null);
+            if (!preview.Succeeded || preview.Data is null)
+            {
+                ErrorMessage = preview.Message ?? "Unable to calculate Desired Output.";
+                return;
+            }
+            var apply = ToApplyResult(preview.Data);
+            await ApplyDesiredOutputPreview(apply, overwriteIssueQty: true, autoAllocate: true);
+        }
+        finally { IsSubmitting = false; }
     }
+
+    protected async Task ApplyBomResult(ProductionMaterialIssueBomApplyResult apply)
+    {
+        DesiredOutputInput = apply.ProductionQtyThisIssue;
+        await ApplyDesiredOutputPreview(apply, overwriteIssueQty: true, autoAllocate: true);
+    }
+
+    private async Task ApplyDesiredOutputPreview(
+        ProductionMaterialIssueBomApplyResult apply,
+        bool overwriteIssueQty,
+        bool autoAllocate)
+    {
+        foreach (var line in Lines.Where(x => !SelectedOperationId.HasValue || x.Material.WorkOrderOperationId == SelectedOperationId))
+        {
+            var row = apply.Lines.FirstOrDefault(x => x.WorkOrderMaterialId == line.Material.WorkOrderMaterialId);
+            if (row is null) continue;
+            line.BomRequestedQty = row.RequestedMaterialQty;
+            line.MaxIssueQty = row.MaxIssueQty;
+            line.AvailableForIssueDateQty = row.AvailableForIssueDateQty;
+            if (overwriteIssueQty)
+            {
+                line.IssueQty = row.SuggestedIssueQty;
+                line.Allocations = [];
+            }
+        }
+
+        AppliedProductionQtyThisIssue = apply.ProductionQtyThisIssue;
+        DesiredOutputDirty = false;
+        PreviewStockDateValid = true;
+
+        if (autoAllocate)
+        {
+            var ok = await AllocateSelectedAtomicallyAsync();
+            if (!ok) return;
+        }
+        await Task.CompletedTask;
+    }
+
     private async Task LoadWorkspaceAsync(string workOrderNo)
     {
         ErrorMessage = null;
         if (!CanAdd) { ErrorMessage = "You do not have permission to create material issues."; return; }
         var result = await MaterialIssues.GetWorkspaceAsync(workOrderNo);
         if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to load Work Order."; return; }
-        Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo; IssueDate = result.Data.IssueDate;
+        Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo; _issueDate = result.Data.IssueDate;
         Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
-        SelectedWorkCentre = string.Empty; SelectedOperationId = result.Data.Operations.OrderBy(x => x.ProcessSequence).Select(x => (long?)x.WorkOrderOperationId).FirstOrDefault(); Remark = string.Empty; _postingRequestId = null;
-        if (SelectedOperationId.HasValue) SelectedOperationRow = ToOperationRow(result.Data, result.Data.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId.Value));
+        SelectedWorkCentre = string.Empty;
+        SelectedOperationId = result.Data.Operations.OrderBy(x => x.ProcessSequence).Select(x => (long?)x.WorkOrderOperationId).FirstOrDefault();
+        Remark = string.Empty; _postingRequestId = null;
+        if (SelectedOperationId.HasValue)
+        {
+            SelectedOperationRow = ToOperationRow(result.Data, result.Data.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId.Value));
+            ResetDesiredOutputState(defaultDesired: SelectedOperationRow.PlannedOutputQty);
+        }
+        else ResetDesiredOutputState(0m);
     }
     private async Task LoadDocumentAsync()
     {
@@ -176,9 +295,10 @@ public partial class PrMaterialIssueEntry : PageBase
         if (!documentResult.Succeeded || documentResult.Data is null) { ErrorMessage = documentResult.Message ?? "Unable to load draft."; return; }
         if (documentResult.Data.Status != "NEW") { ErrorMessage = "Only NEW drafts can be edited."; return; }
         Document = documentResult.Data;
-        var workspaceResult = await MaterialIssues.GetWorkspaceAsync(Document.WorkOrderNo, Document.WorkOrderOperationId);
+        var workspaceResult = await MaterialIssues.GetWorkspaceAsync(
+            Document.WorkOrderNo, Document.WorkOrderOperationId, excludeBatchNo: BatchNo);
         if (!workspaceResult.Succeeded || workspaceResult.Data is null) { ErrorMessage = workspaceResult.Message ?? "Unable to load Work Order."; return; }
-        Workspace = workspaceResult.Data; WorkOrderInput = Workspace.WorkOrderNo; IssueDate = Document.IssueDate; Remark = Document.Remark ?? string.Empty;
+        Workspace = workspaceResult.Data; WorkOrderInput = Workspace.WorkOrderNo; _issueDate = Document.IssueDate; Remark = Document.Remark ?? string.Empty;
         SelectedOperationId = Document.WorkOrderOperationId;
         SelectedOperationRow = ToOperationRow(Workspace, Workspace.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId));
         Lines = Workspace.Materials.Select(x => new MaterialLineVm(x)).ToList();
@@ -189,87 +309,260 @@ public partial class PrMaterialIssueEntry : PageBase
             line.OriginalIssueQty = line.IssueQty;
             line.Allocations = group.Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.BaseQty }).ToList();
         }
+
+        if (Document.ProductionQtyThisIssue is > 0)
+        {
+            DesiredOutputInput = Document.ProductionQtyThisIssue.Value;
+            AppliedProductionQtyThisIssue = Document.ProductionQtyThisIssue.Value;
+            DesiredOutputDirty = false;
+            var preview = await MaterialIssues.GetBomPreviewAsync(
+                SelectedOperationRow.WorkOrderOperationId,
+                Document.ProductionQtyThisIssue.Value,
+                IssueDate,
+                excludeBatchNo: BatchNo);
+            if (preview.Succeeded && preview.Data is not null)
+                await ApplyDesiredOutputPreview(ToApplyResult(preview.Data), overwriteIssueQty: false, autoAllocate: false);
+            PreviewStockDateValid = SelectedIssueLines.All(IsFullyAllocated);
+        }
+        else
+        {
+            ResetDesiredOutputState(0m);
+            ErrorMessage = "This draft has no Desired Output. Apply Desired Output and save before posting.";
+        }
     }
     protected async Task ClearWorkspace()
     {
         Workspace = null; Lines = []; WorkOrderInput = string.Empty; SelectedWorkCentre = string.Empty;
         SelectedOperationId = null; SelectedOperationRow = null; _postingRequestId = null;
+        ResetDesiredOutputState(0m);
         await LoadFilterOptionsAsync();
         OperationPage = 0;
         await SearchOperationsAsync();
     }
-    protected void AutoFillOutstanding()
+
+    protected async Task AutoFillOutstanding()
     {
-        foreach (var line in VisibleLines.Where(x => x.Material.CanManualIssue)) { line.IssueQty = IvQty.Round(Math.Min(line.Material.OutstandingQty, Math.Min(line.Material.AvailableToDraft + line.OriginalIssueQty, line.Material.AvailableQty))); line.Allocations = []; }
-    }
-    protected async Task AllocateAllAsync()
-    {
+        if (!CanFillOutstanding) return;
         IsSubmitting = true; ErrorMessage = null;
         try
         {
-            foreach (var line in Lines.Where(x => x.IssueQty > 0m && x.Material.CanManualIssue))
+            var preview = await MaterialIssues.GetBomPreviewAsync(
+                SelectedOperationRow!.WorkOrderOperationId,
+                AppliedProductionQtyThisIssue!.Value,
+                IssueDate,
+                excludeBatchNo: IsEditMode ? BatchNo : null);
+            if (!preview.Succeeded || preview.Data is null)
             {
-                var result = await AllocationService.AutoAllocateAsync(new ProductionMaterialAllocationRequest { WorkOrderMaterialId = line.Material.WorkOrderMaterialId, IssueDate = IssueDate, RequestedQty = line.IssueQty });
-                if (!result.Succeeded || result.Data is null || result.Data.ShortBaseQty > 0m) { ErrorMessage = result.Message ?? $"Unable to fully allocate {line.Material.ComponentCode}."; return; }
-                line.Allocations = result.Data.Allocations.Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.SuggestedBaseQty }).ToList();
+                ErrorMessage = preview.Message ?? "Unable to refresh stock for FILL OUTSTANDING.";
+                return;
             }
+            foreach (var line in VisibleLines.Where(x =>
+                x.Material.CanManualIssue
+                && SelectedOperationId.HasValue
+                && x.Material.WorkOrderOperationId == SelectedOperationId.Value))
+            {
+                var row = preview.Data.Lines.FirstOrDefault(x => x.WorkOrderMaterialId == line.Material.WorkOrderMaterialId);
+                var available = row?.AvailableForIssueDateQty ?? 0m;
+                line.BomRequestedQty = row?.RequestedMaterialQty ?? line.BomRequestedQty;
+                line.MaxIssueQty = row?.MaxIssueQty ?? line.MaxIssueQty;
+                line.AvailableForIssueDateQty = available;
+                var fill = IvQty.Round(Math.Min(line.Material.OutstandingQty, Math.Min(line.MaxIssueQty, available)));
+                line.IssueQty = Math.Max(0m, fill);
+                line.Allocations = [];
+            }
+            PreviewStockDateValid = false;
+            var ok = await AllocateSelectedAtomicallyAsync();
+            if (ok) PreviewStockDateValid = true;
         }
         finally { IsSubmitting = false; }
     }
-    protected void OpenAllocation(MaterialLineVm line) { AllocationLine = line; AllocationVisible = true; }
-    protected Task ApplyAllocations(IReadOnlyList<ProductionMaterialIssueAllocationRequest> rows) { if (AllocationLine is not null) AllocationLine.Allocations = rows.ToList(); return Task.CompletedTask; }
-    protected void OpenPostConfirmation()
+
+    protected async Task AllocateAllAsync()
     {
-        ErrorMessage = ValidatePosting();
-        if (ErrorMessage is not null) return;
-        PostWarnings = [];
-        foreach (var line in Lines.Where(x => x.IssueQty > 0m))
+        if (DesiredOutputDirty || AppliedProductionQtyThisIssue is not > 0)
         {
-            if (line.IssueQty < line.Material.OutstandingQty) PostWarnings.Add($"{line.Material.ComponentCode} remains short by {(line.Material.OutstandingQty - line.IssueQty):n4} {line.Material.RequiredUom}.");
-            if (line.Material.NetIssuedQty + line.IssueQty > line.Material.RequiredQty) PostWarnings.Add($"{line.Material.ComponentCode} exceeds standard requirement but remains within tolerance.");
+            ErrorMessage = "Apply Desired Output before allocating stock.";
+            return;
         }
-        PostConfirmationVisible = true;
+        IsSubmitting = true; ErrorMessage = null;
+        try
+        {
+            var ok = await AllocateSelectedAtomicallyAsync();
+            if (ok) PreviewStockDateValid = true;
+        }
+        finally { IsSubmitting = false; }
     }
+
+    private async Task<bool> AllocateSelectedAtomicallyAsync()
+    {
+        var targets = Lines.Where(x =>
+            SelectedOperationId.HasValue
+            && x.Material.WorkOrderOperationId == SelectedOperationId.Value
+            && x.IssueQty > 0m
+            && x.Material.CanManualIssue).ToList();
+        var reserved = new Dictionary<int, decimal>();
+        var proposals = new Dictionary<long, List<ProductionMaterialIssueAllocationRequest>>();
+        foreach (var line in targets)
+        {
+            var result = await AllocationService.AutoAllocateAsync(new ProductionMaterialAllocationRequest
+            {
+                WorkOrderMaterialId = line.Material.WorkOrderMaterialId,
+                IssueDate = IssueDate,
+                RequestedQty = line.IssueQty,
+                ReservedBaseQtyByBalance = reserved
+            });
+            if (!result.Succeeded || result.Data is null || result.Data.ShortBaseQty > 0m)
+            {
+                ErrorMessage = result.Message ?? $"Unable to fully allocate {line.Material.ComponentCode}.";
+                return false;
+            }
+            var alloc = result.Data.Allocations
+                .Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.SuggestedBaseQty })
+                .ToList();
+            proposals[line.Material.WorkOrderMaterialId] = alloc;
+            foreach (var row in alloc)
+                reserved[row.FromBalLocId] = IvQty.Round(reserved.GetValueOrDefault(row.FromBalLocId) + row.BaseQty);
+        }
+        foreach (var line in targets)
+            line.Allocations = proposals[line.Material.WorkOrderMaterialId];
+        return true;
+    }
+
+    protected void OpenAllocation(MaterialLineVm line) { AllocationLine = line; AllocationVisible = true; }
+    protected Task ApplyAllocations(IReadOnlyList<ProductionMaterialIssueAllocationRequest> rows)
+    {
+        if (AllocationLine is not null) AllocationLine.Allocations = rows.ToList();
+        PreviewStockDateValid = SelectedIssueLines.Any() && SelectedIssueLines.All(IsFullyAllocated);
+        return Task.CompletedTask;
+    }
+
+    protected void OnIssueQtyEdited()
+    {
+        PreviewStockDateValid = SelectedIssueLines.Any() && SelectedIssueLines.All(IsFullyAllocated);
+    }
+
     private string? ValidatePosting()
     {
         if (Workspace is null) return "Load a Work Order first.";
         if (!SelectedOperationId.HasValue) return "Select one operation for this material issue.";
-        var selected = Lines.Where(x => x.IssueQty > 0m && x.Material.WorkOrderOperationId == SelectedOperationId.Value).ToList();
+        if (AppliedProductionQtyThisIssue is not > 0) return "Apply Desired Output before saving.";
+        if (DesiredOutputDirty) return "Desired Output changed after Apply. Run APPLY & AUTO ALLOCATE again.";
+        if (!PreviewStockDateValid) return "Issue date or Desired Output is stale. Re-apply and allocate stock.";
+        var selected = SelectedIssueLines.ToList();
         if (selected.Count == 0) return "Enter an issue quantity for at least one material.";
         foreach (var line in selected)
         {
             if (!line.Material.CanManualIssue) return $"{line.Material.ComponentCode} cannot be issued manually.";
-            if (line.IssueQty > line.Material.AvailableToDraft + line.OriginalIssueQty) return $"{line.Material.ComponentCode} exceeds its available draft allowance.";
+            if (line.MaxIssueQty > 0m && line.IssueQty > line.MaxIssueQty)
+                return $"{line.Material.ComponentCode} exceeds the maximum allowed quantity for the selected desired output.";
+            if (line.IssueQty > line.Material.AvailableToDraft + line.OriginalIssueQty)
+                return $"{line.Material.ComponentCode} exceeds its available draft allowance.";
             var expected = IvQty.Round(line.IssueQty * line.Material.ConversionFactorToBase);
-            if (Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty)) - expected) > 0.0001m) return $"Allocate exactly {expected:n4} {line.Material.BaseUom} for {line.Material.ComponentCode}.";
+            if (Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty)) - expected) > 0.0001m)
+                return $"Allocate exactly {expected:n4} {line.Material.BaseUom} for {line.Material.ComponentCode}.";
         }
         return null;
     }
     protected async Task SaveAsync()
     {
-        var validation = ValidatePosting(); if (validation is not null) { ErrorMessage = validation; PostConfirmationVisible = false; return; }
-        _postingRequestId ??= Guid.NewGuid().ToString("N"); IsSubmitting = true; ErrorMessage = null;
+        if (IsSubmitting) return;
+        if (IsViewMode)
+        {
+            ErrorMessage = "Open the draft in Edit mode to save changes.";
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
+            // Let DxSpinEdit commit the value from the Save click's focus change before we validate.
+            await Task.Yield();
+
+            if (AppliedProductionQtyThisIssue is > 0 && !DesiredOutputDirty
+                && (!PreviewStockDateValid || SelectedIssueLines.Any(x => !IsFullyAllocated(x))))
+            {
+                var ok = await AllocateSelectedAtomicallyAsync();
+                if (!ok) return;
+                PreviewStockDateValid = true;
+            }
+
+            var validation = ValidatePosting();
+            if (validation is not null)
+            {
+                ErrorMessage = validation;
+                PostConfirmationVisible = false;
+                return;
+            }
+
+            _postingRequestId ??= Guid.NewGuid().ToString("N");
             var request = new ProductionMaterialIssueSaveRequest
             {
                 WorkOrderNo = Workspace!.WorkOrderNo, WorkOrderOperationId = SelectedOperationId!.Value,
                 SnapshotRevision = Workspace.SnapshotRevision, SnapshotHash = Workspace.SnapshotHash,
+                ProductionQtyThisIssue = AppliedProductionQtyThisIssue!.Value,
                 TrxDateTime = IssueDate, RefNo = "AUTO", Remark = Remark,
-                Lines = Lines.Where(x => x.IssueQty > 0m && x.Material.WorkOrderOperationId == SelectedOperationId.Value)
+                Lines = SelectedIssueLines
                     .Select(x => new ProductionMaterialIssueLineRequest { WorkOrderMaterialId = x.Material.WorkOrderMaterialId, IssueQty = IvQty.Round(x.IssueQty), Allocations = x.Allocations }).ToList()
             };
-            var result = IsEditMode
-                ? await MaterialIssues.UpdateAsync(BatchNo!.Value, request)
+            var result = BatchNo is > 0
+                ? await MaterialIssues.UpdateAsync(BatchNo.Value, request)
                 : await MaterialIssues.CreateAsync(request);
-            if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to save material issue draft."; return; }
-            Navigation.NavigateTo($"/planning/material-issues/view/{result.Data.BatchNo}");
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to save material issue draft.";
+                return;
+            }
+
+            // Mode is a route parameter — changing edit→view always reloads summary once.
+            Navigation.NavigateTo($"/planning/material-issues/view/{result.Data.BatchNo}", replace: true);
         }
         finally { IsSubmitting = false; }
     }
     protected void BackToList() => Navigation.NavigateTo("/planning/material-issues");
+    protected void OpenEdit() => Navigation.NavigateTo($"/planning/material-issues/edit/{BatchNo!.Value}");
+    protected bool CanOpenEditFromView => IsViewMode
+        && Document is not null
+        && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
+        && CanEdit;
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
+
+    private void ResetDesiredOutputState(decimal defaultDesired)
+    {
+        _desiredOutputInput = defaultDesired;
+        AppliedProductionQtyThisIssue = null;
+        DesiredOutputDirty = false;
+        PreviewStockDateValid = false;
+    }
+
+    private Dictionary<int, decimal> BuildReservationExcluding(long? excludeMaterialId)
+    {
+        var reserved = new Dictionary<int, decimal>();
+        foreach (var line in Lines.Where(x =>
+            SelectedOperationId.HasValue
+            && x.Material.WorkOrderOperationId == SelectedOperationId.Value
+            && x.Material.WorkOrderMaterialId != excludeMaterialId))
+        {
+            foreach (var alloc in line.Allocations)
+                reserved[alloc.FromBalLocId] = IvQty.Round(reserved.GetValueOrDefault(alloc.FromBalLocId) + alloc.BaseQty);
+        }
+        return reserved;
+    }
+
+    private static ProductionMaterialIssueBomApplyResult ToApplyResult(ProductionMaterialIssueBomPreview preview) => new()
+    {
+        ProductionQtyThisIssue = preview.ProductionQtyThisIssue,
+        Lines = preview.Lines.Select(x => new ProductionMaterialIssueBomApplyLine
+        {
+            WorkOrderMaterialId = x.WorkOrderMaterialId,
+            RequestedMaterialQty = x.RequestedMaterialQty,
+            SuggestedIssueQty = x.SuggestedIssueQty,
+            MaxIssueQty = x.MaxIssueQty,
+            AvailableForIssueDateQty = x.AvailableForIssueDateQty
+        }).ToList()
+    };
 
     protected sealed class MaterialLineVm
     {
@@ -280,10 +573,81 @@ public partial class PrMaterialIssueEntry : PageBase
         public decimal RequiredQty => Material.RequiredQty;
         public decimal NetIssuedQty => Material.NetIssuedQty;
         public decimal AvailableToDraft => Material.AvailableToDraft;
+        public decimal BomRequestedQty { get; set; }
+        public decimal MaxIssueQty { get; set; }
+        public decimal AvailableForIssueDateQty { get; set; }
         private decimal _issueQty;
-        public decimal IssueQty { get => _issueQty; set { if (_issueQty != value) Allocations = []; _issueQty = value; } }
+        public decimal IssueQty
+        {
+            get => _issueQty;
+            set
+            {
+                if (_issueQty == value) return;
+                _issueQty = value;
+                RescaleOrClearAllocations();
+            }
+        }
         public decimal OriginalIssueQty { get; set; }
         public List<ProductionMaterialIssueAllocationRequest> Allocations { get; set; } = [];
+
+        private void RescaleOrClearAllocations()
+        {
+            if (_issueQty <= 0m || Allocations.Count == 0)
+            {
+                Allocations = [];
+                return;
+            }
+
+            var expectedBase = IvQty.Round(_issueQty * Material.ConversionFactorToBase);
+            var currentBase = IvQty.Round(Allocations.Sum(x => x.BaseQty));
+            if (currentBase <= 0m)
+            {
+                Allocations = [];
+                return;
+            }
+
+            if (Math.Abs(currentBase - expectedBase) <= 0.0001m)
+                return;
+
+            // Keep existing lot/balance picks when the operator only changes qty.
+            var factor = expectedBase / currentBase;
+            var scaled = Allocations
+                .Select(a => new ProductionMaterialIssueAllocationRequest
+                {
+                    FromBalLocId = a.FromBalLocId,
+                    BaseQty = IvQty.Round(a.BaseQty * factor)
+                })
+                .Where(a => a.BaseQty > 0m)
+                .ToList();
+            if (scaled.Count == 0)
+            {
+                Allocations = [];
+                return;
+            }
+
+            var sum = IvQty.Round(scaled.Sum(x => x.BaseQty));
+            var drift = IvQty.Round(expectedBase - sum);
+            if (drift != 0m)
+            {
+                var last = scaled[^1];
+                var fixedQty = IvQty.Round(last.BaseQty + drift);
+                if (fixedQty <= 0m)
+                {
+                    Allocations = [];
+                    return;
+                }
+                scaled[^1] = new ProductionMaterialIssueAllocationRequest
+                {
+                    FromBalLocId = last.FromBalLocId,
+                    BaseQty = fixedQty
+                };
+            }
+
+            if (Math.Abs(IvQty.Round(scaled.Sum(x => x.BaseQty)) - expectedBase) > 0.0001m)
+                Allocations = [];
+            else
+                Allocations = scaled;
+        }
     }
 
     private static ProductionMaterialIssueOperationRow ToOperationRow(ProductionMaterialIssueWorkspace workspace, ProductionMaterialIssueOperation operation) => new()

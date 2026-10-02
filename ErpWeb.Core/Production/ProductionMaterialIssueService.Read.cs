@@ -198,6 +198,7 @@ public sealed partial class ProductionMaterialIssueService
             WorkOrderOperationId = mapRows.Select(x => x.WorkOrderOperationId).FirstOrDefault(),
             SnapshotRevision = link.SnapshotRevision,
             SnapshotHash = link.SnapshotHash,
+            ProductionQtyThisIssue = link.ProductionQtyThisIssue,
             Remark = batch.Remarks,
             PostedBy = batch.PostedBy,
             PostedDate = batch.PostedDate,
