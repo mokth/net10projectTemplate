@@ -24,14 +24,14 @@ public sealed partial class ProductionOutputService
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, outputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
             if (output.Status == ProductionOutputStatuses.Posted)
-                return Ok(await MapDetailAsync(db, output.Uid, cancellationToken));
+                return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
             if (link.Status == ProductionPostingLinkStatuses.Succeeded)
-                return Ok(await MapDetailAsync(db, output.Uid, cancellationToken));
+                return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (link.Status != ProductionPostingLinkStatuses.Draft)
                 return Fail("Posting link is not in DRAFT status.");
 
@@ -312,7 +312,7 @@ public sealed partial class ProductionOutputService
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
-            return Ok(await MapDetailAsync(db, output.Uid, cancellationToken));
+            return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
         }
         catch (DbUpdateException)
         {

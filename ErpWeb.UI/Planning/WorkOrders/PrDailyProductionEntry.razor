@@ -2,13 +2,11 @@
 @page "/planning/daily-production/{Mode:regex(^(edit|view)$)}/{OutputId:long}"
 @page "/planning/daily-production/new/{WorkOrderOperationId:long}"
 @inherits PageBase
-@using ErpWeb.Core.Menus
-@using ErpWeb.Core.Production
 
 <PageTitle>@PageHeading</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.PlanningDailyProduction">
-    <div class="iv-page">
+    <div class="iv-page pr-dp-page">
         @if (!string.IsNullOrWhiteSpace(StatusMessage))
         {
             <div class="iv-toast iv-toast--ok" role="status">
@@ -25,7 +23,9 @@
         }
 
         <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-industry"></i></div>
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-industry"></i>
+            </div>
             <div class="iv-hero__copy">
                 <p class="iv-eyebrow">Planning · Production</p>
                 <h1 class="iv-title">@PageHeading</h1>
@@ -39,180 +39,622 @@
                     {
                         <span class="iv-chip code-style">@WorkOrderNo</span>
                     }
+                    @if (!string.IsNullOrWhiteSpace(OutputItemCode))
+                    {
+                        <span class="iv-chip code-style">@OutputItemCode</span>
+                    }
                     <span class="iv-chip">@HeaderStatus</span>
                 </div>
             </div>
+            <div class="iv-hero__kpi">
+                <span>@(IsViewMode ? "Materials" : "Ready lines")</span>
+                <strong>@(Workspace?.Materials.Count ?? 0)</strong>
+            </div>
         </header>
 
-        <section class="iv-card">
-            <div class="d-flex flex-wrap gap-2 mb-3">
-                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="BACK" IconCssClass="fa-solid fa-arrow-left"
-                          Click="@BackToList" Enabled="@(!IsSubmitting)" />
-                @if (CanSave)
+        <section class="iv-card pr-dp-commandbar">
+            <div class="pr-dp-commandbar__left">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="BACK"
+                          IconCssClass="fa-solid fa-arrow-left"
+                          Click="@BackToList"
+                          Enabled="@(!IsSubmitting)" />
+                @if (IsNewMode && Workspace is not null)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk"
-                              Click="@SaveAsync" Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CHANGE OPERATION"
+                              IconCssClass="fa-solid fa-right-left"
+                              Click="@ClearWorkspace"
+                              Enabled="@(!IsSubmitting)" />
+                }
+            </div>
+            <div class="pr-dp-commandbar__right">
+                @if (CanOpenEditFromView)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="EDIT DRAFT"
+                              IconCssClass="far fa-edit"
+                              Click="@OpenEdit"
+                              Enabled="@(!IsSubmitting)" />
                 }
                 @if (CanPost)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Success" Text="POST" IconCssClass="fa-solid fa-check"
-                              Click="@PostAsync" Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Success"
+                              Text="POST"
+                              IconCssClass="fa-solid fa-check"
+                              Click="@OpenPostConfirm"
+                              Enabled="@(!IsSubmitting)" />
                 }
                 @if (CanRollback)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Warning" Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left"
-                              Click="@OpenRollbackConfirm" Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Warning"
+                              Text="ROLLBACK"
+                              IconCssClass="fa-solid fa-rotate-left"
+                              Click="@OpenRollbackConfirm"
+                              Enabled="@(!IsSubmitting)" />
                 }
                 @if (CanDelete)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="DELETE" IconCssClass="fa-solid fa-trash"
-                              Click="@DeleteAsync" Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="DELETE"
+                              IconCssClass="fa-solid fa-trash"
+                              Click="@OpenDeleteConfirm"
+                              Enabled="@(!IsSubmitting)" />
                 }
             </div>
+        </section>
 
-            @if (IsBootstrapping)
-            {
+        @if (IsBootstrapping)
+        {
+            <section class="iv-card">
                 <div class="iv-skeleton" aria-busy="true">
                     <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
                     <div class="iv-skeleton__line"></div>
                 </div>
-            }
-            else if (IsNewMode && SelectedOperationId is null)
-            {
-                <h3 class="h6">Select operation</h3>
-                <div class="row g-2 mb-3">
-                    <div class="col-md-3">
-                        <DxTextBox @bind-Text="EligibleWorkOrderNo" NullText="Work Order" CssClass="w-100" />
+            </section>
+        }
+        else if (IsViewMode && Document is not null)
+        {
+            <section class="iv-card">
+                <h2 class="iv-card__title">Document</h2>
+                <div class="pr-dp-meta">
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Order</span>
+                        <strong class="code-style">@Document.WorkOrderNo</strong>
                     </div>
-                    <div class="col-md-3">
-                        <DxTextBox @bind-Text="EligibleProductCode" NullText="Product" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Product</span>
+                        <strong class="code-style">@Document.ProductCode</strong>
+                        <small>@Document.ProductDescription</small>
                     </div>
-                    <div class="col-md-3">
-                        <DxTextBox @bind-Text="EligibleWorkCentre" NullText="Work Centre" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Operation</span>
+                        <strong>@Document.OperationCode</strong>
+                        <small>@Document.OperationDescription</small>
                     </div>
-                    <div class="col-md-3">
-                        <DxButton Text="SEARCH" Click="@SearchEligibleAsync" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Centre</span>
+                        <strong>@Document.WorkCentreCode</strong>
                     </div>
-                </div>
-                <table class="table table-sm">
-                    <thead>
-                        <tr>
-                            <th>Work Order</th>
-                            <th>Product</th>
-                            <th>WC</th>
-                            <th>Op</th>
-                            <th>Output</th>
-                            <th>Remaining</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in EligibleRows)
-                        {
-                            <tr>
-                                <td class="code-style">@row.WorkOrderNo</td>
-                                <td>@row.ProductCode</td>
-                                <td>@row.WorkCentreCode</td>
-                                <td>@row.OperationCode</td>
-                                <td>@row.OutputItemCode</td>
-                                <td>@row.RemainingQty.ToString("N4") @row.OutputUom</td>
-                                <td>
-                                    <DxButton Text="SELECT" RenderStyle="ButtonRenderStyle.Secondary"
-                                              Click="@(() => SelectOperationAsync(row.WorkOrderOperationId))" />
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            }
-            else
-            {
-                <div class="row g-3 mb-3">
-                    <div class="col-md-3">
-                        <label class="form-label">Production date</label>
-                        <DxDateEdit @bind-Date="ProductionDate" Enabled="@CanEditFields" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Production date</span>
+                        <strong>@Document.ProductionDate.ToString("dd MMM yyyy HH:mm")</strong>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Shift</label>
-                        <DxTextBox @bind-Text="ShiftCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Shift</span>
+                        <strong>@(Document.ShiftCode ?? "—")</strong>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Machine</label>
-                        <DxTextBox @bind-Text="ActualMachineCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Planned machine</span>
+                        <strong class="code-style">@(Document.PlannedMachineCode ?? "—")</strong>
+                        <small>@(Document.PlannedMachineDescription ?? "—")</small>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Operator</label>
-                        <DxTextBox @bind-Text="OperatorCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Actual machine / operator</span>
+                        <strong>@(Document.ActualMachineCode ?? "—") / @(Document.OperatorCode ?? "—")</strong>
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Output lot</label>
-                        <DxTextBox @bind-Text="OutputLotNo" Enabled="@CanEditFields" CssClass="w-100" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Output</span>
+                        <strong>@Document.OutputItemCode · @Document.OutputUom</strong>
+                        <small>Lot @(string.IsNullOrWhiteSpace(Document.OutputLotNo) ? "—" : Document.OutputLotNo)</small>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Good</label>
-                        <DxSpinEdit @bind-Value="GoodQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Good / Scrap</span>
+                        <strong>@Document.GoodQty.ToString("n4") / @Document.ScrapQty.ToString("n4")</strong>
+                        <small>Reject @Document.RejectQty.ToString("n4") · Hold @Document.HoldQty.ToString("n4")</small>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Scrap</label>
-                        <DxSpinEdit @bind-Value="ScrapQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Posted</span>
+                        <strong>@(Document.PostedBy ?? "—")</strong>
+                        <small>@(Document.PostedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Reject</label>
-                        <DxSpinEdit @bind-Value="RejectQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Hold</label>
-                        <DxSpinEdit @bind-Value="HoldQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label">Output item / UOM</label>
-                        <div class="code-style">@OutputItemCode · @OutputUom</div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Reversed</span>
+                        <strong>@(Document.ReversedBy ?? "—")</strong>
+                        <small>@(Document.ReversedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
                     </div>
                 </div>
+            </section>
 
-                <h3 class="h6">Materials for this post</h3>
-                <table class="table table-sm">
-                    <thead>
-                        <tr>
-                            <th>Material</th>
-                            <th>Source</th>
-                            <th>Required (BOM)</th>
-                            <th>Available</th>
-                            <th>Note</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @if (Materials.Count == 0)
+            <section class="iv-card pr-dp-grid">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Readiness</p>
+                        <strong>Materials reference</strong>
+                        <small>Current Available is the live balance; posting revalidates availability at the production time.</small>
+                    </div>
+                </div>
+                <DxGrid Data="@(Workspace?.Materials ?? [])"
+                        KeyFieldName="@nameof(ProductionOutputMaterialLine.WorkOrderMaterialId)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="pr-dp-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.ComponentCode)" Caption="Material" MinWidth="180" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.Description)" Caption="Description" MinWidth="180" />
+                        <DxGridDataColumn Caption="Supply / Issue Method" MinWidth="180">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (ProductionOutputMaterialLine)context.DataItem;
+                                }
+                                <span>@line.SupplySource / @line.IssueMethod</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredQty)" Caption="WO BOM Required" Width="150px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.AvailableQty)" Caption="Current Available" Width="145px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredUom)" Caption="UOM" Width="90px" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.BlockingReason)" Caption="Status / Blocking Reason" MinWidth="220" />
+                    </Columns>
+                </DxGrid>
+            </section>
+        }
+        else if (IsSelectingOperation)
+        {
+            <section class="iv-card">
+                <header class="pr-dp-section-head">
+                    <div>
+                        <strong>Find Work Order operation</strong>
+                        <small>Select an eligible released or in-progress operation for Daily Production.</small>
+                    </div>
+                </header>
+
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
+                    <DxFormLayoutItem Caption="Work Order" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.WorkOrders"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@SearchWo"
+                                        NullText="All eligible Work Orders"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Work Centre" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.WorkCentres"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@SearchWorkCentre"
+                                        NullText="All work centres"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Process" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@FilterOptions.Processes"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@SearchProcess"
+                                        NullText="All processes"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    @if (MoreFiltersVisible)
+                    {
+                        <DxFormLayoutItem Caption="Product" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.Products"
+                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                            @bind-Value="@SearchProduct"
+                                            NullText="All products"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Output Item" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.OutputItems"
+                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                            @bind-Value="@SearchOutputItem"
+                                            NullText="All output items"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Raw Material" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.RawMaterials"
+                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                            @bind-Value="@SearchRawMaterial"
+                                            NullText="All materials"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Planned Machine" ColSpanMd="3">
+                            <Template>
+                                <DxComboBox Data="@FilterOptions.Machines"
+                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                            @bind-Value="@SearchMachine"
+                                            NullText="All planned machines"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            SearchMode="ListSearchMode.AutoSearch"
+                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                </DxFormLayout>
+
+                <div class="pr-dp-filter-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(MoreFiltersVisible ? "Fewer filters" : "More filters")"
+                              IconCssClass="fa-solid fa-sliders"
+                              Click="@(() => MoreFiltersVisible = !MoreFiltersVisible)" />
+                    <div class="pr-dp-filter-actions__right">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CLEAR"
+                                  Click="@ClearOperationFilters"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="FIND"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  Click="@ApplyOperationFiltersAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card pr-dp-lines">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Results</p>
+                        <strong>Matching operations</strong>
+                    </div>
+                    <span class="pr-dp-count">@OperationResultLabel · page @(OperationPage + 1) / @OperationPageCount</span>
+                </div>
+                @if (IsSubmitting)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else if (OperationRows.Count == 0)
+                {
+                    <div class="pr-dp-empty">
+                        <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-magnifying-glass"></i></div>
+                        <h3>No eligible operations</h3>
+                        <p>Change or clear the filters to see more Work Orders.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="pr-dp-ops">
+                        @foreach (var op in OperationRows)
                         {
-                            <tr><td colspan="5" class="text-muted">No materials on this operation.</td></tr>
+                            <article class="pr-dp-op">
+                                <div class="pr-dp-op__main">
+                                    <div class="pr-dp-cell">
+                                        <span class="pr-dp-cell__primary code-style">@op.WorkOrderNo</span>
+                                        <span class="pr-dp-cell__secondary">@op.ProductCode · @op.ProductDescription</span>
+                                    </div>
+                                    <div class="pr-dp-cell">
+                                        <span class="pr-dp-cell__primary">@op.WorkCentreCode / @op.OperationCode</span>
+                                        <span class="pr-dp-cell__secondary">@op.OperationDescription</span>
+                                    </div>
+                                    <div class="pr-dp-cell">
+                                        <span class="pr-dp-cell__primary code-style">@op.OutputItemCode</span>
+                                        <span class="pr-dp-cell__secondary">Planned machine: @(op.SelectedMachineCode ?? "—")</span>
+                                    </div>
+                                    <div class="pr-dp-op__qty">
+                                        <span class="iv-field__label">Planned</span>
+                                        <strong>@op.PlannedOutputQty.ToString("n4") @op.OutputUom</strong>
+                                        <small>Good completed @op.GoodQty.ToString("n4") · Remaining @op.RemainingQty.ToString("n4")</small>
+                                    </div>
+                                </div>
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="SELECT"
+                                          Click="@(() => ApplyOperationAsync(op))"
+                                          Enabled="@(!IsSubmitting)" />
+                            </article>
                         }
-                        else
-                        {
-                            @foreach (var m in Materials)
-                            {
-                                <tr>
-                                    <td>@m.ComponentCode <span class="text-muted">@m.Description</span></td>
-                                    <td>@m.IssueMethod / @m.SupplySource</td>
-                                    <td>@m.RequiredQty.ToString("N4") @m.RequiredUom</td>
-                                    <td>@m.AvailableQty.ToString("N4")</td>
-                                    <td class="text-danger">@m.BlockingReason</td>
-                                </tr>
-                            }
-                        }
-                    </tbody>
-                </table>
-            }
-        </section>
+                    </div>
+                    <div class="pr-dp-pager">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Previous"
+                                  Click="@(() => ChangeOperationPageAsync(-1))"
+                                  Enabled="@(OperationPage > 0 && !IsSubmitting)" />
+                        <span>Page @(OperationPage + 1) of @OperationPageCount</span>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Next"
+                                  Click="@(() => ChangeOperationPageAsync(1))"
+                                  Enabled="@(OperationPage + 1 < OperationPageCount && !IsSubmitting)" />
+                    </div>
+                }
+            </section>
+        }
+        else if (Workspace is not null)
+        {
+            <section class="iv-card">
+                <header class="pr-dp-section-head">
+                    <div>
+                        <strong>Operation</strong>
+                        <small>@Workspace.Operation.WorkOrderNo · @Workspace.Operation.OperationCode — @Workspace.Operation.OperationDescription</small>
+                    </div>
+                    <span class="pr-dp-pill">@ModeStatus</span>
+                </header>
+                <div class="pr-dp-meta">
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Product</span>
+                        <strong class="code-style">@Workspace.Operation.ProductCode</strong>
+                        <small>@Workspace.Operation.ProductDescription</small>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Centre</span>
+                        <strong>@Workspace.Operation.WorkCentreCode</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Planned output</span>
+                        <strong>@Workspace.Operation.PlannedOutputQty.ToString("n4") @Workspace.Operation.OutputUom</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Good completed / remaining</span>
+                        <strong>@Workspace.Operation.GoodQty.ToString("n4") / @Workspace.Operation.RemainingQty.ToString("n4")</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Planned machine</span>
+                        <strong class="code-style">@(string.IsNullOrWhiteSpace(PlannedMachineCode) ? "—" : PlannedMachineCode)</strong>
+                        <small>@(string.IsNullOrWhiteSpace(PlannedMachineDescription) ? "Work Order snapshot" : PlannedMachineDescription)</small>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Output</span>
+                        <strong class="code-style">@Workspace.Operation.OutputItemCode</strong>
+                        <small>@Workspace.Operation.OutputType · @Workspace.Operation.OutputUom</small>
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Entry</p>
+                        <strong>Production details</strong>
+                        <small>Choose existing master values, then enter the production quantities.</small>
+                    </div>
+                </div>
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
+                    <DxFormLayoutItem Caption="Production date &amp; time" ColSpanMd="3">
+                        <Template>
+                            <DxDateEdit @bind-Date="@ProductionDate"
+                                        DisplayFormat="dd/MM/yyyy HH:mm"
+                                        TimeSectionVisible="true"
+                                        Enabled="@CanEditFields"
+                                        CssClass="w-100" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Shift" ColSpanMd="3">
+                        <Template>
+                            <DxComboBox Data="@Lookups.Shifts"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@ShiftCode"
+                                        NullText="Optional shift"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                        Enabled="@CanEditFields" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Actual machine" ColSpanMd="3">
+                        <Template>
+                            <DxComboBox Data="@Lookups.Machines"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@ActualMachineCode"
+                                        NullText="Optional actual machine"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                        Enabled="@CanEditFields" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Operator" ColSpanMd="3">
+                        <Template>
+                            <DxComboBox Data="@Lookups.Operators"
+                                        TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                        @bind-Value="@OperatorCode"
+                                        NullText="Optional operator"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                        Enabled="@CanEditFields" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Output lot" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox @bind-Text="@OutputLotNo" NullText="Enter output lot" Enabled="@CanEditFields" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Output item / UOM" ColSpanMd="4">
+                        <Template>
+                            <div class="pr-dp-readonly code-style">@OutputItemCode · @OutputUom</div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Planned machine" ColSpanMd="4">
+                        <Template>
+                            <div class="pr-dp-readonly">@PlannedMachineCode @(string.IsNullOrWhiteSpace(PlannedMachineDescription) ? "" : $"· {PlannedMachineDescription}")</div>
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            <section class="iv-card pr-dp-grid">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Output quantities</p>
+                        <strong>Record production</strong>
+                        <small>Good Completed drives the remaining quantity; Scrap, Reject, and Hold are tracked separately.</small>
+                    </div>
+                </div>
+                <div class="pr-dp-qty-grid">
+                    <div class="pr-dp-qty-field">
+                        <span class="iv-field__label">Good</span>
+                        <DxSpinEdit @bind-Value="@GoodQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <small>@OutputUom</small>
+                    </div>
+                    <div class="pr-dp-qty-field">
+                        <span class="iv-field__label">Scrap</span>
+                        <DxSpinEdit @bind-Value="@ScrapQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <small>@OutputUom</small>
+                    </div>
+                    <div class="pr-dp-qty-field">
+                        <span class="iv-field__label">Reject</span>
+                        <DxSpinEdit @bind-Value="@RejectQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <small>@OutputUom</small>
+                    </div>
+                    <div class="pr-dp-qty-field">
+                        <span class="iv-field__label">Hold</span>
+                        <DxSpinEdit @bind-Value="@HoldQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <small>@OutputUom</small>
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card pr-dp-grid">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Readiness</p>
+                        <strong>Materials reference</strong>
+                        <small>Current Available is the live balance; posting revalidates availability at the production time.</small>
+                    </div>
+                </div>
+                <DxGrid Data="@Workspace.Materials"
+                        KeyFieldName="@nameof(ProductionOutputMaterialLine.WorkOrderMaterialId)"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        TextWrapEnabled="false"
+                        PageSize="20"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        CssClass="pr-dp-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.ComponentCode)" Caption="Material" MinWidth="180" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.Description)" Caption="Description" MinWidth="180" />
+                        <DxGridDataColumn Caption="Supply / Issue Method" MinWidth="180">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (ProductionOutputMaterialLine)context.DataItem;
+                                }
+                                <span>@line.SupplySource / @line.IssueMethod</span>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredQty)" Caption="WO BOM Required" Width="150px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.AvailableQty)" Caption="Current Available" Width="145px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredUom)" Caption="UOM" Width="90px" />
+                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.BlockingReason)" Caption="Status / Blocking Reason" MinWidth="220" />
+                    </Columns>
+                </DxGrid>
+            </section>
+
+            <footer class="pr-dp-footer">
+                <p class="pr-dp-footer__hint">
+                    @if (!CanEditFields)
+                    {
+                        @:This document is read-only in its current status.
+                    }
+                    else if (GoodQty + ScrapQty + RejectQty + HoldQty <= 0m)
+                    {
+                        @:Enter at least one production quantity, then save the draft.
+                    }
+                    else
+                    {
+                        @:Review the operation and material readiness, then save the draft.
+                    }
+                </p>
+                <div class="pr-dp-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CANCEL"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@SaveAsync"
+                              Enabled="@(!IsSubmitting && CanSave)" />
+                </div>
+            </footer>
+        }
     </div>
 
-    <DxPopup Visible="@RollbackConfirmVisible" HeaderText="Rollback Daily Production"
-             CloseOnOutsideClick="false" ShowCloseButton="true" Closed="@(() => RollbackConfirmVisible = false)">
+    <DxPopup Visible="@PostConfirmationVisible"
+             HeaderText="Confirm Post"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             Closed="@(() => PostConfirmationVisible = false)">
         <BodyContentTemplate>
-            <p>Enter a reason to roll back this posted document.</p>
-            <DxMemo @bind-Text="RollbackReason" Rows="3" CssClass="w-100" />
+            <p>Post daily production document <strong>@DocumentNo</strong>?</p>
         </BodyContentTemplate>
         <FooterContentTemplate>
-            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" />
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PostConfirmationVisible = false)" Enabled="@(!IsSubmitting)" />
+            <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting)" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup Visible="@DeleteConfirmationVisible"
+             HeaderText="Confirm Delete"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             Closed="@(() => DeleteConfirmationVisible = false)">
+        <BodyContentTemplate>
+            <p>Delete the NEW draft <strong>@DocumentNo</strong>?</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => DeleteConfirmationVisible = false)" Enabled="@(!IsSubmitting)" />
+            <DxButton Text="Delete" RenderStyle="ButtonRenderStyle.Danger" Click="@DeleteAsync" Enabled="@(!IsSubmitting)" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup Visible="@RollbackConfirmVisible"
+             HeaderText="Rollback Daily Production"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             Closed="@(() => RollbackConfirmVisible = false)">
+        <BodyContentTemplate>
+            <p>Enter a reason to roll back this posted document.</p>
+            <DxMemo @bind-Text="@RollbackReason" Rows="3" maxlength="250" CssClass="w-100" />
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" Enabled="@(!IsSubmitting)" />
             <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
         </FooterContentTemplate>
     </DxPopup>

@@ -35,7 +35,7 @@ public sealed partial class ProductionOutputService
                     && replay.ProductionDocumentLineId.HasValue)
                 {
                     await tx.CommitAsync(cancellationToken);
-                    return Ok(await MapDetailAsync(db, replay.ProductionDocumentLineId.Value, cancellationToken));
+                    return Ok(await MapDetailAsync(db, scope, replay.ProductionDocumentLineId.Value, cancellationToken));
                 }
 
                 return Fail("This rollback request is already being processed.", IvMasterErrorCode.Concurrency);
@@ -44,7 +44,7 @@ public sealed partial class ProductionOutputService
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, request.OutputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
             if (output.Status == ProductionOutputStatuses.Reversed)
-                return Ok(await MapDetailAsync(db, output.Uid, cancellationToken));
+                return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.Posted)
                 return Fail("Only POSTED Daily Production documents can be rolled back.");
 
@@ -305,7 +305,7 @@ public sealed partial class ProductionOutputService
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
-            return Ok(await MapDetailAsync(db, output.Uid, cancellationToken));
+            return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
         }
         catch (DbUpdateException)
         {

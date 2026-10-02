@@ -18,6 +18,9 @@ public partial class PrDailyProductionEntry : PageBase
 
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
+    protected bool MoreFiltersVisible;
+    protected bool PostConfirmationVisible;
+    protected bool DeleteConfirmationVisible;
     protected string? StatusMessage;
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase)
@@ -25,7 +28,16 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
     protected bool IsViewMode => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
     protected string ModeChip => IsViewMode ? "VIEW" : IsEditMode ? "EDIT" : "NEW";
-    protected string PageHeading => IsNewMode ? "New Daily Production" : IsEditMode ? "Edit Daily Production" : "Daily Production";
+    protected string PageHeading => IsNewMode ? "New Daily Production" : IsEditMode ? "Edit Daily Production" : "View Daily Production";
+
+    protected ProductionOutputDetail? Document;
+    protected ProductionOutputWorkspace? Workspace;
+    protected ProductionOutputEntryLookups Lookups { get; set; } = new();
+    protected ProductionEligibleOperationFilterOptions FilterOptions { get; set; } = new();
+    protected List<ProductionEligibleOperationRow> OperationRows { get; set; } = [];
+    protected int OperationTotalCount;
+    protected int OperationPage;
+    protected const int OperationPageSize = 20;
 
     protected long? SelectedOperationId;
     protected long? CurrentOutputId;
@@ -34,10 +46,11 @@ public partial class PrDailyProductionEntry : PageBase
     protected string HeaderStatus = ProductionOutputStatuses.New;
     protected string OutputItemCode = string.Empty;
     protected string OutputUom = string.Empty;
+    protected string OutputType = string.Empty;
     protected string PostingRequestId = string.Empty;
     protected byte[] RowVersion = [];
 
-    protected DateTime ProductionDate = DateTime.Today;
+    protected DateTime ProductionDate = DateTime.Now;
     protected string? ShiftCode;
     protected string? ActualMachineCode;
     protected string? OperatorCode;
@@ -47,11 +60,13 @@ public partial class PrDailyProductionEntry : PageBase
     protected decimal RejectQty;
     protected decimal HoldQty;
 
-    protected List<ProductionOutputMaterialLine> Materials { get; set; } = [];
-    protected List<ProductionEligibleOperationRow> EligibleRows { get; set; } = [];
-    protected string EligibleWorkOrderNo = string.Empty;
-    protected string EligibleProductCode = string.Empty;
-    protected string EligibleWorkCentre = string.Empty;
+    protected string SearchWo = string.Empty;
+    protected string SearchProduct = string.Empty;
+    protected string SearchWorkCentre = string.Empty;
+    protected string SearchProcess = string.Empty;
+    protected string SearchOutputItem = string.Empty;
+    protected string SearchRawMaterial = string.Empty;
+    protected string SearchMachine = string.Empty;
 
     protected bool CanAccessAdd;
     protected bool CanAccessEdit;
@@ -59,14 +74,44 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool CanAccessRollback;
     protected bool CanAccessDelete;
 
-    protected bool CanEditFields => (IsNewMode || IsEditMode) && HeaderStatus == ProductionOutputStatuses.New;
-    protected bool CanSave => CanEditFields && SelectedOperationId is > 0 && (IsNewMode ? CanAccessAdd : CanAccessEdit);
-    protected bool CanPost => CurrentOutputId is > 0 && HeaderStatus == ProductionOutputStatuses.New && CanAccessPost;
-    protected bool CanRollback => CurrentOutputId is > 0 && HeaderStatus == ProductionOutputStatuses.Posted && CanAccessRollback;
-    protected bool CanDelete => CurrentOutputId is > 0 && HeaderStatus == ProductionOutputStatuses.New && CanAccessDelete && !IsNewMode;
+    protected bool CanEditFields => (IsNewMode || IsEditMode)
+        && HeaderStatus == ProductionOutputStatuses.New;
+    protected bool CanSave => CanEditFields
+        && SelectedOperationId is > 0
+        && (IsNewMode ? CanAccessAdd : CanAccessEdit);
+    protected bool CanPost => CurrentOutputId is > 0
+        && HeaderStatus == ProductionOutputStatuses.New
+        && CanAccessPost;
+    protected bool CanRollback => CurrentOutputId is > 0
+        && HeaderStatus == ProductionOutputStatuses.Posted
+        && CanAccessRollback;
+    protected bool CanDelete => CurrentOutputId is > 0
+        && HeaderStatus == ProductionOutputStatuses.New
+        && CanAccessDelete
+        && !IsNewMode;
+    protected bool CanOpenEditFromView => IsViewMode
+        && HeaderStatus == ProductionOutputStatuses.New
+        && CanAccessEdit
+        && CurrentOutputId is > 0;
 
-    protected bool RollbackConfirmVisible;
+    protected bool IsSelectingOperation => IsNewMode && Workspace is null;
+    protected int OperationPageCount => Math.Max(1, (OperationTotalCount + OperationPageSize - 1) / OperationPageSize);
+    protected string OperationResultLabel => OperationTotalCount == 1
+        ? "1 operation"
+        : $"{OperationTotalCount:N0} operations";
+    protected string ModeStatus => Workspace?.Operation.WorkOrderStatus ?? HeaderStatus;
+    protected string SelectedProductDescription => Workspace?.Operation.ProductDescription ?? Document?.ProductDescription ?? string.Empty;
+    // A saved document owns the historical planned-machine snapshot. Do not infer a value from
+    // the current Work Order operation when an older document has no saved PlannedMachineCode.
+    protected string PlannedMachineCode => Document is not null
+        ? Document.PlannedMachineCode ?? string.Empty
+        : Workspace?.Operation.SelectedMachineCode ?? string.Empty;
+    protected string PlannedMachineDescription => Document is not null
+        ? Document.PlannedMachineDescription ?? string.Empty
+        : Workspace?.Operation.SelectedMachineDescription ?? string.Empty;
+
     protected string RollbackReason = string.Empty;
+    protected bool RollbackConfirmVisible;
     private string? _loadedKey;
 
     protected override Task OnPageInitializedAsync() => Task.CompletedTask;
@@ -89,10 +134,14 @@ public partial class PrDailyProductionEntry : PageBase
         CanAccessRollback = await AccessRights.CanAsync(MenuCodes.PlanningDailyProduction, PermissionCodes.Rollback);
         CanAccessDelete = await AccessRights.CanAsync(MenuCodes.PlanningDailyProduction, PermissionCodes.Delete);
 
+        Document = null;
+        Workspace = null;
+        Lookups = new();
+        OperationRows = [];
+        OperationTotalCount = 0;
+        OperationPage = 0;
         SelectedOperationId = null;
         CurrentOutputId = null;
-        Materials = [];
-        EligibleRows = [];
         ResetFormFields();
 
         if (OutputId is > 0)
@@ -106,30 +155,84 @@ public partial class PrDailyProductionEntry : PageBase
         }
         else if (IsNewMode)
         {
+            await LoadFilterOptionsAsync();
             await SearchEligibleAsync();
         }
 
         IsBootstrapping = false;
     }
 
-    protected async Task SearchEligibleAsync()
+    protected async Task LoadFilterOptionsAsync()
     {
-        var result = await Outputs.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery
+        var result = await Outputs.GetEligibleOperationFilterOptionsAsync();
+        if (result.Succeeded && result.Data is not null)
         {
-            WorkOrderNo = EligibleWorkOrderNo,
-            ProductCode = EligibleProductCode,
-            WorkCentreCode = EligibleWorkCentre,
-            Take = 100,
-        });
-        if (!result.Succeeded)
-        {
-            ErrorMessage = result.Message;
-            EligibleRows = [];
+            FilterOptions = result.Data;
             return;
         }
 
-        EligibleRows = result.Data?.ToList() ?? [];
+        ErrorMessage = result.Message ?? "Unable to load Daily Production filters.";
+        FilterOptions = new();
     }
+
+    protected async Task SearchEligibleAsync()
+    {
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Outputs.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery
+            {
+                WorkOrderNo = NullIfEmpty(SearchWo),
+                ProductCode = NullIfEmpty(SearchProduct),
+                WorkCentreCode = NullIfEmpty(SearchWorkCentre),
+                OperationCode = NullIfEmpty(SearchProcess),
+                OutputItemCode = NullIfEmpty(SearchOutputItem),
+                RawMaterialCode = NullIfEmpty(SearchRawMaterial),
+                MachineCode = NullIfEmpty(SearchMachine),
+                ExactMatch = true,
+                Skip = OperationPage * OperationPageSize,
+                Take = OperationPageSize,
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to load eligible operations.";
+                OperationRows = [];
+                OperationTotalCount = 0;
+                return;
+            }
+
+            OperationRows = result.Data.Rows.ToList();
+            OperationTotalCount = result.Data.TotalCount;
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task ApplyOperationFiltersAsync()
+    {
+        OperationPage = 0;
+        await SearchEligibleAsync();
+    }
+
+    protected async Task ChangeOperationPageAsync(int change)
+    {
+        OperationPage = Math.Clamp(OperationPage + change, 0, OperationPageCount - 1);
+        await SearchEligibleAsync();
+    }
+
+    protected async Task ClearOperationFilters()
+    {
+        SearchWo = SearchProduct = SearchWorkCentre = SearchProcess =
+            SearchOutputItem = SearchRawMaterial = SearchMachine = string.Empty;
+        OperationPage = 0;
+        await SearchEligibleAsync();
+    }
+
+    protected async Task ApplyOperationAsync(ProductionEligibleOperationRow operation) =>
+        await SelectOperationAsync(operation.WorkOrderOperationId);
 
     protected async Task SelectOperationAsync(long operationId)
     {
@@ -142,12 +245,42 @@ public partial class PrDailyProductionEntry : PageBase
         }
 
         SelectedOperationId = operationId;
+        Workspace = workspace.Data;
+        Document = null;
+        CurrentOutputId = null;
+        DocumentNo = string.Empty;
+        PostingRequestId = Guid.NewGuid().ToString("N");
         WorkOrderNo = workspace.Data.Operation.WorkOrderNo;
         OutputItemCode = workspace.Data.Operation.OutputItemCode;
         OutputUom = workspace.Data.Operation.OutputUom ?? string.Empty;
-        Materials = workspace.Data.Materials.ToList();
+        OutputType = workspace.Data.Operation.OutputType ?? string.Empty;
         HeaderStatus = ProductionOutputStatuses.New;
         ProductionDate = DateTime.Now;
+        ShiftCode = null;
+        ActualMachineCode = null;
+        OperatorCode = null;
+        OutputLotNo = string.Empty;
+        GoodQty = ScrapQty = RejectQty = HoldQty = 0m;
+        await LoadEntryLookupsAsync(operationId, workspace.Data.Operation.SelectedMachineCode);
+    }
+
+    private async Task LoadEntryLookupsAsync(long operationId, string? defaultActualMachine = null)
+    {
+        var result = await Outputs.GetEntryLookupsAsync(operationId);
+        if (!result.Succeeded || result.Data is null)
+        {
+            Lookups = new();
+            ErrorMessage ??= result.Message ?? "Unable to load Daily Production entry choices.";
+            return;
+        }
+
+        Lookups = result.Data;
+        if (string.IsNullOrWhiteSpace(ActualMachineCode)
+            && !string.IsNullOrWhiteSpace(defaultActualMachine)
+            && Lookups.Machines.Any(x => string.Equals(x.Code, defaultActualMachine, StringComparison.OrdinalIgnoreCase)))
+        {
+            ActualMachineCode = defaultActualMachine;
+        }
     }
 
     private async Task LoadDocumentAsync(long outputId)
@@ -160,6 +293,7 @@ public partial class PrDailyProductionEntry : PageBase
         }
 
         var d = result.Data;
+        Document = d;
         CurrentOutputId = d.Uid;
         DocumentNo = d.DocumentNo;
         WorkOrderNo = d.WorkOrderNo;
@@ -169,24 +303,58 @@ public partial class PrDailyProductionEntry : PageBase
         ShiftCode = d.ShiftCode;
         ActualMachineCode = d.ActualMachineCode;
         OperatorCode = d.OperatorCode;
-        OutputLotNo = d.OutputLotNo;
         GoodQty = d.GoodQty;
         ScrapQty = d.ScrapQty;
         RejectQty = d.RejectQty;
         HoldQty = d.HoldQty;
+        OutputLotNo = d.OutputLotNo;
         OutputItemCode = d.OutputItemCode;
         OutputUom = d.OutputUom;
+        OutputType = d.OutputType ?? string.Empty;
         PostingRequestId = d.PostingRequestId;
         RowVersion = d.RowVersion;
 
-        var workspace = await Outputs.GetWorkspaceAsync(d.WorkOrderOperationId);
+        var workspace = await Outputs.GetDocumentWorkspaceAsync(outputId);
         if (workspace.Succeeded && workspace.Data is not null)
-            Materials = workspace.Data.Materials.ToList();
+        {
+            Workspace = workspace.Data;
+            await LoadEntryLookupsAsync(d.WorkOrderOperationId);
+            AddHistoricalChoiceValues();
+        }
+        else if (!IsViewMode)
+        {
+            ErrorMessage = workspace.Message ?? "Unable to load the saved operation workspace.";
+        }
+    }
+
+    private void AddHistoricalChoiceValues()
+    {
+        Lookups = new ProductionOutputEntryLookups
+        {
+            Shifts = AddHistoricalChoice(Lookups.Shifts, ShiftCode),
+            Machines = AddHistoricalChoice(Lookups.Machines, ActualMachineCode),
+            Operators = AddHistoricalChoice(Lookups.Operators, OperatorCode),
+        };
+    }
+
+    private static IReadOnlyList<ProductionOutputChoice> AddHistoricalChoice(
+        IReadOnlyList<ProductionOutputChoice> choices, string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)
+            || choices.Any(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)))
+            return choices;
+
+        return choices
+            .Append(new ProductionOutputChoice(code, $"{code} (historical)"))
+            .OrderBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     protected async Task SaveAsync()
     {
-        if (SelectedOperationId is null or <= 0) return;
+        if (IsSubmitting || !CanSave || SelectedOperationId is not > 0)
+            return;
+
         IsSubmitting = true;
         ErrorMessage = null;
         try
@@ -196,6 +364,7 @@ public partial class PrDailyProductionEntry : PageBase
                 var created = await Outputs.CreateAsync(new ProductionOutputCreateRequest
                 {
                     WorkOrderOperationId = SelectedOperationId.Value,
+                    PostingRequestId = PostingRequestId,
                     ProductionDate = ProductionDate,
                     ShiftCode = ShiftCode,
                     ActualMachineCode = ActualMachineCode,
@@ -208,7 +377,7 @@ public partial class PrDailyProductionEntry : PageBase
                 });
                 if (!created.Succeeded || created.Data is null)
                 {
-                    ErrorMessage = created.Message;
+                    ErrorMessage = created.Message ?? "Unable to save Daily Production.";
                     return;
                 }
 
@@ -221,6 +390,7 @@ public partial class PrDailyProductionEntry : PageBase
             {
                 OutputId = CurrentOutputId.Value,
                 WorkOrderOperationId = SelectedOperationId.Value,
+                PostingRequestId = PostingRequestId,
                 ProductionDate = ProductionDate,
                 ShiftCode = ShiftCode,
                 ActualMachineCode = ActualMachineCode,
@@ -234,7 +404,7 @@ public partial class PrDailyProductionEntry : PageBase
             });
             if (!updated.Succeeded || updated.Data is null)
             {
-                ErrorMessage = updated.Message;
+                ErrorMessage = updated.Message ?? "Unable to update Daily Production.";
                 return;
             }
 
@@ -246,23 +416,62 @@ public partial class PrDailyProductionEntry : PageBase
         }
     }
 
+    protected void OpenPostConfirm()
+    {
+        if (CanPost)
+            PostConfirmationVisible = true;
+    }
+
     protected async Task PostAsync()
     {
-        if (CurrentOutputId is null or <= 0) return;
+        if (IsSubmitting || !CanPost)
+            return;
+
         IsSubmitting = true;
         ErrorMessage = null;
         try
         {
-            var result = await Outputs.PostAsync(CurrentOutputId.Value);
+            var result = await Outputs.PostAsync(CurrentOutputId!.Value);
             if (!result.Succeeded || result.Data is null)
             {
-                ErrorMessage = result.Message;
+                ErrorMessage = result.Message ?? "Unable to post Daily Production.";
                 return;
             }
 
+            PostConfirmationVisible = false;
             await LoadDocumentAsync(result.Data.Uid);
             StatusMessage = $"Posted {DocumentNo}.";
-            Navigation.NavigateTo($"/planning/daily-production/view/{result.Data.Uid}", replace: true);
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected void OpenDeleteConfirm()
+    {
+        if (CanDelete)
+            DeleteConfirmationVisible = true;
+    }
+
+    protected async Task DeleteAsync()
+    {
+        if (IsSubmitting || !CanDelete)
+            return;
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Outputs.DeleteAsync(CurrentOutputId!.Value);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.Message ?? "Unable to delete Daily Production.";
+                return;
+            }
+
+            DeleteConfirmationVisible = false;
+            Navigation.NavigateTo("/planning/daily-production");
         }
         finally
         {
@@ -272,13 +481,16 @@ public partial class PrDailyProductionEntry : PageBase
 
     protected void OpenRollbackConfirm()
     {
+        if (!CanRollback)
+            return;
         RollbackReason = string.Empty;
         RollbackConfirmVisible = true;
     }
 
     protected async Task RollbackAsync()
     {
-        if (CurrentOutputId is null or <= 0) return;
+        if (IsSubmitting || !CanRollback)
+            return;
         if (string.IsNullOrWhiteSpace(RollbackReason))
         {
             ErrorMessage = "Rollback reason is required.";
@@ -291,13 +503,13 @@ public partial class PrDailyProductionEntry : PageBase
         {
             var result = await Outputs.RollbackAsync(new ProductionOutputRollbackRequest
             {
-                OutputId = CurrentOutputId.Value,
+                OutputId = CurrentOutputId!.Value,
                 PostingRequestId = Guid.NewGuid().ToString("N"),
                 Reason = RollbackReason.Trim(),
             });
             if (!result.Succeeded || result.Data is null)
             {
-                ErrorMessage = result.Message;
+                ErrorMessage = result.Message ?? "Unable to roll back Daily Production.";
                 return;
             }
 
@@ -311,38 +523,37 @@ public partial class PrDailyProductionEntry : PageBase
         }
     }
 
-    protected async Task DeleteAsync()
+    protected async Task ClearWorkspace()
     {
-        if (CurrentOutputId is null or <= 0) return;
-        IsSubmitting = true;
-        try
-        {
-            var result = await Outputs.DeleteAsync(CurrentOutputId.Value);
-            if (!result.Succeeded)
-            {
-                ErrorMessage = result.Message;
-                return;
-            }
+        if (IsSubmitting || !IsNewMode)
+            return;
 
-            Navigation.NavigateTo("/planning/daily-production");
-        }
-        finally
-        {
-            IsSubmitting = false;
-        }
+        Workspace = null;
+        SelectedOperationId = null;
+        Lookups = new();
+        ResetFormFields();
+        await LoadFilterOptionsAsync();
+        OperationPage = 0;
+        await SearchEligibleAsync();
     }
 
     protected void BackToList() => Navigation.NavigateTo("/planning/daily-production");
+    protected void OpenEdit() => Navigation.NavigateTo($"/planning/daily-production/edit/{CurrentOutputId}");
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 
     private void ResetFormFields()
     {
-        DocumentNo = WorkOrderNo = OutputItemCode = OutputUom = PostingRequestId = OutputLotNo = string.Empty;
+        DocumentNo = WorkOrderNo = OutputItemCode = OutputUom = OutputType = string.Empty;
+        PostingRequestId = Guid.NewGuid().ToString("N");
         ShiftCode = ActualMachineCode = OperatorCode = null;
+        OutputLotNo = string.Empty;
         GoodQty = ScrapQty = RejectQty = HoldQty = 0m;
-        ProductionDate = DateTime.Today;
+        ProductionDate = DateTime.Now;
         HeaderStatus = ProductionOutputStatuses.New;
         RowVersion = [];
     }
+
+    private static string? NullIfEmpty(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

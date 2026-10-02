@@ -24,16 +24,26 @@ public interface IProductionOutputService
     Task<IvMasterOperationResult<ProductionOutputSearchPage>> SearchAsync(
         ProductionOutputSearchQuery query, CancellationToken cancellationToken = default);
 
-    Task<IvMasterOperationResult<IReadOnlyList<ProductionEligibleOperationRow>>> SearchEligibleOperationsAsync(
+    Task<IvMasterOperationResult<ProductionEligibleOperationPage>> SearchEligibleOperationsAsync(
         ProductionEligibleOperationQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionEligibleOperationFilterOptions>> GetEligibleOperationFilterOptionsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionOutputEntryLookups>> GetEntryLookupsAsync(
+        long workOrderOperationId, CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetWorkspaceAsync(
         long workOrderOperationId, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
+        long outputId, CancellationToken cancellationToken = default);
 }
 
 public class ProductionOutputCreateRequest
 {
     public long WorkOrderOperationId { get; set; }
+    public string PostingRequestId { get; set; } = string.Empty;
     public DateTime ProductionDate { get; set; }
     public string? ShiftCode { get; set; }
     public string? ActualMachineCode { get; set; }
@@ -75,7 +85,10 @@ public sealed class ProductionEligibleOperationQuery
     public string? OperationCode { get; set; }
     public string? OutputItemCode { get; set; }
     public string? MachineCode { get; set; }
-    public int Take { get; set; } = 100;
+    public string? RawMaterialCode { get; set; }
+    public bool ExactMatch { get; set; }
+    public int Skip { get; set; }
+    public int Take { get; set; } = 20;
 }
 
 public sealed class ProductionOutputDetail
@@ -85,10 +98,16 @@ public sealed class ProductionOutputDetail
     public string Status { get; init; } = string.Empty;
     public long WorkOrderId { get; init; }
     public string WorkOrderNo { get; init; } = string.Empty;
+    public string ProductCode { get; init; } = string.Empty;
+    public string? ProductDescription { get; init; }
     public long RouteStepId { get; init; }
     public long WorkOrderOperationId { get; init; }
     public string OperationCode { get; init; } = string.Empty;
+    public string? OperationDescription { get; init; }
     public string WorkCentreCode { get; init; } = string.Empty;
+    public string? WorkOrderStatus { get; init; }
+    public string? PlannedMachineCode { get; init; }
+    public string? PlannedMachineDescription { get; init; }
     public DateTime ProductionDate { get; init; }
     public string? ShiftCode { get; init; }
     public string? ActualMachineCode { get; init; }
@@ -102,6 +121,10 @@ public sealed class ProductionOutputDetail
     public string? OutputType { get; init; }
     public string OutputLotNo { get; init; } = string.Empty;
     public string PostingRequestId { get; init; } = string.Empty;
+    public DateTime? PostedDate { get; init; }
+    public string? PostedBy { get; init; }
+    public DateTime? ReversedDate { get; init; }
+    public string? ReversedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
 }
 
@@ -132,9 +155,14 @@ public sealed class ProductionEligibleOperationRow
     public long WorkOrderId { get; init; }
     public string WorkOrderNo { get; init; } = string.Empty;
     public string ProductCode { get; init; } = string.Empty;
+    public string? ProductDescription { get; init; }
     public string WorkCentreCode { get; init; } = string.Empty;
     public string OperationCode { get; init; } = string.Empty;
+    public string? OperationDescription { get; init; }
+    public string? WorkOrderStatus { get; init; }
     public string OutputItemCode { get; init; } = string.Empty;
+    public string? SelectedMachineCode { get; init; }
+    public string? SelectedMachineDescription { get; init; }
     public decimal PlannedOutputQty { get; init; }
     public decimal GoodQty { get; init; }
     public decimal RemainingQty { get; init; }
@@ -142,6 +170,32 @@ public sealed class ProductionEligibleOperationRow
     public bool IsFinalOperation { get; init; }
     public string? OutputType { get; init; }
 }
+
+public sealed class ProductionEligibleOperationPage
+{
+    public IReadOnlyList<ProductionEligibleOperationRow> Rows { get; init; } = [];
+    public int TotalCount { get; init; }
+}
+
+public sealed class ProductionEligibleOperationFilterOptions
+{
+    public IReadOnlyList<ProductionOutputChoice> WorkOrders { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Products { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> WorkCentres { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Processes { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> OutputItems { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> RawMaterials { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Machines { get; init; } = [];
+}
+
+public sealed class ProductionOutputEntryLookups
+{
+    public IReadOnlyList<ProductionOutputChoice> Shifts { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Machines { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Operators { get; init; } = [];
+}
+
+public sealed record ProductionOutputChoice(string Code, string Label);
 
 public sealed class ProductionOutputWorkspace
 {
