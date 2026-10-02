@@ -173,6 +173,59 @@ public class IvReconciliationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HistorySliceMismatch_is_reported_even_when_quantities_agree()
+    {
+        var pileId = await _db.SeedPileAsync("A100", 10m);
+        await using (var db = await _db.Factory.CreateDbContextAsync())
+        {
+            var pile = await db.IvBalLocs.SingleAsync(x => x.Id == pileId);
+            pile.TransDate = new DateTime(2026, 8, 1);
+            await db.SaveChangesAsync();
+        }
+
+        var historyId = await _db.SeedHistoryAsync(
+            iCode: "A100",
+            trxType: "MR",
+            toBalLocId: pileId,
+            toStdQty: 10m,
+            toLoc: "BIN2");
+
+        var result = await Service().ReconcileAsync();
+
+        var finding = Assert.Single(result.Findings, f => f.Code == "HISTORY_SLICE_MISMATCH");
+        Assert.Equal(historyId, finding.HistoryId);
+        Assert.Equal(pileId, finding.BalLocId);
+        Assert.Contains("BIN2", finding.Message);
+        Assert.Contains("BIN1", finding.Message);
+    }
+
+    [Fact]
+    public async Task HistorySliceMismatch_filter_matches_recorded_or_actual_identity()
+    {
+        var pileId = await _db.SeedPileAsync("A101", 5m, wh: "WH2");
+        await using (var db = await _db.Factory.CreateDbContextAsync())
+        {
+            var pile = await db.IvBalLocs.SingleAsync(x => x.Id == pileId);
+            pile.TransDate = new DateTime(2026, 8, 1);
+            await db.SaveChangesAsync();
+        }
+
+        await _db.SeedHistoryAsync(
+            iCode: "A100",
+            trxType: "MR",
+            toBalLocId: pileId,
+            toStdQty: 5m,
+            toWh: "MAIN",
+            toLoc: "BIN1");
+
+        var actualFilter = await Service().ReconcileAsync(iCode: "A101", whCode: "WH2");
+        Assert.Contains(actualFilter.Findings, f => f.Code == "HISTORY_SLICE_MISMATCH");
+
+        var recordedFilter = await Service().ReconcileAsync(iCode: "A100", whCode: "MAIN");
+        Assert.Contains(recordedFilter.Findings, f => f.Code == "HISTORY_SLICE_MISMATCH");
+    }
+
+    [Fact]
     public async Task ATransfer_NetsAgainstBothOfItsLegs()
     {
         // The source opened with 8, sent 4, and therefore holds 4; the destination received 4.

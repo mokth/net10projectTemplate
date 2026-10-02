@@ -172,6 +172,9 @@ public class AppDbContext : DbContext
     public DbSet<ProductionPostingLink> ProductionPostingLinks => Set<ProductionPostingLink>();
     public DbSet<ProductionMaterialMovement> ProductionMaterialMovements => Set<ProductionMaterialMovement>();
     public DbSet<ProductionMaterialIssueLine> ProductionMaterialIssueLines => Set<ProductionMaterialIssueLine>();
+    public DbSet<ProductionBalLot> ProductionBalLots => Set<ProductionBalLot>();
+    public DbSet<ProductionBalLotMovement> ProductionBalLotMovements => Set<ProductionBalLotMovement>();
+    public DbSet<ProductionOutput> ProductionOutputs => Set<ProductionOutput>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
 

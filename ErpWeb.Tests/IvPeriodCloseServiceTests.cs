@@ -275,6 +275,24 @@ public class IvPeriodCloseServiceTests : IAsyncLifetime
         Assert.Contains("reconciliation finding", result.ErrorMessage);
     }
 
+    [Fact]
+    public async Task History_slice_mismatch_blocks_the_close()
+    {
+        var balId = await SeedPileAsync("A100", 100m);
+        await SeedHistoryAsync(
+            balId,
+            trxType: IvTrxTypes.MiscellaneousReceipt,
+            date: new DateTime(2026, 7, 15),
+            inQty: 100m,
+            toLoc: "BIN2");
+
+        var result = await CreateService().CloseAsync(
+            new IvPeriodCloseRequest { PeriodFrom = JulyFrom, PeriodTo = JulyTo });
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("HISTORY_SLICE_MISMATCH", result.ErrorMessage);
+    }
+
     // ── Reopen ─────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -418,6 +436,7 @@ public class IvPeriodCloseServiceTests : IAsyncLifetime
             IStatus = "ACTIVE",
             StdQty = qty,
             StdUom = "EA",
+            TransDate = Today.AddDays(-1),
             UnitPrice = 5m
         };
         db.IvBalLocs.Add(bal);
@@ -425,7 +444,14 @@ public class IvPeriodCloseServiceTests : IAsyncLifetime
         return bal.Id;
     }
 
-    private async Task SeedHistoryAsync(int balLocId, string trxType, DateTime date, decimal inQty, int batchNo = 1, short lineNo = 1)
+    private async Task SeedHistoryAsync(
+        int balLocId,
+        string trxType,
+        DateTime date,
+        decimal inQty,
+        int batchNo = 1,
+        short lineNo = 1,
+        string toLoc = "BIN1")
     {
         await using var db = await _factory.CreateDbContextAsync();
         db.IvTrxHistories.Add(new IvTrxHistory
@@ -439,8 +465,11 @@ public class IvPeriodCloseServiceTests : IAsyncLifetime
             BatchStatus = IvBatchStatuses.Posted,
             ICode = "A100",
             ToBalLocId = balLocId,
+            ToWarehouse = "MAIN",
+            ToLocation = toLoc,
             ToStdQty = inQty,
-            ToStdUom = "EA"
+            ToStdUom = "EA",
+            IStatus = "ACTIVE"
         });
         await db.SaveChangesAsync();
     }

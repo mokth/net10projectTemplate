@@ -284,12 +284,16 @@
             Icon="fa-solid fa-clipboard-list" />
         <Menu Code="PLN_MATERIAL_ISSUE" Name="Issue to Production" Route="/planning/material-issues" SortOrder="2"
               Icon="fa-solid fa-dolly" />
-        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="3"
+        <Menu Code="PLN_DAILY_PRODUCTION" Name="Daily Production" Route="/planning/daily-production" SortOrder="3"
+              Icon="fa-solid fa-industry" />
+        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="4"
             Icon="fa-solid fa-screwdriver-wrench" />
     </Menu>
     <Menu Code="PLN_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
       <Menu Code="PLN_MAC_SUMMARY" Name="Machine Maintenance Summary" Route="/planning/machine-maintenance-summary" SortOrder="1"
             Icon="fa-solid fa-chart-column" />
+      <Menu Code="PLN_PRODUCTION_BALANCE" Name="Production Balance by Lot" Route="/planning/production-balance" SortOrder="2"
+            Icon="fa-solid fa-scale-balanced" />
     </Menu>
   </Menu>
 

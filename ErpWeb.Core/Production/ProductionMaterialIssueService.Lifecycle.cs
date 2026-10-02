@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Repositories.Inventory;
@@ -47,7 +48,8 @@ public sealed partial class ProductionMaterialIssueService
                 var detailIds = details.Select(x => x.Id).ToArray();
                 if (detailIds.Length > 0
                     && await db.ProductionMaterialMovements.AsNoTracking()
-                        .AnyAsync(x => detailIds.Contains(x.InventoryBatchDetailId), ct))
+                        .AnyAsync(x => x.InventoryBatchDetailId.HasValue
+                            && detailIds.Contains(x.InventoryBatchDetailId.Value), ct))
                 {
                     items.Add(new()
                     {
@@ -199,7 +201,6 @@ public sealed partial class ProductionMaterialIssueService
                 var balance = locked[detail.FromBalLocId!.Value];
                 if (!masters.TryGetValue(material.ComponentCode, out var master) || !master.IsActive || !master.StockControl
                     || balance.ICode != material.ComponentCode || balance.WhCode != material.WarehouseCode
-                    || (!string.IsNullOrWhiteSpace(material.LocationCode) && balance.LocCode != material.LocationCode)
                     || balance.IStatus != IvItemStatuses.Active)
                     return $"Stock balance {balance.Id} is no longer eligible for {material.ComponentCode}.";
                 if (!string.IsNullOrWhiteSpace(balance.StdUom)
@@ -251,9 +252,12 @@ public sealed partial class ProductionMaterialIssueService
                 material.IssuedQty = IvQty.Round(rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty)
                     - rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty));
                 material.ReturnedQty = IvQty.Round(rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty));
-                material.ConsumedQty = IvQty.Round(rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty));
+                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
+                    rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
+                    rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
                 material.ModifiedDate = now; material.ModifiedBy = user;
             }
+            await CreateMaterialInLotsAsync(db, order, link, now, user, ct);
             var fromStatus = order.Status;
             if (order.Status == ProductionWorkOrderStatuses.Released) order.Status = ProductionWorkOrderStatuses.InProgress;
             order.ModifiedDate = now; order.ModifiedBy = user;
@@ -271,5 +275,82 @@ public sealed partial class ProductionMaterialIssueService
             await tx.RollbackAsync(ct);
             return "Posting conflicted with another change; reload and retry.";
         }
+    }
+
+    private static async Task CreateMaterialInLotsAsync(
+        AppDbContext db,
+        ProductionWorkOrder order,
+        ProductionPostingLink link,
+        DateTime now,
+        string user,
+        CancellationToken ct)
+    {
+        var issueMovements = await db.ProductionMaterialMovements
+            .Where(x => x.PostingLinkId == link.Uid
+                        && x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .OrderBy(x => x.InventoryTrxLineNo)
+            .ToListAsync(ct);
+
+        foreach (var movement in issueMovements)
+        {
+            var material = await db.ProductionWorkOrderMaterials
+                .SingleAsync(x => x.Uid == movement.WorkOrderMaterialId, ct);
+            var lot = new ProductionBalLot
+            {
+                CompanyCode = movement.CompanyCode,
+                BranchCode = movement.BranchCode,
+                Kind = ProductionBalLotKinds.MaterialIn,
+                ItemCode = movement.ItemCode,
+                Description = material.ComponentDescription,
+                Qty = movement.Qty,
+                Uom = movement.Uom,
+                BaseQty = movement.BaseQty,
+                BaseUom = movement.BaseUom,
+                ConversionFactorToBase = movement.ConversionFactorToBase,
+                TotalCost = movement.TotalCost,
+                AverageUnitCost = movement.BaseQty > 0m
+                    ? IvQty.Round(movement.TotalCost / movement.BaseQty)
+                    : movement.UnitCost,
+                WorkOrderId = order.Uid,
+                WorkOrderNo = order.WorkOrderNo,
+                WorkOrderMaterialId = movement.WorkOrderMaterialId,
+                OriginalIssueMovementId = movement.Uid,
+                SourceIvBalLocId = movement.FromBalLocId,
+                WarehouseCode = movement.WarehouseCode,
+                LocationCode = movement.LocationCode,
+                LotNo = movement.LotNo,
+                LastMovementDate = movement.MovementDate,
+            };
+            db.ProductionBalLots.Add(lot);
+            await db.SaveChangesAsync(ct);
+
+            var balMovement = new ProductionBalLotMovement
+            {
+                ProductionBalLotId = lot.Uid,
+                MovementType = ProductionBalLotMovementTypes.Issue,
+                Qty = movement.Qty,
+                Uom = movement.Uom,
+                BaseQty = movement.BaseQty,
+                BaseUom = movement.BaseUom,
+                UnitCost = movement.UnitCost,
+                TotalCost = movement.TotalCost,
+                WorkOrderId = order.Uid,
+                WorkOrderMaterialId = movement.WorkOrderMaterialId,
+                WorkOrderOperationId = movement.WorkOrderOperationId,
+                PostingLinkId = link.Uid,
+                DocumentType = ProductionDocumentTypes.MaterialIssue,
+                DocumentNo = movement.InventoryBatchNo?.ToString() ?? link.ProductionDocumentNo ?? string.Empty,
+                MovementDate = movement.MovementDate,
+                CreatedDate = now,
+                CreatedBy = user,
+            };
+            db.ProductionBalLotMovements.Add(balMovement);
+            await db.SaveChangesAsync(ct);
+
+            movement.ProductionBalLotId = lot.Uid;
+            movement.ProductionBalLotMovementId = balMovement.Uid;
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 }

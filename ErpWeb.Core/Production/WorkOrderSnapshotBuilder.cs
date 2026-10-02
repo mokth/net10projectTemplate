@@ -139,6 +139,7 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
 
         var itemCodes = revision.Lines.Select(l => l.ICode)
             .Append(revision.ProdCode)
+            .Concat(revision.RouteSteps.Select(s => s.OutputItemCode))
             .Where(code => !string.IsNullOrWhiteSpace(code))
             .Select(code => code.Trim().ToUpperInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -175,7 +176,16 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
                      .ThenBy(s => s.WorkCentreCode, StringComparer.Ordinal)
                      .ThenBy(s => s.OutputItemCode, StringComparer.Ordinal))
         {
-            var step = BuildRouteStep(sourceStep);
+            var outputCode = NormalizeCode(sourceStep.OutputItemCode);
+            if (!masters.TryGetValue(outputCode, out var outputItem)
+                || string.IsNullOrWhiteSpace(outputItem.StdUom))
+            {
+                return WorkOrderSnapshotBuildResult.Fail(
+                    ProductionReadinessErrorCodes.ReferenceInvalid,
+                    $"Route step output item '{outputCode}' is missing from the item master or has no StdUom.");
+            }
+
+            var step = BuildRouteStep(sourceStep, outputItem);
             workOrder.RouteSteps.Add(step);
             stepsByKey[sourceStep.RouteStepKey] = step;
             if (sourceStep.Uid != 0)
@@ -372,16 +382,25 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
         };
     }
 
-    private static ProductionWorkOrderRouteStep BuildRouteStep(PrBomRouteStep source) => new()
+    private static ProductionWorkOrderRouteStep BuildRouteStep(PrBomRouteStep source, IvStockMaster outputItem)
     {
-        SourceRouteStepId = source.Uid == 0 ? null : source.Uid,
-        SourceRouteStepKey = source.RouteStepKey,
-        StageSequence = source.StageSequence,
-        WorkCentreCode = NormalizeCode(source.WorkCentreCode),
-        OutputItemCode = NormalizeCode(source.OutputItemCode),
-        OutputBaseQty = source.StandardOutputQty,
-        OutputUom = Normalize(source.OutputUom),
-    };
+        var outputUom = Normalize(source.OutputUom);
+        var outputBaseUom = Normalize(outputItem.StdUom)!;
+
+        return new ProductionWorkOrderRouteStep
+        {
+            SourceRouteStepId = source.Uid == 0 ? null : source.Uid,
+            SourceRouteStepKey = source.RouteStepKey,
+            StageSequence = source.StageSequence,
+            WorkCentreCode = NormalizeCode(source.WorkCentreCode),
+            OutputItemCode = NormalizeCode(source.OutputItemCode),
+            OutputType = Normalize(source.OutputType) ?? PrRouteOutputTypes.WipStocked,
+            YieldPercent = 100m,
+            OutputBaseQty = source.StandardOutputQty,
+            OutputUom = outputUom,
+            OutputBaseUom = outputBaseUom,
+        };
+    }
 
     private static ProductionWorkOrderOperation BuildOperation(PrBomOperation source, int sequenceNo)
     {

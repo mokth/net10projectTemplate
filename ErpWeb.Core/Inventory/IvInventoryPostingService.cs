@@ -365,6 +365,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 }
 
                 plan.BalLocId = bal.Id;
+                // The balance key is authoritative at posting time. Keep the document and the
+                // history leg aligned with the actual IvBalLoc bin, including legacy rows whose
+                // casing/whitespace differs from the saved line.
+                plan.Detail.ToWarehouse = bal.WhCode;
+                plan.Detail.ToLocation = bal.LocCode;
+                plan.Detail.ToLotNo = plan.LotControl ? bal.LotNo : string.Empty;
             }
         }
 
@@ -2009,46 +2015,50 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             linePlans.Add(planResult.Plan!);
         }
 
-        var decreaseBySourceId = new Dictionary<int, decimal>();
-        var increaseByDestSlice = new Dictionary<IvStockSliceKey, decimal>();
+        var outgoingBySourceId = new Dictionary<int, decimal>();
+        var incomingByDestinationSlice = new Dictionary<IvStockSliceKey, decimal>();
         var sourceSliceById = new Dictionary<int, IvStockSliceKey>();
-        var sourceCostById = new Dictionary<int, (decimal? Cost, decimal? UnitPrice)>();
 
         foreach (var plan in linePlans)
         {
-            decreaseBySourceId[plan.FromBalLocId] =
-                decreaseBySourceId.GetValueOrDefault(plan.FromBalLocId) + plan.Quantity;
-            sourceSliceById[plan.FromBalLocId] = plan.FromSlice;
-            increaseByDestSlice[plan.ToSlice] =
-                increaseByDestSlice.GetValueOrDefault(plan.ToSlice) + plan.Quantity;
-        }
+            outgoingBySourceId[plan.FromBalLocId] =
+                outgoingBySourceId.GetValueOrDefault(plan.FromBalLocId) + plan.Quantity;
 
-        var orderedSourceIds = sourceSliceById
-            .OrderBy(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .ToList();
-        var lockedSources = new Dictionary<int, IvBalLocLockResult>();
-
-        foreach (var balLocId in orderedSourceIds)
-        {
-            var lockedRow = await _posting.LockBalLocByIdForTenantAsync(
-                db, balLocId, companyCode, branchCode, cancellationToken);
-            if (lockedRow is null)
+            if (sourceSliceById.TryGetValue(plan.FromBalLocId, out var existingSourceSlice)
+                && !existingSourceSlice.Equals(plan.FromSlice))
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
-                    $"Source balance Id {balLocId} was not found for this company/branch.");
+                    $"Source balance Id {plan.FromBalLocId} is referenced by inconsistent stock slices.");
             }
 
+            sourceSliceById[plan.FromBalLocId] = plan.FromSlice;
+            incomingByDestinationSlice[plan.ToSlice] =
+                incomingByDestinationSlice.GetValueOrDefault(plan.ToSlice) + plan.Quantity;
+        }
+
+        // Lock every existing source and destination slice in the same deterministic order. This
+        // prevents a transfer batch from taking source and destination locks in opposite orders.
+        var orderedSlices = _posting.GetOrderedStockSlices(
+            sourceSliceById.Values.Concat(incomingByDestinationSlice.Keys));
+        var lockedBySlice = (await _posting.LockBalanceSlicesAsync(
+                db, orderedSlices, cancellationToken))
+            .ToDictionary(x => x.Key, x => x.Value);
+
+        var orderedSourceIds = sourceSliceById
+            .OrderBy(kv => kv.Value)
+            .ThenBy(kv => kv.Key)
+            .Select(kv => kv.Key)
+            .ToList();
+        var sourceBalancesById = new Dictionary<int, IvBalLoc>();
+        var sourceCostById = new Dictionary<int, (decimal? Cost, decimal? UnitPrice)>();
+
+        foreach (var balLocId in orderedSourceIds)
+        {
             var expected = sourceSliceById[balLocId];
-            if (!string.Equals(lockedRow.CompanyCode, expected.CompanyCode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.BranchCode, expected.BranchCode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.ICode, expected.ICode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.WhCode, expected.WhCode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.LocCode, expected.LocCode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.LotNo, expected.LotNo, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.IStatus, expected.IStatus, StringComparison.OrdinalIgnoreCase))
+            if (!lockedBySlice.TryGetValue(expected, out var sourceBalance)
+                || sourceBalance.Id != balLocId)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
@@ -2057,7 +2067,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
 
             var stagedUom = linePlans.First(p => p.FromBalLocId == balLocId).Uom ?? string.Empty;
-            var actualUom = (lockedRow.StdUom ?? string.Empty).Trim();
+            var actualUom = (sourceBalance.StdUom ?? string.Empty).Trim();
             if (!string.Equals(actualUom, stagedUom.Trim(), StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -2066,38 +2076,24 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     $"Source balance Id {balLocId} UOM no longer matches the transfer line.");
             }
 
-            lockedSources[balLocId] = lockedRow;
-            if (!sourceCostById.ContainsKey(balLocId))
-            {
-                var srcBal = await db.IvBalLocs
-                    .AsNoTracking()
-                    .Where(x => x.Id == balLocId)
-                    .Select(x => new { x.Cost, x.UnitPrice })
-                    .FirstOrDefaultAsync(cancellationToken);
-                sourceCostById[balLocId] = (srcBal?.Cost, srcBal?.UnitPrice);
-            }
-        }
+            sourceBalancesById[balLocId] = sourceBalance;
+            sourceCostById[balLocId] = (sourceBalance.Cost, sourceBalance.UnitPrice);
 
-        foreach (var (balLocId, lockedRow) in lockedSources)
-        {
             var stockDateError = ValidateBalanceStockDate(
-                balLocId, lockedRow.TransDate, batch.TrxDtTime, lockedRow.LotNo);
+                balLocId, sourceBalance.TransDate, batch.TrxDtTime, sourceBalance.LotNo);
             if (stockDateError is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
             }
-        }
 
-        foreach (var (balLocId, required) in decreaseBySourceId)
-        {
-            var actual = lockedSources[balLocId].StdQty;
-            if (required > actual)
+            var required = outgoingBySourceId[balLocId];
+            if (required > sourceBalance.StdQty)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
-                    $"Insufficient quantity on balance Id {balLocId} (on hand {actual}, required {required}).");
+                    $"Insufficient quantity on balance Id {balLocId} (on hand {sourceBalance.StdQty}, required {required}).");
             }
         }
 
@@ -2143,7 +2139,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             plan.DestLot = destLotByKey[lotKey];
         }
 
-        var orderedDestSlices = _posting.GetOrderedStockSlices(increaseByDestSlice.Keys);
+        var orderedDestSlices = _posting.GetOrderedStockSlices(incomingByDestinationSlice.Keys);
         var lockedDest = new Dictionary<IvStockSliceKey, IvBalLoc>();
 
         foreach (var slice in orderedDestSlices)
@@ -2156,15 +2152,27 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 destLotId = lot.Id > 0 ? lot.Id : null;
             }
 
-            var bal = await _posting.FindOrCreateBalLocAsync(
-                db,
-                slice,
-                destLotId,
-                plan.Uom,
-                userId,
-                batch.TrxDtTime,
-                batch.LocationCode,
-                cancellationToken);
+            IvBalLoc bal;
+            if (lockedBySlice.TryGetValue(slice, out var existingDestination))
+            {
+                bal = existingDestination;
+                if (string.IsNullOrWhiteSpace(bal.LocationCode))
+                {
+                    bal.LocationCode = Truncate(batch.LocationCode, 10);
+                }
+            }
+            else
+            {
+                bal = await _posting.FindOrCreateBalLocAsync(
+                    db,
+                    slice,
+                    destLotId,
+                    plan.Uom,
+                    userId,
+                    batch.TrxDtTime,
+                    batch.LocationCode,
+                    cancellationToken);
+            }
 
             if (plan.LotControl && !string.IsNullOrWhiteSpace(plan.ToLotNo) && bal.LotId is null)
             {
@@ -2174,22 +2182,65 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             lockedDest[slice] = bal;
         }
 
-        foreach (var bal in lockedDest.Values)
+        var deltaByBalance = new Dictionary<IvBalLoc, decimal>();
+        var sliceByBalance = new Dictionary<IvBalLoc, IvStockSliceKey>();
+        var uomByBalance = new Dictionary<IvBalLoc, string>();
+        var destinationSourceIdByBalance = new Dictionary<IvBalLoc, int>();
+
+        foreach (var balLocId in orderedSourceIds)
         {
-            if (bal.StdQty > 0m || bal.TransDate.HasValue)
+            var balance = sourceBalancesById[balLocId];
+            deltaByBalance.TryAdd(balance, 0m);
+            sliceByBalance[balance] = sourceSliceById[balLocId];
+            uomByBalance[balance] = linePlans.First(p => p.FromBalLocId == balLocId).Uom ?? string.Empty;
+        }
+
+        foreach (var slice in orderedDestSlices)
+        {
+            var balance = lockedDest[slice];
+            deltaByBalance.TryAdd(balance, 0m);
+            sliceByBalance.TryAdd(balance, slice);
+            var plan = linePlans.First(p => p.ToSlice.Equals(slice));
+            uomByBalance.TryAdd(balance, plan.Uom ?? string.Empty);
+            destinationSourceIdByBalance.TryAdd(balance, plan.FromBalLocId);
+        }
+
+        foreach (var plan in linePlans)
+        {
+            var source = sourceBalancesById[plan.FromBalLocId];
+            var destination = lockedDest[plan.ToSlice];
+            deltaByBalance[source] = deltaByBalance.GetValueOrDefault(source) - plan.Quantity;
+            deltaByBalance[destination] = deltaByBalance.GetValueOrDefault(destination) + plan.Quantity;
+        }
+
+        foreach (var balance in deltaByBalance.Keys)
+        {
+            if (balance.StdQty > 0m || balance.TransDate.HasValue)
             {
-                var stockDateError = ValidateBalanceStockDate(bal.Id, bal.TransDate, batch.TrxDtTime, bal.LotNo);
+                var stockDateError = ValidateBalanceStockDate(
+                    balance.Id, balance.TransDate, batch.TrxDtTime, balance.LotNo);
                 if (stockDateError is not null)
                 {
                     await tx.RollbackAsync(cancellationToken);
                     return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
                 }
             }
+
+            var nextQuantity = balance.StdQty + deltaByBalance[balance];
+            if (nextQuantity < 0m)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"Insufficient quantity on balance Id {balance.Id} (on hand {balance.StdQty}, required {Math.Abs(deltaByBalance[balance])}).");
+            }
         }
 
-        var trBalLocIds = orderedSourceIds
-            .Concat(lockedDest.Values.Select(x => x.Id))
+        var trBalLocIds = deltaByBalance.Keys
+            .Select(x => x.Id)
+            .Where(x => x > 0)
             .Distinct()
+            .OrderBy(x => x)
             .ToList();
         var laterDayError = await ValidateNoLaterDayMovementsAsync(
             db, companyCode, branchCode, trBalLocIds, batch.TrxDtTime, excludeBatchNo: null, cancellationToken);
@@ -2199,56 +2250,50 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
         }
 
-        foreach (var balLocId in orderedSourceIds)
+        foreach (var balance in deltaByBalance.Keys
+                     .OrderBy(x => sliceByBalance[x])
+                     .ThenBy(x => x.Id))
         {
-            var required = decreaseBySourceId[balLocId];
-            var affected = await _posting.DecreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, required, batch.TrxDtTime, cancellationToken);
-            if (affected != 1)
+            var delta = deltaByBalance[balance];
+            if (delta > 0m && balance.StdQty == 0m
+                && destinationSourceIdByBalance.TryGetValue(balance, out var sourceId))
             {
-                await tx.RollbackAsync(cancellationToken);
-                return IvInventoryPostingBatchResult.Fail(
-                    batchNo,
-                    $"Stock decrease failed for balance Id {balLocId} (insufficient quantity or missing row).");
-            }
-        }
-
-        foreach (var slice in orderedDestSlices)
-        {
-            var bal = lockedDest[slice];
-            var qtyBefore = bal.StdQty;
-            var delta = increaseByDestSlice[slice];
-            var sourceId = linePlans.First(p => p.ToSlice.Equals(slice)).FromBalLocId;
-            var (srcCost, srcUnitPrice) = sourceCostById[sourceId];
-
-            if (qtyBefore == 0m)
-            {
-                ApplyDestCostFromSource(bal, srcCost, srcUnitPrice);
+                var (srcCost, srcUnitPrice) = sourceCostById[sourceId];
+                ApplyDestCostFromSource(balance, srcCost, srcUnitPrice);
             }
 
-            bal.StdQty += delta;
-            bal.ModifiedDate = now;
-            bal.TransDate = batch.TrxDtTime;
-            if (string.IsNullOrWhiteSpace(bal.StdUom))
+            balance.StdQty += delta;
+            balance.ModifiedDate = now;
+            balance.TransDate = batch.TrxDtTime;
+            if (string.IsNullOrWhiteSpace(balance.StdUom))
             {
-                bal.StdUom = Truncate(linePlans.First(p => p.ToSlice.Equals(slice)).Uom, 10);
+                balance.StdUom = Truncate(uomByBalance[balance], 10);
             }
         }
 
         TestHookAfterTrStockUpdate?.Invoke();
 
+        // New destination balances need database-generated IDs before their IDs are copied to
+        // detail/history rows. This save remains inside the posting transaction.
+        await db.SaveChangesAsync(cancellationToken);
+
         var opId = Guid.NewGuid();
         foreach (var plan in linePlans)
         {
             var detail = plan.Detail;
-            var lockedSource = lockedSources[plan.FromBalLocId];
+            var lockedSource = sourceBalancesById[plan.FromBalLocId];
             var destBal = lockedDest[plan.ToSlice];
             var (srcCost, srcUnitPrice) = sourceCostById[plan.FromBalLocId];
 
             detail.FromBalLocId = plan.FromBalLocId;
             detail.FromLotId = lockedSource.LotId;
             detail.ToBalLocId = destBal.Id;
-            detail.ToLotNo = plan.LotControl ? (plan.ToLotNo ?? detail.ToLotNo) : string.Empty;
+            detail.FrWarehouse = lockedSource.WhCode;
+            detail.FrLocation = lockedSource.LocCode;
+            detail.FrLotNo = lockedSource.LotNo;
+            detail.ToWarehouse = destBal.WhCode;
+            detail.ToLocation = destBal.LocCode;
+            detail.ToLotNo = plan.LotControl ? destBal.LotNo : string.Empty;
             if (plan.LotControl && plan.DestLot is not null)
             {
                 detail.ToLot = plan.DestLot;
@@ -2272,14 +2317,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 ProdDesc = detail.ProdDesc ?? detail.IDesc,
                 ICode = detail.ICode ?? plan.ICode,
                 IDesc = detail.IDesc,
-                FrWarehouse = detail.FrWarehouse,
-                FrLocation = detail.FrLocation,
-                FrLotNo = detail.FrLotNo,
+                 FrWarehouse = lockedSource.WhCode,
+                 FrLocation = lockedSource.LocCode,
+                 FrLotNo = lockedSource.LotNo,
                 FrStdQty = detail.FrStdQty,
                 FrStdUom = detail.FrStdUom,
-                ToWarehouse = detail.ToWarehouse,
-                ToLocation = detail.ToLocation,
-                ToLotNo = detail.ToLotNo,
+                 ToWarehouse = destBal.WhCode,
+                 ToLocation = destBal.LocCode,
+                 ToLotNo = plan.LotControl ? destBal.LotNo : string.Empty,
                 ToStdQty = detail.ToStdQty,
                 ToStdUom = detail.ToStdUom,
                 IStatus = detail.IStatus,
@@ -2375,8 +2420,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
         }
 
-        var destDecreaseById = new Dictionary<int, decimal>();
-        var sourceRestoreById = new Dictionary<int, decimal>();
+        var netByBalLocId = new Dictionary<int, decimal>();
         var sliceById = new Dictionary<int, IvStockSliceKey>();
 
         foreach (var h in history)
@@ -2384,21 +2428,41 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var toId = h.ToBalLocId!.Value;
             var frId = h.FromBalLocId!.Value;
             var qty = h.FrStdQty!.Value;
-            destDecreaseById[toId] = destDecreaseById.GetValueOrDefault(toId) + qty;
-            sourceRestoreById[frId] = sourceRestoreById.GetValueOrDefault(frId) + qty;
+            netByBalLocId[toId] = netByBalLocId.GetValueOrDefault(toId) - qty;
+            netByBalLocId[frId] = netByBalLocId.GetValueOrDefault(frId) + qty;
 
             var frWh = (h.FrWarehouse ?? string.Empty).Trim();
             var frLoc = (h.FrLocation ?? string.Empty).Trim();
             var frLot = (h.FrLotNo ?? string.Empty).Trim();
             var iStatus = (h.IStatus ?? string.Empty).Trim();
-            sliceById[frId] = IvStockSliceKey.Create(
+            var frSlice = IvStockSliceKey.Create(
                 companyCode, branchCode, h.ICode, frWh, frLoc, frLot, iStatus);
+            if (sliceById.TryGetValue(frId, out var existingFrSlice)
+                && !existingFrSlice.Equals(frSlice))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"History references balance Id {frId} with inconsistent source stock slices.");
+            }
+
+            sliceById[frId] = frSlice;
 
             var toWh = (h.ToWarehouse ?? string.Empty).Trim();
             var toLoc = (h.ToLocation ?? string.Empty).Trim();
             var toLot = (h.ToLotNo ?? string.Empty).Trim();
-            sliceById[toId] = IvStockSliceKey.Create(
+            var toSlice = IvStockSliceKey.Create(
                 companyCode, branchCode, h.ICode, toWh, toLoc, toLot, iStatus);
+            if (sliceById.TryGetValue(toId, out var existingToSlice)
+                && !existingToSlice.Equals(toSlice))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"History references balance Id {toId} with inconsistent destination stock slices.");
+            }
+
+            sliceById[toId] = toSlice;
         }
 
         var orderedIds = sliceById
@@ -2406,6 +2470,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             .Select(kv => kv.Key)
             .ToList();
 
+        var lockedById = new Dictionary<int, IvBalLocLockResult>();
         foreach (var balLocId in orderedIds)
         {
             var lockedRow = await _posting.LockBalLocByIdForTenantAsync(
@@ -2418,24 +2483,29 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     $"ORPHAN_HISTORY: BalLoc Id {balLocId} missing for rollback.");
             }
 
-            if (!string.Equals(lockedRow.CompanyCode, companyCode, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(lockedRow.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return IvInventoryPostingBatchResult.Fail(batchNo, "Tenant mismatch on balance row.");
-            }
-        }
-
-        foreach (var (balLocId, decrease) in destDecreaseById)
-        {
-            var locked = await _posting.LockBalLocByIdForTenantAsync(
-                db, balLocId, companyCode, branchCode, cancellationToken);
-            if (locked!.StdQty < decrease)
+            var expected = sliceById[balLocId];
+            if (!string.Equals(lockedRow.CompanyCode?.Trim(), expected.CompanyCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.BranchCode?.Trim(), expected.BranchCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.ICode?.Trim(), expected.ICode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.WhCode?.Trim(), expected.WhCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.LocCode?.Trim(), expected.LocCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.LotNo?.Trim(), expected.LotNo, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(lockedRow.IStatus?.Trim(), expected.IStatus, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
-                    $"Insufficient quantity on destination balance Id {balLocId} for rollback (on hand {locked.StdQty}, required {decrease}).");
+                    $"History balance mismatch for BalLoc Id {balLocId} (recorded stock slice does not match the current balance).");
+            }
+
+            lockedById[balLocId] = lockedRow;
+            var nextQuantity = lockedRow.StdQty + netByBalLocId[balLocId];
+            if (nextQuantity < 0m)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"Insufficient quantity on balance Id {balLocId} for rollback (on hand {lockedRow.StdQty}, required {Math.Abs(netByBalLocId[balLocId])}).");
             }
         }
 
@@ -2454,36 +2524,24 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
         }
 
-        foreach (var (balLocId, decrease) in destDecreaseById)
+        foreach (var balLocId in orderedIds)
         {
-            var affected = await _posting.DecreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, decrease, repairedDates[balLocId], cancellationToken);
+            var net = netByBalLocId[balLocId];
+            var affected = net < 0m
+                ? await _posting.DecreaseBalLocQtyAsync(
+                    db, balLocId, companyCode, branchCode, -net, repairedDates[balLocId], cancellationToken)
+                : net > 0m
+                    ? await _posting.IncreaseBalLocQtyAsync(
+                        db, balLocId, companyCode, branchCode, net, repairedDates[balLocId], cancellationToken)
+                    : await _posting.SetBalLocTransDateAsync(
+                        db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
             if (affected != 1)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
-                    $"Destination stock decrease failed for balance Id {balLocId}.");
+                    $"Rollback stock update failed for balance Id {balLocId}.");
             }
-
-            await _posting.SetBalLocTransDateAsync(
-                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
-        }
-
-        foreach (var (balLocId, restore) in sourceRestoreById)
-        {
-            var affected = await _posting.IncreaseBalLocQtyAsync(
-                db, balLocId, companyCode, branchCode, restore, repairedDates[balLocId], cancellationToken);
-            if (affected != 1)
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return IvInventoryPostingBatchResult.Fail(
-                    batchNo,
-                    $"Source stock restore failed for balance Id {balLocId}.");
-            }
-
-            await _posting.SetBalLocTransDateAsync(
-                db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
         _posting.RemoveHistory(db, history);
@@ -2695,26 +2753,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return ($"Line {detail.TrxLineNo}: warehouse '{toWh}' was not found for this branch.", null);
         }
 
-        var hasLocations = await _common.HasActiveLocationsAsync(db, companyCode, branchCode, toWh, cancellationToken);
         var toLoc = (detail.ToLocation ?? string.Empty).Trim();
-        if (hasLocations)
+        var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+            db,
+            _common,
+            companyCode,
+            branchCode,
+            toWh,
+            toLoc,
+            $"Line {detail.TrxLineNo}",
+            "location",
+            cancellationToken);
+        if (locationValidation.Error is not null)
         {
-            if (string.IsNullOrWhiteSpace(toLoc))
-            {
-                return ($"Line {detail.TrxLineNo}: location is required for warehouse '{toWh}'.", null);
-            }
+            return (locationValidation.Error, null);
+        }
 
-            var location = await _common.GetActiveLocationAsync(
-                db, companyCode, branchCode, toWh, toLoc, cancellationToken);
-            if (location is null)
-            {
-                return ($"Line {detail.TrxLineNo}: location '{toLoc}' was not found for warehouse '{toWh}'.", null);
-            }
-        }
-        else
-        {
-            toLoc = string.Empty;
-        }
+        toLoc = locationValidation.Location;
 
         var fromSlice = IvStockSliceKey.Create(
             companyCode, branchCode, iCode, frWh, frLoc, frLot, iStatus);
@@ -2927,26 +2982,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return ($"Line {detail.TrxLineNo}: warehouse '{toWh}' was not found for this branch.", null);
         }
 
-        var hasLocations = await _common.HasActiveLocationsAsync(db, companyCode, branchCode, toWh, cancellationToken);
         var toLoc = (detail.ToLocation ?? string.Empty).Trim();
-        if (hasLocations)
+        var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+            db,
+            _common,
+            companyCode,
+            branchCode,
+            toWh,
+            toLoc,
+            $"Line {detail.TrxLineNo}",
+            "location",
+            cancellationToken);
+        if (locationValidation.Error is not null)
         {
-            if (string.IsNullOrWhiteSpace(toLoc))
-            {
-                return ($"Line {detail.TrxLineNo}: location is required for warehouse '{toWh}'.", null);
-            }
+            return (locationValidation.Error, null);
+        }
 
-            var location = await _common.GetActiveLocationAsync(
-                db, companyCode, branchCode, toWh, toLoc, cancellationToken);
-            if (location is null)
-            {
-                return ($"Line {detail.TrxLineNo}: location '{toLoc}' was not found for warehouse '{toWh}'.", null);
-            }
-        }
-        else
-        {
-            toLoc = string.Empty;
-        }
+        toLoc = locationValidation.Location;
 
         var iStatus = (detail.IStatus ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(iStatus))

@@ -112,7 +112,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty),
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty),
                     g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty),
-                    g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty)));
+                    ProductionMaterialMovementTotals.EffectiveConsumed(
+                        g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
+                        g.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty))));
         var draftRows = await (from map in db.ProductionMaterialIssueLines.AsNoTracking()
             join link in db.ProductionPostingLinks.AsNoTracking() on map.PostingLinkId equals link.Uid
             join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id

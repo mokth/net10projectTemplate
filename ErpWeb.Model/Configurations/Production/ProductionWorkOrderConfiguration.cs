@@ -140,8 +140,12 @@ public sealed class ProductionWorkOrderRouteStepConfiguration : IEntityTypeConfi
         builder.Property(x => x.WorkCentreDescription).HasMaxLength(100);
         builder.Property(x => x.OutputItemCode).HasMaxLength(30).IsRequired();
         builder.Property(x => x.OutputItemDescription).HasMaxLength(200);
+        builder.Property(x => x.OutputType).HasMaxLength(20);
+        builder.Property(x => x.YieldPercent).HasPrecision(9, 4);
         ConfigureQty(builder.Property(x => x.OutputBaseQty));
         builder.Property(x => x.OutputUom).HasColumnName("OutputUOM").HasMaxLength(10);
+        builder.Property(x => x.OutputBaseUom).HasColumnName("OutputBaseUOM").HasMaxLength(10);
+        builder.Property(x => x.OutputConversionFactorToBase).HasPrecision(18, 8);
         ConfigureQty(builder.Property(x => x.PlannedQty));
         builder.Property(x => x.PlannedStartDateTime).HasColumnType("datetime2");
         builder.Property(x => x.PlannedCompletionDateTime).HasColumnType("datetime2");

@@ -839,7 +839,6 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 return ($"Line {lineNo}: warehouse '{toWarehouse}' was not found for this branch.", null);
             }
 
-            var hasLocations = await _common.HasActiveLocationsAsync(db, companyCode, branchCode, toWarehouse, cancellationToken);
             var explicitLocation = (line.ToLocation ?? string.Empty).Trim();
             if (explicitLocation.Length > 0)
             {
@@ -847,6 +846,12 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             }
             else
             {
+                var hasLocations = await _common.HasActiveLocationsAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    toWarehouse,
+                    cancellationToken);
                 toLocation = await ResolveCompatibleLocationAsync(
                     db,
                     companyCode,
@@ -857,23 +862,22 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     cancellationToken);
             }
 
-            if (hasLocations && string.IsNullOrWhiteSpace(toLocation))
+            var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+                db,
+                _common,
+                companyCode,
+                branchCode,
+                toWarehouse,
+                toLocation,
+                $"Line {lineNo}",
+                "location",
+                cancellationToken);
+            if (locationValidation.Error is not null)
             {
-                return ($"Line {lineNo}: location is required for warehouse '{toWarehouse}'.", null);
+                return (locationValidation.Error, null);
             }
 
-            if (hasLocations)
-            {
-                var location = await _common.GetActiveLocationAsync(db, companyCode, branchCode, toWarehouse, toLocation, cancellationToken);
-                if (location is null)
-                {
-                    return ($"Line {lineNo}: location '{toLocation}' was not found for warehouse '{toWarehouse}'.", null);
-                }
-            }
-            else
-            {
-                toLocation = string.Empty;
-            }
+            toLocation = locationValidation.Location;
 
             var status = await _common.GetActiveStatusAsync(db, companyCode, itemStatus, cancellationToken);
             if (status is null)

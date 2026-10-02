@@ -1223,8 +1223,8 @@ public sealed partial class ProductionWorkOrderService
         var changed = new List<string>();
 
         Diff(
-            current.RouteSteps.Select(s => (Key: s.SourceRouteStepKey?.ToString("D") ?? s.WorkCentreCode + ":" + s.StageSequence, Label: $"Route {s.StageSequence} {s.WorkCentreCode}", Sig: $"{s.OutputItemCode}|{s.OutputBaseQty}")),
-            next.RouteSteps.Select(s => (Key: s.SourceRouteStepKey?.ToString("D") ?? s.WorkCentreCode + ":" + s.StageSequence, Label: $"Route {s.StageSequence} {s.WorkCentreCode}", Sig: $"{s.OutputItemCode}|{s.OutputBaseQty}")),
+            current.RouteSteps.Select(s => (Key: s.SourceRouteStepKey?.ToString("D") ?? s.WorkCentreCode + ":" + s.StageSequence, Label: $"Route {s.StageSequence} {s.WorkCentreCode}", Sig: $"{s.OutputItemCode}|{s.OutputType}|{s.OutputBaseQty}|{s.OutputUom}|{s.OutputBaseUom}|{s.OutputConversionFactorToBase}|{s.YieldPercent}")),
+            next.RouteSteps.Select(s => (Key: s.SourceRouteStepKey?.ToString("D") ?? s.WorkCentreCode + ":" + s.StageSequence, Label: $"Route {s.StageSequence} {s.WorkCentreCode}", Sig: $"{s.OutputItemCode}|{s.OutputType}|{s.OutputBaseQty}|{s.OutputUom}|{s.OutputBaseUom}|{s.OutputConversionFactorToBase}|{s.YieldPercent}")),
             added, removed, changed);
         Diff(
             current.Operations.Select(o => (Key: o.SourceOperationKey?.ToString("D") ?? o.OperationCode, Label: $"Operation {o.OperationCode}", Sig: $"{o.ProcessType}|{o.StandardDurationMinutes}|{o.IsFinalOperation}")),

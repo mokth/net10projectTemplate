@@ -74,9 +74,9 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Lot_without_expiry_falls_back_to_fifo_and_cost_requires_permission()
+    public async Task Lot_without_expiry_falls_back_to_fifo_across_locations_and_cost_requires_permission()
     {
-        var materialId = await SeedAsync(lotControl: true, location: "BIN-A");
+        var materialId = await SeedAsync(lotControl: true, location: "SITE");
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.IvLots.AddRange(Lot("OLD", null), Lot("NEW", null));
@@ -97,9 +97,10 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         });
 
         Assert.True(result.Succeeded, result.Message);
-        Assert.Equal(["OLD", "NEW"], result.Data!.Allocations.Select(x => x.LotNo));
-        Assert.Equal([5m, 1m], result.Data.Allocations.Select(x => x.SuggestedBaseQty));
-        Assert.Equal(7m, result.Data.Allocations[0].UnitPrice);
+        Assert.Equal(["OLD"], result.Data!.Allocations.Select(x => x.LotNo));
+        Assert.Equal(["BIN-B"], result.Data.Allocations.Select(x => x.Location));
+        Assert.Equal([6m], result.Data.Allocations.Select(x => x.SuggestedBaseQty));
+        Assert.Equal(1m, result.Data.Allocations[0].UnitPrice);
     }
 
     [Fact]
@@ -138,13 +139,13 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     [Fact]
     public async Task Bom_preview_rejects_zero_and_over_planned_and_scales_with_tolerance_max()
     {
-        var materialId = await SeedAsync(lotControl: false, location: null);
+        var materialId = await SeedAsync(lotControl: false, location: "SITE");
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var material = await db.ProductionWorkOrderMaterials.SingleAsync(x => x.Uid == materialId);
             material.Tolerance = 5m;
             material.RequiredQty = 100m;
-            db.IvBalLocs.Add(Balance(41, "", 200m, new DateTime(2026, 9, 1), null, "BIN-A"));
+            db.IvBalLocs.Add(Balance(41, "", 200m, new DateTime(2026, 9, 1), null, "BIN-B"));
             await db.SaveChangesAsync();
             var operationId = material.WorkOrderOperationId!.Value;
             var access = Access(canViewCost: false);
@@ -195,11 +196,13 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     [Fact]
     public async Task Workspace_uses_movement_facts_and_live_eligible_availability()
     {
-        var materialId = await SeedAsync(lotControl: false, location: null);
+        var materialId = await SeedAsync(lotControl: false, location: "SITE");
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var material = await db.ProductionWorkOrderMaterials.SingleAsync();
-            db.IvBalLocs.Add(Balance(20, "", 6m, new DateTime(2026, 9, 1), null, "BIN-A"));
+            db.IvBalLocs.AddRange(
+                Balance(20, "", 6m, new DateTime(2026, 9, 1), null, "BIN-A"),
+                Balance(21, "", 1m, new DateTime(2026, 9, 2), null, "BIN-B"));
             db.ProductionMaterialMovements.AddRange(
                 Movement(material, 1, ProductionMaterialMovementTypes.Issue, 4m),
                 Movement(material, 2, ProductionMaterialMovementTypes.IssueReversal, 1m),
@@ -230,8 +233,8 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.Equal(2.5m, line.NetIssuedQty);
         Assert.Equal(7.5m, line.OutstandingQty);
         Assert.Equal(2m, line.ConsumedQty);
-        Assert.Equal(6m, line.AvailableQty);
-        Assert.Equal(1.5m, line.ShortageQty);
+        Assert.Equal(7m, line.AvailableQty);
+        Assert.Equal(0.5m, line.ShortageQty);
         Assert.True(line.CanManualIssue);
         Assert.Equal(new DateTime(2026, 10, 1), result.Data.IssueDate);
     }
@@ -239,7 +242,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     [Fact]
     public async Task Post_creates_inventory_and_production_facts_and_replay_is_idempotent()
     {
-        var materialId = await SeedAsync(lotControl: false, location: null);
+        var materialId = await SeedAsync(lotControl: false, location: "SITE");
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.IvBalLocs.Add(Balance(30, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
@@ -264,10 +267,12 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(6m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 30)).StdQty);
         Assert.Equal(IvBatchStatuses.Posted, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
-        Assert.Single(await verify.IvTrxHistories.ToListAsync());
+        var history = Assert.Single(await verify.IvTrxHistories.ToListAsync());
+        Assert.Equal("BIN-A", history.FrLocation);
         var movement = Assert.Single(await verify.ProductionMaterialMovements.ToListAsync());
         Assert.Equal(4m, movement.Qty);
         Assert.Equal(4m, movement.BaseQty);
+        Assert.Equal("BIN-A", movement.LocationCode);
         Assert.Equal(2m, movement.UnitCost);
         Assert.Equal(8m, movement.TotalCost);
         Assert.Equal(4m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);

@@ -104,6 +104,36 @@ public sealed class WorkOrderQuantityCalculator : IWorkOrderQuantityCalculator
                 continue;
             }
 
+            var routeBaseUom = Normalize(routeStep.OutputBaseUom);
+            if (routeBaseUom is null)
+            {
+                result.Add(ProductionReadinessErrorCodes.RouteOutputContractIncomplete,
+                    $"Route step {routeStep.StageSequence} has no output base UOM.",
+                    Describe(routeStep));
+                continue;
+            }
+
+            if (string.Equals(routeUom, routeBaseUom, StringComparison.OrdinalIgnoreCase))
+            {
+                routeStep.OutputConversionFactorToBase = 1m;
+            }
+            else
+            {
+                var factor = await ConvertAsync(
+                    company, routeStep.OutputItemCode, 1m, routeUom, routeBaseUom,
+                    result, Describe(routeStep), cancellationToken);
+                if (factor is null || factor.Value <= 0m)
+                {
+                    result.Add(ProductionReadinessErrorCodes.UomConversionMissing,
+                        $"Route step {routeStep.StageSequence} cannot convert {routeUom} to {routeBaseUom}.",
+                        Describe(routeStep));
+                    continue;
+                }
+
+                routeStep.OutputConversionFactorToBase =
+                    decimal.Round(factor.Value, 8, MidpointRounding.AwayFromZero);
+            }
+
             foreach (var operation in routeStep.Operations)
             {
                 await CalculateOperationAsync(workOrder, routeStep, operation, company, product, routeUom, result, cancellationToken);

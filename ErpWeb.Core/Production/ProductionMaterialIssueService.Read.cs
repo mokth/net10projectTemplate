@@ -92,9 +92,10 @@ public sealed partial class ProductionMaterialIssueService
                 .ToListAsync(cancellationToken);
             var movements = await db.ProductionMaterialMovements.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
-                    && batchNos.Contains(x.InventoryBatchNo)
+                    && x.InventoryBatchNo.HasValue
+                    && batchNos.Contains(x.InventoryBatchNo.Value)
                     && x.MovementType == ProductionMaterialMovementTypes.Issue)
-                .Select(x => new { x.InventoryBatchNo, x.WorkOrderMaterialId })
+                .Select(x => new { InventoryBatchNo = x.InventoryBatchNo!.Value, x.WorkOrderMaterialId })
                 .ToListAsync(cancellationToken);
             var counts = movements.GroupBy(x => x.InventoryBatchNo)
                 .ToDictionary(x => x.Key, x => x.Select(y => y.WorkOrderMaterialId).Distinct().Count());
@@ -174,8 +175,9 @@ public sealed partial class ProductionMaterialIssueService
         {
             documentLines = movements.Select(x => new ProductionMaterialIssueDocumentLine
             {
-                WorkOrderMaterialId = x.WorkOrderMaterialId, InventoryLineNo = x.InventoryTrxLineNo,
-                FromBalLocId = x.FromBalLocId,
+                WorkOrderMaterialId = x.WorkOrderMaterialId,
+                InventoryLineNo = x.InventoryTrxLineNo ?? 0,
+                FromBalLocId = x.FromBalLocId ?? 0,
                 ItemCode = x.ItemCode, IssueQty = x.Qty, Uom = x.Uom, BaseQty = x.BaseQty,
                 BaseUom = x.BaseUom, Warehouse = x.WarehouseCode, Location = x.LocationCode,
                 LotNo = x.LotNo, ItemStatus = x.ItemStatus, UnitCost = canViewCost ? x.UnitCost : null,

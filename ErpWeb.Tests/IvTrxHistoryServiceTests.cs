@@ -150,6 +150,7 @@ internal sealed class IvHistoryTestDb : IAsyncDisposable
             IStatus = status,
             StdQty = qty,
             StdUom = "EA",
+            TransDate = new DateTime(2026, 8, 1),
             LotId = lotId,
             UnitPrice = unitPrice
         };

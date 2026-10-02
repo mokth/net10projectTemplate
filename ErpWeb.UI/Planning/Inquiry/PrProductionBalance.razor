@@ -1,0 +1,179 @@
+@page "/planning/production-balance"
+@inherits PageBase
+
+<PageTitle>Production Balance by Lot</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningProductionBalance">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-boxes-stacked"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Inquiry</p>
+                <h1 class="iv-title">Production Balance by Lot</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                    @if (!AppliedIncludeZeroQty)
+                    {
+                        <span class="iv-chip">Qty &gt; 0</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Lots</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search item, description, lot, work order…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="ProductionBalanceLotRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(ProductionBalanceLotRow.Uid)"
+                                      GridKey="pln-production-balance"
+                                      Title="Production balances"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      GridSelectionMode="GridSelectionMode.Single"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionEventHandle="@OnLotSelectedAsync"
+                                      OnButtonEventHandle="@OnButtonClick" />
+                </div>
+            }
+        </section>
+
+        @if (SelectedLot is not null)
+        {
+            <section class="iv-card">
+                <div class="iv-toolbar-row">
+                    <div class="iv-toolbar-row__search">
+                        <strong class="code-style">@SelectedLot.ItemCode</strong>
+                        <span> — @SelectedLot.Kind · lot @(string.IsNullOrWhiteSpace(SelectedLot.LotNo) ? "—" : SelectedLot.LotNo)</span>
+                        <span class="text-muted"> · WO @SelectedLot.WorkOrderNo · @SelectedLot.Qty.ToString("n4") @SelectedLot.Uom</span>
+                    </div>
+                </div>
+
+                @if (DetailLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else
+                {
+                    <CommonDataGridEx T="ProductionBalanceLotMovementRow"
+                                      Columns="@MovementColumns"
+                                      GridKey="pln-production-balance-movements"
+                                      Title="Lot movements"
+                                      CustomDataSource="@MovementDataSource"
+                                      ShowToolbarText="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false" />
+                }
+            </section>
+        }
+        else if (!IsBootstrapping)
+        {
+            <p class="iv-subtitle">Select a lot to see its movements.</p>
+        }
+
+        <DxPopup HeaderText="Filter production balances"
+                 CloseOnOutsideClick="false"
+                 Width="540px"
+                 CssClass="common-popup"
+                 @bind-Visible="@FilterPopupVisible">
+            <Content>
+                <div class="iv-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Kind" ColSpanMd="6">
+                            <Template>
+                                <DxComboBox Data="@KindOptions"
+                                            TextFieldName="@nameof(FilterOption.Name)"
+                                            ValueFieldName="@nameof(FilterOption.Key)"
+                                            @bind-Value="@DraftKind" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Work Order" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftWorkOrderNo"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Item" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftItemCode"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Include zero qty" ColSpanMd="6">
+                            <Template>
+                                <DxCheckBox @bind-Checked="@DraftIncludeZeroQty" AllowIndeterminateState="false" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

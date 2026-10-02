@@ -14,4 +14,7 @@ public static class RunningNumberKeys
 
     /// <summary>Production Work Order number. Formatted <c>WO00000001</c>.</summary>
     public const string ProductionWorkOrder = "PR_WORK_ORDER";
+
+    /// <summary>Daily Production / Production Output document number. Formatted <c>DP00000001</c>.</summary>
+    public const string ProductionDailyOutput = "PR_DAILY_OUTPUT";
 }

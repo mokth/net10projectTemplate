@@ -1,0 +1,178 @@
+@page "/planning/daily-production"
+@inherits PageBase
+
+<PageTitle>Daily Production</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningDailyProduction">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-industry"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Production</p>
+                <h1 class="iv-title">Daily Production</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Documents</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search document, output item or lot…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="ProductionOutputListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(ProductionOutputListRow.Uid)"
+                                      GridKey="pln-daily-production-list"
+                                      Title="Daily Production"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="true"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnSelectionsEventHandle="@OnSelectionsEvent"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No daily production documents match the current filters.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
+                        {
+                            <button type="button" class="iv-compact-row" @onclick="@(() => OpenView(row.Uid))">
+                                <div class="iv-compact-row__title">
+                                    <span class="code-style">@row.DocumentNo</span>
+                                    <span>@row.WorkOrderNo · @row.OutputItemCode</span>
+                                </div>
+                                <div class="iv-compact-row__meta">
+                                    <span>@row.ProductionDate.ToString("dd MMM yyyy")</span>
+                                    <span>@row.Status</span>
+                                    <span>Good @row.GoodQty.ToString("n4")</span>
+                                </div>
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </section>
+
+        <DxPopup HeaderText="Filter daily production"
+                 CloseOnOutsideClick="false"
+                 Width="540px"
+                 CssClass="common-popup"
+                 @bind-Visible="@FilterPopupVisible">
+            <Content>
+                <div class="iv-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Work Order" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@DraftWorkOrderNo"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Status" ColSpanMd="6">
+                            <Template>
+                                <DxComboBox Data="@StatusOptions"
+                                            TextFieldName="@nameof(FilterOption.Name)"
+                                            ValueFieldName="@nameof(FilterOption.Key)"
+                                            @bind-Value="@DraftStatus" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Confirm"
+                 CloseOnOutsideClick="false"
+                 Width="440px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConfirmVisible">
+            <Content>
+                <p class="iv-confirm__copy">@ConfirmMessage</p>
+                @if (ConfirmNeedsReason)
+                {
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                            <Template>
+                                <DxMemo @bind-Text="@ConfirmReason" Rows="2" maxlength="250" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                }
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  Click="@(() => ConfirmVisible = false)"
+                                  Enabled="@(!IsApplyingAction)" />
+                        <DxButton RenderStyle="@ConfirmButtonStyle"
+                                  Text="@ConfirmButtonText"
+                                  Click="@ConfirmActionAsync"
+                                  Enabled="@(!IsApplyingAction)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

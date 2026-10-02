@@ -1,0 +1,219 @@
+@page "/planning/daily-production/{Mode:regex(^(new|edit|view)$)}"
+@page "/planning/daily-production/{Mode:regex(^(edit|view)$)}/{OutputId:long}"
+@page "/planning/daily-production/new/{WorkOrderOperationId:long}"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Production
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningDailyProduction">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-industry"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Production</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    @if (!string.IsNullOrWhiteSpace(DocumentNo))
+                    {
+                        <span class="iv-chip code-style">@DocumentNo</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(WorkOrderNo))
+                    {
+                        <span class="iv-chip code-style">@WorkOrderNo</span>
+                    }
+                    <span class="iv-chip">@HeaderStatus</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="BACK" IconCssClass="fa-solid fa-arrow-left"
+                          Click="@BackToList" Enabled="@(!IsSubmitting)" />
+                @if (CanSave)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@SaveAsync" Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanPost)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Success" Text="POST" IconCssClass="fa-solid fa-check"
+                              Click="@PostAsync" Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanRollback)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Warning" Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left"
+                              Click="@OpenRollbackConfirm" Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanDelete)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="DELETE" IconCssClass="fa-solid fa-trash"
+                              Click="@DeleteAsync" Enabled="@(!IsSubmitting)" />
+                }
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (IsNewMode && SelectedOperationId is null)
+            {
+                <h3 class="h6">Select operation</h3>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-3">
+                        <DxTextBox @bind-Text="EligibleWorkOrderNo" NullText="Work Order" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <DxTextBox @bind-Text="EligibleProductCode" NullText="Product" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <DxTextBox @bind-Text="EligibleWorkCentre" NullText="Work Centre" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <DxButton Text="SEARCH" Click="@SearchEligibleAsync" />
+                    </div>
+                </div>
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Work Order</th>
+                            <th>Product</th>
+                            <th>WC</th>
+                            <th>Op</th>
+                            <th>Output</th>
+                            <th>Remaining</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in EligibleRows)
+                        {
+                            <tr>
+                                <td class="code-style">@row.WorkOrderNo</td>
+                                <td>@row.ProductCode</td>
+                                <td>@row.WorkCentreCode</td>
+                                <td>@row.OperationCode</td>
+                                <td>@row.OutputItemCode</td>
+                                <td>@row.RemainingQty.ToString("N4") @row.OutputUom</td>
+                                <td>
+                                    <DxButton Text="SELECT" RenderStyle="ButtonRenderStyle.Secondary"
+                                              Click="@(() => SelectOperationAsync(row.WorkOrderOperationId))" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Production date</label>
+                        <DxDateEdit @bind-Date="ProductionDate" Enabled="@CanEditFields" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Shift</label>
+                        <DxTextBox @bind-Text="ShiftCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Machine</label>
+                        <DxTextBox @bind-Text="ActualMachineCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Operator</label>
+                        <DxTextBox @bind-Text="OperatorCode" Enabled="@CanEditFields" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Output lot</label>
+                        <DxTextBox @bind-Text="OutputLotNo" Enabled="@CanEditFields" CssClass="w-100" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Good</label>
+                        <DxSpinEdit @bind-Value="GoodQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Scrap</label>
+                        <DxSpinEdit @bind-Value="ScrapQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Reject</label>
+                        <DxSpinEdit @bind-Value="RejectQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Hold</label>
+                        <DxSpinEdit @bind-Value="HoldQty" Enabled="@CanEditFields" CssClass="w-100" MinValue="0" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Output item / UOM</label>
+                        <div class="code-style">@OutputItemCode · @OutputUom</div>
+                    </div>
+                </div>
+
+                <h3 class="h6">Materials for this post</h3>
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Material</th>
+                            <th>Source</th>
+                            <th>Required (BOM)</th>
+                            <th>Available</th>
+                            <th>Note</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (Materials.Count == 0)
+                        {
+                            <tr><td colspan="5" class="text-muted">No materials on this operation.</td></tr>
+                        }
+                        else
+                        {
+                            @foreach (var m in Materials)
+                            {
+                                <tr>
+                                    <td>@m.ComponentCode <span class="text-muted">@m.Description</span></td>
+                                    <td>@m.IssueMethod / @m.SupplySource</td>
+                                    <td>@m.RequiredQty.ToString("N4") @m.RequiredUom</td>
+                                    <td>@m.AvailableQty.ToString("N4")</td>
+                                    <td class="text-danger">@m.BlockingReason</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
+
+    <DxPopup Visible="@RollbackConfirmVisible" HeaderText="Rollback Daily Production"
+             CloseOnOutsideClick="false" ShowCloseButton="true" Closed="@(() => RollbackConfirmVisible = false)">
+        <BodyContentTemplate>
+            <p>Enter a reason to roll back this posted document.</p>
+            <DxMemo @bind-Text="RollbackReason" Rows="3" CssClass="w-100" />
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" />
+            <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
+        </FooterContentTemplate>
+    </DxPopup>
+</MenuAuthorize>

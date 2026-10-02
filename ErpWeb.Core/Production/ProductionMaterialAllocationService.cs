@@ -116,7 +116,6 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
                 x.IssueMethod,
                 x.SupplySource,
                 x.WarehouseCode,
-                x.LocationCode,
                 x.BaseUom,
                 x.ConversionFactorToBase,
                 WorkOrderStatus = x.WorkOrder!.Status
@@ -142,7 +141,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
                 && x.BranchCode == scope.BranchCode
                 && x.ICode == material.ComponentCode
                 && x.WhCode == material.WarehouseCode
-                && (string.IsNullOrEmpty(material.LocationCode) || x.LocCode == material.LocationCode)
+                // Work-order LocationCode is tenant/site metadata; stock bins are matched by warehouse only.
                 && x.IStatus == IvItemStatuses.Active
                 && x.StdQty > 0m
                 && x.StockMaster.IsActive

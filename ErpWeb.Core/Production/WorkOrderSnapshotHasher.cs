@@ -103,6 +103,7 @@ public static class WorkOrderSnapshotHasher
         {
             ProductionSnapshotHashVersions.V1 => ComputeSnapshotHashV1(workOrder),
             ProductionSnapshotHashVersions.DefinitionIdentityV2 => ComputeSnapshotHashV2(workOrder),
+            ProductionSnapshotHashVersions.RouteOutputContractV3 => ComputeSnapshotHashV3(workOrder),
             _ => throw new InvalidOperationException(
                 $"Unsupported SnapshotHashVersion {workOrder.SnapshotHashVersion}."),
         };
@@ -121,7 +122,7 @@ public static class WorkOrderSnapshotHasher
         WriteSnapshotHeaderCommon(w, workOrder);
         w.AddDate(workOrder.DefinitionEffectiveDate);
         w.AddDate(workOrder.SourceEffectiveFrom);
-        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: false);
+        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: false, includeRouteOutputContract: false);
         return w.ComputeHash();
     }
 
@@ -139,7 +140,23 @@ public static class WorkOrderSnapshotHasher
         WriteSnapshotHeaderCommon(w, workOrder);
         w.Add(workOrder.SourceDefinitionCode);
         w.Add(workOrder.SourceProductDefinitionRevisionId);
-        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: true);
+        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: true, includeRouteOutputContract: false);
+        return w.ComputeHash();
+    }
+
+    /// <summary>
+    /// Hash-version 3: V2 body plus route OutputType, YieldPercent, OutputBaseUom,
+    /// OutputConversionFactorToBase.
+    /// </summary>
+    public static string ComputeSnapshotHashV3(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+
+        var w = new CanonicalHashWriter();
+        WriteSnapshotHeaderCommon(w, workOrder);
+        w.Add(workOrder.SourceDefinitionCode);
+        w.Add(workOrder.SourceProductDefinitionRevisionId);
+        WriteSnapshotScheduleAndBody(w, workOrder, includeComponentDefinitionCode: true, includeRouteOutputContract: true);
         return w.ComputeHash();
     }
 
@@ -163,7 +180,8 @@ public static class WorkOrderSnapshotHasher
     private static void WriteSnapshotScheduleAndBody(
         CanonicalHashWriter w,
         ProductionWorkOrder workOrder,
-        bool includeComponentDefinitionCode)
+        bool includeComponentDefinitionCode,
+        bool includeRouteOutputContract)
     {
         w.AddTimestamp(workOrder.ScheduleAnchorDateTime);
         w.AddTimestamp(workOrder.PlannedStartDateTime);
@@ -192,6 +210,13 @@ public static class WorkOrderSnapshotHasher
             w.Add(step.OutputBaseQty);
             w.Add(step.PlannedQty);
             w.Add(step.OutputUom);
+            if (includeRouteOutputContract)
+            {
+                w.Add(step.OutputType);
+                w.Add(step.YieldPercent);
+                w.Add(step.OutputBaseUom);
+                w.Add(step.OutputConversionFactorToBase);
+            }
             w.AddTimestamp(step.PlannedStartDateTime);
             w.AddTimestamp(step.PlannedCompletionDateTime);
 

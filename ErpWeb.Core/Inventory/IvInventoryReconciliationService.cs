@@ -1,5 +1,6 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 
@@ -118,19 +119,16 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var findings = new List<IvInventoryReconcileFinding>();
 
-        var balQuery = db.IvBalLocs.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch);
-        if (itemFilter is not null)
-        {
-            balQuery = balQuery.Where(x => x.ICode == itemFilter);
-        }
-
-        if (whFilter is not null)
-        {
-            balQuery = balQuery.Where(x => x.WhCode == whFilter);
-        }
-
-        var balances = await balQuery.ToListAsync(cancellationToken);
+        // Keep the complete branch snapshot available for history-to-balance identity checks. The
+        // filtered collection below remains the scope for quantity/duplicate/integrity findings.
+        var allBalances = await db.IvBalLocs.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
+            .ToListAsync(cancellationToken);
+        var balanceById = allBalances.ToDictionary(x => x.Id);
+        var balances = allBalances
+            .Where(x => MatchesFilter(itemFilter, x.ICode)
+                        && MatchesFilter(whFilter, x.WhCode))
+            .ToList();
 
         // Duplicate slices (legacy)
         foreach (var dup in balances
@@ -146,23 +144,17 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
             });
         }
 
-        var historyQuery = db.IvTrxHistories.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch);
-        if (itemFilter is not null)
-        {
-            historyQuery = historyQuery.Where(x => x.ICode == itemFilter);
-        }
-
-        var histories = await historyQuery.ToListAsync(cancellationToken);
+        // Do not filter history by the recorded item here. A history-to-balance mismatch may be visible
+        // only because the actual referenced balance matches the caller's item/warehouse filter.
+        var histories = await db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
+            .ToListAsync(cancellationToken);
 
         // The orphan check asks whether a pile EXISTS, so it is resolved against the WHOLE branch — never
         // against the filtered set. Resolving it against the filtered set would report every transfer
         // that came from another warehouse (or another item) as "orphaned history": a false positive
         // manufactured by asking a narrower question than the one the check means.
-        var branchBalLocIds = await db.IvBalLocs.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
-            .Select(x => x.Id)
-            .ToListAsync(cancellationToken);
+        var branchBalLocIds = allBalances.Select(x => x.Id).ToList();
         var balIds = branchBalLocIds.ToHashSet();
 
         // Orphan history: stock-controlled (has BalLoc FK) but missing BalLoc
@@ -192,6 +184,34 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
                     HistoryId = h.Id,
                     BalLocId = fromId
                 });
+            }
+        }
+
+        // A foreign-key reference can still point to a real balance whose stock identity no longer
+        // matches the history leg. Report the recorded and actual identities separately for each leg;
+        // null/whitespace values are normalized and codes compare case-insensitively.
+        foreach (var h in histories)
+        {
+            if (h.ToBalLocId is int toId && balanceById.TryGetValue(toId, out var actualInbound))
+            {
+                AddHistorySliceMismatch(
+                    h,
+                    actualInbound,
+                    inbound: true,
+                    itemFilter,
+                    whFilter,
+                    findings);
+            }
+
+            if (h.FromBalLocId is int fromId && balanceById.TryGetValue(fromId, out var actualOutbound))
+            {
+                AddHistorySliceMismatch(
+                    h,
+                    actualOutbound,
+                    inbound: false,
+                    itemFilter,
+                    whFilter,
+                    findings);
             }
         }
 
@@ -427,6 +447,78 @@ public sealed class IvInventoryReconciliationService : IIvInventoryReconciliatio
             }
         }
 
-        return IvInventoryReconcileResult.Ok(findings);
+        var orderedFindings = findings
+            .OrderBy(f => f.Slice is null ? 1 : 0)
+            .ThenBy(f => f.Slice ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(f => f.Code, StringComparer.Ordinal)
+            .ThenBy(f => f.HistoryId ?? 0)
+            .ThenBy(f => f.BalLocId ?? 0)
+            .ToList();
+
+        return IvInventoryReconcileResult.Ok(orderedFindings);
     }
+
+    private static void AddHistorySliceMismatch(
+        IvTrxHistory history,
+        ErpWeb.Model.Entities.Inventory.IvBalLoc actual,
+        bool inbound,
+        string? itemFilter,
+        string? warehouseFilter,
+        ICollection<IvInventoryReconcileFinding> findings)
+    {
+        var recordedWarehouse = inbound ? history.ToWarehouse : history.FrWarehouse;
+        var recordedLocation = inbound ? history.ToLocation : history.FrLocation;
+        var recordedLot = inbound ? history.ToLotNo : history.FrLotNo;
+
+        if (!MatchesFilter(itemFilter, history.ICode, actual.ICode)
+            || !MatchesFilter(warehouseFilter, recordedWarehouse, actual.WhCode))
+        {
+            return;
+        }
+
+        var itemMatches = SameStockCode(history.ICode, actual.ICode);
+        var warehouseMatches = SameStockCode(recordedWarehouse, actual.WhCode);
+        var locationMatches = SameStockCode(recordedLocation, actual.LocCode);
+        var lotMatches = SameStockCode(recordedLot, actual.LotNo);
+        var statusMatches = SameStockCode(history.IStatus, actual.IStatus);
+        if (itemMatches && warehouseMatches && locationMatches && lotMatches && statusMatches)
+        {
+            return;
+        }
+
+        var leg = inbound ? "inbound" : "outbound";
+        var actualSlice = IvStockSliceKey.Create(
+            actual.CompanyCode,
+            actual.BranchCode,
+            actual.ICode,
+            actual.WhCode,
+            actual.LocCode,
+            actual.LotNo,
+            actual.IStatus);
+        findings.Add(new IvInventoryReconcileFinding
+        {
+            Code = "HISTORY_SLICE_MISMATCH",
+            Message = $"History Id {history.Id} {leg} leg references BalLoc {actual.Id} with a different stock slice. "
+                + $"Recorded item/warehouse/bin/lot/status = {FormatStockValue(history.ICode)}/"
+                + $"{FormatStockValue(recordedWarehouse)}/{FormatStockValue(recordedLocation)}/"
+                + $"{FormatStockValue(recordedLot)}/{FormatStockValue(history.IStatus)}; "
+                + $"actual = {FormatStockValue(actual.ICode)}/{FormatStockValue(actual.WhCode)}/"
+                + $"{FormatStockValue(actual.LocCode)}/{FormatStockValue(actual.LotNo)}/"
+                + $"{FormatStockValue(actual.IStatus)}.",
+            BalLocId = actual.Id,
+            HistoryId = history.Id,
+            Slice = actualSlice.ToString(),
+            BalLocQty = actual.StdQty
+        });
+    }
+
+    private static bool MatchesFilter(string? filter, params string?[] values) =>
+        filter is null || values.Any(value => SameStockCode(filter, value));
+
+    private static bool SameStockCode(string? left, string? right) =>
+        string.Equals(NormalizeStockValue(left), NormalizeStockValue(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeStockValue(string? value) => (value ?? string.Empty).Trim();
+
+    private static string FormatStockValue(string? value) => $"'{NormalizeStockValue(value)}'";
 }

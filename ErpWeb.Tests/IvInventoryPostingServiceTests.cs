@@ -134,6 +134,33 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Post_revalidates_a_named_destination_bin_after_it_is_deactivated()
+    {
+        var mr = CreateMr();
+        var save = await mr.SaveNewAsync(Request(10m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var location = await db.IvLocations.SingleAsync(x => x.LocCode == "BIN1");
+            location.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var post = await mr.PostAsync([save.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("inactive", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(IvBatchStatuses.New, await verify.IvTrxBatches
+            .Where(x => x.BatchNo == save.BatchNo)
+            .Select(x => x.BatchStatus)
+            .SingleAsync());
+        Assert.Empty(await verify.IvBalLocs.ToListAsync());
+        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+    }
+
+    [Fact]
     public async Task Post_same_slice_lines_aggregate_to_one_bal_three_history()
     {
         var mr = CreateMr();

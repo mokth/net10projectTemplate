@@ -73,6 +73,14 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
                 + "before releasing or structurally editing.");
         }
 
+        if (context.RequireCurrentSnapshotFormat
+            && workOrder.SnapshotHashVersion < ProductionSnapshotHashVersions.Current)
+        {
+            report.Add(ProductionReadinessErrorCodes.SnapshotHashVersionStale,
+                "This Work Order snapshot hash version is below the current route-output contract. "
+                + "Refresh the Product Definition before releasing.");
+        }
+
         if (!string.IsNullOrWhiteSpace(context.CurrentSnapshotHash)
             && !string.Equals(context.CurrentSnapshotHash, workOrder.SnapshotHash, StringComparison.Ordinal))
         {
@@ -250,14 +258,74 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
 
     private static void ValidateTerminalOutput(ProductionWorkOrder workOrder, WorkOrderReadinessReport report)
     {
-        // The terminal route step's output must be the Work Order finished good.
-        if (!workOrder.RouteSteps.Any(rs =>
-                string.Equals(rs.OutputItemCode, workOrder.ProductCode, StringComparison.OrdinalIgnoreCase)))
+        foreach (var routeStep in workOrder.RouteSteps)
         {
-            report.Add(ProductionReadinessErrorCodes.FinalOutputMismatch,
-                $"No route step produces the Work Order item {workOrder.ProductCode}.");
+            ValidateRouteOutputContract(routeStep, report);
+        }
+
+        var terminalFg = workOrder.RouteSteps
+            .Where(rs =>
+                string.Equals(rs.OutputItemCode, workOrder.ProductCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(rs.OutputType, PrRouteOutputTypes.FinishedGoods, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (terminalFg.Count == 0)
+        {
+            report.Add(ProductionReadinessErrorCodes.TerminalFgRouteInvalid,
+                $"Exactly one FINISHED_GOODS route step must produce Work Order item {workOrder.ProductCode}.");
+            return;
+        }
+
+        if (terminalFg.Count > 1)
+        {
+            report.Add(ProductionReadinessErrorCodes.TerminalFgRouteInvalid,
+                $"Multiple FINISHED_GOODS route steps produce Work Order item {workOrder.ProductCode}.");
+            return;
+        }
+
+        var terminal = terminalFg[0];
+        if (!string.Equals(terminal.OutputBaseUom, workOrder.OutputUom, StringComparison.OrdinalIgnoreCase))
+        {
+            report.Add(ProductionReadinessErrorCodes.TerminalFgRouteInvalid,
+                $"Terminal FG route OutputBaseUom '{terminal.OutputBaseUom}' must equal Work Order OutputUom '{workOrder.OutputUom}'.",
+                Describe(terminal));
         }
     }
+
+    private static void ValidateRouteOutputContract(ProductionWorkOrderRouteStep routeStep, WorkOrderReadinessReport report)
+    {
+        var target = Describe(routeStep);
+        if (string.IsNullOrWhiteSpace(routeStep.OutputType)
+            || !IsKnownOutputType(routeStep.OutputType))
+        {
+            report.Add(ProductionReadinessErrorCodes.RouteOutputContractIncomplete,
+                $"Route step {routeStep.StageSequence} has missing or unknown OutputType.", target);
+        }
+
+        if (routeStep.YieldPercent is null || routeStep.YieldPercent != 100m)
+        {
+            report.Add(ProductionReadinessErrorCodes.RouteOutputContractIncomplete,
+                $"Route step {routeStep.StageSequence} requires YieldPercent = 100 for this release.", target);
+        }
+
+        if (string.IsNullOrWhiteSpace(routeStep.OutputBaseUom)
+            || routeStep.OutputConversionFactorToBase is null
+            || routeStep.OutputConversionFactorToBase <= 0m)
+        {
+            report.Add(ProductionReadinessErrorCodes.RouteOutputContractIncomplete,
+                $"Route step {routeStep.StageSequence} is missing OutputBaseUom or a positive conversion factor.",
+                target);
+        }
+    }
+
+    private static bool IsKnownOutputType(string? value) =>
+        value is PrRouteOutputTypes.WipStocked
+            or PrRouteOutputTypes.WipNonstock
+            or PrRouteOutputTypes.FinishedGoods;
+
+    private static string Describe(ProductionWorkOrderRouteStep step) =>
+        $"PrWorkOrderRouteStep/{step.StageSequence}/{step.WorkCentreCode}";
+
 
     private static void ValidateMaterials(ProductionWorkOrder workOrder, WorkOrderReadinessReport report)
     {
@@ -332,6 +400,14 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
         {
             report.Add(ProductionReadinessErrorCodes.ReferenceInvalid,
                 $"The declared producer of {material.ComponentCode} outputs {declared.OutputItemCode}.",
+                target);
+        }
+
+        if (declared is not null
+            && !string.Equals(declared.OutputType, PrRouteOutputTypes.WipStocked, StringComparison.OrdinalIgnoreCase))
+        {
+            report.Add(ProductionReadinessErrorCodes.WipProducerNotStocked,
+                $"Internal route WIP material {material.ComponentCode} requires a WIP_STOCKED producing route step.",
                 target);
         }
     }

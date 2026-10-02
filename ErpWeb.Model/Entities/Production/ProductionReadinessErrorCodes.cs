@@ -34,6 +34,18 @@ public static class ProductionReadinessErrorCodes
     /// <summary>The terminal route step's output item does not match the Work Order product.</summary>
     public const string FinalOutputMismatch = "WO_FINAL_OUTPUT_MISMATCH";
 
+    /// <summary>Current snapshot route step is missing OutputType / base UOM / conversion.</summary>
+    public const string RouteOutputContractIncomplete = "WO_ROUTE_OUTPUT_CONTRACT_INCOMPLETE";
+
+    /// <summary>Exactly one FINISHED_GOODS route must produce the Work Order product.</summary>
+    public const string TerminalFgRouteInvalid = "WO_TERMINAL_FG_ROUTE_INVALID";
+
+    /// <summary>INTERNAL_ROUTE_WIP producer is not WIP_STOCKED.</summary>
+    public const string WipProducerNotStocked = "WO_WIP_PRODUCER_NOT_STOCKED";
+
+    /// <summary>Snapshot hash version is below the current execution contract.</summary>
+    public const string SnapshotHashVersionStale = "WO_SNAPSHOT_HASH_VERSION_STALE";
+
     // ── Process and resources (plan §9.1) ─────────────────────────────────────────────────────
 
     /// <summary>A machine-based operation has no selected/default machine option.</summary>

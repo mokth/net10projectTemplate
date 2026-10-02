@@ -143,8 +143,7 @@ public sealed partial class ProductionMaterialIssueService
             var material = materials[line.WorkOrderMaterialId];
             var balance = balances[allocation.FromBalLocId];
             if (!balance.StockMaster.IsActive || !balance.StockMaster.StockControl || balance.IStatus != IvItemStatuses.Active
-                || balance.ICode != material.ComponentCode || balance.WhCode != material.WarehouseCode
-                || (!string.IsNullOrWhiteSpace(material.LocationCode) && balance.LocCode != material.LocationCode))
+                || balance.ICode != material.ComponentCode || balance.WhCode != material.WarehouseCode)
                 return DraftFail(IvMasterErrorCode.Validation, $"Stock balance {balance.Id} is not eligible for {material.ComponentCode}.");
             if (!string.IsNullOrWhiteSpace(balance.StdUom)
                 && !string.Equals(balance.StdUom, material.BaseUom, StringComparison.OrdinalIgnoreCase))
@@ -213,8 +212,9 @@ public sealed partial class ProductionMaterialIssueService
             var referencedIds = oldDetailIds.Length == 0
                 ? new HashSet<int>()
                 : (await db.ProductionMaterialMovements.AsNoTracking()
-                    .Where(x => oldDetailIds.Contains(x.InventoryBatchDetailId))
-                    .Select(x => x.InventoryBatchDetailId)
+                    .Where(x => x.InventoryBatchDetailId.HasValue
+                        && oldDetailIds.Contains(x.InventoryBatchDetailId.Value))
+                    .Select(x => x.InventoryBatchDetailId!.Value)
                     .Distinct()
                     .ToListAsync(ct)).ToHashSet();
             if (referencedIds.Count > allocationPlan.Count)

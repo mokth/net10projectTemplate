@@ -53,7 +53,8 @@ public sealed class ProductionMaterialIssueSchemaTests
             typeof(ProductionWorkOrder), typeof(ProductionWorkOrderMaterial),
             typeof(ProductionWorkOrderOperation), typeof(ProductionPostingLink),
             typeof(ProductionMaterialMovement), typeof(IvTrxBatch),
-            typeof(IvTrxBatchDetail), typeof(IvBalLoc), typeof(IvLot)
+            typeof(IvTrxBatchDetail), typeof(IvBalLoc), typeof(IvLot),
+            typeof(ProductionBalLot), typeof(ProductionBalLotMovement), typeof(ProductionOutput)
         };
 
         Assert.Equal(expectedPrincipals.Length, Entity.GetForeignKeys().Count());
@@ -73,7 +74,8 @@ public sealed class ProductionMaterialIssueSchemaTests
         Assert.Contains("IX_PrMaterialMovement_Operation_Date", indexes.Keys);
         Assert.Contains("IX_PrMaterialMovement_InventoryBatch", indexes.Keys);
         Assert.Contains("IX_PrMaterialMovement_OriginalMovement", indexes.Keys);
-        Assert.True(indexes["UQ_PrMaterialMovement_PostingLine"].IsUnique);
+        Assert.True(indexes["UQ_PrMaterialMovement_PostingInventoryLine"].IsUnique);
+        Assert.True(indexes["UQ_PrMaterialMovement_PostingBalLotLine"].IsUnique);
     }
 
     [Fact]

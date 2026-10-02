@@ -15,7 +15,7 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
             table.HasCheckConstraint("CK_PrMaterialMovement_Cost", "[UnitCost] >= 0 AND [TotalCost] >= 0");
             table.HasCheckConstraint(
                 "CK_PrMaterialMovement_Type",
-                "[MovementType] IN ('ISSUE', 'ISSUE_REVERSAL', 'RETURN', 'CONSUME', 'ADJUST')");
+                "[MovementType] IN ('ISSUE', 'ISSUE_REVERSAL', 'RETURN', 'CONSUME', 'CONSUME_REVERSAL', 'ADJUST')");
         });
 
         builder.HasKey(x => x.Uid);
@@ -42,6 +42,9 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.Property(x => x.InventoryBatchDetailId).HasColumnName("InventoryBatchDetailID");
         builder.Property(x => x.InventoryHistoryId).HasColumnName("InventoryHistoryID");
         builder.Property(x => x.InventoryPostingOperationId).HasColumnName("InventoryPostingOperationID").HasMaxLength(64);
+        builder.Property(x => x.ProductionBalLotId).HasColumnName("ProductionBalLotID");
+        builder.Property(x => x.ProductionBalLotMovementId).HasColumnName("ProductionBalLotMovementID");
+        builder.Property(x => x.ProductionOutputId).HasColumnName("ProductionOutputID");
         builder.Property(x => x.UnitCost).HasPrecision(18, 4);
         builder.Property(x => x.TotalCost).HasPrecision(18, 4);
         builder.Property(x => x.PostingLinkId).HasColumnName("PostingLinkID");
@@ -59,6 +62,9 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.HasOne(x => x.InventoryBatchDetail).WithMany().HasForeignKey(x => x.InventoryBatchDetailId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.FromBalLoc).WithMany().HasForeignKey(x => x.FromBalLocId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.Lot).WithMany().HasForeignKey(x => x.LotId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ProductionBalLot).WithMany().HasForeignKey(x => x.ProductionBalLotId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ProductionBalLotMovement).WithMany().HasForeignKey(x => x.ProductionBalLotMovementId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ProductionOutput).WithMany().HasForeignKey(x => x.ProductionOutputId).OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(x => new { x.WorkOrderId, x.MovementDate }).HasDatabaseName("IX_PrMaterialMovement_WorkOrder_Date");
         builder.HasIndex(x => new { x.WorkOrderMaterialId, x.MovementType }).HasDatabaseName("IX_PrMaterialMovement_Material_Type");
@@ -66,6 +72,12 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.InventoryBatchNo }).HasDatabaseName("IX_PrMaterialMovement_InventoryBatch");
         builder.HasIndex(x => x.OriginalMovementId).HasDatabaseName("IX_PrMaterialMovement_OriginalMovement");
         builder.HasIndex(x => new { x.PostingLinkId, x.InventoryBatchDetailId, x.MovementType })
-            .IsUnique().HasDatabaseName("UQ_PrMaterialMovement_PostingLine");
+            .IsUnique()
+            .HasFilter("[InventoryBatchDetailID] IS NOT NULL")
+            .HasDatabaseName("UQ_PrMaterialMovement_PostingInventoryLine");
+        builder.HasIndex(x => new { x.PostingLinkId, x.ProductionBalLotMovementId, x.MovementType })
+            .IsUnique()
+            .HasFilter("[ProductionBalLotMovementID] IS NOT NULL")
+            .HasDatabaseName("UQ_PrMaterialMovement_PostingBalLotLine");
     }
 }

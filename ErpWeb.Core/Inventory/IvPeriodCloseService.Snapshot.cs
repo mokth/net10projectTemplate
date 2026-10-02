@@ -11,6 +11,7 @@ public sealed partial class IvPeriodCloseService
     private static readonly HashSet<string> BlockingFindingCodes = new(StringComparer.OrdinalIgnoreCase)
     {
         "MISMATCH",
+        "HISTORY_SLICE_MISMATCH",
         "ORPHAN_HISTORY",
         "DUPLICATE_SLICE",
         "STOCK_COUNT_BATCH_NOT_POSTED",

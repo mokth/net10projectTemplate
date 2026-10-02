@@ -763,27 +763,23 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             return ($"Line {lineNo}: warehouse '{toWarehouse}' was not found for this branch.", null);
         }
 
-        var hasLocations = await _common.HasActiveLocationsAsync(
-            db, companyCode, branchCode, toWarehouse, cancellationToken);
         var toLocation = (line.ToLocation ?? string.Empty).Trim();
-        if (hasLocations)
+        var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+            db,
+            _common,
+            companyCode,
+            branchCode,
+            toWarehouse,
+            toLocation,
+            $"Line {lineNo}",
+            "location",
+            cancellationToken);
+        if (locationValidation.Error is not null)
         {
-            if (string.IsNullOrWhiteSpace(toLocation))
-            {
-                return ($"Line {lineNo}: location is required for warehouse '{toWarehouse}'.", null);
-            }
+            return (locationValidation.Error, null);
+        }
 
-            var location = await _common.GetActiveLocationAsync(
-                db, companyCode, branchCode, toWarehouse, toLocation, cancellationToken);
-            if (location is null)
-            {
-                return ($"Line {lineNo}: location '{toLocation}' was not found for warehouse '{toWarehouse}'.", null);
-            }
-        }
-        else
-        {
-            toLocation = string.Empty;
-        }
+        toLocation = locationValidation.Location;
 
         if (toLocation.Length > 10)
         {

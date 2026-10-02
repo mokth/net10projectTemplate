@@ -940,27 +940,23 @@ public sealed class IvStockTransferService : IIvStockTransferService
             return ($"Line {lineNo}: destination warehouse '{toWarehouse}' was not found for this branch.", null);
         }
 
-        var hasDestLocations = await _common.HasActiveLocationsAsync(
-            db, companyCode, branchCode, toWarehouse, cancellationToken);
         var toLocation = (line.ToLocation ?? string.Empty).Trim();
-        if (hasDestLocations)
+        var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+            db,
+            _common,
+            companyCode,
+            branchCode,
+            toWarehouse,
+            toLocation,
+            $"Line {lineNo}",
+            "destination location",
+            cancellationToken);
+        if (locationValidation.Error is not null)
         {
-            if (string.IsNullOrWhiteSpace(toLocation))
-            {
-                return ($"Line {lineNo}: destination location is required for warehouse '{toWarehouse}'.", null);
-            }
+            return (locationValidation.Error, null);
+        }
 
-            var toLocRow = await _common.GetActiveLocationAsync(
-                db, companyCode, branchCode, toWarehouse, toLocation, cancellationToken);
-            if (toLocRow is null)
-            {
-                return ($"Line {lineNo}: destination location '{toLocation}' was not found for warehouse '{toWarehouse}'.", null);
-            }
-        }
-        else
-        {
-            toLocation = string.Empty;
-        }
+        toLocation = locationValidation.Location;
 
         var fromSlice = IvStockSliceKey.Create(
             companyCode, branchCode, iCode, frWarehouse, frLocation, frLotNo, iStatus);

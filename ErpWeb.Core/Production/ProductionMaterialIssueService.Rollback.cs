@@ -83,14 +83,24 @@ public sealed partial class ProductionMaterialIssueService
                 return RollbackFail(IvMasterErrorCode.Validation, "This Issue to Production has already been rolled back.");
 
             originalIds = originalMovements.Select(x => x.Uid).ToList();
-            var hasDependency = await db.ProductionMaterialMovements.AsNoTracking().AnyAsync(x =>
-                x.OriginalMovementId.HasValue && originalIds.Contains(x.OriginalMovementId.Value)
-                && (x.MovementType == ProductionMaterialMovementTypes.Consume
-                    || x.MovementType == ProductionMaterialMovementTypes.Return
-                    || x.MovementType == ProductionMaterialMovementTypes.Adjustment), cancellationToken);
-            if (hasDependency)
+            var dependentMovements = await db.ProductionMaterialMovements.AsNoTracking()
+                .Where(x => x.OriginalMovementId.HasValue && originalIds.Contains(x.OriginalMovementId.Value))
+                .ToListAsync(cancellationToken);
+            if (ProductionMaterialMovementTotals.HasBlockingDownstreamDependency(dependentMovements))
                 return RollbackFail(IvMasterErrorCode.InUse, "Rollback is blocked because later production movements depend on this issue.");
 
+            // MATERIAL_IN piles must still hold the full original issue base qty.
+            foreach (var original in originalMovements)
+            {
+                var pile = await db.ProductionBalLots
+                    .FirstOrDefaultAsync(x => x.OriginalIssueMovementId == original.Uid, cancellationToken);
+                if (pile is not null
+                    && IvQty.Round(pile.BaseQty) != IvQty.Round(original.BaseQty))
+                {
+                    return RollbackFail(IvMasterErrorCode.InUse,
+                        $"Production balance lot for {original.ItemCode} no longer holds the full issued quantity.");
+                }
+            }
             var now = _clock.Now;
             var user = scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
             var rollbackLink = new ProductionPostingLink
@@ -133,7 +143,11 @@ public sealed partial class ProductionMaterialIssueService
 
             // When this IP was the only history on a BalLoc, inventory rollback clears TransDate.
             // Piles with quantity still need a stock date so the reopened draft can be re-posted.
-            foreach (var balLocId in originalMovements.Select(x => x.FromBalLocId).Distinct().OrderBy(x => x))
+            foreach (var balLocId in originalMovements
+                .Where(x => x.FromBalLocId.HasValue)
+                .Select(x => x.FromBalLocId!.Value)
+                .Distinct()
+                .OrderBy(x => x))
             {
                 var locked = await _stockPosting!.LockBalLocByIdForTenantAsync(
                     db, balLocId, scope.CompanyCode, scope.BranchCode!, cancellationToken);
@@ -208,9 +222,44 @@ public sealed partial class ProductionMaterialIssueService
                     - materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty)
                     - reversedByMaterial.GetValueOrDefault(material.Uid));
                 material.ReturnedQty = IvQty.Round(materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty));
-                material.ConsumedQty = IvQty.Round(materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty));
+                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
+                    materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
+                    materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
                 material.ModifiedDate = now;
                 material.ModifiedBy = user;
+            }
+
+            foreach (var original in originalMovements)
+            {
+                var pile = await db.ProductionBalLots
+                    .FirstOrDefaultAsync(x => x.OriginalIssueMovementId == original.Uid, cancellationToken);
+                if (pile is null)
+                    continue;
+                db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
+                {
+                    ProductionBalLotId = pile.Uid,
+                    MovementType = ProductionBalLotMovementTypes.IssueReversal,
+                    Qty = original.Qty,
+                    Uom = original.Uom,
+                    BaseQty = original.BaseQty,
+                    BaseUom = original.BaseUom,
+                    UnitCost = original.UnitCost,
+                    TotalCost = original.TotalCost,
+                    WorkOrderId = original.WorkOrderId,
+                    WorkOrderMaterialId = original.WorkOrderMaterialId,
+                    WorkOrderOperationId = original.WorkOrderOperationId,
+                    PostingLinkId = rollbackLink.Uid,
+                    DocumentType = ProductionDocumentTypes.MaterialIssue,
+                    DocumentNo = request.InventoryBatchNo.ToString(),
+                    MovementDate = original.MovementDate,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                });
+                pile.Qty = 0m;
+                pile.BaseQty = 0m;
+                pile.TotalCost = 0m;
+                pile.AverageUnitCost = 0m;
+                pile.LastMovementDate = original.MovementDate;
             }
 
             // Reopen the same post link as a NEW draft so the user can edit qty/lot and re-post.

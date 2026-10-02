@@ -37,10 +37,33 @@ public class ProductionWorkOrderRouteStep
     public string OutputItemCode { get; set; } = string.Empty;
     public string? OutputItemDescription { get; set; }
 
+    /// <summary>
+    /// Frozen <c>PrBomRouteStep.OutputType</c>: WIP_STOCKED | WIP_NONSTOCK | FINISHED_GOODS.
+    /// Null only on pre-V3 released snapshots; Daily Production rejects null.
+    /// </summary>
+    public string? OutputType { get; set; }
+
+    /// <summary>
+    /// Frozen route yield percent. New snapshots stamp 100. Non-100 execution is deferred.
+    /// </summary>
+    public decimal? YieldPercent { get; set; }
+
     /// <summary>The source route step's declared output quantity basis.</summary>
     public decimal OutputBaseQty { get; set; } = 1m;
 
     public string? OutputUom { get; set; }
+
+    /// <summary>
+    /// Frozen inventory base UOM of <see cref="OutputItemCode"/> (item StdUom).
+    /// Set by the snapshot builder from the item master; not authored on PrBomRouteStep.
+    /// </summary>
+    public string? OutputBaseUom { get; set; }
+
+    /// <summary>
+    /// Frozen conversion: one <see cref="OutputUom"/> unit equals this many
+    /// <see cref="OutputBaseUom"/> units. Resolved by the quantity calculator.
+    /// </summary>
+    public decimal? OutputConversionFactorToBase { get; set; }
 
     /// <summary>Planned output for this occurrence, in <see cref="OutputUom"/>.</summary>
     public decimal PlannedQty { get; set; }

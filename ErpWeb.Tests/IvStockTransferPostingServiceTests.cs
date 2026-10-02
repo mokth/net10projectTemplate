@@ -119,6 +119,58 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Post_nets_a_balance_that_is_both_source_and_destination()
+    {
+        var bin1Id = await SeedBalLocAsync(20m, loc: "BIN1", seedOpeningHistory: true);
+        var bin2Id = await SeedBalLocAsync(10m, loc: "BIN2", seedOpeningHistory: true);
+        var tr = CreateTr();
+        var save = await tr.SaveNewAsync(new IvStockTransferSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines =
+            [
+                TransferLine(bin1Id, 5m, "BIN2", "BIN1"),
+                TransferLine(bin2Id, 3m, "BIN3", "BIN2")
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var post = await tr.PostAsync([save.BatchNo]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(15m, await db.IvBalLocs.Where(x => x.Id == bin1Id).Select(x => x.StdQty).SingleAsync());
+            Assert.Equal(12m, await db.IvBalLocs.Where(x => x.Id == bin2Id).Select(x => x.StdQty).SingleAsync());
+            Assert.Equal(3m, await db.IvBalLocs.Where(x => x.LocCode == "BIN3").Select(x => x.StdQty).SingleAsync());
+
+            var history = await db.IvTrxHistories
+                .Where(x => x.BatchNo == save.BatchNo)
+                .OrderBy(x => x.TrxLineNo)
+                .ToListAsync();
+            Assert.Equal(2, history.Count);
+            Assert.Equal((bin1Id, bin2Id), (history[0].FromBalLocId, history[0].ToBalLocId));
+            Assert.Equal((bin2Id, await db.IvBalLocs.Where(x => x.LocCode == "BIN3").Select(x => x.Id).SingleAsync()),
+                (history[1].FromBalLocId, history[1].ToBalLocId));
+            Assert.Equal(("BIN1", "BIN2"), (history[0].FrLocation, history[0].ToLocation));
+            Assert.Equal(("BIN2", "BIN3"), (history[1].FrLocation, history[1].ToLocation));
+        }
+
+        Assert.True((await tr.RollbackAsync([save.BatchNo])).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(20m, await db.IvBalLocs.Where(x => x.Id == bin1Id).Select(x => x.StdQty).SingleAsync());
+            Assert.Equal(10m, await db.IvBalLocs.Where(x => x.Id == bin2Id).Select(x => x.StdQty).SingleAsync());
+            Assert.Equal(0, await db.IvTrxHistories.CountAsync(x => x.BatchNo == save.BatchNo));
+        }
+
+        Assert.True((await tr.PostAsync([save.BatchNo])).Succeeded);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(15m, await verify.IvBalLocs.Where(x => x.Id == bin1Id).Select(x => x.StdQty).SingleAsync());
+        Assert.Equal(12m, await verify.IvBalLocs.Where(x => x.Id == bin2Id).Select(x => x.StdQty).SingleAsync());
+    }
+
+    [Fact]
     public async Task Multi_line_same_source_over_transfer_fails_atomically()
     {
         var srcId = await SeedBalLocAsync(24m);
@@ -147,7 +199,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
     [Fact]
     public async Task Rollback_then_repost_restores_and_reapplies_movement()
     {
-        var srcId = await SeedBalLocAsync(100m);
+        var srcId = await SeedBalLocAsync(100m, seedOpeningHistory: true);
         var tr = CreateTr();
         var save = await tr.SaveNewAsync(TransferRequest(srcId, 30m, "BIN2"));
         Assert.True((await tr.PostAsync([save.BatchNo])).Succeeded);
@@ -163,7 +215,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
         {
             Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == srcId).Select(x => x.StdQty).SingleAsync());
-            Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+            Assert.Equal(0, await db.IvTrxHistories.CountAsync(x => x.BatchNo == save.BatchNo));
             Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync()).BatchStatus);
         }
 
@@ -173,7 +225,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
         {
             Assert.Equal(70m, await db.IvBalLocs.Where(x => x.Id == srcId).Select(x => x.StdQty).SingleAsync());
             Assert.Equal(30m, await db.IvBalLocs.Where(x => x.LocCode == "BIN2").Select(x => x.StdQty).SingleAsync());
-            Assert.Equal(1, await db.IvTrxHistories.CountAsync());
+            Assert.Equal(1, await db.IvTrxHistories.CountAsync(x => x.BatchNo == save.BatchNo));
         }
     }
 
@@ -470,7 +522,8 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             LotId = lot.Id,
             IStatus = "ACTIVE",
             StdQty = qty,
-            StdUom = "EA"
+            StdUom = "EA",
+            TransDate = FixedToday.AddDays(-1)
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();
@@ -507,7 +560,8 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
         string loc = "BIN1",
         string status = "ACTIVE",
         decimal? unitPrice = null,
-        decimal? cost = null)
+        decimal? cost = null,
+        bool seedOpeningHistory = false)
     {
         await using var db = await _factory.CreateDbContextAsync();
         var bal = new IvBalLoc
@@ -521,11 +575,35 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             IStatus = status,
             StdQty = qty,
             StdUom = "EA",
+            TransDate = FixedToday.AddDays(-1),
             UnitPrice = unitPrice,
             Cost = cost
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();
+
+        if (seedOpeningHistory)
+        {
+            db.IvTrxHistories.Add(new IvTrxHistory
+            {
+                CompanyCode = bal.CompanyCode,
+                BranchCode = bal.BranchCode,
+                BatchNo = -bal.Id,
+                TrxLineNo = 1,
+                TrxDtTime = FixedToday.AddDays(-1),
+                TrxType = "OPENING",
+                BatchStatus = IvBatchStatuses.Posted,
+                ICode = bal.ICode,
+                ToWarehouse = bal.WhCode,
+                ToLocation = bal.LocCode,
+                ToStdQty = bal.StdQty,
+                ToStdUom = bal.StdUom,
+                IStatus = bal.IStatus,
+                ToBalLocId = bal.Id
+            });
+            await db.SaveChangesAsync();
+        }
+
         return bal.Id;
     }
 
@@ -536,13 +614,17 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             Lines = [TransferLine(fromBalLocId, qty, toLoc)]
         };
 
-    private static IvStockTransferLineRequest TransferLine(int fromBalLocId, decimal qty, string toLoc) =>
+    private static IvStockTransferLineRequest TransferLine(
+        int fromBalLocId,
+        decimal qty,
+        string toLoc,
+        string fromLoc = "BIN1") =>
         new()
         {
             FromBalLocId = fromBalLocId,
             ICode = "A100",
             FrWarehouse = "MAIN",
-            FrLocation = "BIN1",
+            FrLocation = fromLoc,
             FrLotNo = string.Empty,
             ToWarehouse = "MAIN",
             ToLocation = toLoc,

@@ -175,6 +175,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
         services.AddScoped<IProductionMaterialAllocationService, ProductionMaterialAllocationService>();
         services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
+        services.AddScoped<IProductionOutputService, ProductionOutputService>();
+        services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
         // Version-2 snapshot quantity contract (plan §7.3).
         services.AddScoped<IWorkOrderQuantityCalculator, WorkOrderQuantityCalculator>();
         services.AddScoped<IWorkOrderReadinessValidator, WorkOrderReadinessValidator>();
