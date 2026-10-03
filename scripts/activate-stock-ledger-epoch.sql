@@ -20,6 +20,10 @@ DECLARE @CompanyCode   nvarchar(5)     = N'DEMO';
 DECLARE @BranchCode    nvarchar(5)     = N'HQ';
 DECLARE @EffectiveFrom datetime2(7)    = '2026-10-01T00:00:00';
 DECLARE @ActivatedBy   nvarchar(100)   = N'DBA';
+-- Populate only after reviewing the identity-level preview and both release gates.
+DECLARE @ApprovedManifestHash char(64) = NULL;
+DECLARE @SqlServerScratchGatePassed bit = 0;
+DECLARE @RestoredDatabaseGatePassed bit = 0;
 
 DECLARE @MigrationBatchId uniqueidentifier =
     CONVERT(uniqueidentifier,
@@ -45,14 +49,28 @@ BEGIN
     RETURN;
 END;
 
+IF @ApprovedManifestHash IS NULL OR LEN(TRIM(@ApprovedManifestHash)) <> 64
+   OR @ApprovedManifestHash LIKE '%[^0-9A-Fa-f]%'
+   OR @SqlServerScratchGatePassed <> 1 OR @RestoredDatabaseGatePassed <> 1
+BEGIN
+    RAISERROR(N'activate-stock-ledger-epoch.sql: approved identity manifest hash and both release gates are required.', 16, 1);
+    RETURN;
+END;
+
 IF OBJECT_ID(N'dbo.StockLedgerEpoch', N'U') IS NULL
    OR OBJECT_ID(N'dbo.StockPosting', N'U') IS NULL
    OR OBJECT_ID(N'dbo.StockPostingBranchSequence', N'U') IS NULL
    OR COL_LENGTH(N'dbo.PrProductionBalLotMovement', N'LedgerVersion') IS NULL
    OR COL_LENGTH(N'dbo.IvTrxHistory', N'LedgerVersion') IS NULL
    OR COL_LENGTH(N'dbo.IvTrxHistory', N'EntryRole') IS NULL
+   OR OBJECT_ID(N'dbo.TR_IvBalLoc_V2WriteGuard', N'TR') IS NULL
+   OR OBJECT_ID(N'dbo.TR_PrProductionBalLot_V2WriteGuard', N'TR') IS NULL
+   OR OBJECT_ID(N'dbo.TR_IvTrxHistory_V2WriteGuard', N'TR') IS NULL
+   OR OBJECT_ID(N'dbo.TR_PrProductionBalLotMovement_V2WriteGuard', N'TR') IS NULL
+   OR OBJECT_ID(N'dbo.TR_PrMaterialMovement_V2WriteGuard', N'TR') IS NULL
+   OR OBJECT_ID(N'dbo.TR_PrProductionMovementAllocation_V2WriteGuard', N'TR') IS NULL
 BEGIN
-    RAISERROR(N'activate-stock-ledger-epoch.sql: ledger schema missing. Run create-stock-posting-ledger.sql, alter-production-stock-ledger.sql, alter-inventory-history-ledger.sql first.', 16, 1);
+    RAISERROR(N'activate-stock-ledger-epoch.sql: ledger schema or write guards missing. Run the stock ledger schema scripts and create-stock-ledger-write-guard.sql first.', 16, 1);
     RETURN;
 END;
 
@@ -130,6 +148,49 @@ END;
 BEGIN TRY
     BEGIN TRANSACTION;
 
+    DECLARE @StockLockResult int;
+    DECLARE @StockLockResource nvarchar(255) = CONCAT(N'STOCK_WRITE|', @CompanyCode, N'|', @BranchCode);
+    EXEC @StockLockResult = sys.sp_getapplock
+        @Resource = @StockLockResource,
+        @LockMode = N'Exclusive',
+        @LockOwner = N'Transaction',
+        @LockTimeout = 30000;
+    IF @StockLockResult < 0
+        THROW 51001, 'Unable to acquire the branch stock lock for cutover.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.StockLedgerEpoch WITH (UPDLOCK, HOLDLOCK)
+               WHERE CompanyCode = @CompanyCode AND BranchCode = @BranchCode AND Status = N'ACTIVE')
+        THROW 51002, 'An ACTIVE epoch appeared while acquiring the branch stock lock.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.PrProductionBalLot lot
+               WHERE lot.CompanyCode = @CompanyCode AND lot.BranchCode = @BranchCode AND lot.BaseQty > 0
+                 AND (lot.BalanceStage IS NULL OR lot.ProductionLocationID IS NULL
+                      OR lot.StockStatusCode IS NULL OR lot.OriginType IS NULL))
+        THROW 51003, 'Positive production stock has unresolved stage, location, status, or origin.', 1;
+
+    DECLARE @ProductionManifest nvarchar(max) = (
+        SELECT lot.UID, lot.Kind, lot.ItemCode, lot.Qty, lot.UOM, lot.BaseQty, lot.BaseUOM,
+               lot.ConversionFactorToBase, lot.WorkOrderID, lot.WorkOrderMaterialID,
+               lot.OriginalIssueMovementID, lot.SourceIvBalLocID, lot.ProducingRouteStepID,
+               lot.WorkOrderOperationID, lot.LotNo, lot.PoolCode, lot.PhysicalLotNo,
+               lot.BalanceStage, lot.ProductionLocationID, lot.StockStatusCode, lot.OriginType
+        FROM dbo.PrProductionBalLot lot WITH (HOLDLOCK)
+        WHERE lot.CompanyCode = @CompanyCode AND lot.BranchCode = @BranchCode AND lot.BaseQty > 0
+        ORDER BY lot.UID FOR JSON PATH, INCLUDE_NULL_VALUES);
+    DECLARE @InventoryManifest nvarchar(max) = (
+        SELECT b.ID, b.ICode, b.WHCode, b.LocCode, b.LotNo, b.LotId,
+               b.IStatus, b.StdQty, b.StdUOM
+        FROM dbo.IvBalLoc b WITH (HOLDLOCK)
+        WHERE b.CompanyCode = @CompanyCode AND b.BranchCode = @BranchCode AND b.StdQty > 0
+        ORDER BY b.ID FOR JSON PATH, INCLUDE_NULL_VALUES);
+    DECLARE @ManifestPayload nvarchar(max) = CONCAT(
+        N'v2|', @CompanyCode, N'|', @BranchCode, N'|', CONVERT(nvarchar(33), @EffectiveFrom, 126),
+        N'|PRODUCTION|', @ProductionManifest, N'|INVENTORY|', @InventoryManifest);
+    DECLARE @ManifestHash char(64) = CONVERT(char(64),
+        CONVERT(varchar(64), HASHBYTES('SHA2_256', @ManifestPayload), 2));
+    IF @ManifestHash <> @ApprovedManifestHash
+        THROW 51004, 'The live identity-level manifest differs from the approved hash.', 1;
+
     DECLARE @ProdQtyBefore decimal(18, 4) =
         (SELECT ISNULL(SUM(BaseQty), 0) FROM dbo.PrProductionBalLot
          WHERE CompanyCode = @CompanyCode AND BranchCode = @BranchCode);
@@ -152,17 +213,6 @@ BEGIN TRY
         CASE WHEN OBJECT_ID(N'dbo.IvBalLoc', N'U') IS NULL THEN 0
              ELSE (SELECT ISNULL(SUM(StdQty), 0) FROM dbo.IvBalLoc
                    WHERE CompanyCode = @CompanyCode AND BranchCode = @BranchCode AND StdQty > 0) END;
-    DECLARE @ManifestPayload nvarchar(800) = CONCAT(
-        N'{"company":"', @CompanyCode, N'","branch":"', @BranchCode,
-        N'","effectiveFrom":"', CONVERT(nvarchar(33), @EffectiveFrom, 126),
-        N'","prodOpenCount":', @ProdOpenCount,
-        N',"prodOpenBase":', CONVERT(varchar(32), @ProdOpenBase),
-        N',"ivOpenCount":', @IvOpenCount,
-        N',"ivOpenQty":', CONVERT(varchar(32), @IvOpenQty), N'}');
-
-    DECLARE @ManifestHash char(64) =
-        CONVERT(char(64), CONVERT(varchar(64), HASHBYTES('SHA2_256', @ManifestPayload), 2));
-
     INSERT INTO dbo.StockLedgerEpoch
     (
         CompanyCode, BranchCode, EffectiveFrom, CutoverPostingSequence, Version, Status,
@@ -216,6 +266,7 @@ BEGIN TRY
         );
 
         SET @ProdPostingId = SCOPE_IDENTITY();
+        EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=@ProdPostingId;
 
         INSERT INTO dbo.PrProductionBalLotMovement
         (
@@ -295,6 +346,7 @@ BEGIN TRY
           AND CompanyCode = @CompanyCode
           AND BranchCode = @BranchCode
           AND SealedAtUtc IS NULL;
+        EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=NULL;
     END;
 
     IF OBJECT_ID(N'dbo.IvBalLoc', N'U') IS NOT NULL
@@ -332,6 +384,7 @@ BEGIN TRY
         );
 
         SET @IvPostingId = SCOPE_IDENTITY();
+        EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=@IvPostingId;
 
         INSERT INTO dbo.IvTrxHistory
         (
@@ -393,6 +446,7 @@ BEGIN TRY
           AND CompanyCode = @CompanyCode
           AND BranchCode = @BranchCode
           AND SealedAtUtc IS NULL;
+        EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=NULL;
     END;
 
     IF EXISTS (
@@ -454,6 +508,7 @@ END TRY
 BEGIN CATCH
     IF @@TRANCOUNT > 0
         ROLLBACK TRANSACTION;
+    EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=NULL;
 
     DECLARE @Err nvarchar(4000) = ERROR_MESSAGE();
     RAISERROR(N'activate-stock-ledger-epoch.sql failed: %s', 16, 1, @Err);

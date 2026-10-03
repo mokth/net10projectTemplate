@@ -20,19 +20,22 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
     private readonly IRunningNumberService? _runningNumbers;
     private readonly IIvStockPostingRepository? _stockPosting;
     private readonly IIvInventoryPostingService? _inventoryPosting;
+    private readonly IProductionOperationEligibilityService _operationEligibility;
 
     public ProductionMaterialIssueService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
         ICurrentDateService clock,
-        IProductionMaterialAllocationService allocation)
+        IProductionMaterialAllocationService allocation,
+        IProductionOperationEligibilityService? operationEligibility = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _clock = clock;
         _allocation = allocation;
+        _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
     }
 
     public ProductionMaterialIssueService(
@@ -43,8 +46,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         IProductionMaterialAllocationService allocation,
         IRunningNumberService runningNumbers,
         IIvStockPostingRepository stockPosting,
-        IIvInventoryPostingService inventoryPosting)
-        : this(dbFactory, tenant, access, clock, allocation)
+        IIvInventoryPostingService inventoryPosting,
+        IProductionOperationEligibilityService? operationEligibility = null)
+        : this(dbFactory, tenant, access, clock, allocation, operationEligibility)
     {
         _runningNumbers = runningNumbers;
         _stockPosting = stockPosting;
@@ -86,8 +90,14 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         if (operationId.HasValue && order.Operations.All(x => x.Uid != operationId.Value))
             return Fail(IvMasterErrorCode.NotFound, "Work Order operation was not found.");
 
+        var eligibilityByOperation = order.Operations.ToDictionary(
+            x => x.Uid,
+            x => _operationEligibility.Evaluate(x, order.RouteSteps.ToList(), order.Operations.ToList()));
+
         var validatedExcludeBatchNo = await ResolveValidatedExcludeBatchNoAsync(
             db, scope.CompanyCode, scope.BranchCode!, order.Uid, operationId, excludeBatchNo, cancellationToken);
+        var basisByOperation = await LoadActiveBasisByOperationAsync(
+            db, scope.CompanyCode, scope.BranchCode!, order.Uid, validatedExcludeBatchNo, cancellationToken);
 
         var materialEntities = order.Materials
             .Where(x => !operationId.HasValue || x.WorkOrderOperationId == operationId.Value)
@@ -143,9 +153,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             if (canManualIssue)
             {
                 var candidates = await _allocation.GetStockCandidatesAsync(
-                    material.Uid, _clock.Today, cancellationToken);
+                    material.Uid, _clock.Today, cancellationToken, excludeInventoryBatchNo: validatedExcludeBatchNo);
                 if (candidates.Succeeded)
-                    availableBaseQty = IvQty.Round(candidates.Data!.Sum(x => x.AvailableBaseQty));
+                    availableBaseQty = IvQty.Round(candidates.Data!.Sum(x => x.AvailableToAllocateBaseQty));
                 else
                 {
                     canManualIssue = false;
@@ -164,6 +174,10 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 ? ProductionMaterialExecutionCalc.IssueQtyForBaseQty(availableBaseQty, material.ConversionFactorToBase)
                 : 0m;
             operationsById.TryGetValue(material.WorkOrderOperationId ?? 0, out var operation);
+            var reservedByOtherDrafts = canManualIssue
+                ? IvQty.Round((await _allocation.GetStockCandidatesAsync(material.Uid, _clock.Today, cancellationToken,
+                    excludeInventoryBatchNo: validatedExcludeBatchNo)).Data?.Sum(x => x.ReservedOtherDraftBaseQty) ?? 0m)
+                : 0m;
 
             materials.Add(new ProductionMaterialIssueMaterial
             {
@@ -193,6 +207,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 AvailableBaseQty = availableBaseQty,
                 AvailableQty = availableQty,
                 ShortageQty = IvQty.Round(Math.Max(outstanding - availableQty, 0m)),
+                OtherDraftReservedBaseQty = reservedByOtherDrafts,
+                AvailableAfterDraftReservations = availableQty,
                 WarehouseCode = material.WarehouseCode,
                 LocationCode = material.LocationCode,
                 LotControl = stock?.LotControl == true,
@@ -214,9 +230,19 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 ProcessSequence = x.ProcessSequence,
                 OperationCode = x.OperationCode,
                 OperationDescription = x.OperationDescription,
-                WorkCentreCode = x.WorkCentreCode
-                ,PlannedOutputQty = x.PlannedOutputQty
-                ,PlannedOutputUom = x.PlannedOutputUom
+                WorkCentreCode = x.WorkCentreCode,
+                PlannedOutputQty = x.PlannedOutputQty,
+                PlannedOutputUom = x.PlannedOutputUom,
+                StageSequence = x.RouteStepId.HasValue
+                    ? order.RouteSteps.Single(step => step.Uid == x.RouteStepId.Value).StageSequence : 0,
+                IsSequenceEligible = eligibilityByOperation.GetValueOrDefault(x.Uid)?.IsEligible == true,
+                SequenceBlockingReason = eligibilityByOperation.GetValueOrDefault(x.Uid)?.BlockingReason,
+                ActualOutputQty = IvQty.Round(x.GoodQty),
+                PostedBasisQty = basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).Posted,
+                OpenDraftBasisQty = basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).OpenDraft,
+                RemainingBasisQty = IvQty.Round(Math.Max(x.PlannedOutputQty
+                    - basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).Posted
+                    - basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).OpenDraft, 0m))
             }).ToList();
         var routeIds = operations.Where(x => x.RouteStepId.HasValue).Select(x => x.RouteStepId!.Value).ToHashSet();
         var routeSteps = order.RouteSteps
@@ -285,6 +311,42 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         return excludeBatchNo;
     }
 
+    private static async Task<IReadOnlyDictionary<long, OperationBasisTotals>> LoadActiveBasisByOperationAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long workOrderId,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var rows = await (from map in db.ProductionMaterialIssueLines.AsNoTracking()
+                          join link in db.ProductionPostingLinks.AsNoTracking() on map.PostingLinkId equals link.Uid
+                          join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id
+                          where link.CompanyCode == companyCode
+                              && link.BranchCode == branchCode
+                              && link.WorkOrderId == workOrderId
+                              && link.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
+                              && (!excludeBatchNo.HasValue || map.InventoryBatchNo != excludeBatchNo.Value)
+                              && ((link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New)
+                                  || (link.Status == ProductionPostingLinkStatuses.Succeeded && batch.BatchStatus == IvBatchStatuses.Posted))
+                          select new
+                          {
+                              map.WorkOrderOperationId,
+                              link.Uid,
+                              link.ProductionQtyThisIssue,
+                              IsDraft = link.Status == ProductionPostingLinkStatuses.Draft
+                          })
+            .ToListAsync(cancellationToken);
+
+        return rows.GroupBy(x => new { x.WorkOrderOperationId, x.Uid, x.IsDraft, x.ProductionQtyThisIssue })
+            .GroupBy(x => x.Key.WorkOrderOperationId)
+            .ToDictionary(
+                x => x.Key,
+                x => new OperationBasisTotals(
+                    IvQty.Round(x.Where(y => !y.Key.IsDraft).Sum(y => y.Key.ProductionQtyThisIssue ?? 0m)),
+                    IvQty.Round(x.Where(y => y.Key.IsDraft).Sum(y => y.Key.ProductionQtyThisIssue ?? 0m))));
+    }
+
     private static string? BlockingReason(
         ProductionWorkOrderMaterial material,
         bool stockActive,
@@ -318,4 +380,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         IvMasterOperationResult<ProductionMaterialIssueWorkspace>.Fail(code, message);
 
     private sealed record MovementTotals(decimal Issue, decimal IssueReversal, decimal Returned, decimal Consumed);
+    private sealed record OperationBasisTotals(decimal Posted, decimal OpenDraft)
+    {
+        public static readonly OperationBasisTotals Empty = new(0m, 0m);
+    }
 }

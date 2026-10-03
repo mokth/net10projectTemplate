@@ -37,6 +37,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Posting_process1_stages_handoff_and_process2_is_capped_by_available()
     {
         var graph = await SeedTwoProcessAsync("WO-H1");
+        await SetPlannedOutputAsync(graph.Process1Id, 30m);
         var sut = CreateService();
 
         var p1 = await CreateAndPostAsync(sut, graph.Process1Id, 30m, date: new DateTime(2026, 10, 2, 8, 0, 0));
@@ -74,6 +75,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Upstream_rollback_is_blocked_until_consumer_is_rolled_back()
     {
         var graph = await SeedTwoProcessAsync("WO-H2");
+        await SetPlannedOutputAsync(graph.Process1Id, 30m);
         var sut = CreateService();
 
         var p1 = await CreateAndPostAsync(sut, graph.Process1Id, 30m);
@@ -87,7 +89,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
             Reason = "blocked upstream",
         });
         Assert.False(blocked.Succeeded);
-        Assert.Contains("blocked by later effective consumption", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("downstream production", blocked.Message, StringComparison.OrdinalIgnoreCase);
         await AssertBalancesUnchangedAsync(graph.OrderId, expectedHandoffQty: 0m, expectedRouteQty: 30m);
 
         var reverseP2 = await sut.RollbackAsync(new ProductionOutputRollbackRequest
@@ -129,6 +131,8 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Three_process_chain_and_partial_and_mixed_quantities()
     {
         var graph = await SeedThreeProcessAsync("WO-H3");
+        await SetPlannedOutputAsync(graph.Process1Id, 30m);
+        await SetPlannedOutputAsync(graph.Process2Id, 10m);
         var sut = CreateService();
 
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 30m)).Succeeded);
@@ -179,6 +183,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Uom_contract_conversion_blank_fallback_and_mismatches()
     {
         var factorGraph = await SeedTwoProcessAsync("WO-H5", conversionFactor: 2m);
+        await SetPlannedOutputAsync(factorGraph.Process1Id, 30m);
         var sut = CreateService();
         Assert.True((await CreateAndPostAsync(sut, factorGraph.Process1Id, 30m)).Succeeded);
         await using (var db = await _factory.CreateDbContextAsync())
@@ -189,20 +194,24 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         }
 
         var blankProducer = await SeedTwoProcessAsync("WO-H5B", blankProducerUom: true);
+        await SetPlannedOutputAsync(blankProducer.Process1Id, 5m);
         Assert.True((await CreateAndPostAsync(CreateService(), blankProducer.Process1Id, 5m)).Succeeded);
 
         var blankConsumer = await SeedTwoProcessAsync("WO-H5C", blankConsumerUom: true);
+        await SetPlannedOutputAsync(blankConsumer.Process1Id, 5m);
         var blankSut = CreateService();
         Assert.True((await CreateAndPostAsync(blankSut, blankConsumer.Process1Id, 5m)).Succeeded);
         Assert.True((await CreateAndPostAsync(blankSut, blankConsumer.Process2Id, 5m,
             date: new DateTime(2026, 10, 1, 9, 0, 0))).Succeeded);
 
         var mismatchProducer = await SeedTwoProcessAsync("WO-H5D", producerUom: "KG");
+        await SetPlannedOutputAsync(mismatchProducer.Process1Id, 5m);
         var badProducer = await CreateAndPostAsync(CreateService(), mismatchProducer.Process1Id, 5m);
         Assert.False(badProducer.Succeeded);
         Assert.Contains("PlannedOutputUom must equal route OutputUom", badProducer.Message, StringComparison.OrdinalIgnoreCase);
 
         var mismatchConsumer = await SeedTwoProcessAsync("WO-H5E", consumerUom: "KG");
+        await SetPlannedOutputAsync(mismatchConsumer.Process1Id, 5m);
         var badConsumerSut = CreateService();
         Assert.True((await CreateAndPostAsync(badConsumerSut, mismatchConsumer.Process1Id, 5m)).Succeeded);
         var badConsumer = await CreateAndPostAsync(badConsumerSut, mismatchConsumer.Process2Id, 5m,
@@ -220,6 +229,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Date_rule_rejects_backdated_consume_and_backdated_produce_add()
     {
         var graph = await SeedTwoProcessAsync("WO-H6");
+        await SetPlannedOutputAsync(graph.Process1Id, 35m);
         var sut = CreateService();
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 20m,
             date: new DateTime(2026, 10, 2, 12, 0, 0))).Succeeded);
@@ -227,7 +237,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         var earlyConsume = await CreateAndPostAsync(sut, graph.Process2Id, 5m,
             date: new DateTime(2026, 10, 1, 8, 0, 0));
         Assert.False(earlyConsume.Succeeded);
-        Assert.Contains("future LastMovementDate", earlyConsume.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Process Seq 10", earlyConsume.Message, StringComparison.OrdinalIgnoreCase);
 
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 10m,
             date: new DateTime(2026, 10, 3, 8, 0, 0))).Succeeded);
@@ -237,10 +247,13 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         Assert.False(backdatedAdd.Succeeded);
         Assert.Contains("future LastMovementDate", backdatedAdd.Message, StringComparison.OrdinalIgnoreCase);
 
+        Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 5m,
+            date: new DateTime(2026, 10, 4, 8, 0, 0))).Succeeded);
+
         await using var db = await _factory.CreateDbContextAsync();
         var lot = await HandoffLotAsync(db, graph.OrderId, graph.Process1Id);
-        Assert.Equal(30m, lot!.Qty);
-        Assert.Equal(new DateTime(2026, 10, 3, 8, 0, 0), lot.LastMovementDate);
+        Assert.Equal(35m, lot!.Qty);
+        Assert.Equal(new DateTime(2026, 10, 4, 8, 0, 0), lot.LastMovementDate);
 
         var stillEarly = await CreateAndPostAsync(sut, graph.Process2Id, 5m,
             date: new DateTime(2026, 10, 2, 11, 0, 0));
@@ -276,6 +289,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     public async Task Prior_history_without_handoff_lot_shows_zero_available()
     {
         var graph = await SeedTwoProcessAsync("WO-H8");
+        await SetPlannedOutputAsync(graph.Process1Id, 30m);
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var op1 = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == graph.Process1Id);
@@ -316,6 +330,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         }
 
         var graph = await SeedTwoProcessOnFactoryAsync(factory, "WO-SQL-H");
+        await SetPlannedOutputAsync(factory, graph.Process1Id, 15m);
         var sut = new ProductionOutputService(
             factory,
             InventoryTenantTestHelper.CreateTenantContext(),
@@ -348,6 +363,19 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
             .ToListAsync();
         Assert.Equal(expectedHandoffQty, handoffs.Sum(x => x.Qty));
         Assert.Equal(expectedRouteQty, routes.Sum(x => x.Qty));
+    }
+
+    private Task SetPlannedOutputAsync(long operationId, decimal plannedOutputQty) =>
+        SetPlannedOutputAsync(_factory, operationId, plannedOutputQty);
+
+    private static async Task SetPlannedOutputAsync(
+        IDbContextFactory<AppDbContext> factory, long operationId, decimal plannedOutputQty)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var operation = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == operationId);
+        operation.PlannedOutputQty = plannedOutputQty;
+        operation.RemainingQty = IvQty.Round(Math.Max(plannedOutputQty - operation.GoodQty, 0m));
+        await db.SaveChangesAsync();
     }
 
     private static async Task<ProductionBalLot?> HandoffLotAsync(AppDbContext db, long orderId, long processId) =>
@@ -462,6 +490,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         var route = new ProductionWorkOrderRouteStep
         {
             WorkOrder = order,
+            StageSequence = 10,
             WorkCentreCode = "WC10",
             OutputItemCode = "WIP-OUT",
             OutputType = PrRouteOutputTypes.WipStocked,

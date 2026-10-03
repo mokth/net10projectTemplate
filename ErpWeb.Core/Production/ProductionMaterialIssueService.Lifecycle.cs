@@ -130,7 +130,9 @@ public sealed partial class ProductionMaterialIssueService
             if (link.ProductionQtyThisIssue is null)
                 return "This material issue draft was created before Desired Output became mandatory. Edit the draft, apply Desired Output, and save it again before posting.";
             var maps = await db.ProductionMaterialIssueLines.Where(x => x.PostingLinkId == link.Uid).OrderBy(x => x.InventoryTrxLineNo).ToListAsync(ct);
-            var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).OrderBy(x => x.TrxLineNo).ToListAsync(ct);
+            var mappedDetailIds = maps.Select(x => x.InventoryBatchDetailId).ToArray();
+            var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id && mappedDetailIds.Contains(x.Id))
+                .OrderBy(x => x.TrxLineNo).ToListAsync(ct);
             if (maps.Count == 0 || maps.Count != details.Count || maps.Select(x => x.WorkOrderOperationId).Distinct().Count() != 1)
                 return "The draft allocation map is incomplete or mixes operations.";
             var workOrderOperationId = maps[0].WorkOrderOperationId;
@@ -138,9 +140,21 @@ public sealed partial class ProductionMaterialIssueService
                 .SingleOrDefaultAsync(x => x.Uid == workOrderOperationId && x.WorkOrderId == link.WorkOrderId, ct);
             if (operation is null || operation.PlannedOutputQty <= 0m)
                 return "The selected operation is missing or has an invalid planned output quantity.";
+            var routeSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                .Where(x => x.WorkOrderId == order.Uid).ToListAsync(ct);
+            var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+                .Where(x => x.WorkOrderId == order.Uid).ToListAsync(ct);
+            var eligibility = _operationEligibility.Evaluate(operation, routeSteps, operations);
+            if (!eligibility.IsEligible)
+                return eligibility.BlockingReason ?? "The selected operation is blocked by the Work Order execution sequence.";
             var storedDesired = IvQty.Round(link.ProductionQtyThisIssue.Value);
             if (storedDesired <= 0m || storedDesired > operation.PlannedOutputQty)
                 return "Persisted Desired Output is invalid for the selected operation planned output.";
+            var activeBasis = await LoadActiveBasisByOperationAsync(db, company, branch, order.Uid, batchNo, ct);
+            var basis = activeBasis.GetValueOrDefault(workOrderOperationId, OperationBasisTotals.Empty);
+            if (IvQty.Round(basis.Posted + basis.OpenDraft + storedDesired) > IvQty.Round(operation.PlannedOutputQty))
+                return $"Material Requirement Basis Qty exceeds the remaining operation planning basis of "
+                    + $"{Math.Max(operation.PlannedOutputQty - basis.Posted - basis.OpenDraft, 0m):n4}.";
             var materialIds = maps.Select(x => x.WorkOrderMaterialId).Distinct().OrderBy(x => x).ToArray();
             var materials = new Dictionary<long, ProductionWorkOrderMaterial>();
             foreach (var id in materialIds)
@@ -172,6 +186,9 @@ public sealed partial class ProductionMaterialIssueService
                 var desiredMax = ProductionMaterialExecutionCalc.MaxForProductionQty(standardForDesired, material.Tolerance);
                 if (issueQty > desiredMax)
                     return $"Material {material.ComponentCode} exceeds its Desired Output maximum of {desiredMax:n4}.";
+                if (issueQty > standardForDesired
+                    && group.Any(x => string.IsNullOrWhiteSpace(x.ExcessIssueReason)))
+                    return $"Material {material.ComponentCode} exceeds its standard BOM quantity {standardForDesired:n4}; an Excess Issue Reason is required.";
                 if (issueQty > remainingWo)
                     return $"Material {material.ComponentCode} exceeds its issue tolerance.";
             }
@@ -226,7 +243,14 @@ public sealed partial class ProductionMaterialIssueService
                 userId.Length > 10 ? userId[..10] : userId, batchNo, IvTrxTypes.IssueToProduction, ct);
             if (!posted.Succeeded) return posted.ErrorMessage ?? "Inventory posting failed.";
             await db.SaveChangesAsync(ct);
-            var histories = await db.IvTrxHistories.Where(x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo).ToListAsync(ct);
+            var historyQuery = db.IvTrxHistories.Where(x => x.CompanyCode == company && x.BranchCode == branch
+                && x.BatchNo == batchNo);
+            if (ledger.Context is not null)
+            {
+                var postingId = ledger.Context.Posting.Id;
+                historyQuery = historyQuery.Where(x => x.StockPostingId == postingId);
+            }
+            var histories = await historyQuery.ToListAsync(ct);
             if (histories.Count != details.Count) return "Inventory history did not match every draft allocation.";
             var now = _clock.Now; var user = userId.Length > 10 ? userId[..10] : userId;
             foreach (var map in maps)
@@ -263,7 +287,7 @@ public sealed partial class ProductionMaterialIssueService
             }
             await CreateMaterialInLotsAsync(db, order, link, now, user, ct);
             if (ledger.Context is not null)
-                StampIssueLedgerFacts(ledger.Context, link.Uid);
+                await StampIssueLedgerFactsAsync(ledger.Context, link.Uid, ct);
             var fromStatus = order.Status;
             if (order.Status == ProductionWorkOrderStatuses.Released) order.Status = ProductionWorkOrderStatuses.InProgress;
             order.ModifiedDate = now; order.ModifiedBy = user;
@@ -284,22 +308,22 @@ public sealed partial class ProductionMaterialIssueService
         }
     }
 
-    private static void StampIssueLedgerFacts(
+    private static async Task StampIssueLedgerFactsAsync(
         ErpWeb.Core.StockLedger.StockPostingContext context,
-        long postingLinkId)
+        long postingLinkId,
+        CancellationToken cancellationToken)
     {
-        var line = context.Db.ChangeTracker.Entries<ProductionBalLotMovement>()
-            .Where(x => x.State == EntityState.Added && x.Entity.PostingLinkId == postingLinkId)
-            .OrderBy(x => x.Entity.Uid)
-            .ToArray();
-        var postingLine = context.Db.ChangeTracker.Entries<IvTrxHistory>()
-            .Where(x => x.State == EntityState.Added && x.Entity.StockPostingId == context.Posting.Id)
-            .Select(x => x.Entity.PostingLineNo ?? 0).DefaultIfEmpty().Max();
-        foreach (var entry in line)
+        // These rows were flushed by CreateMaterialInLotsAsync; tracking Added entries loses them.
+        var movements = await context.Db.ProductionBalLotMovements
+            .Where(x => x.PostingLinkId == postingLinkId && x.MovementType == ProductionBalLotMovementTypes.Issue)
+            .OrderBy(x => x.Uid).ToListAsync(cancellationToken);
+        var lotIds = movements.Select(x => x.ProductionBalLotId).ToArray();
+        var lots = await context.Db.ProductionBalLots
+            .Where(x => lotIds.Contains(x.Uid)).ToDictionaryAsync(x => x.Uid, cancellationToken);
+        var postingLine = 0;
+        foreach (var movement in movements)
         {
-            var movement = entry.Entity;
-            var lot = context.Db.ChangeTracker.Entries<ProductionBalLot>()
-                .Select(x => x.Entity).First(x => x.Uid == movement.ProductionBalLotId);
+            var lot = lots[movement.ProductionBalLotId];
             movement.LedgerVersion = 2;
             movement.LedgerEpochId = context.Epoch.Id;
             movement.StockPostingId = context.Posting.Id;
@@ -309,18 +333,30 @@ public sealed partial class ProductionMaterialIssueService
             movement.ItemCode = lot.ItemCode;
             movement.ItemDescription = lot.Description;
             movement.BalanceStage = lot.BalanceStage ?? "MATERIAL";
+            movement.ProductionLocationId = lot.ProductionLocationId;
+            movement.WorkCentreCode = lot.WorkCentreCode;
+            movement.ProcessCode = lot.ProcessCode;
             movement.WorkOrderNo = lot.WorkOrderNo;
             movement.LotIdentity = lot.PoolCode ?? lot.LotNo;
             movement.PhysicalLotNo = lot.PhysicalLotNo;
             movement.StockStatusCode = lot.StockStatusCode ?? "AVAILABLE";
             movement.ConversionFactorToBase = lot.ConversionFactorToBase;
-            movement.SourceLineId = movement.WorkOrderMaterialId?.ToString() ?? movement.Uid.ToString();
+            movement.SourceLineId = lot.OriginalIssueMovementId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                ?? movement.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             movement.SplitOrdinal = 0;
             movement.ValuationStatus = "UNVALUED";
+            lot.LastStockEventEffectiveAt = context.Posting.EffectiveAt;
         }
-        foreach (var material in context.Db.ChangeTracker.Entries<ProductionMaterialMovement>()
-            .Where(x => x.State == EntityState.Added && x.Entity.PostingLinkId == postingLinkId))
-            material.Entity.StockPostingId = context.Posting.Id;
+        var materials = await context.Db.ProductionMaterialMovements
+            .Where(x => x.PostingLinkId == postingLinkId && x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .ToListAsync(cancellationToken);
+        foreach (var material in materials)
+        {
+            material.StockPostingId = context.Posting.Id;
+            material.SourceLineId = material.InventoryBatchDetailId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                ?? throw new InvalidOperationException("Issue movement is missing an inventory detail identity.");
+            material.SplitOrdinal = 0;
+        }
     }
 
     private static async Task CreateMaterialInLotsAsync(

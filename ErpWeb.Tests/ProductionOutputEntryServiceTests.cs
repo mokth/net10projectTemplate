@@ -200,6 +200,146 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         Assert.Equal(graph.OperationId, saved.Data!.Operation.WorkOrderOperationId);
     }
 
+    [Fact]
+    public async Task Sequence_gate_filters_search_and_blocks_direct_workspace_create_and_stale_post()
+    {
+        var graph = await SeedTwoStageSequenceGraphAsync("WO-SEQUENCE");
+        var sut = CreateService();
+
+        var initial = await sut.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery { Take = 20 });
+        Assert.True(initial.Succeeded, initial.Message);
+        Assert.Equal(1, initial.Data!.TotalCount);
+        Assert.Equal(graph.FirstOperationId, Assert.Single(initial.Data.Rows).WorkOrderOperationId);
+
+        var directWorkspace = await sut.GetWorkspaceAsync(graph.LaterOperationId);
+        Assert.False(directWorkspace.Succeeded);
+        Assert.Contains("Previous Stage 10", directWorkspace.Message, StringComparison.OrdinalIgnoreCase);
+
+        var blockedCreate = await sut.CreateAsync(Request(graph.LaterOperationId, Guid.NewGuid().ToString("N")));
+        Assert.False(blockedCreate.Succeeded);
+        Assert.Contains("Previous Stage 10", blockedCreate.Message, StringComparison.OrdinalIgnoreCase);
+
+        await SetOperationGoodAsync(graph.FirstOperationId, 10m);
+        var opened = await sut.CreateAsync(Request(graph.LaterOperationId, Guid.NewGuid().ToString("N")));
+        Assert.True(opened.Succeeded, opened.Message);
+
+        // Simulate a predecessor correction after a valid draft was saved. PostAsync must make the
+        // final sequence decision from the live execution projection, not the old workspace.
+        await SetOperationGoodAsync(graph.FirstOperationId, 0m);
+        var stalePost = await sut.PostAsync(opened.Data!.Uid);
+        Assert.False(stalePost.Succeeded);
+        Assert.Contains("Previous Stage 10", stalePost.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Rollback_cannot_reopen_a_stage_when_later_stage_production_is_posted()
+    {
+        var graph = await SeedTwoStageSequenceGraphAsync("WO-SEQUENCE-ROLLBACK");
+        var sut = CreateService();
+
+        var firstRequest = Request(graph.FirstOperationId, Guid.NewGuid().ToString("N"));
+        firstRequest.GoodQty = 10m;
+        var first = await sut.CreateAsync(firstRequest);
+        Assert.True(first.Succeeded, first.Message);
+        var firstPost = await sut.PostAsync(first.Data!.Uid);
+        Assert.True(firstPost.Succeeded, firstPost.Message);
+
+        var later = await sut.CreateAsync(Request(graph.LaterOperationId, Guid.NewGuid().ToString("N")));
+        Assert.True(later.Succeeded, later.Message);
+        var laterPost = await sut.PostAsync(later.Data!.Uid);
+        Assert.True(laterPost.Succeeded, laterPost.Message);
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = first.Data.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "verify route integrity",
+        });
+
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("downstream production", rollback.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(later.Data.DocumentNo, rollback.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Partial_production_consumption_and_rollback_preserve_exact_material_and_wip_costs()
+    {
+        var graph = await SeedGraphAsync("WO-COST");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var material = await db.ProductionWorkOrderMaterials.SingleAsync(x => x.WorkOrderId == graph.OrderId);
+            db.ProductionBalLots.Add(new ProductionBalLot
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                Kind = ProductionBalLotKinds.MaterialIn,
+                ItemCode = material.ComponentCode,
+                Description = material.ComponentDescription,
+                Qty = 2m,
+                Uom = "EA",
+                BaseQty = 2m,
+                BaseUom = "EA",
+                ConversionFactorToBase = 1m,
+                TotalCost = 10m,
+                AverageUnitCost = 5m,
+                WorkOrderId = graph.OrderId,
+                WorkOrderNo = "WO-COST",
+                WorkOrderMaterialId = material.Uid,
+                WarehouseCode = "WH01",
+                LocationCode = "BIN-A",
+                LotNo = "RM-LOT",
+                LastMovementDate = new DateTime(2026, 10, 1, 7, 0, 0),
+                RowVersion = [1],
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateService();
+        var first = await sut.CreateAsync(Request(graph.OperationId, Guid.NewGuid().ToString("N")));
+        Assert.True(first.Succeeded, first.Message);
+        Assert.True((await sut.PostAsync(first.Data!.Uid)).Succeeded);
+
+        var secondRequest = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        secondRequest.GoodQty = 8m;
+        secondRequest.ProductionDate = new DateTime(2026, 10, 1, 9, 0, 0);
+        var second = await sut.CreateAsync(secondRequest);
+        Assert.True(second.Succeeded, second.Message);
+        Assert.True((await sut.PostAsync(second.Data!.Uid)).Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var source = await db.ProductionBalLots.SingleAsync(x => x.Kind == ProductionBalLotKinds.MaterialIn);
+            Assert.Equal(0m, source.BaseQty);
+            Assert.Equal(0m, source.TotalCost);
+            var consumes = await db.ProductionMaterialMovements
+                .Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume)
+                .OrderBy(x => x.Uid)
+                .ToListAsync();
+            Assert.Equal([2m, 8m], consumes.Select(x => x.TotalCost));
+            var wip = await db.ProductionBalLots.SingleAsync(x => x.Kind == ProductionBalLotKinds.Wip);
+            Assert.Equal(10m, wip.BaseQty);
+            Assert.Equal(10m, wip.TotalCost);
+        }
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = second.Data!.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "Verify cost restoration",
+        });
+        Assert.True(rollback.Succeeded, rollback.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var source = await db.ProductionBalLots.SingleAsync(x => x.Kind == ProductionBalLotKinds.MaterialIn);
+            Assert.Equal(1.6m, source.BaseQty);
+            Assert.Equal(8m, source.TotalCost);
+            var wip = await db.ProductionBalLots.SingleAsync(x => x.Kind == ProductionBalLotKinds.Wip);
+            Assert.Equal(2m, wip.BaseQty);
+            Assert.Equal(2m, wip.TotalCost);
+        }
+    }
+
     private ProductionOutputService CreateService(
         IAccessRightService? access = null,
         string company = "DEMO",
@@ -269,6 +409,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         var route = new ProductionWorkOrderRouteStep
         {
             WorkOrder = order,
+            StageSequence = 10,
             WorkCentreCode = "WC10",
             OutputItemCode = "FG-OUT",
             OutputItemDescription = "Finished output",
@@ -334,9 +475,93 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         return new GraphIds(order.Uid, operation.Uid);
     }
 
+    private async Task<SequenceGraphIds> SeedTwoStageSequenceGraphAsync(string workOrderNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var order = new ProductionWorkOrder
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WorkOrderNo = workOrderNo,
+            ProductCode = "FG-SEQUENCE",
+            OutputUom = "EA",
+            Status = ProductionWorkOrderStatuses.Released,
+            PlannedQty = 10m,
+            RemainingQty = 10m,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('B', 64),
+            SnapshotHashVersion = ProductionSnapshotHashVersions.Current,
+            SnapshotFormatVersion = ProductionSnapshotFormatVersions.Current,
+            IsLegacySnapshot = false,
+            DefinitionEffectiveDate = new DateTime(2026, 10, 1),
+            PlannedStartDateTime = new DateTime(2026, 10, 1),
+            PlannedCompletionDateTime = new DateTime(2026, 10, 2),
+            RowVersion = [1],
+        };
+        var firstRoute = SequenceRoute(order, 10, "WC-A");
+        var laterRoute = SequenceRoute(order, 20, "WC-B");
+        var first = SequenceOperation(order, firstRoute);
+        var later = SequenceOperation(order, laterRoute);
+        firstRoute.Operations.Add(first);
+        laterRoute.Operations.Add(later);
+        order.RouteSteps.Add(firstRoute);
+        order.RouteSteps.Add(laterRoute);
+        order.Operations.Add(first);
+        order.Operations.Add(later);
+
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+        db.ProductionWorkOrders.Add(order);
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
+        return new SequenceGraphIds(first.Uid, later.Uid);
+    }
+
+    private async Task SetOperationGoodAsync(long operationId, decimal goodQty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var operation = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == operationId);
+        operation.GoodQty = goodQty;
+        operation.ProcessedQty = goodQty;
+        operation.RemainingQty = IvQty.Round(Math.Max(operation.PlannedOutputQty - goodQty, 0m));
+        await db.SaveChangesAsync();
+    }
+
+    private static ProductionWorkOrderRouteStep SequenceRoute(
+        ProductionWorkOrder order, int stageSequence, string workCentreCode) => new()
+    {
+        WorkOrder = order,
+        StageSequence = stageSequence,
+        WorkCentreCode = workCentreCode,
+        OutputItemCode = "WIP-SEQUENCE",
+        OutputType = PrRouteOutputTypes.WipNonstock,
+        YieldPercent = 100m,
+        OutputUom = "EA",
+        OutputBaseUom = "EA",
+        OutputConversionFactorToBase = 1m,
+        RowVersion = [1],
+    };
+
+    private static ProductionWorkOrderOperation SequenceOperation(
+        ProductionWorkOrder order, ProductionWorkOrderRouteStep route) => new()
+    {
+        WorkOrder = order,
+        RouteStep = route,
+        OperationCode = "OP10",
+        ProcessSequence = 10,
+        ProcessType = "MANUAL",
+        PlannedOutputQty = 10m,
+        PlannedInputUom = "EA",
+        PlannedOutputUom = "EA",
+        IsFinalOperation = true,
+        StandardDurationMinutes = 1m,
+        RemainingQty = 10m,
+        RowVersion = [1],
+    };
+
     public async ValueTask DisposeAsync() => await _connection.DisposeAsync();
 
     private readonly record struct GraphIds(long OrderId, long OperationId);
+    private readonly record struct SequenceGraphIds(long FirstOperationId, long LaterOperationId);
 
     private sealed class TestRunningNumberService : IRunningNumberService
     {

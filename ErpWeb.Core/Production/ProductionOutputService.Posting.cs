@@ -28,14 +28,6 @@ public sealed partial class ProductionOutputService
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
             StockPostingContext? ledgerContext = null;
-            if (_stockCoordinator is not null)
-            {
-                var command = BuildOutputPostingCommand(
-                    output, reversal: false, output.ProductionDate, null, null);
-                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
-                if (ledger.Error is not null) return Fail(ledger.Error.Message);
-                ledgerContext = ledger.Context;
-            }
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
@@ -62,6 +54,25 @@ public sealed partial class ProductionOutputService
                 return Fail("Route OutputType is null; refresh the Work Order.");
             if (routeStep.YieldPercent is not null and not 100m)
                 return Fail("YieldPercent must be 100 for this milestone.");
+
+            // The Work Order lock serializes Daily Production posts and rollbacks for this order.
+            // Lock the complete execution graph in deterministic routing order before evaluating it,
+            // so a predecessor rollback cannot invalidate this decision before commit.
+            var sequenceRouteSteps = await LockRouteStepsForWorkOrderAsync(db, order.Uid, cancellationToken);
+            var sequenceOperations = await LockOperationsForWorkOrderAsync(db, order.Uid, cancellationToken);
+            var sequence = _operationEligibility.Evaluate(
+                operation, sequenceRouteSteps, sequenceOperations);
+            if (!sequence.IsEligible)
+                return Fail(sequence.BlockingReason!);
+
+            if (_stockCoordinator is not null)
+            {
+                var command = BuildOutputPostingCommand(
+                    output, reversal: false, output.ProductionDate, null, null);
+                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+                if (ledger.Error is not null) return Fail(ledger.Error.Message);
+                ledgerContext = ledger.Context;
+            }
 
             var siblings = await db.ProductionWorkOrderOperations
                 .Where(x => x.RouteStepId == routeStep.Uid)
@@ -156,8 +167,7 @@ public sealed partial class ProductionOutputService
                 ProductionBalLot Lot,
                 decimal MaterialQty,
                 decimal LotQty,
-                decimal BaseQty,
-                decimal Cost)>();
+                decimal BaseQty)>();
             var remainingBaseByLot = new Dictionary<long, decimal>();
 
             foreach (var material in materials)
@@ -208,18 +218,18 @@ public sealed partial class ProductionOutputService
                         return Fail($"Lot {lot.LotNo} has a future LastMovementDate.");
 
                     var availableBase = remainingBaseByLot.GetValueOrDefault(lot.Uid, lot.BaseQty);
+                    if (availableBase <= 0m) continue;
                     var takeBase = Math.Min(availableBase, remainingBase);
+                    if (IvQty.Round(takeBase) <= 0m) continue;
                     var materialQty = material.ConversionFactorToBase > 0m
                         ? IvQty.Round(takeBase / material.ConversionFactorToBase)
                         : takeBase;
                     var lotQty = lot.ConversionFactorToBase > 0m
                         ? IvQty.Round(takeBase / lot.ConversionFactorToBase)
                         : takeBase;
-                    var takeCost = lot.BaseQty > 0m
-                        ? IvQty.Round(lot.TotalCost * (takeBase / lot.BaseQty))
-                        : 0m;
-
-                    consumeFacts.Add((material, lot, materialQty, lotQty, takeBase, takeCost));
+                    if (materialQty <= 0m || lotQty <= 0m)
+                        return Fail($"The allocation for {material.ComponentCode} rounds to zero in its source UOM.");
+                    consumeFacts.Add((material, lot, materialQty, lotQty, takeBase));
                     remainingBaseByLot[lot.Uid] = IvQty.Round(availableBase - takeBase);
                     remainingBase = IvQty.Round(remainingBase - takeBase);
                 }
@@ -232,14 +242,21 @@ public sealed partial class ProductionOutputService
             await db.SaveChangesAsync(cancellationToken);
 
             // Apply consumption
+            var totalConsumedCost = 0m;
             foreach (var fact in consumeFacts.OrderBy(x => x.Lot.Uid))
             {
                 var lot = fact.Lot;
+                // A final depletion receives the exact remaining cost. This prevents rounded
+                // proportional splits from leaving value stranded in an empty production pile.
+                var takeCost = IvQty.Round(lot.BaseQty - fact.BaseQty) <= 0m
+                    ? lot.TotalCost
+                    : IvQty.Round(lot.TotalCost * (fact.BaseQty / lot.BaseQty));
                 lot.Qty = IvQty.Round(lot.Qty - fact.LotQty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty - fact.BaseQty);
-                lot.TotalCost = IvQty.Round(lot.TotalCost - fact.Cost);
+                lot.TotalCost = IvQty.Round(lot.TotalCost - takeCost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
                 lot.LastMovementDate = output.ProductionDate;
+                totalConsumedCost = IvQty.Round(totalConsumedCost + takeCost);
 
                 var balMov = new ProductionBalLotMovement
                 {
@@ -249,8 +266,8 @@ public sealed partial class ProductionOutputService
                     Uom = lot.Uom,
                     BaseQty = fact.BaseQty,
                     BaseUom = lot.BaseUom,
-                    UnitCost = fact.BaseQty > 0m ? IvQty.Round(fact.Cost / fact.BaseQty) : 0m,
-                    TotalCost = fact.Cost,
+                    UnitCost = fact.BaseQty > 0m ? IvQty.Round(takeCost / fact.BaseQty) : 0m,
+                    TotalCost = takeCost,
                     WorkOrderId = order.Uid,
                     WorkOrderMaterialId = fact.Material.Uid,
                     WorkOrderOperationId = operation.Uid,
@@ -287,7 +304,7 @@ public sealed partial class ProductionOutputService
                     FromBalLocId = lot.SourceIvBalLocId,
                     ItemStatus = string.Empty,
                     UnitCost = balMov.UnitCost,
-                    TotalCost = fact.Cost,
+                    TotalCost = takeCost,
                     PostingLinkId = link.Uid,
                     OriginalMovementId = lot.Kind == ProductionBalLotKinds.MaterialIn
                         ? lot.OriginalIssueMovementId
@@ -302,12 +319,17 @@ public sealed partial class ProductionOutputService
 
             if (handoffLot is not null && handoffConsumeQty > 0m && consumerContract is not null)
             {
+                var handoffCost = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase) <= 0m
+                    ? handoffLot.TotalCost
+                    : IvQty.Round(handoffLot.TotalCost * (handoffConsumeBase / handoffLot.BaseQty));
                 handoffLot.Qty = IvQty.Round(handoffLot.Qty - handoffConsumeQty);
                 handoffLot.BaseQty = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase);
+                handoffLot.TotalCost = IvQty.Round(handoffLot.TotalCost - handoffCost);
                 handoffLot.AverageUnitCost = handoffLot.BaseQty > 0m
                     ? IvQty.Round(handoffLot.TotalCost / handoffLot.BaseQty)
                     : 0m;
                 handoffLot.LastMovementDate = output.ProductionDate;
+                totalConsumedCost = IvQty.Round(totalConsumedCost + handoffCost);
 
                 db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
                 {
@@ -317,8 +339,8 @@ public sealed partial class ProductionOutputService
                     Uom = consumerContract.Uom,
                     BaseQty = handoffConsumeBase,
                     BaseUom = consumerContract.BaseUom,
-                    UnitCost = 0m,
-                    TotalCost = 0m,
+                    UnitCost = handoffConsumeBase > 0m ? IvQty.Round(handoffCost / handoffConsumeBase) : 0m,
+                    TotalCost = handoffCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -337,7 +359,8 @@ public sealed partial class ProductionOutputService
                 var produceBase = ProductionProcessHandoff.ToBaseQty(
                     output.GoodQty, producerContract.ConversionFactorToBase);
                 var createdOrUpdated = await LockOrCreateHandoffLotAsync(
-                    db, scope, order, routeStep, operation, output, producerContract, produceBase, cancellationToken);
+                    db, scope, order, routeStep, operation, output, producerContract, produceBase,
+                    totalConsumedCost, cancellationToken);
                 if (createdOrUpdated.Error is not null)
                     return Fail(createdOrUpdated.Error);
 
@@ -349,8 +372,8 @@ public sealed partial class ProductionOutputService
                     Uom = producerContract.Uom,
                     BaseQty = produceBase,
                     BaseUom = producerContract.BaseUom,
-                    UnitCost = 0m,
-                    TotalCost = 0m,
+                    UnitCost = produceBase > 0m ? IvQty.Round(totalConsumedCost / produceBase) : 0m,
+                    TotalCost = totalConsumedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -372,7 +395,7 @@ public sealed partial class ProductionOutputService
                 var factor = routeStep.OutputConversionFactorToBase ?? 1m;
                 var produceBase = IvQty.Round(output.GoodQty * factor);
                 var wipLot = await LockOrCreateWipLotAsync(
-                    db, scope, order, routeStep, operation, output, produceBase, now, user, cancellationToken);
+                    db, scope, order, routeStep, operation, output, produceBase, totalConsumedCost, now, user, cancellationToken);
                 var produceMov = new ProductionBalLotMovement
                 {
                     ProductionBalLotId = wipLot.Uid,
@@ -381,8 +404,8 @@ public sealed partial class ProductionOutputService
                     Uom = output.OutputUom,
                     BaseQty = produceBase,
                     BaseUom = routeStep.OutputBaseUom ?? output.OutputUom,
-                    UnitCost = 0m,
-                    TotalCost = 0m,
+                    UnitCost = produceBase > 0m ? IvQty.Round(totalConsumedCost / produceBase) : 0m,
+                    TotalCost = totalConsumedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -540,7 +563,7 @@ public sealed partial class ProductionOutputService
             movement.SourceLineId = movement.WorkOrderMaterialId?.ToString()
                 ?? movement.WorkOrderOperationId?.ToString()
                 ?? movement.Uid.ToString();
-            movement.SplitOrdinal = 0;
+            movement.SplitOrdinal = movements.Count(x => x.SourceLineId == movement.SourceLineId && x.Uid < movement.Uid);
             movement.ValuationStatus = "UNVALUED";
             lot.LastStockEventEffectiveAt = context.Posting.EffectiveAt;
         }
@@ -548,7 +571,13 @@ public sealed partial class ProductionOutputService
             .Where(x => x.ProductionOutputId == outputId && x.PostingLinkId == postingLinkId)
             .ToListAsync(cancellationToken);
         foreach (var movement in material)
+        {
             movement.StockPostingId = context.Posting.Id;
+            movement.SourceLineId = movement.WorkOrderMaterialId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            movement.SplitOrdinal = material.Count(x => x.WorkOrderMaterialId == movement.WorkOrderMaterialId
+                && x.MovementType == movement.MovementType && x.Uid < movement.Uid);
+            movement.MovementDate = context.Posting.EffectiveAt;
+        }
     }
 
     private static async Task<(ProductionBalLot? Lot, string? Error)> LockOrCreateHandoffLotAsync(
@@ -560,6 +589,7 @@ public sealed partial class ProductionOutputService
         ProductionOutput output,
         ProductionProcessHandoff.QtyContract contract,
         decimal produceBase,
+        decimal producedCost,
         CancellationToken ct)
     {
         var lotNo = ProductionProcessHandoff.HandoffLotNo(operation.Uid);
@@ -592,6 +622,8 @@ public sealed partial class ProductionOutputService
 
             existing.Qty = IvQty.Round(existing.Qty + output.GoodQty);
             existing.BaseQty = IvQty.Round(existing.BaseQty + produceBase);
+            existing.TotalCost = IvQty.Round(existing.TotalCost + producedCost);
+            existing.AverageUnitCost = existing.BaseQty > 0m ? IvQty.Round(existing.TotalCost / existing.BaseQty) : 0m;
             existing.LastMovementDate = output.ProductionDate;
             return (existing, null);
         }
@@ -607,8 +639,8 @@ public sealed partial class ProductionOutputService
             BaseQty = produceBase,
             BaseUom = contract.BaseUom,
             ConversionFactorToBase = contract.ConversionFactorToBase,
-            TotalCost = 0m,
-            AverageUnitCost = 0m,
+            TotalCost = producedCost,
+            AverageUnitCost = produceBase > 0m ? IvQty.Round(producedCost / produceBase) : 0m,
             WorkOrderId = order.Uid,
             WorkOrderNo = order.WorkOrderNo,
             ProducingRouteStepId = null,
@@ -660,6 +692,7 @@ public sealed partial class ProductionOutputService
         ProductionWorkOrderOperation operation,
         ProductionOutput output,
         decimal produceBase,
+        decimal producedCost,
         DateTime now,
         string user,
         CancellationToken ct)
@@ -685,6 +718,8 @@ public sealed partial class ProductionOutputService
             }
             existing.Qty = IvQty.Round(existing.Qty + output.GoodQty);
             existing.BaseQty = IvQty.Round(existing.BaseQty + produceBase);
+            existing.TotalCost = IvQty.Round(existing.TotalCost + producedCost);
+            existing.AverageUnitCost = existing.BaseQty > 0m ? IvQty.Round(existing.TotalCost / existing.BaseQty) : 0m;
             existing.LastMovementDate = output.ProductionDate;
             return existing;
         }
@@ -700,8 +735,8 @@ public sealed partial class ProductionOutputService
             BaseQty = produceBase,
             BaseUom = routeStep.OutputBaseUom ?? output.OutputUom,
             ConversionFactorToBase = routeStep.OutputConversionFactorToBase ?? 1m,
-            TotalCost = 0m,
-            AverageUnitCost = 0m,
+            TotalCost = producedCost,
+            AverageUnitCost = produceBase > 0m ? IvQty.Round(producedCost / produceBase) : 0m,
             WorkOrderId = order.Uid,
             WorkOrderNo = order.WorkOrderNo,
             ProducingRouteStepId = routeStep.Uid,
@@ -798,6 +833,31 @@ public sealed partial class ProductionOutputService
             ? await db.ProductionWorkOrderOperations.FromSqlInterpolated(
                 $@"SELECT * FROM dbo.PrWorkOrderOperation WITH (UPDLOCK, HOLDLOCK) WHERE UID={id}").SingleOrDefaultAsync(ct)
             : await db.ProductionWorkOrderOperations.SingleOrDefaultAsync(x => x.Uid == id, ct);
+
+    private static async Task<List<ProductionWorkOrderRouteStep>> LockRouteStepsForWorkOrderAsync(
+        AppDbContext db, long workOrderId, CancellationToken ct) =>
+        db.Database.IsSqlServer()
+            ? await db.ProductionWorkOrderRouteSteps.FromSqlInterpolated(
+                    $@"SELECT * FROM dbo.PrWorkOrderRouteStep WITH (UPDLOCK, HOLDLOCK) WHERE WorkOrderID={workOrderId} ORDER BY StageSequence, UID")
+                .ToListAsync(ct)
+            : await db.ProductionWorkOrderRouteSteps
+                .Where(x => x.WorkOrderId == workOrderId)
+                .OrderBy(x => x.StageSequence)
+                .ThenBy(x => x.Uid)
+                .ToListAsync(ct);
+
+    private static async Task<List<ProductionWorkOrderOperation>> LockOperationsForWorkOrderAsync(
+        AppDbContext db, long workOrderId, CancellationToken ct) =>
+        db.Database.IsSqlServer()
+            ? await db.ProductionWorkOrderOperations.FromSqlInterpolated(
+                    $@"SELECT * FROM dbo.PrWorkOrderOperation WITH (UPDLOCK, HOLDLOCK) WHERE WorkOrderID={workOrderId} ORDER BY RouteStepID, ProcessSequence, UID")
+                .ToListAsync(ct)
+            : await db.ProductionWorkOrderOperations
+                .Where(x => x.WorkOrderId == workOrderId)
+                .OrderBy(x => x.RouteStepId)
+                .ThenBy(x => x.ProcessSequence)
+                .ThenBy(x => x.Uid)
+                .ToListAsync(ct);
 
     private static async Task<ProductionWorkOrderMaterial?> LockMaterialAsync(AppDbContext db, long id, CancellationToken ct) =>
         db.Database.IsSqlServer()

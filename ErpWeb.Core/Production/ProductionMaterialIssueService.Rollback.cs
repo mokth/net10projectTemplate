@@ -319,14 +319,8 @@ public sealed partial class ProductionMaterialIssueService
 
             await db.SaveChangesAsync(cancellationToken);
             if (ledger.Context is not null)
-            {
-                var details = await db.IvTrxBatchDetails
-                    .Where(x => x.BatchId == batch.Id).ToListAsync(cancellationToken);
-                foreach (var detail in details)
-                    detail.DocumentRevision = checked(detail.DocumentRevision + 1);
                 await _inventoryPosting.CompletePostingInTransactionAsync(
                     ledger.Context, cancellationToken);
-            }
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Ok(
                 await BuildRollbackResultAsync(db, rollbackLink, cancellationToken));

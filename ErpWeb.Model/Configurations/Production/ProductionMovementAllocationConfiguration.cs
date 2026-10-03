@@ -10,6 +10,7 @@ public sealed class ProductionMovementAllocationConfiguration : IEntityTypeConfi
     {
         builder.ToTable("PrProductionMovementAllocation", table =>
         {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_PrProductionMovementAllocation_Qty", "[BaseQty] > 0");
             table.HasCheckConstraint("CK_PrProductionMovementAllocation_Distinct",
                 "[ReceiptMovementId] <> [OutboundMovementId]");

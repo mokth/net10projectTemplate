@@ -9,8 +9,11 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
     public void Configure(EntityTypeBuilder<IvTrxHistory> builder)
     {
         builder.ToTable("IvTrxHistory", table =>
+        {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_IvTrxHistory_V2",
-                "[LedgerVersion] IS NULL OR ([LedgerVersion] = 2 AND [LedgerEpochId] IS NOT NULL AND [StockPostingId] IS NOT NULL AND [PostingLineNo] > 0 AND [DocumentRevision] >= 0 AND [EntryRole] IS NOT NULL)"));
+                "[LedgerVersion] IS NULL OR ([LedgerVersion] = 2 AND [LedgerEpochId] IS NOT NULL AND [StockPostingId] IS NOT NULL AND [PostingLineNo] > 0 AND [DocumentRevision] >= 0 AND [EntryRole] IS NOT NULL)");
+        });
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

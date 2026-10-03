@@ -1,6 +1,7 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -30,6 +31,20 @@ public sealed class ProductionMaterialIssueSchemaTests
         ?? throw new InvalidOperationException("ProductionMaterialIssueLine is not mapped.");
 
     [Fact]
+    public void Trigger_backed_ledger_tables_disable_sql_server_output_clause()
+    {
+        foreach (var type in new[]
+        {
+            typeof(StockPosting), typeof(IvTrxHistory), typeof(ProductionBalLotMovement),
+            typeof(ProductionMaterialMovement), typeof(ProductionMovementAllocation)
+        })
+        {
+            var entity = Model.FindEntityType(type)!;
+            Assert.False(entity.IsSqlOutputClauseUsed(), $"{entity.GetTableName()} has a seal trigger.");
+        }
+    }
+
+    [Fact]
     public void Movement_has_required_table_key_precision_and_constraints()
     {
         Assert.Equal("PrMaterialMovement", Entity.GetTableName());
@@ -52,7 +67,8 @@ public sealed class ProductionMaterialIssueSchemaTests
         {
             typeof(ProductionWorkOrder), typeof(ProductionWorkOrderMaterial),
             typeof(ProductionWorkOrderOperation), typeof(ProductionPostingLink),
-            typeof(ProductionMaterialMovement), typeof(IvTrxBatch),
+            typeof(ProductionMaterialMovement), typeof(ProductionMaterialMovement),
+            typeof(ProductionMaterialMovement), typeof(ErpWeb.Model.Entities.StockLedger.StockPosting), typeof(IvTrxBatch),
             typeof(IvTrxBatchDetail), typeof(IvBalLoc), typeof(IvLot),
             typeof(ProductionBalLot), typeof(ProductionBalLotMovement), typeof(ProductionOutput)
         };
@@ -84,14 +100,16 @@ public sealed class ProductionMaterialIssueSchemaTests
         Assert.Equal("PrMaterialIssueLine", DraftLineEntity.GetTableName());
         Assert.Equal(18, DraftLineEntity.FindProperty(nameof(ProductionMaterialIssueLine.IssueQty))!.GetPrecision());
         Assert.Equal(4, DraftLineEntity.FindProperty(nameof(ProductionMaterialIssueLine.BaseQty))!.GetScale());
+        Assert.Equal(250, DraftLineEntity.FindProperty(nameof(ProductionMaterialIssueLine.ExcessIssueReason))!.GetMaxLength());
         Assert.All(DraftLineEntity.GetForeignKeys(), x => Assert.Equal(DeleteBehavior.Restrict, x.DeleteBehavior));
         Assert.Equal(6, DraftLineEntity.GetForeignKeys().Count());
         var indexes = DraftLineEntity.GetIndexes().ToDictionary(x => x.GetDatabaseName()!);
         Assert.True(indexes["UQ_PrMaterialIssueLine_InventoryDetail"].IsUnique);
-        Assert.True(indexes["UQ_PrMaterialIssueLine_PostingLine"].IsUnique);
+        Assert.True(indexes["UQ_PrMaterialIssueLine_PostingRevisionLine"].IsUnique);
         Assert.Contains("IX_PrMaterialIssueLine_Batch", indexes.Keys);
         Assert.Contains("IX_PrMaterialIssueLine_Material", indexes.Keys);
         Assert.Contains("IX_PrMaterialIssueLine_Operation", indexes.Keys);
+        Assert.Contains("IX_PrMaterialIssueLine_PostingLink_Material", indexes.Keys);
     }
 
     [Fact]

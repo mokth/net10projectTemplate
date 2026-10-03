@@ -19,28 +19,32 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
     private readonly IAccessRightService _access;
     private readonly ICurrentDateService _clock;
     private readonly IInventoryAsOfStockService _asOfStock;
+    private readonly IProductionMaterialIssueDraftReservationReader _draftReservations;
 
     public ProductionMaterialAllocationService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
         ICurrentDateService clock,
-        IInventoryAsOfStockService? asOfStock = null)
+        IInventoryAsOfStockService? asOfStock = null,
+        IProductionMaterialIssueDraftReservationReader? draftReservations = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _clock = clock;
         _asOfStock = asOfStock ?? new InventoryAsOfStockService();
+        _draftReservations = draftReservations ?? new ProductionMaterialIssueDraftReservationReader();
     }
 
     public async Task<IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>> GetStockCandidatesAsync(
         long workOrderMaterialId,
         DateTime issueDate,
         CancellationToken cancellationToken = default,
-        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance = null)
+        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance = null,
+        int? excludeInventoryBatchNo = null)
     {
-        var prepared = await PrepareAsync(workOrderMaterialId, issueDate, reservedBaseQtyByBalance, cancellationToken);
+        var prepared = await PrepareAsync(workOrderMaterialId, issueDate, reservedBaseQtyByBalance, excludeInventoryBatchNo, cancellationToken);
         if (prepared.Error is not null)
             return IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>.Fail(
                 prepared.Error.Value.Code, prepared.Error.Value.Message);
@@ -58,7 +62,8 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
             return Fail(IvMasterErrorCode.Validation, "Requested quantity must be greater than zero.");
 
         var prepared = await PrepareAsync(
-            request.WorkOrderMaterialId, request.IssueDate, request.ReservedBaseQtyByBalance, cancellationToken);
+            request.WorkOrderMaterialId, request.IssueDate, request.ReservedBaseQtyByBalance,
+            request.ExcludeInventoryBatchNo, cancellationToken);
         if (prepared.Error is not null)
             return Fail(prepared.Error.Value.Code, prepared.Error.Value.Message);
 
@@ -93,6 +98,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         long materialId,
         DateTime issueDate,
         IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance,
+        int? excludeInventoryBatchNo,
         CancellationToken cancellationToken)
     {
         if (!await _access.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, cancellationToken))
@@ -168,19 +174,22 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
 
         var availability = await _asOfStock.GetAsync(db, scope.CompanyCode, scope.BranchCode!,
             raw.Select(x => x.FromBalLocId).ToArray(), issueDate, cancellationToken);
+        var otherDraftReserved = await _draftReservations.GetReservedBaseQtyByBalanceAsync(
+            db, scope.CompanyCode, scope.BranchCode!, materialId, issueDate, excludeInventoryBatchNo, cancellationToken);
         foreach (var row in raw)
         {
             if (!availability.TryGetValue(row.FromBalLocId, out var stock)) continue;
             row.CurrentBaseQty = stock.CurrentBaseQty;
             row.AsOfBaseQty = stock.AsOfBaseQty;
-            var reserved = reservedBaseQtyByBalance is not null
+            row.UsableBaseQty = stock.UsableBaseQty;
+            row.ReservedOtherDraftBaseQty = otherDraftReserved.GetValueOrDefault(row.FromBalLocId);
+            row.ReservedCurrentDocumentBaseQty = reservedBaseQtyByBalance is not null
                 && reservedBaseQtyByBalance.TryGetValue(row.FromBalLocId, out var reservedQty)
                 ? IvQty.Round(Math.Max(reservedQty, 0m))
                 : 0m;
-            row.AvailableBaseQty = IvQty.Round(Math.Max(stock.UsableBaseQty - reserved, 0m));
+            row.AvailableBaseQty = IvQty.Round(Math.Max(stock.UsableBaseQty
+                - row.ReservedOtherDraftBaseQty - row.ReservedCurrentDocumentBaseQty, 0m));
         }
-
-        raw.RemoveAll(x => x.AvailableBaseQty <= 0m);
 
         var ordered = raw
             .OrderBy(x => x.LotControl && x.ExpiryDate is null ? 1 : 0)
@@ -207,7 +216,10 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         AvailableBaseQty = IvQty.Round(row.AvailableBaseQty),
         CurrentBaseQty = IvQty.Round(row.CurrentBaseQty),
         AsOfBaseQty = IvQty.Round(row.AsOfBaseQty),
-        UsableBaseQty = IvQty.Round(row.AvailableBaseQty),
+        UsableBaseQty = IvQty.Round(row.UsableBaseQty),
+        ReservedOtherDraftBaseQty = IvQty.Round(row.ReservedOtherDraftBaseQty),
+        ReservedCurrentDocumentBaseQty = IvQty.Round(row.ReservedCurrentDocumentBaseQty),
+        AvailableToAllocateBaseQty = IvQty.Round(row.AvailableBaseQty),
         BaseUom = row.BaseUom,
         SuggestedBaseQty = suggested,
         UnitPrice = canViewCost ? row.UnitPrice : null
@@ -229,6 +241,9 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         public decimal AvailableBaseQty { get; set; }
         public decimal CurrentBaseQty { get; set; }
         public decimal AsOfBaseQty { get; set; }
+        public decimal UsableBaseQty { get; set; }
+        public decimal ReservedOtherDraftBaseQty { get; set; }
+        public decimal ReservedCurrentDocumentBaseQty { get; set; }
         public string BaseUom { get; init; } = string.Empty;
         public decimal? UnitPrice { get; init; }
         public bool LotControl { get; init; }

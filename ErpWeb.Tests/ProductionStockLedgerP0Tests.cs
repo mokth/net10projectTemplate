@@ -68,6 +68,27 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Exhausted_first_lot_does_not_create_a_zero_quantity_leg()
+    {
+        var fixture = await SeedOutputAsync(
+            new MaterialSpec("WIP-A", 6m, "EA", 1m),
+            new MaterialSpec("WIP-A", 4m, "EA", 1m));
+        await SeedLotAsync(fixture, "WIP-A", 5m, "EA", 5m, 1m, "LOT-A");
+        await SeedLotAsync(fixture, "WIP-A", 5m, "EA", 5m, 1m, "LOT-B");
+
+        var result = await CreateService().PostAsync(fixture.OutputId);
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var legs = await db.ProductionBalLotMovements
+            .Where(x => x.MovementType == ProductionBalLotMovementTypes.Consume)
+            .OrderBy(x => x.Uid).ToListAsync();
+        Assert.Equal(new[] { 5m, 1m, 4m }, legs.Select(x => x.BaseQty));
+        Assert.All(legs, x => Assert.True(x.Qty > 0m && x.BaseQty > 0m));
+        Assert.Equal(3, await db.ProductionMaterialMovements.CountAsync());
+    }
+
+    [Fact]
     public async Task Consumption_uses_balance_owned_uom_for_lot_projection()
     {
         var fixture = await SeedOutputAsync(new MaterialSpec("WIP-A", 1m, "BOX", 10m));
@@ -157,6 +178,7 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
         var route = new ProductionWorkOrderRouteStep
         {
             WorkOrder = order,
+            StageSequence = 10,
             WorkCentreCode = "WC-P0",
             OutputItemCode = "FG-P0",
             OutputType = PrRouteOutputTypes.WipNonstock,
@@ -261,7 +283,8 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
         decimal qty,
         string uom,
         decimal baseQty,
-        decimal factor)
+        decimal factor,
+        string? lotNo = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         db.ProductionBalLots.Add(new ProductionBalLot
@@ -279,7 +302,7 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
             WorkOrderNo = "WO-P0",
             ProducingRouteStepId = fixture.RouteStepId,
             OutputType = PrRouteOutputTypes.WipStocked,
-            LotNo = $"LOT-{itemCode}",
+            LotNo = lotNo ?? $"LOT-{itemCode}",
             LastMovementDate = new DateTime(2026, 9, 30),
         });
         await db.SaveChangesAsync();

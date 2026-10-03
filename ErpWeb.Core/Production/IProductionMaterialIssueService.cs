@@ -170,6 +170,7 @@ public sealed class ProductionMaterialIssueDocumentLine
     public string ItemStatus { get; init; } = string.Empty;
     public decimal? UnitCost { get; init; }
     public decimal? TotalCost { get; init; }
+    public string? ExcessIssueReason { get; init; }
 }
 
 public sealed class ProductionMaterialIssueWorkspace
@@ -208,6 +209,13 @@ public sealed class ProductionMaterialIssueOperation
     public string? WorkCentreCode { get; init; }
     public decimal PlannedOutputQty { get; init; }
     public string? PlannedOutputUom { get; init; }
+    public int StageSequence { get; init; }
+    public bool IsSequenceEligible { get; set; }
+    public string? SequenceBlockingReason { get; set; }
+    public decimal ActualOutputQty { get; init; }
+    public decimal PostedBasisQty { get; init; }
+    public decimal OpenDraftBasisQty { get; init; }
+    public decimal RemainingBasisQty { get; init; }
 }
 
 public sealed class ProductionMaterialIssueMaterial
@@ -238,6 +246,10 @@ public sealed class ProductionMaterialIssueMaterial
     public decimal AvailableBaseQty { get; init; }
     public decimal AvailableQty { get; init; }
     public decimal ShortageQty { get; init; }
+    public decimal StandardForCurrentBasis { get; init; }
+    public decimal OtherDraftReservedBaseQty { get; init; }
+    public decimal AvailableAfterDraftReservations { get; init; }
+    public bool RequiresExcessReason { get; init; }
     public string? WarehouseCode { get; init; }
     public string? LocationCode { get; init; }
     public bool LotControl { get; init; }
@@ -281,6 +293,7 @@ public sealed record ProductionMaterialIssueFilterChoice(string Code, string Lab
 public sealed class ProductionMaterialIssueOperationRow
 {
     public long WorkOrderOperationId { get; init; }
+    public long WorkOrderId { get; init; }
     public string WorkOrderNo { get; init; } = string.Empty;
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
@@ -292,6 +305,14 @@ public sealed class ProductionMaterialIssueOperationRow
     public string RawMaterialCodes { get; set; } = string.Empty;
     public decimal PlannedOutputQty { get; init; }
     public string? PlannedOutputUom { get; init; }
+    public int StageSequence { get; init; }
+    public int ProcessSequence { get; init; }
+    public bool IsSequenceEligible { get; set; }
+    public string? SequenceBlockingReason { get; set; }
+    public decimal ActualOutputQty { get; set; }
+    public decimal PostedBasisQty { get; set; }
+    public decimal OpenDraftBasisQty { get; set; }
+    public decimal RemainingBasisQty { get; set; }
 }
 
 public sealed class ProductionMaterialIssueBomPreview
@@ -299,6 +320,9 @@ public sealed class ProductionMaterialIssueBomPreview
     public long WorkOrderOperationId { get; init; }
     public decimal OperationPlannedOutputQty { get; init; }
     public decimal ProductionQtyThisIssue { get; init; }
+    public decimal PostedBasisQty { get; init; }
+    public decimal OpenDraftBasisQty { get; init; }
+    public decimal RemainingBasisQty { get; init; }
     public IReadOnlyList<ProductionMaterialIssueBomPreviewLine> Lines { get; init; } = [];
 }
 
@@ -317,6 +341,7 @@ public sealed class ProductionMaterialIssueBomPreviewLine
     public decimal AvailableForIssueDateQty { get; init; }
     public bool CanManualIssue { get; init; }
     public string? BlockingReason { get; init; }
+    public bool RequiresExcessReason { get; init; }
 }
 
 /// <summary>Shared apply payload for inline Desired Output and BOM dialog.</summary>
@@ -351,6 +376,7 @@ public sealed class ProductionMaterialIssueLineRequest
 {
     public long WorkOrderMaterialId { get; set; }
     public decimal IssueQty { get; set; }
+    public string? ExcessIssueReason { get; set; }
     public IReadOnlyList<ProductionMaterialIssueAllocationRequest> Allocations { get; set; } = [];
 }
 

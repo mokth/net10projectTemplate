@@ -58,6 +58,7 @@ public static class ProductionAuditEventTypes
     public const string MaterialIssueRolledBack = "MATERIAL_ISSUE_ROLLED_BACK";
     public const string OutputPosted = "OUTPUT_POSTED";
     public const string OutputRolledBack = "OUTPUT_ROLLED_BACK";
+    public const string Completed = "COMPLETED";
 }
 
 public static class ProductionMaterialMovementTypes

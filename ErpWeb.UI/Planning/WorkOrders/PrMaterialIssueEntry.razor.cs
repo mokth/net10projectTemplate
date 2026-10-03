@@ -109,7 +109,7 @@ public partial class PrMaterialIssueEntry : PageBase
     protected bool CanApplyDesiredOutput => Workspace is not null
         && SelectedOperationRow is not null
         && DesiredOutputInput > 0m
-        && DesiredOutputInput <= (SelectedOperationRow.PlannedOutputQty)
+        && DesiredOutputInput <= SelectedOperationRow.RemainingBasisQty
         && !IsSubmitting;
     protected bool CanFillOutstanding => CanApplyDesiredOutput
         && AppliedProductionQtyThisIssue is > 0
@@ -191,21 +191,30 @@ public partial class PrMaterialIssueEntry : PageBase
     {
         var result = await MaterialIssues.GetWorkspaceAsync(operation.WorkOrderNo, operation.WorkOrderOperationId);
         if (!result.Succeeded || result.Data is null) { ErrorMessage = result.Message ?? "Unable to load operation."; return; }
-        SelectedOperationRow = operation; Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
+        var refreshedOperation = result.Data.Operations.Single(x => x.WorkOrderOperationId == operation.WorkOrderOperationId);
+        if (!refreshedOperation.IsSequenceEligible)
+        {
+            ErrorMessage = refreshedOperation.SequenceBlockingReason
+                ?? "The selected operation is blocked by the Work Order execution sequence.";
+            return;
+        }
+
+        SelectedOperationRow = ToOperationRow(result.Data, refreshedOperation);
+        Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
         _issueDate = result.Data.IssueDate; SelectedOperationId = operation.WorkOrderOperationId;
-        SelectedWorkCentre = operation.WorkCentreCode ?? string.Empty;
+        SelectedWorkCentre = refreshedOperation.WorkCentreCode ?? string.Empty;
         Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
         Remark = string.Empty;
-        ResetDesiredOutputState(defaultDesired: operation.PlannedOutputQty);
+        ResetDesiredOutputState(defaultDesired: refreshedOperation.RemainingBasisQty);
     }
     protected void OpenBom() { if (SelectedOperationRow is not null) BomVisible = true; }
 
     protected async Task ApplyDesiredOutputAndAllocateAsync()
     {
         if (SelectedOperationRow is null || Workspace is null) return;
-        if (DesiredOutputInput <= 0m || DesiredOutputInput > SelectedOperationRow.PlannedOutputQty)
+        if (DesiredOutputInput <= 0m || DesiredOutputInput > SelectedOperationRow.RemainingBasisQty)
         {
-            ErrorMessage = "Desired output must be greater than zero and not exceed planned output.";
+            ErrorMessage = "Material Requirement Basis Qty must be greater than zero and not exceed the remaining operation planning basis.";
             return;
         }
         IsSubmitting = true; ErrorMessage = null;
@@ -273,12 +282,24 @@ public partial class PrMaterialIssueEntry : PageBase
         Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo; _issueDate = result.Data.IssueDate;
         Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
         SelectedWorkCentre = string.Empty;
-        SelectedOperationId = result.Data.Operations.OrderBy(x => x.ProcessSequence).Select(x => (long?)x.WorkOrderOperationId).FirstOrDefault();
+        var firstEligibleOperation = result.Data.Operations
+            .Where(x => x.IsSequenceEligible)
+            .OrderBy(x => x.StageSequence)
+            .ThenBy(x => x.ProcessSequence)
+            .FirstOrDefault();
+        if (firstEligibleOperation is null)
+        {
+            ErrorMessage = "No operation is currently eligible for material issue. Complete the required preceding operations first.";
+            ResetDesiredOutputState(0m);
+            return;
+        }
+
+        SelectedOperationId = firstEligibleOperation.WorkOrderOperationId;
         Remark = string.Empty; _postingRequestId = null;
         if (SelectedOperationId.HasValue)
         {
             SelectedOperationRow = ToOperationRow(result.Data, result.Data.Operations.Single(x => x.WorkOrderOperationId == SelectedOperationId.Value));
-            ResetDesiredOutputState(defaultDesired: SelectedOperationRow.PlannedOutputQty);
+            ResetDesiredOutputState(defaultDesired: SelectedOperationRow.RemainingBasisQty);
         }
         else ResetDesiredOutputState(0m);
     }
@@ -308,6 +329,7 @@ public partial class PrMaterialIssueEntry : PageBase
             line.IssueQty = IvQty.Round(group.Sum(x => x.IssueQty));
             line.OriginalIssueQty = line.IssueQty;
             line.Allocations = group.Select(x => new ProductionMaterialIssueAllocationRequest { FromBalLocId = x.FromBalLocId, BaseQty = x.BaseQty }).ToList();
+            line.ExcessIssueReason = group.Select(x => x.ExcessIssueReason).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
         }
 
         if (Document.ProductionQtyThisIssue is > 0)
@@ -409,7 +431,8 @@ public partial class PrMaterialIssueEntry : PageBase
                 WorkOrderMaterialId = line.Material.WorkOrderMaterialId,
                 IssueDate = IssueDate,
                 RequestedQty = line.IssueQty,
-                ReservedBaseQtyByBalance = reserved
+                ReservedBaseQtyByBalance = reserved,
+                ExcludeInventoryBatchNo = IsEditMode ? BatchNo : null
             });
             if (!result.Succeeded || result.Data is null || result.Data.ShortBaseQty > 0m)
             {
@@ -457,6 +480,8 @@ public partial class PrMaterialIssueEntry : PageBase
                 return $"{line.Material.ComponentCode} exceeds the maximum allowed quantity for the selected desired output.";
             if (line.IssueQty > line.Material.AvailableToDraft + line.OriginalIssueQty)
                 return $"{line.Material.ComponentCode} exceeds its available draft allowance.";
+            if (line.IssueQty > line.BomRequestedQty && string.IsNullOrWhiteSpace(line.ExcessIssueReason))
+                return $"{line.Material.ComponentCode} exceeds the BOM standard; enter an Excess Issue Reason.";
             var expected = IvQty.Round(line.IssueQty * line.Material.ConversionFactorToBase);
             if (Math.Abs(IvQty.Round(line.Allocations.Sum(x => x.BaseQty)) - expected) > 0.0001m)
                 return $"Allocate exactly {expected:n4} {line.Material.BaseUom} for {line.Material.ComponentCode}.";
@@ -504,7 +529,13 @@ public partial class PrMaterialIssueEntry : PageBase
                 ProductionQtyThisIssue = AppliedProductionQtyThisIssue!.Value,
                 TrxDateTime = IssueDate, RefNo = "AUTO", Remark = Remark,
                 Lines = SelectedIssueLines
-                    .Select(x => new ProductionMaterialIssueLineRequest { WorkOrderMaterialId = x.Material.WorkOrderMaterialId, IssueQty = IvQty.Round(x.IssueQty), Allocations = x.Allocations }).ToList()
+                    .Select(x => new ProductionMaterialIssueLineRequest
+                    {
+                        WorkOrderMaterialId = x.Material.WorkOrderMaterialId,
+                        IssueQty = IvQty.Round(x.IssueQty),
+                        ExcessIssueReason = string.IsNullOrWhiteSpace(x.ExcessIssueReason) ? null : x.ExcessIssueReason.Trim(),
+                        Allocations = x.Allocations
+                    }).ToList()
             };
             var result = BatchNo is > 0
                 ? await MaterialIssues.UpdateAsync(BatchNo.Value, request)
@@ -573,9 +604,13 @@ public partial class PrMaterialIssueEntry : PageBase
         public decimal RequiredQty => Material.RequiredQty;
         public decimal NetIssuedQty => Material.NetIssuedQty;
         public decimal AvailableToDraft => Material.AvailableToDraft;
+        public decimal OtherDraftReservedBaseQty => Material.OtherDraftReservedBaseQty;
+        public decimal AvailableAfterDraftReservations => Material.AvailableAfterDraftReservations;
         public decimal BomRequestedQty { get; set; }
         public decimal MaxIssueQty { get; set; }
         public decimal AvailableForIssueDateQty { get; set; }
+        public string? ExcessIssueReason { get; set; }
+        public bool RequiresExcessReason => IssueQty > BomRequestedQty;
         private decimal _issueQty;
         public decimal IssueQty
         {
@@ -656,6 +691,10 @@ public partial class PrMaterialIssueEntry : PageBase
         ProductCode = workspace.ProductCode, ProductDescription = workspace.ProductDescription,
         WorkCentreCode = operation.WorkCentreCode, OperationCode = operation.OperationCode,
         OperationDescription = operation.OperationDescription, OutputItemCode = workspace.ProductCode,
-        PlannedOutputQty = operation.PlannedOutputQty, PlannedOutputUom = operation.PlannedOutputUom
+        PlannedOutputQty = operation.PlannedOutputQty, PlannedOutputUom = operation.PlannedOutputUom,
+        StageSequence = operation.StageSequence, ProcessSequence = operation.ProcessSequence,
+        IsSequenceEligible = operation.IsSequenceEligible, SequenceBlockingReason = operation.SequenceBlockingReason,
+        ActualOutputQty = operation.ActualOutputQty, PostedBasisQty = operation.PostedBasisQty,
+        OpenDraftBasisQty = operation.OpenDraftBasisQty, RemainingBasisQty = operation.RemainingBasisQty
     };
 }

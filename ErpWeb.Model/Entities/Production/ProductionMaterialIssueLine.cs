@@ -26,6 +26,8 @@ public sealed class ProductionMaterialIssueLine
     public ProductionWorkOrderMaterial? WorkOrderMaterial { get; set; }
     public decimal IssueQty { get; set; }
     public decimal BaseQty { get; set; }
+    /// <summary>Required auditable explanation when this material exceeds its standard BOM quantity.</summary>
+    public string? ExcessIssueReason { get; set; }
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
 }

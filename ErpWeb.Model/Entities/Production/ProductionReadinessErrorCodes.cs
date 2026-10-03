@@ -25,6 +25,12 @@ public static class ProductionReadinessErrorCodes
     /// <summary>A route step has no process operations.</summary>
     public const string NoOperation = "WO_NO_OPERATION";
 
+    /// <summary>A route step has no valid positive stage sequence.</summary>
+    public const string StageSequenceInvalid = "WO_STAGE_SEQUENCE_INVALID";
+
+    /// <summary>An operation has no valid positive process sequence.</summary>
+    public const string ProcessSequenceInvalid = "WO_PROCESS_SEQUENCE_INVALID";
+
     /// <summary>An active route step has no row flagged <c>IsFinalOperation</c>.</summary>
     public const string FinalProcessMissing = "WO_FINAL_PROCESS_MISSING";
 

@@ -10,6 +10,7 @@ public sealed class ProductionBalLotMovementConfiguration : IEntityTypeConfigura
     {
         builder.ToTable("PrProductionBalLotMovement", table =>
         {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_PrProductionBalLotMovement_Qty", "[Qty] > 0 AND [BaseQty] > 0");
             table.HasCheckConstraint("CK_PrProductionBalLotMovement_Cost", "[UnitCost] >= 0 AND [TotalCost] >= 0");
             table.HasCheckConstraint(

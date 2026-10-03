@@ -10,6 +10,7 @@ public sealed class StockPostingConfiguration : IEntityTypeConfiguration<StockPo
     {
         builder.ToTable("StockPosting", table =>
         {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_StockPosting_Sequence", "[PostingSequence] > 0");
             table.HasCheckConstraint("CK_StockPosting_Revision", "[DocumentRevision] >= 0");
             table.HasCheckConstraint("CK_StockPosting_Hashes",

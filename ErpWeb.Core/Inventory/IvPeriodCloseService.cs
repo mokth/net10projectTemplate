@@ -128,6 +128,8 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new ErpWeb.Core.StockLedger.BranchStockTransactionLock()
+            .AcquireAsync(db, company, branch, cancellationToken);
 
         var existing = await db.IvPeriodCloseHdrs
             .FirstOrDefaultAsync(
@@ -379,6 +381,8 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new ErpWeb.Core.StockLedger.BranchStockTransactionLock()
+            .AcquireAsync(db, company, branch, cancellationToken);
 
         var header = await db.IvPeriodCloseHdrs
             .FirstOrDefaultAsync(
@@ -721,6 +725,12 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
             .Select(x => (long?)x.PostingSequence)
             .MaxAsync(cancellationToken) ?? 0L;
 
+        var productionBalances = await db.ProductionBalLots.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.BaseQty > 0m)
+            .OrderBy(x => x.Uid)
+            .Select(x => new { x.Uid, x.ItemCode, x.BaseUom, x.BaseQty })
+            .ToListAsync(cancellationToken);
+
         var header = new StockPeriodSnapshotHdr
         {
             CompanyCode = company,
@@ -729,16 +739,6 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
             PeriodKey = periodKey,
             Revision = revision,
             PostingSequenceWatermark = watermark,
-            SourceDataHash = StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(
-                System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    company,
-                    branch,
-                    periodKey,
-                    revision,
-                    watermark,
-                    lines = snapshot.Lines.Count
-                }))),
             QuantityStatus = "SEALED",
             CreatedAtUtc = DateTime.UtcNow,
             CreatedBy = userId
@@ -754,6 +754,28 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
                 BaseQty = line.ClosingQty
             });
         }
+
+        foreach (var balance in productionBalances)
+        {
+            header.Lines.Add(new StockPeriodSnapshotLine
+            {
+                LedgerArea = "PRODUCTION",
+                StockIdentity = balance.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ItemCode = balance.ItemCode,
+                BaseUom = balance.BaseUom,
+                BaseQty = balance.BaseQty
+            });
+        }
+
+        header.SourceDataHash = StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                company, branch, periodKey, revision, watermark,
+                lines = header.Lines.OrderBy(x => x.LedgerArea, StringComparer.Ordinal)
+                    .ThenBy(x => x.StockIdentity, StringComparer.Ordinal)
+                    .Select(x => new { x.LedgerArea, x.StockIdentity, x.ItemCode, x.BaseUom, x.BaseQty })
+                    .ToArray()
+            })));
 
         db.StockPeriodSnapshotHdrs.Add(header);
     }

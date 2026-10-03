@@ -161,6 +161,7 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
             var posting = BuildPosting(command, scope, epoch.Id, sequence);
             db.StockPostings.Add(posting);
             await db.SaveChangesAsync(cancellationToken);
+            await SetDatabaseWriteContextAsync(db, posting.Id, cancellationToken);
 
             var context = new StockPostingContext(db, epoch, posting, scope.UserId);
             var value = await handler(context, cancellationToken);
@@ -169,6 +170,7 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
 
             posting.SealedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
+            await ClearDatabaseWriteContextAsync(db, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(true, true, false, posting.Id, posting.PostingSequence, value, null);
         }
@@ -255,6 +257,7 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         var posting = BuildPosting(command, scope, epoch.Id, sequence);
         db.StockPostings.Add(posting);
         await db.SaveChangesAsync(cancellationToken);
+        await SetDatabaseWriteContextAsync(db, posting.Id, cancellationToken);
         return new(true, false, new StockPostingContext(db, epoch, posting, scope.UserId), null);
     }
 
@@ -267,6 +270,21 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         await context.Db.SaveChangesAsync(cancellationToken);
         context.Posting.SealedAtUtc = DateTime.UtcNow;
         await context.Db.SaveChangesAsync(cancellationToken);
+        await ClearDatabaseWriteContextAsync(context.Db, cancellationToken);
+    }
+
+    private static async Task SetDatabaseWriteContextAsync(AppDbContext db, long postingId, CancellationToken ct)
+    {
+        if (db.Database.IsSqlServer())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value={postingId}", ct);
+    }
+
+    private static async Task ClearDatabaseWriteContextAsync(AppDbContext db, CancellationToken ct)
+    {
+        if (db.Database.IsSqlServer())
+            await db.Database.ExecuteSqlRawAsync(
+                "EXEC sys.sp_set_session_context @key=N'STOCK_LEDGER_V2_POSTING_ID', @value=NULL", ct);
     }
 
     private static async Task<long> NextSequenceAsync(

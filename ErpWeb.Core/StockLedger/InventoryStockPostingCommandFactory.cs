@@ -19,7 +19,7 @@ public static class InventoryStockPostingCommandFactory
         var batch = await db.IvTrxBatches.AsNoTracking().SingleAsync(x =>
             x.CompanyCode == companyCode && x.BranchCode == branchCode && x.BatchNo == batchNo,
             cancellationToken);
-        var lines = await db.IvTrxBatchDetails.AsNoTracking()
+        var allLines = await db.IvTrxBatchDetails.AsNoTracking()
             .Where(x => x.BatchId == batch.Id)
             .OrderBy(x => x.DocumentRevision).ThenBy(x => x.TrxLineNo)
             .Select(x => new
@@ -28,7 +28,17 @@ public static class InventoryStockPostingCommandFactory
                 x.FrWarehouse, x.FrLocation, x.FrLotNo, x.FrStdQty, x.FrStdUom,
                 x.ToWarehouse, x.ToLocation, x.ToLotNo, x.ToStdQty, x.ToStdUom
             }).ToListAsync(cancellationToken);
-        var revision = lines.Count == 0 ? 0 : lines.Max(x => x.DocumentRevision);
+        var revision = allLines.Count == 0 ? 0 : allLines.Max(x => x.DocumentRevision);
+        var lines = allLines.Where(x => x.DocumentRevision == revision).ToArray();
+        var role = reversal ? "REVERSAL" : "PRIMARY";
+        var sourceId = batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var priorPosting = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.CompanyCode == companyCode && x.BranchCode == branchCode
+            && x.SourceModule == "INVENTORY" && x.SourceDocumentType == batch.TrxType
+            && x.SourceDocumentId == sourceId && x.DocumentRevision == revision
+            && x.PostingRole == role, cancellationToken);
+        if (priorPosting is not null)
+            effectiveAt = priorPosting.EffectiveAt;
         long? reversesPostingId = null;
         if (reversal)
         {
@@ -39,7 +49,6 @@ public static class InventoryStockPostingCommandFactory
                 .Select(x => x.StockPostingId).FirstOrDefaultAsync(cancellationToken);
         }
 
-        var role = reversal ? "REVERSAL" : "PRIMARY";
         var evidence = StockPostingFingerprint.Create(
             new { batchNo, batch.TrxType, revision, role, effectiveAt, reversesPostingId },
             new { batch.Id, batch.RefNo, batch.TrxDtTime, lines });
@@ -49,7 +58,7 @@ public static class InventoryStockPostingCommandFactory
             CommandType = $"IV_{(reversal ? "ROLLBACK" : "POST")}_{batch.TrxType}".ToUpperInvariant(),
             SourceModule = "INVENTORY",
             SourceDocumentType = batch.TrxType,
-            SourceDocumentId = batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            SourceDocumentId = sourceId,
             SourceDocumentNo = batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
             DocumentRevision = revision,
             PostingRole = role,

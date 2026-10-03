@@ -579,7 +579,16 @@ public sealed class IvStockHistoryRepository : IIvStockHistoryRepository
         var company = (companyCode ?? string.Empty).Trim();
         var branch = (branchCode ?? string.Empty).Trim();
 
+        var activeEpochs = db.StockLedgerEpochs.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                && x.Status == ErpWeb.Model.Entities.StockLedger.StockLedgerEpochStatuses.Active);
         return db.IvTrxHistories.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch);
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                && ((!activeEpochs.Any() && x.LedgerVersion == null)
+                    || (x.LedgerVersion == 2
+                        && activeEpochs.Any(e => e.Id == x.LedgerEpochId)
+                        && db.StockPostings.Any(p => p.Id == x.StockPostingId
+                            && p.CompanyCode == company && p.BranchCode == branch
+                            && p.SealedAtUtc != null))));
     }
 }

@@ -167,7 +167,8 @@ public sealed partial class ProductionMaterialIssueService
                     BaseQty = x.BaseQty, BaseUom = material.BaseUom ?? string.Empty,
                     Warehouse = detail.FrWarehouse ?? string.Empty, Location = detail.FrLocation ?? string.Empty,
                     LotNo = detail.FrLotNo ?? string.Empty, ItemStatus = detail.IStatus ?? string.Empty,
-                    UnitCost = canViewCost ? unitCost : null, TotalCost = canViewCost ? IvQty.Round(x.BaseQty * unitCost) : null
+                    UnitCost = canViewCost ? unitCost : null, TotalCost = canViewCost ? IvQty.Round(x.BaseQty * unitCost) : null,
+                    ExcessIssueReason = x.ExcessIssueReason
                 };
             }).ToList();
         }

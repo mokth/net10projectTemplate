@@ -29,6 +29,8 @@ public sealed partial class ProductionOutputService
 
         var rows = await operations
             .OrderBy(x => x.WorkOrder!.WorkOrderNo)
+            .ThenBy(x => x.RouteStep!.StageSequence)
+            .ThenBy(x => x.RouteStep!.WorkCentreCode)
             .ThenBy(x => x.ProcessSequence)
             .ThenBy(x => x.Uid)
             .Skip(skip)
@@ -41,8 +43,10 @@ public sealed partial class ProductionOutputService
                 ProductCode = x.WorkOrder.ProductCode,
                 ProductDescription = x.WorkOrder.ProductDescription,
                 WorkCentreCode = x.RouteStep!.WorkCentreCode,
+                StageSequence = x.RouteStep.StageSequence,
                 OperationCode = x.OperationCode,
                 OperationDescription = x.OperationDescription,
+                ProcessSequence = x.ProcessSequence,
                 WorkOrderStatus = x.WorkOrder.Status,
                 OutputItemCode = x.RouteStep.OutputItemCode,
                 SelectedMachineCode = x.Machines.Where(m => m.IsSelected).OrderBy(m => m.Priority)
@@ -215,8 +219,15 @@ public sealed partial class ProductionOutputService
             return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
                 IvMasterErrorCode.NotFound, "Operation is not eligible for Daily Production.");
 
+        var sequenceGraph = await LoadSequenceGraphAsync(db, operation!.WorkOrderId!.Value, cancellationToken);
+        var sequence = _operationEligibility.Evaluate(
+            operation, sequenceGraph.RouteSteps, sequenceGraph.Operations);
+        if (!sequence.IsEligible)
+            return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
+                IvMasterErrorCode.Validation, sequence.BlockingReason!);
+
         return IvMasterOperationResult<ProductionOutputWorkspace>.Ok(
-            await BuildWorkspaceAsync(db, scope, operation!, cancellationToken));
+            await BuildWorkspaceAsync(db, scope, operation, cancellationToken));
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
@@ -263,7 +274,34 @@ public sealed partial class ProductionOutputService
                 && x.WorkOrder.BranchCode == scope.BranchCode
                 && (x.WorkOrder.Status == ProductionWorkOrderStatuses.Released
                     || x.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
-                && x.PlannedOutputQty - x.GoodQty > 0m);
+                && x.RouteStep.StageSequence > 0
+                && x.ProcessSequence > 0
+                && x.PlannedOutputQty - x.GoodQty > 0m
+                // A malformed released snapshot must not expose an operation as executable.
+                && !db.ProductionWorkOrderRouteSteps.Any(route =>
+                    route.WorkOrderId == x.WorkOrderId && route.StageSequence <= 0)
+                && !db.ProductionWorkOrderRouteSteps.Any(route =>
+                    route.WorkOrderId == x.WorkOrderId
+                    && !db.ProductionWorkOrderOperations.Any(operation =>
+                        operation.WorkOrderId == x.WorkOrderId && operation.RouteStepId == route.Uid))
+                && !db.ProductionWorkOrderOperations.Any(operation =>
+                    operation.WorkOrderId == x.WorkOrderId
+                    && (operation.RouteStepId == null
+                        || operation.ProcessSequence <= 0
+                        || !db.ProductionWorkOrderRouteSteps.Any(route =>
+                            route.Uid == operation.RouteStepId && route.WorkOrderId == x.WorkOrderId)))
+                // All lower stages must be complete. Equal stages are parallel and excluded.
+                && !db.ProductionWorkOrderOperations.Any(lowerOperation =>
+                    lowerOperation.WorkOrderId == x.WorkOrderId
+                    && lowerOperation.RouteStep != null
+                    && lowerOperation.RouteStep.StageSequence < x.RouteStep.StageSequence
+                    && lowerOperation.PlannedOutputQty - lowerOperation.GoodQty > 0m)
+                // All lower processes in the same route step must be complete. Equal processes
+                // remain parallel and therefore are intentionally excluded.
+                && !db.ProductionWorkOrderOperations.Any(lowerOperation =>
+                    lowerOperation.RouteStepId == x.RouteStepId
+                    && lowerOperation.ProcessSequence < x.ProcessSequence
+                    && lowerOperation.PlannedOutputQty - lowerOperation.GoodQty > 0m));
 
     private static IQueryable<ProductionWorkOrderOperation> ApplyOperationFilters(
         IQueryable<ProductionWorkOrderOperation> operations,
@@ -323,7 +361,30 @@ public sealed partial class ProductionOutputService
         && operation.WorkOrder.SnapshotHashVersion >= ProductionSnapshotHashVersions.Current
         && !string.IsNullOrWhiteSpace(operation.RouteStep.OutputType)
         && (operation.RouteStep.YieldPercent is null || operation.RouteStep.YieldPercent == 100m)
+        && operation.RouteStep.StageSequence > 0
+        && operation.ProcessSequence > 0
         && IvQty.Round(operation.PlannedOutputQty - operation.GoodQty) > 0m;
+
+    private static async Task<(
+        List<ProductionWorkOrderRouteStep> RouteSteps,
+        List<ProductionWorkOrderOperation> Operations)> LoadSequenceGraphAsync(
+        AppDbContext db,
+        long workOrderId,
+        CancellationToken cancellationToken)
+    {
+        var routeSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking()
+            .Where(x => x.WorkOrderId == workOrderId)
+            .OrderBy(x => x.StageSequence)
+            .ThenBy(x => x.Uid)
+            .ToListAsync(cancellationToken);
+        var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .Where(x => x.WorkOrderId == workOrderId)
+            .OrderBy(x => x.RouteStepId)
+            .ThenBy(x => x.ProcessSequence)
+            .ThenBy(x => x.Uid)
+            .ToListAsync(cancellationToken);
+        return (routeSteps, operations);
+    }
 
     private static async Task<ProductionOutputWorkspace> BuildWorkspaceAsync(
         AppDbContext db,
@@ -435,8 +496,10 @@ public sealed partial class ProductionOutputService
                 ProductCode = operation.WorkOrder.ProductCode,
                 ProductDescription = operation.WorkOrder.ProductDescription,
                 WorkCentreCode = operation.RouteStep!.WorkCentreCode,
+                StageSequence = operation.RouteStep.StageSequence,
                 OperationCode = operation.OperationCode,
                 OperationDescription = operation.OperationDescription,
+                ProcessSequence = operation.ProcessSequence,
                 WorkOrderStatus = operation.WorkOrder.Status,
                 OutputItemCode = operation.RouteStep.OutputItemCode,
                 SelectedMachineCode = selectedMachine?.MachineCode,

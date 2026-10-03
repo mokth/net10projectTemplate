@@ -60,6 +60,31 @@ public sealed partial class ProductionOutputService
             if (routeStep is null || operation is null)
                 return Fail("Route step or operation was not found.");
 
+            // Match PostAsync lock ordering after the Work Order serialization root. The complete
+            // graph remains stable while this rollback decides whether it would break a posted
+            // downstream route history.
+            await LockRouteStepsForWorkOrderAsync(db, order.Uid, cancellationToken);
+            await LockOperationsForWorkOrderAsync(db, order.Uid, cancellationToken);
+
+            var projectedOperationGood = IvQty.Round(operation.GoodQty - output.GoodQty);
+            if (projectedOperationGood < 0m)
+                return Fail("Reversing output would make an operation outcome quantity negative.");
+
+            var wasComplete = ProductionOperationSequenceGate.IsOperationComplete(operation);
+            var willComplete = ProductionOperationSequenceGate.IsOperationComplete(
+                operation.PlannedOutputQty, projectedOperationGood);
+            if (wasComplete && !willComplete)
+            {
+                var downstream = await FindPostedDownstreamOutputAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, order.Uid, routeStep, operation, cancellationToken);
+                if (downstream is not null)
+                {
+                    return Fail($"Cannot roll back {output.DocumentNo} because downstream production "
+                        + $"{downstream.DocumentNo} is already POSTED for {downstream.WorkCentreCode} / "
+                        + $"{downstream.OperationCode}.");
+                }
+            }
+
             var materials = await db.ProductionWorkOrderMaterials
                 .Where(x => x.WorkOrderOperationId == operation.Uid)
                 .OrderBy(x => x.Uid)
@@ -274,12 +299,13 @@ public sealed partial class ProductionOutputService
 
                 var nextQty = IvQty.Round(lot.Qty - produce.Qty);
                 var nextBaseQty = IvQty.Round(lot.BaseQty - produce.BaseQty);
-                if (nextQty < 0m || nextBaseQty < 0m)
+                var nextCost = IvQty.Round(lot.TotalCost - produce.TotalCost);
+                if (nextQty < 0m || nextBaseQty < 0m || nextCost < 0m)
                     return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
                 lot.Qty = nextQty;
                 lot.BaseQty = nextBaseQty;
-                lot.TotalCost = 0m;
-                lot.AverageUnitCost = 0m;
+                lot.TotalCost = nextCost;
+                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var produceRev = new ProductionBalLotMovement
                 {
@@ -289,8 +315,8 @@ public sealed partial class ProductionOutputService
                     Uom = produce.Uom,
                     BaseQty = produce.BaseQty,
                     BaseUom = produce.BaseUom,
-                    UnitCost = 0m,
-                    TotalCost = 0m,
+                    UnitCost = produce.BaseQty > 0m ? IvQty.Round(produce.TotalCost / produce.BaseQty) : 0m,
+                    TotalCost = produce.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -420,6 +446,41 @@ public sealed partial class ProductionOutputService
                 $@"SELECT * FROM dbo.PrProductionBalLot WITH (UPDLOCK, HOLDLOCK) WHERE UID={id}")
                 .SingleOrDefaultAsync(ct)
             : await db.ProductionBalLots.SingleOrDefaultAsync(x => x.Uid == id, ct);
+
+    private static async Task<DownstreamPostedOutput?> FindPostedDownstreamOutputAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long workOrderId,
+        ProductionWorkOrderRouteStep currentRouteStep,
+        ProductionWorkOrderOperation currentOperation,
+        CancellationToken cancellationToken)
+    {
+        return await (
+            from output in db.ProductionOutputs.AsNoTracking()
+            join operation in db.ProductionWorkOrderOperations.AsNoTracking()
+                on output.WorkOrderOperationId equals operation.Uid
+            join routeStep in db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                on operation.RouteStepId equals (long?)routeStep.Uid
+            where output.CompanyCode == companyCode
+                && output.BranchCode == branchCode
+                && output.WorkOrderId == workOrderId
+                && output.Status == ProductionOutputStatuses.Posted
+                && ((operation.RouteStepId == currentRouteStep.Uid
+                        && operation.ProcessSequence > currentOperation.ProcessSequence)
+                    || routeStep.StageSequence > currentRouteStep.StageSequence)
+            orderby routeStep.StageSequence, operation.ProcessSequence, output.ProductionDate, output.Uid
+            select new DownstreamPostedOutput(
+                output.DocumentNo,
+                routeStep.WorkCentreCode,
+                operation.OperationCode))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private sealed record DownstreamPostedOutput(
+        string DocumentNo,
+        string WorkCentreCode,
+        string OperationCode);
 
     private static string? Truncate(string? value, int max) =>
         string.IsNullOrEmpty(value) ? value : value.Length <= max ? value : value[..max];

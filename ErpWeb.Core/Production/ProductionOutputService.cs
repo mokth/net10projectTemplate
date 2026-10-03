@@ -18,6 +18,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly ICurrentDateService _clock;
     private readonly IRunningNumberService _runningNumbers;
     private readonly IStockPostingCoordinator? _stockCoordinator;
+    private readonly IProductionOperationEligibilityService _operationEligibility;
 
     public ProductionOutputService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -25,7 +26,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         IAccessRightService access,
         ICurrentDateService clock,
         IRunningNumberService runningNumbers,
-        IStockPostingCoordinator? stockCoordinator = null)
+        IStockPostingCoordinator? stockCoordinator = null,
+        IProductionOperationEligibilityService? operationEligibility = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -33,6 +35,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         _clock = clock;
         _runningNumbers = runningNumbers;
         _stockCoordinator = stockCoordinator;
+        _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputDetail>> CreateAsync(
@@ -88,6 +91,12 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             return Fail("Work Order snapshot hash version must be refreshed to V3 before Daily Production.");
         if (IvQty.Round(operation.PlannedOutputQty - operation.GoodQty) <= 0m)
             return Fail("The Work Order operation has no remaining Good quantity.");
+
+        var sequenceGraph = await LoadSequenceGraphAsync(db, order.Uid, cancellationToken);
+        var sequence = _operationEligibility.Evaluate(
+            operation, sequenceGraph.RouteSteps, sequenceGraph.Operations);
+        if (!sequence.IsEligible)
+            return Fail(sequence.BlockingReason!);
 
         var referenceError = await ValidateReferencesAsync(
             db, scope, operation, request.ShiftCode, request.ActualMachineCode, request.OperatorCode,

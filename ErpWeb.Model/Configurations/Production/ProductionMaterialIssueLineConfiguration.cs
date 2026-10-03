@@ -25,11 +25,13 @@ public sealed class ProductionMaterialIssueLineConfiguration : IEntityTypeConfig
         builder.Property(x => x.WorkOrderMaterialId).HasColumnName("WorkOrderMaterialID");
         builder.Property(x => x.IssueQty).HasPrecision(18, 4);
         builder.Property(x => x.BaseQty).HasPrecision(18, 4);
+        builder.Property(x => x.ExcessIssueReason).HasMaxLength(250);
         builder.Property(x => x.CreatedBy).HasMaxLength(10).IsRequired();
         builder.HasIndex(x => x.InventoryBatchDetailId).IsUnique().HasDatabaseName("UQ_PrMaterialIssueLine_InventoryDetail");
         builder.HasIndex(x => new { x.PostingLinkId, x.DocumentRevision, x.InventoryTrxLineNo }).IsUnique().HasDatabaseName("UQ_PrMaterialIssueLine_PostingRevisionLine");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.InventoryBatchNo }).HasDatabaseName("IX_PrMaterialIssueLine_Batch");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.WorkOrderMaterialId }).HasDatabaseName("IX_PrMaterialIssueLine_Material");
+        builder.HasIndex(x => new { x.PostingLinkId, x.WorkOrderMaterialId }).HasDatabaseName("IX_PrMaterialIssueLine_PostingLink_Material");
         builder.HasIndex(x => new { x.WorkOrderOperationId, x.WorkOrderMaterialId }).HasDatabaseName("IX_PrMaterialIssueLine_Operation");
         builder.HasOne(x => x.PostingLink).WithMany().HasForeignKey(x => x.PostingLinkId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.InventoryBatch).WithMany().HasForeignKey(x => x.InventoryBatchId).OnDelete(DeleteBehavior.Restrict);

@@ -157,8 +157,10 @@ public sealed class ProductionEligibleOperationRow
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
     public string WorkCentreCode { get; init; } = string.Empty;
+    public int StageSequence { get; init; }
     public string OperationCode { get; init; } = string.Empty;
     public string? OperationDescription { get; init; }
+    public int ProcessSequence { get; init; }
     public string? WorkOrderStatus { get; init; }
     public string OutputItemCode { get; init; } = string.Empty;
     public string? SelectedMachineCode { get; init; }

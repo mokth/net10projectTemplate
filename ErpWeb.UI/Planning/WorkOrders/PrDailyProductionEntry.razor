@@ -368,7 +368,7 @@
                                     </div>
                                     <div class="pr-dp-cell">
                                         <span class="pr-dp-cell__primary">@op.WorkCentreCode / @op.OperationCode</span>
-                                        <span class="pr-dp-cell__secondary">@op.OperationDescription</span>
+                                        <span class="pr-dp-cell__secondary">Stage @op.StageSequence · Process Seq @op.ProcessSequence · @op.OperationDescription</span>
                                     </div>
                                     <div class="pr-dp-cell">
                                         <span class="pr-dp-cell__primary code-style">@op.OutputItemCode</span>
@@ -420,6 +420,12 @@
                     <div class="pr-dp-meta__item">
                         <span class="iv-field__label">Work Centre</span>
                         <strong>@Workspace.Operation.WorkCentreCode</strong>
+                        <small>Stage @Workspace.Operation.StageSequence</small>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Process</span>
+                        <strong>@Workspace.Operation.OperationCode</strong>
+                        <small>Process Seq @Workspace.Operation.ProcessSequence</small>
                     </div>
                     <div class="pr-dp-meta__item">
                         <span class="iv-field__label">Planned output</span>

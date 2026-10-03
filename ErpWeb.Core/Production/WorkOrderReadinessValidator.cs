@@ -109,6 +109,12 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
         {
             var target = $"PrWorkOrderRouteStep/{routeStep.StageSequence}";
 
+            if (routeStep.StageSequence <= 0)
+            {
+                report.Add(ProductionReadinessErrorCodes.StageSequenceInvalid,
+                    $"Route step {routeStep.WorkCentreCode} has a non-positive StageSequence.", target);
+            }
+
             if (routeStep.Operations.Count == 0)
             {
                 report.Add(ProductionReadinessErrorCodes.NoOperation,
@@ -151,6 +157,12 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
     {
         var target = $"PrWorkOrderOperation/{operation.OperationCode}";
         var processType = Normalize(operation.ProcessType);
+
+        if (operation.ProcessSequence <= 0)
+        {
+            report.Add(ProductionReadinessErrorCodes.ProcessSequenceInvalid,
+                $"Operation {operation.OperationCode} has a non-positive ProcessSequence.", target);
+        }
 
         if (!PrProcessTypes.IsValid(processType))
         {

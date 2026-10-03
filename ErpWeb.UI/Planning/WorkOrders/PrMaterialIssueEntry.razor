@@ -83,7 +83,7 @@
                               Text="BOM / CALCULATE"
                               IconCssClass="fa-solid fa-calculator"
                               Click="@OpenBom"
-                              Enabled="@(SelectedOperationRow is not null && !IsSubmitting)" />
+                              Enabled="@(SelectedOperationRow is not null && SelectedOperationRow.RemainingBasisQty > 0m && !IsSubmitting)" />
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="APPLY &amp; AUTO ALLOCATE"
                               IconCssClass="fa-solid fa-wand-magic-sparkles"
@@ -136,7 +136,7 @@
                         <strong>@Document.PlannedQty.ToString("n4") @Document.OutputUom</strong>
                     </div>
                     <div class="pr-issue-meta__item">
-                        <span class="iv-field__label">Desired output</span>
+                        <span class="iv-field__label">Material requirement basis</span>
                         <strong>@(Document.ProductionQtyThisIssue?.ToString("n4") ?? "—")</strong>
                     </div>
                     <div class="pr-issue-meta__item">
@@ -369,10 +369,14 @@
                                         <strong>@op.PlannedOutputQty.ToString("n4") @op.PlannedOutputUom</strong>
                                     </div>
                                 </div>
+                                @if (!op.IsSequenceEligible)
+                                {
+                                    <span class="pr-issue-cell__warn">@op.SequenceBlockingReason</span>
+                                }
                                 <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                          Text="SELECT"
+                                          Text="@(op.IsSequenceEligible ? "SELECT" : "BLOCKED")"
                                           Click="@(() => ApplyOperationAsync(op))"
-                                          Enabled="@(!IsSubmitting)" />
+                                          Enabled="@(op.IsSequenceEligible && !IsSubmitting)" />
                             </article>
                         }
                     </div>
@@ -411,10 +415,12 @@
                     <div class="pr-issue-meta__item">
                         <span class="iv-field__label">Work Centre</span>
                         <strong>@(SelectedOperationRow?.WorkCentreCode ?? "—")</strong>
+                        <small>Stage @SelectedOperationRow?.StageSequence · Process @SelectedOperationRow?.ProcessSequence</small>
                     </div>
                     <div class="pr-issue-meta__item">
                         <span class="iv-field__label">Planned output</span>
                         <strong>@SelectedOperationRow?.PlannedOutputQty.ToString("n4") @SelectedOperationRow?.PlannedOutputUom</strong>
+                        <small>Actual @SelectedOperationRow?.ActualOutputQty.ToString("n4") · Remaining basis @SelectedOperationRow?.RemainingBasisQty.ToString("n4")</small>
                     </div>
                     <div class="pr-issue-meta__item">
                         <span class="iv-field__label">Issue date &amp; time</span>
@@ -447,18 +453,18 @@
 
                 <div class="pr-issue-desired">
                     <div class="pr-issue-desired__field">
-                        <span class="iv-field__label">Desired output qty</span>
+                        <span class="iv-field__label">Material Requirement Basis Qty</span>
                         <div class="pr-issue-desired__input">
                             <DxSpinEdit @bind-Value="@DesiredOutputInput"
                                         MinValue="0.0001m"
-                                        MaxValue="@(SelectedOperationRow?.PlannedOutputQty ?? 0m)"
+                                        MaxValue="@(SelectedOperationRow?.RemainingBasisQty ?? 0m)"
                                         Increment="0.0001m"
                                         DisplayFormat="n4"
                                         ShowSpinButtons="false"
                                         Enabled="@(!IsSubmitting)" />
                             <span>@SelectedOperationRow?.PlannedOutputUom</span>
                         </div>
-                        <small>Max planned @SelectedOperationRow?.PlannedOutputQty.ToString("n4") @SelectedOperationRow?.PlannedOutputUom</small>
+                        <small>Used only to calculate this issue’s BOM requirement — not recorded production output. Posted @SelectedOperationRow?.PostedBasisQty.ToString("n4") · Open drafts @SelectedOperationRow?.OpenDraftBasisQty.ToString("n4")</small>
                         @if (DesiredOutputDirty)
                         {
                             <small class="pr-issue-desired__warn">Desired output changed — run APPLY &amp; AUTO ALLOCATE again.</small>
@@ -505,6 +511,8 @@
                         <DxGridDataColumn FieldName="@nameof(MaterialLineVm.NetIssuedQty)" Caption="Issued" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineVm.BomRequestedQty)" Caption="For this output" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineVm.MaxIssueQty)" Caption="Max incl. tol." Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.OtherDraftReservedBaseQty)" Caption="Reserved other IP" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.AvailableAfterDraftReservations)" Caption="Available to allocate" Width="135px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineVm.IssueQty)" Caption="Issue now" Width="150px">
                             <CellDisplayTemplate>
                                 @{
@@ -522,6 +530,19 @@
                                                 CssClass="pr-issue-qty__input" />
                                     <span>@editLine.Material.RequiredUom</span>
                                 </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Excess reason" MinWidth="200">
+                            <CellDisplayTemplate>
+                                @{ var reasonLine = (MaterialLineVm)context.DataItem; }
+                                @if (reasonLine.RequiresExcessReason)
+                                {
+                                    <DxTextBox @bind-Text="reasonLine.ExcessIssueReason" NullText="Required above BOM standard" Enabled="@(!IsSubmitting)" />
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn Caption="Allocation" Width="160px">
@@ -595,6 +616,7 @@
                                 RequestedQty="@(AllocationLine?.IssueQty ?? 0m)"
                                 Allocations="@(AllocationLine?.Allocations ?? [])"
                                 ReservedByOtherLines="@ReservedByOtherLines"
+                                ExcludeBatchNo="@(IsEditMode ? BatchNo : null)"
                                 Applied="@ApplyAllocations" />
     <PrMaterialIssueBomDialog @bind-Visible="@BomVisible"
                               Operation="@SelectedOperationRow"

@@ -440,6 +440,13 @@ public sealed class ProductionWorkOrderReopenRequest
     public string Reason { get; set; } = string.Empty;
 }
 
+public sealed class ProductionWorkOrderCompletionRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[] RowVersion { get; set; } = [];
+    public string? Remark { get; set; }
+}
+
 public sealed class ProductionWorkOrderMachineSelectRequest
 {
     public string WorkOrderNo { get; set; } = string.Empty;
@@ -543,6 +550,10 @@ public interface IProductionWorkOrderService
     /// </summary>
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReopenForEditAsync(
         ProductionWorkOrderReopenRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CompleteAsync(
+        ProductionWorkOrderCompletionRequest request,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> SelectDraftMachineAsync(

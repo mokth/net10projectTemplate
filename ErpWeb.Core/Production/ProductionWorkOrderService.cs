@@ -30,6 +30,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
     private readonly IWorkOrderScheduleCalculator _scheduler;
     private readonly IWorkOrderReadinessValidator _readiness;
     private readonly ProductionWorkOrderOptions _options;
+    private readonly IProductionMaterialReconciliationService _materialReconciliation;
 
     public ProductionWorkOrderService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -42,7 +43,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         IWorkOrderQuantityCalculator quantities,
         IWorkOrderScheduleCalculator scheduler,
         IWorkOrderReadinessValidator readiness,
-        Microsoft.Extensions.Options.IOptions<ProductionWorkOrderOptions> options)
+        Microsoft.Extensions.Options.IOptions<ProductionWorkOrderOptions> options,
+        IProductionMaterialReconciliationService? materialReconciliation = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -55,6 +57,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         _scheduler = scheduler;
         _readiness = readiness;
         _options = options.Value;
+        _materialReconciliation = materialReconciliation ?? new ProductionMaterialReconciliationService();
     }
 
     public async Task<IvMasterOperationResult<ProductionWorkOrderListPage>> SearchAsync(

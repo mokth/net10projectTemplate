@@ -92,15 +92,45 @@ public sealed partial class ProductionMaterialIssueService
             .Skip(Math.Max(query.Skip, 0)).Take(Math.Clamp(query.Take, 1, 100))
             .Select(x => new ProductionMaterialIssueOperationRow
             {
-                WorkOrderOperationId = x.Uid, WorkOrderNo = x.WorkOrder!.WorkOrderNo,
+                WorkOrderOperationId = x.Uid, WorkOrderId = x.WorkOrderId!.Value, WorkOrderNo = x.WorkOrder!.WorkOrderNo,
                 ProductCode = x.WorkOrder.ProductCode, ProductDescription = x.WorkOrder.ProductDescription,
                 WorkCentreCode = x.WorkCentreCode, OperationCode = x.OperationCode, OperationDescription = x.OperationDescription,
+                StageSequence = x.RouteStep != null ? x.RouteStep.StageSequence : 0,
+                ProcessSequence = x.ProcessSequence,
                 OutputItemCode = x.RouteStep != null ? x.RouteStep.OutputItemCode : x.WorkOrder.ProductCode,
                 SelectedMachineCode = x.Machines.Where(m => m.IsSelected).Select(m => m.MachineCode).FirstOrDefault(),
                 PlannedOutputQty = x.PlannedOutputQty, PlannedOutputUom = x.PlannedOutputUom
             }).ToListAsync(cancellationToken);
         if (page.Count > 0)
         {
+            var workOrderIds = page.Select(x => x.WorkOrderId).Distinct().ToArray();
+            var graphOperations = await db.ProductionWorkOrderOperations.AsNoTracking()
+                .Where(x => x.WorkOrderId.HasValue && workOrderIds.Contains(x.WorkOrderId.Value))
+                .ToListAsync(cancellationToken);
+            var graphSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                .Where(x => workOrderIds.Contains(x.WorkOrderId))
+                .ToListAsync(cancellationToken);
+            var basisByOperation = new Dictionary<long, OperationBasisTotals>();
+            foreach (var workOrderId in workOrderIds)
+            {
+                var basis = await LoadActiveBasisByOperationAsync(db, scope.CompanyCode, scope.BranchCode!,
+                    workOrderId, null, cancellationToken);
+                foreach (var entry in basis) basisByOperation[entry.Key] = entry.Value;
+            }
+            foreach (var row in page)
+            {
+                var selected = graphOperations.Single(x => x.Uid == row.WorkOrderOperationId);
+                var eligibility = _operationEligibility.Evaluate(selected,
+                    graphSteps.Where(x => x.WorkOrderId == row.WorkOrderId).ToList(),
+                    graphOperations.Where(x => x.WorkOrderId == row.WorkOrderId).ToList());
+                row.IsSequenceEligible = eligibility.IsEligible;
+                row.SequenceBlockingReason = eligibility.BlockingReason;
+                row.ActualOutputQty = IvQty.Round(selected.GoodQty);
+                var basis = basisByOperation.GetValueOrDefault(row.WorkOrderOperationId, OperationBasisTotals.Empty);
+                row.PostedBasisQty = basis.Posted;
+                row.OpenDraftBasisQty = basis.OpenDraft;
+                row.RemainingBasisQty = IvQty.Round(Math.Max(row.PlannedOutputQty - basis.Posted - basis.OpenDraft, 0m));
+            }
             var operationIds = page.Select(x => x.WorkOrderOperationId).ToArray();
             var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()
                 .Where(x => x.WorkOrderOperationId.HasValue && operationIds.Contains(x.WorkOrderOperationId.Value)
@@ -143,6 +173,13 @@ public sealed partial class ProductionMaterialIssueService
         var workspace = await GetWorkspaceAsync(operation.WorkOrderNo, workOrderOperationId, cancellationToken, excludeBatchNo);
         if (!workspace.Succeeded || workspace.Data is null)
             return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(workspace.ErrorCode, workspace.Message ?? "Unable to load Process BOM.");
+        var selectedOperation = workspace.Data.Operations.Single(x => x.WorkOrderOperationId == workOrderOperationId);
+        if (!selectedOperation.IsSequenceEligible)
+            return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(IvMasterErrorCode.Validation,
+                selectedOperation.SequenceBlockingReason ?? "The selected operation is blocked by the Work Order execution sequence.");
+        if (productionQtyThisIssue > selectedOperation.RemainingBasisQty)
+            return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(IvMasterErrorCode.Validation,
+                $"Material Requirement Basis Qty exceeds the remaining operation planning basis of {selectedOperation.RemainingBasisQty:n4}.");
         var lines = new List<ProductionMaterialIssueBomPreviewLine>();
         foreach (var material in workspace.Data.Materials)
         {
@@ -153,10 +190,11 @@ public sealed partial class ProductionMaterialIssueService
             var availableForDate = 0m;
             if (material.CanManualIssue && material.ConversionFactorToBase > 0m)
             {
-                var candidates = await _allocation.GetStockCandidatesAsync(material.WorkOrderMaterialId, trxDateTime, cancellationToken);
+                var candidates = await _allocation.GetStockCandidatesAsync(material.WorkOrderMaterialId, trxDateTime,
+                    cancellationToken, excludeInventoryBatchNo: excludeBatchNo);
                 if (candidates.Succeeded)
                     availableForDate = ProductionMaterialExecutionCalc.IssueQtyForBaseQty(
-                        candidates.Data!.Sum(x => x.UsableBaseQty), material.ConversionFactorToBase);
+                        candidates.Data!.Sum(x => x.AvailableToAllocateBaseQty), material.ConversionFactorToBase);
             }
             lines.Add(new ProductionMaterialIssueBomPreviewLine
             {
@@ -168,7 +206,8 @@ public sealed partial class ProductionMaterialIssueService
                 AvailableForIssueDateQty = availableForDate,
                 SuggestedIssueQty = IvQty.Round(Math.Max(0m, Math.Min(requested, Math.Min(material.AvailableToDraft, availableForDate)))),
                 CanManualIssue = material.CanManualIssue,
-                BlockingReason = material.BlockingReason
+                BlockingReason = material.BlockingReason,
+                RequiresExcessReason = false
             });
         }
         return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Ok(new()
@@ -176,6 +215,9 @@ public sealed partial class ProductionMaterialIssueService
             WorkOrderOperationId = workOrderOperationId,
             OperationPlannedOutputQty = operation.PlannedOutputQty,
             ProductionQtyThisIssue = productionQtyThisIssue,
+            PostedBasisQty = selectedOperation.PostedBasisQty,
+            OpenDraftBasisQty = selectedOperation.OpenDraftBasisQty,
+            RemainingBasisQty = selectedOperation.RemainingBasisQty,
             Lines = lines
         });
     }

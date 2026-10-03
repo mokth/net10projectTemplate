@@ -10,6 +10,7 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
     {
         builder.ToTable("PrMaterialMovement", table =>
         {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_PrMaterialMovement_Qty", "[Qty] > 0 AND [BaseQty] > 0");
             table.HasCheckConstraint("CK_PrMaterialMovement_Conversion", "[ConversionFactorToBase] > 0");
             table.HasCheckConstraint("CK_PrMaterialMovement_Cost", "[UnitCost] >= 0 AND [TotalCost] >= 0");

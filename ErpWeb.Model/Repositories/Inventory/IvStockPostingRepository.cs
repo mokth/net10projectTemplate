@@ -302,7 +302,10 @@ WHERE CompanyCode = {company}
     {
         ArgumentNullException.ThrowIfNull(db);
         return await db.IvTrxBatchDetails
-            .Where(x => x.BatchId == batchId)
+            .Where(x => x.BatchId == batchId
+                && x.DocumentRevision == db.IvTrxBatchDetails
+                    .Where(d => d.BatchId == batchId)
+                    .Select(d => (int?)d.DocumentRevision).Max())
             .OrderBy(x => x.TrxLineNo)
             .ToListAsync(cancellationToken);
     }
