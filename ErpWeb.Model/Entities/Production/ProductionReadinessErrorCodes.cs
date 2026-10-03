@@ -31,6 +31,9 @@ public static class ProductionReadinessErrorCodes
     /// <summary>An active route step has more than one final operation.</summary>
     public const string FinalProcessAmbiguous = "WO_FINAL_PROCESS_AMBIGUOUS";
 
+    /// <summary>The final process is not the last process sequence on the route step.</summary>
+    public const string FinalProcessNotLast = "WO_FINAL_PROCESS_NOT_LAST";
+
     /// <summary>The terminal route step's output item does not match the Work Order product.</summary>
     public const string FinalOutputMismatch = "WO_FINAL_OUTPUT_MISMATCH";
 

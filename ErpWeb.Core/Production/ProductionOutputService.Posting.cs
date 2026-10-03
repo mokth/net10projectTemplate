@@ -54,10 +54,65 @@ public sealed partial class ProductionOutputService
             if (routeStep.YieldPercent is not null and not 100m)
                 return Fail("YieldPercent must be 100 for this milestone.");
 
+            var siblings = await db.ProductionWorkOrderOperations
+                .Where(x => x.RouteStepId == routeStep.Uid)
+                .OrderBy(x => x.ProcessSequence)
+                .ThenBy(x => x.Uid)
+                .ToListAsync(cancellationToken);
+            if (ProductionProcessHandoff.ValidateFinalIsLast(siblings) is { } finalError)
+                return Fail(finalError);
+
             var processed = IvQty.Round(output.GoodQty + output.ScrapQty + output.RejectQty + output.HoldQty);
             var operationRemaining = IvQty.Round(operation.PlannedOutputQty - operation.GoodQty);
             if (output.GoodQty > operationRemaining)
                 return Fail($"Good qty {output.GoodQty} exceeds operation remaining {operationRemaining}.");
+
+            var priorError = ProductionProcessHandoff.TryGetImmediatePrior(siblings, operation, out var priorOperation);
+            if (priorError is not null) return Fail(priorError);
+            var nextError = ProductionProcessHandoff.TryGetImmediateNext(siblings, operation, out var nextOperation);
+            if (nextError is not null) return Fail(nextError);
+
+            var producesHandoff = ProductionProcessHandoff.IsHandoffProducer(operation, nextOperation);
+            ProductionProcessHandoff.QtyContract? producerContract = null;
+            if (producesHandoff && output.GoodQty > 0m)
+            {
+                if (ProductionProcessHandoff.ResolveProducerContract(operation, routeStep, out producerContract) is { } producerUomError)
+                    return Fail(producerUomError);
+            }
+
+            ProductionProcessHandoff.QtyContract? consumerContract = null;
+            ProductionBalLot? handoffLot = null;
+            decimal handoffConsumeQty = 0m;
+            decimal handoffConsumeBase = 0m;
+            if (priorOperation is not null)
+            {
+                var priorContractError = ProductionProcessHandoff.ResolveProducerContract(
+                    priorOperation, routeStep, out var priorContract);
+                if (priorContractError is not null) return Fail(priorContractError);
+                if (priorContract is null) return Fail("Previous-process handoff UOM could not be resolved.");
+
+                if (ProductionProcessHandoff.ResolveConsumerContract(
+                        operation, routeStep, priorContract.Uom, out consumerContract) is { } consumerUomError)
+                    return Fail(consumerUomError);
+                if (consumerContract is null) return Fail("Process handoff UOM could not be resolved.");
+
+                handoffConsumeQty = processed;
+                if (handoffConsumeQty > 0m)
+                {
+                    handoffConsumeBase = ProductionProcessHandoff.ToBaseQty(
+                        handoffConsumeQty, consumerContract.ConversionFactorToBase);
+                    handoffLot = await LockHandoffLotAsync(
+                        db, scope.CompanyCode, scope.BranchCode!, order.Uid, priorOperation.Uid,
+                        routeStep.OutputItemCode, cancellationToken);
+                    if (handoffLot is null || handoffLot.BaseQty <= 0m)
+                        return Fail($"Insufficient previous-process balance for {routeStep.OutputItemCode}.");
+                    if (handoffLot.LastMovementDate.HasValue
+                        && handoffLot.LastMovementDate.Value > output.ProductionDate)
+                        return Fail($"Lot {handoffLot.LotNo} has a future LastMovementDate.");
+                    if (handoffConsumeBase > handoffLot.BaseQty)
+                        return Fail($"Insufficient previous-process balance for {routeStep.OutputItemCode}.");
+                }
+            }
 
             var isFinalFg = operation.IsFinalOperation
                 && string.Equals(routeStep.OutputType, PrRouteOutputTypes.FinishedGoods, StringComparison.OrdinalIgnoreCase);
@@ -224,6 +279,70 @@ public sealed partial class ProductionOutputService
                 });
             }
 
+            if (handoffLot is not null && handoffConsumeQty > 0m && consumerContract is not null)
+            {
+                handoffLot.Qty = IvQty.Round(handoffLot.Qty - handoffConsumeQty);
+                handoffLot.BaseQty = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase);
+                handoffLot.AverageUnitCost = handoffLot.BaseQty > 0m
+                    ? IvQty.Round(handoffLot.TotalCost / handoffLot.BaseQty)
+                    : 0m;
+                handoffLot.LastMovementDate = output.ProductionDate;
+
+                db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
+                {
+                    ProductionBalLotId = handoffLot.Uid,
+                    MovementType = ProductionBalLotMovementTypes.Consume,
+                    Qty = handoffConsumeQty,
+                    Uom = consumerContract.Uom,
+                    BaseQty = handoffConsumeBase,
+                    BaseUom = consumerContract.BaseUom,
+                    UnitCost = 0m,
+                    TotalCost = 0m,
+                    WorkOrderId = order.Uid,
+                    WorkOrderOperationId = operation.Uid,
+                    RouteStepId = routeStep.Uid,
+                    ProductionOutputId = output.Uid,
+                    PostingLinkId = link.Uid,
+                    DocumentType = ProductionDocumentTypes.ProductionOutput,
+                    DocumentNo = output.DocumentNo,
+                    MovementDate = output.ProductionDate,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                });
+            }
+
+            if (producesHandoff && output.GoodQty > 0m && producerContract is not null)
+            {
+                var produceBase = ProductionProcessHandoff.ToBaseQty(
+                    output.GoodQty, producerContract.ConversionFactorToBase);
+                var createdOrUpdated = await LockOrCreateHandoffLotAsync(
+                    db, scope, order, routeStep, operation, output, producerContract, produceBase, cancellationToken);
+                if (createdOrUpdated.Error is not null)
+                    return Fail(createdOrUpdated.Error);
+
+                db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
+                {
+                    ProductionBalLotId = createdOrUpdated.Lot!.Uid,
+                    MovementType = ProductionBalLotMovementTypes.Produce,
+                    Qty = output.GoodQty,
+                    Uom = producerContract.Uom,
+                    BaseQty = produceBase,
+                    BaseUom = producerContract.BaseUom,
+                    UnitCost = 0m,
+                    TotalCost = 0m,
+                    WorkOrderId = order.Uid,
+                    WorkOrderOperationId = operation.Uid,
+                    RouteStepId = routeStep.Uid,
+                    ProductionOutputId = output.Uid,
+                    PostingLinkId = link.Uid,
+                    DocumentType = ProductionDocumentTypes.ProductionOutput,
+                    DocumentNo = output.DocumentNo,
+                    MovementDate = output.ProductionDate,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                });
+            }
+
             // Produce WIP/FG staging when final + GoodQty > 0 + stocked/FG
             if (operation.IsFinalOperation
                 && output.GoodQty > 0m
@@ -319,6 +438,107 @@ public sealed partial class ProductionOutputService
             await tx.RollbackAsync(cancellationToken);
             return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency);
         }
+    }
+
+    private static async Task<(ProductionBalLot? Lot, string? Error)> LockOrCreateHandoffLotAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        ProductionWorkOrder order,
+        ProductionWorkOrderRouteStep routeStep,
+        ProductionWorkOrderOperation operation,
+        ProductionOutput output,
+        ProductionProcessHandoff.QtyContract contract,
+        decimal produceBase,
+        CancellationToken ct)
+    {
+        var lotNo = ProductionProcessHandoff.HandoffLotNo(operation.Uid);
+        var existing = await db.ProductionBalLots
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.Kind == ProductionBalLotKinds.Wip
+                && x.WorkOrderId == order.Uid
+                && x.ProducingRouteStepId == null
+                && x.WorkOrderOperationId == operation.Uid
+                && x.ItemCode == routeStep.OutputItemCode
+                && x.LotNo == lotNo)
+            .OrderBy(x => x.Uid)
+            .FirstOrDefaultAsync(ct);
+
+        if (existing is not null)
+        {
+            if (db.Database.IsSqlServer())
+            {
+                existing = await db.ProductionBalLots
+                    .FromSqlInterpolated($@"SELECT * FROM dbo.PrProductionBalLot WITH (UPDLOCK, HOLDLOCK) WHERE UID={existing.Uid}")
+                    .SingleAsync(ct);
+            }
+
+            if (existing.LastMovementDate.HasValue
+                && output.ProductionDate < existing.LastMovementDate.Value)
+            {
+                return (null, $"Lot {existing.LotNo} has a future LastMovementDate.");
+            }
+
+            existing.Qty = IvQty.Round(existing.Qty + output.GoodQty);
+            existing.BaseQty = IvQty.Round(existing.BaseQty + produceBase);
+            existing.LastMovementDate = output.ProductionDate;
+            return (existing, null);
+        }
+
+        var lot = new ProductionBalLot
+        {
+            CompanyCode = scope.CompanyCode,
+            BranchCode = scope.BranchCode!,
+            Kind = ProductionBalLotKinds.Wip,
+            ItemCode = routeStep.OutputItemCode,
+            Qty = output.GoodQty,
+            Uom = contract.Uom,
+            BaseQty = produceBase,
+            BaseUom = contract.BaseUom,
+            ConversionFactorToBase = contract.ConversionFactorToBase,
+            TotalCost = 0m,
+            AverageUnitCost = 0m,
+            WorkOrderId = order.Uid,
+            WorkOrderNo = order.WorkOrderNo,
+            ProducingRouteStepId = null,
+            WorkOrderOperationId = operation.Uid,
+            OutputType = routeStep.OutputType,
+            WorkCentreCode = routeStep.WorkCentreCode,
+            ProcessCode = operation.OperationCode,
+            LotNo = lotNo,
+            LastMovementDate = output.ProductionDate,
+        };
+        db.ProductionBalLots.Add(lot);
+        await db.SaveChangesAsync(ct);
+        return (lot, null);
+    }
+
+    private static async Task<ProductionBalLot?> LockHandoffLotAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        long workOrderId,
+        long producingOperationId,
+        string itemCode,
+        CancellationToken ct)
+    {
+        var lotNo = ProductionProcessHandoff.HandoffLotNo(producingOperationId);
+        var existing = await db.ProductionBalLots.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.Kind == ProductionBalLotKinds.Wip
+                && x.WorkOrderId == workOrderId
+                && x.ProducingRouteStepId == null
+                && x.WorkOrderOperationId == producingOperationId
+                && x.ItemCode == itemCode
+                && x.LotNo == lotNo)
+            .OrderBy(x => x.Uid)
+            .Select(x => x.Uid)
+            .FirstOrDefaultAsync(ct);
+        if (existing <= 0) return null;
+
+        var lots = await LockBalLotsByIdsAsync(db, [existing], ct);
+        return lots.FirstOrDefault();
     }
 
     private static async Task<ProductionBalLot> LockOrCreateWipLotAsync(

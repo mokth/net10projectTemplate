@@ -381,6 +381,49 @@ public sealed partial class ProductionOutputService
             });
         }
 
+        if (operation.RouteStepId is long routeStepId)
+        {
+            var siblings = await db.ProductionWorkOrderOperations.AsNoTracking()
+                .Where(x => x.RouteStepId == routeStepId)
+                .OrderBy(x => x.ProcessSequence)
+                .ThenBy(x => x.Uid)
+                .ToListAsync(cancellationToken);
+            if (ProductionProcessHandoff.TryGetImmediatePrior(siblings, operation, out var prior) is null
+                && prior is not null)
+            {
+                var available = 0m;
+                string? blocking = null;
+                var lotNo = ProductionProcessHandoff.HandoffLotNo(prior.Uid);
+                available = await db.ProductionBalLots.AsNoTracking()
+                    .Where(x => x.CompanyCode == scope.CompanyCode
+                        && x.BranchCode == scope.BranchCode
+                        && x.Kind == ProductionBalLotKinds.Wip
+                        && x.WorkOrderId == operation.WorkOrderId
+                        && x.ProducingRouteStepId == null
+                        && x.WorkOrderOperationId == prior.Uid
+                        && x.ItemCode == operation.RouteStep!.OutputItemCode
+                        && x.LotNo == lotNo
+                        && x.BaseQty > 0m)
+                    .SumAsync(x => x.Qty, cancellationToken);
+
+                var uom = operation.PlannedOutputUom
+                    ?? operation.RouteStep!.OutputUom
+                    ?? string.Empty;
+                materials.Add(new ProductionOutputMaterialLine
+                {
+                    WorkOrderMaterialId = ProductionProcessHandoff.SyntheticMaterialId(prior.Uid),
+                    ComponentCode = operation.RouteStep!.OutputItemCode,
+                    Description = $"Previous process {prior.OperationCode}",
+                    IssueMethod = ProductionProcessHandoff.IssueMethod,
+                    SupplySource = ProductionProcessHandoff.SupplySource,
+                    RequiredQty = 0m,
+                    RequiredUom = uom,
+                    AvailableQty = IvQty.Round(available),
+                    BlockingReason = blocking,
+                });
+            }
+        }
+
         var selectedMachine = SelectedMachine(operation);
         return new ProductionOutputWorkspace
         {

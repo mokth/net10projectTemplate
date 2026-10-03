@@ -289,6 +289,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
             ProcessType = "MACHINE",
             PlannedOutputQty = 10m,
             PlannedOutputUom = "EA",
+            IsFinalOperation = true,
             RowVersion = [1],
         };
         operation.Machines.Add(new ProductionWorkOrderMachine

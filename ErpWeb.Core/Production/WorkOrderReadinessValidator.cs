@@ -130,6 +130,12 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
                     $"Route step {routeStep.StageSequence} has {finals} final processes; exactly one is required.",
                     target);
             }
+            else if (ProductionProcessHandoff.ValidateFinalIsLast(routeStep.Operations.ToList()) is not null)
+            {
+                report.Add(ProductionReadinessErrorCodes.FinalProcessNotLast,
+                    $"Route step {routeStep.StageSequence}: the final process must be the last process on the route step.",
+                    target);
+            }
 
             foreach (var operation in routeStep.Operations)
             {

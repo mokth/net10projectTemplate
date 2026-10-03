@@ -121,6 +121,11 @@ public sealed partial class ProductionOutputService
                 .ToListAsync(cancellationToken);
 
             var balById = consumeBal.ToDictionary(x => x.Uid);
+            var materialBalIds = consumeMaterial
+                .Where(x => x.ProductionBalLotMovementId.HasValue)
+                .Select(x => x.ProductionBalLotMovementId!.Value)
+                .ToHashSet();
+
             foreach (var consume in consumeMaterial.OrderBy(x => x.ProductionBalLotId ?? 0).ThenBy(x => x.Uid))
             {
                 if (consume.ProductionBalLotId is null || consume.ProductionBalLotMovementId is null)
@@ -200,6 +205,52 @@ public sealed partial class ProductionOutputService
                     .Where(x => x.ProductionBalLotId == lot.Uid)
                     .ToListAsync(cancellationToken);
                 // Include the pending reversal in-memory for LastMovementDate.
+                allLotMovements.Add(balRev);
+                lot.LastMovementDate = ProductionBalLotSignedQty.LatestEffectiveMovementDate(allLotMovements);
+            }
+
+            // Handoff consume: bal-lot CONSUME with no matching material movement.
+            foreach (var handoffConsume in consumeBal
+                         .Where(x => !materialBalIds.Contains(x.Uid))
+                         .OrderBy(x => x.ProductionBalLotId)
+                         .ThenBy(x => x.Uid))
+            {
+                var lot = await LockBalLotByIdAsync(db, handoffConsume.ProductionBalLotId, cancellationToken);
+                if (lot is null) return Fail("Previous-process balance lot was not found.");
+
+                lot.Qty = IvQty.Round(lot.Qty + handoffConsume.Qty);
+                lot.BaseQty = IvQty.Round(lot.BaseQty + handoffConsume.BaseQty);
+                lot.TotalCost = IvQty.Round(lot.TotalCost + handoffConsume.TotalCost);
+                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
+
+                var balRev = new ProductionBalLotMovement
+                {
+                    ProductionBalLotId = lot.Uid,
+                    MovementType = ProductionBalLotMovementTypes.ConsumeReversal,
+                    Qty = handoffConsume.Qty,
+                    Uom = handoffConsume.Uom,
+                    BaseQty = handoffConsume.BaseQty,
+                    BaseUom = handoffConsume.BaseUom,
+                    UnitCost = handoffConsume.UnitCost,
+                    TotalCost = handoffConsume.TotalCost,
+                    WorkOrderId = order.Uid,
+                    WorkOrderOperationId = operation.Uid,
+                    RouteStepId = routeStep.Uid,
+                    ProductionOutputId = output.Uid,
+                    PostingLinkId = rollbackLink.Uid,
+                    OriginalMovementId = handoffConsume.Uid,
+                    DocumentType = ProductionDocumentTypes.ProductionOutput,
+                    DocumentNo = output.DocumentNo,
+                    MovementDate = output.ProductionDate,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                };
+                db.ProductionBalLotMovements.Add(balRev);
+                await db.SaveChangesAsync(cancellationToken);
+
+                var allLotMovements = await db.ProductionBalLotMovements.AsNoTracking()
+                    .Where(x => x.ProductionBalLotId == lot.Uid)
+                    .ToListAsync(cancellationToken);
                 allLotMovements.Add(balRev);
                 lot.LastMovementDate = ProductionBalLotSignedQty.LatestEffectiveMovementDate(allLotMovements);
             }

@@ -80,6 +80,27 @@ public sealed class WorkOrderReadinessValidatorTests
     }
 
     [Fact]
+    public void Final_process_that_is_not_last_blocks_release()
+    {
+        var order = ValidOrder();
+        var routeStep = order.RouteSteps.Single();
+        routeStep.Operations.Single().IsFinalOperation = true;
+        routeStep.Operations.Add(new ProductionWorkOrderOperation
+        {
+            WorkCentreCode = "WC01",
+            OperationCode = "OP20",
+            ProcessType = "MANUAL",
+            ProcessSequence = 20,
+            IsFinalOperation = false,
+            StandardDurationMinutes = 5m
+        });
+
+        var report = Sut().Validate(order, Ready());
+
+        Assert.Contains(report.Errors, e => e.Code == ProductionReadinessErrorCodes.FinalProcessNotLast);
+    }
+
+    [Fact]
     public void Machine_process_without_a_machine_option_blocks_release()
     {
         var order = ValidOrder();
