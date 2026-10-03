@@ -6,6 +6,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
+using ErpWeb.Core.StockLedger;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -20,6 +21,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IIvStockCommonRepository _common;
     private readonly IPoOrderRepository _poOrders;
     private readonly ILogger<IvInventoryPostingService> _logger;
+    private readonly IIvInventoryHistoryWriter? _historyWriter;
+    private readonly IStockPostingCoordinator? _coordinator;
 
     public IvInventoryPostingService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -28,7 +31,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IIvStockPostingRepository posting,
         IIvStockCommonRepository common,
         IPoOrderRepository poOrders,
-        ILogger<IvInventoryPostingService> logger)
+        ILogger<IvInventoryPostingService> logger,
+        IIvInventoryHistoryWriter? historyWriter = null,
+        IStockPostingCoordinator? coordinator = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -37,6 +42,75 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _common = common;
         _poOrders = poOrders;
         _logger = logger;
+        _historyWriter = historyWriter;
+        _coordinator = coordinator;
+    }
+
+    public async Task<StockPostingBeginResult> BeginPostingInTransactionAsync(
+        AppDbContext db, string companyCode, string branchCode, int batchNo,
+        bool reversal, DateTime effectiveAt, CancellationToken cancellationToken = default)
+    {
+        if (_coordinator is null)
+            return new(false, false, null, null);
+        var command = await InventoryStockPostingCommandFactory.CreateAsync(
+            db, companyCode, branchCode, batchNo, reversal, effectiveAt, cancellationToken);
+        return await _coordinator.BeginInTransactionAsync(db, command, cancellationToken);
+    }
+
+    public Task CompletePostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default) =>
+        context is null || _coordinator is null
+            ? Task.CompletedTask
+            : _coordinator.CompleteInTransactionAsync(context, cancellationToken);
+
+    private async Task<(StockPostingContext? Context, IvInventoryPostingBatchResult? Fail)> BeginStandaloneLedgerAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        bool reversal,
+        CancellationToken cancellationToken)
+    {
+        if (_coordinator is null)
+            return (null, null);
+
+        var effectiveAt = await StockBusinessTime.NowAsync(db, companyCode, cancellationToken);
+        var begin = await BeginPostingInTransactionAsync(
+            db, companyCode, branchCode, batchNo, reversal, effectiveAt, cancellationToken);
+        if (begin.Error is not null)
+            return (null, IvInventoryPostingBatchResult.Fail(batchNo, begin.Error.Message));
+        if (begin.WasReplay)
+            return (null, IvInventoryPostingBatchResult.Ok(batchNo, Guid.Empty));
+        return (begin.Context, null);
+    }
+
+    private async Task CompleteStandaloneLedgerAsync(
+        StockPostingContext? context,
+        AppDbContext db,
+        bool stampHistory,
+        CancellationToken cancellationToken)
+    {
+        if (context is null)
+            return;
+        if (stampHistory)
+            StampNewHistory(context, db);
+        await CompletePostingInTransactionAsync(context, cancellationToken);
+    }
+
+    private void ApplyHistoryRollback(
+        AppDbContext db,
+        IReadOnlyList<IvTrxHistory> history,
+        StockPostingContext? postingContext)
+    {
+        if (postingContext is null)
+        {
+            _posting.RemoveHistory(db, history);
+            return;
+        }
+
+        if (_historyWriter is null)
+            throw new InvalidOperationException("The V2 inventory history writer is unavailable.");
+        _historyWriter.AppendReversal(postingContext, history, postingContext.Posting.DocumentRevision);
     }
 
     public Task<IvInventoryPostingResult> PostAsync(
@@ -213,6 +287,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = await PostInventoryMRCoreAsync(
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
         if (!result.Succeeded)
@@ -221,6 +303,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return result;
         }
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -496,14 +579,24 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = await RollBackInventoryMRCoreAsync(
-            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken,
+            ledger.Context);
         if (!result.Succeeded)
         {
             await tx.RollbackAsync(cancellationToken);
             return result;
         }
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -521,7 +614,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string userId,
         int batchNo,
         string expectedTrxType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        StockPostingContext? postingContext = null)
     {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -530,7 +624,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInNotFoundMessage(expectedTrxType));
         }
 
-        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        var rollbackEffectiveAt = postingContext?.Posting.EffectiveAt ?? batch.TrxDtTime;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, rollbackEffectiveAt, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
@@ -603,19 +698,22 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
-        var rollbackChronology = await ValidateRollbackChronologyAsync(
-            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        var rollbackChronology = postingContext is null
+            ? await ValidateRollbackChronologyAsync(
+                db, companyCode, branchCode, batchNo, history, cancellationToken)
+            : null;
         if (rollbackChronology is not null)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
         }
 
-        var balLocIds = locked.Values.Select(x => x.Id).ToList();
         var repairedDates = new Dictionary<int, DateTime?>();
-        foreach (var balLocId in balLocIds)
+        foreach (var slice in ordered)
         {
-            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
-                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+            var bal = locked[slice];
+            var nextQty = bal.StdQty - deltaBySlice[slice];
+            repairedDates[bal.Id] = await ResolveRollbackTransDateAsync(
+                db, companyCode, branchCode, bal.Id, batchNo, bal.TransDate, nextQty, cancellationToken);
         }
 
         // Apply all after all checks
@@ -629,7 +727,19 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             bal.TransDate = repairedDates[bal.Id];
         }
 
-        _posting.RemoveHistory(db, history);
+        if (postingContext is null)
+        {
+            _posting.RemoveHistory(db, history);
+        }
+        else
+        {
+            if (_historyWriter is null)
+                throw new InvalidOperationException("The V2 inventory history writer is unavailable.");
+            _historyWriter.AppendReversal(
+                postingContext, history, postingContext.Posting.DocumentRevision);
+            foreach (var bal in locked.Values)
+                bal.TransDate = postingContext.Posting.EffectiveAt;
+        }
 
         foreach (var detail in details)
         {
@@ -681,6 +791,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
         }
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = string.Equals(expectedTrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
             ? await PostNonStockGoodsReceiptCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken)
             : await PostInventoryMRCoreAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
@@ -691,6 +809,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -732,9 +851,19 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
         }
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = string.Equals(expectedTrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
-            ? await RollBackNonStockGoodsReceiptCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken)
-            : await RollBackInventoryMRCoreAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+            ? await RollBackNonStockGoodsReceiptCoreAsync(
+                db, companyCode, branchCode, userId, batchNo, cancellationToken, ledger.Context)
+            : await RollBackInventoryMRCoreAsync(
+                db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken, ledger.Context);
         if (!result.Succeeded)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -742,6 +871,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, -1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -836,7 +966,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string branchCode,
         string userId,
         int batchNo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        StockPostingContext? postingContext = null)
     {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null || !string.Equals(batch.TrxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase))
@@ -860,7 +991,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, "No posted history found for this batch.");
         }
 
-        _posting.RemoveHistory(db, history);
+        ApplyHistoryRollback(db, history, postingContext);
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         var opId = Guid.NewGuid();
@@ -884,6 +1015,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = await PostInventoryADJCoreAsync(
             db, companyCode, branchCode, userId, batchNo, cancellationToken);
         if (!result.Succeeded)
@@ -892,6 +1031,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return result;
         }
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1154,6 +1294,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase))
@@ -1201,6 +1349,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             inverseByBalLoc[balLocId] = inverseByBalLoc.GetValueOrDefault(balLocId) + delta;
         }
 
+        var lockedAdjById = new Dictionary<int, IvBalLocLockResult>();
         foreach (var balLocId in inverseByBalLoc.Keys.OrderBy(id => id))
         {
             var lockedRow = await _posting.LockBalLocByIdForTenantAsync(
@@ -1221,6 +1370,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     batchNo,
                     $"Insufficient quantity on balance Id {balLocId} for rollback (on hand {lockedRow.StdQty}, required decrease {Math.Abs(inverse)}).");
             }
+
+            lockedAdjById[balLocId] = lockedRow;
         }
 
         var rollbackChronology = await ValidateRollbackChronologyAsync(
@@ -1234,8 +1385,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var repairedDates = new Dictionary<int, DateTime?>();
         foreach (var balLocId in inverseByBalLoc.Keys)
         {
-            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
-                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+            var lockedRow = lockedAdjById[balLocId];
+            repairedDates[balLocId] = await ResolveRollbackTransDateAsync(
+                db,
+                companyCode,
+                branchCode,
+                balLocId,
+                batchNo,
+                lockedRow.TransDate,
+                lockedRow.StdQty + inverseByBalLoc[balLocId],
+                cancellationToken);
         }
 
         foreach (var (balLocId, inverse) in inverseByBalLoc.OrderBy(kv => kv.Key))
@@ -1277,7 +1436,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
         }
 
-        _posting.RemoveHistory(db, history);
+        ApplyHistoryRollback(db, history, ledger.Context);
 
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
@@ -1290,6 +1449,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1442,6 +1602,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         return PostInventoryADJCoreAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken);
     }
 
+    public async Task<IvInventoryPostingBatchResult> PostStockAdjustmentInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, CancellationToken cancellationToken = default)
+    {
+        var result = await PostInventoryADJCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, cancellationToken);
+        StampNewHistory(postingContext, db);
+        return result;
+    }
+
     public Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(
         AppDbContext db,
         string companyCode,
@@ -1454,6 +1625,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         ArgumentNullException.ThrowIfNull(db);
         return PostInventoryMICoreAsync(
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+    }
+
+    public async Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default)
+    {
+        var result = await PostInventoryMICoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (result.Succeeded) StampNewHistory(postingContext, db);
+        return result;
     }
 
     public Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(
@@ -1470,6 +1652,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
     }
 
+    public Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default)
+    {
+        return RollBackInventoryMICoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken,
+            postingContext);
+    }
+
     public Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
         AppDbContext db,
         string companyCode,
@@ -1484,6 +1676,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
     }
 
+    public async Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default)
+    {
+        var result = await PostInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+        if (result.Succeeded) StampNewHistory(postingContext, db);
+        return result;
+    }
+
     public Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(
         AppDbContext db,
         string companyCode,
@@ -1496,6 +1699,27 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         ArgumentNullException.ThrowIfNull(db);
         return RollBackInventoryMRCoreAsync(
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+    }
+
+    public Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default)
+    {
+        return RollBackInventoryMRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken,
+            postingContext);
+    }
+
+    private void StampNewHistory(StockPostingContext? context, AppDbContext db)
+    {
+        if (context is null) return;
+        if (!ReferenceEquals(context.Db, db))
+            throw new InvalidOperationException("Inventory and posting context must share one DbContext.");
+        var added = db.ChangeTracker.Entries<IvTrxHistory>()
+            .Where(x => x.State == EntityState.Added && x.Entity.LedgerVersion is null)
+            .Select(x => x.Entity).ToArray();
+        _historyWriter?.StampGeneration(context, added, context.Posting.DocumentRevision);
     }
 
     public async Task DeleteNewStockInBatchInTransactionAsync(
@@ -1539,6 +1763,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = await PostInventoryMICoreAsync(
             db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
         if (!result.Succeeded)
@@ -1562,6 +1794,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1777,8 +2010,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
+
         var result = await RollBackInventoryMICoreAsync(
-            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+            db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken,
+            ledger.Context);
         if (!result.Succeeded)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1798,6 +2040,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1815,7 +2058,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string userId,
         int batchNo,
         string expectedTrxType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        StockPostingContext? postingContext = null)
     {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -1824,7 +2068,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutNotFoundMessage(expectedTrxType));
         }
 
-        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
+        var rollbackEffectiveAt = postingContext?.Posting.EffectiveAt ?? batch.TrxDtTime;
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, rollbackEffectiveAt, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
@@ -1877,6 +2122,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             .OrderBy(kv => kv.Value)
             .Select(kv => kv.Key)
             .ToList();
+        var lockedById = new Dictionary<int, IvBalLocLockResult>();
 
         foreach (var balLocId in orderedIds)
         {
@@ -1895,10 +2141,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             {
                 return IvInventoryPostingBatchResult.Fail(batchNo, "Tenant mismatch on balance row.");
             }
+
+            lockedById[balLocId] = lockedRow;
         }
 
-        var rollbackChronology = await ValidateRollbackChronologyAsync(
-            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        var rollbackChronology = postingContext is null
+            ? await ValidateRollbackChronologyAsync(
+                db, companyCode, branchCode, batchNo, history, cancellationToken)
+            : null;
         if (rollbackChronology is not null)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
@@ -1907,8 +2157,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var repairedDates = new Dictionary<int, DateTime?>();
         foreach (var balLocId in orderedIds)
         {
-            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
-                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+            var lockedRow = lockedById[balLocId];
+            repairedDates[balLocId] = await ResolveRollbackTransDateAsync(
+                db,
+                companyCode,
+                branchCode,
+                balLocId,
+                batchNo,
+                lockedRow.TransDate,
+                lockedRow.StdQty + restoreById[balLocId],
+                cancellationToken);
         }
 
         foreach (var balLocId in orderedIds)
@@ -1929,7 +2187,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         TestHookAfterMiRollbackStock?.Invoke();
 
-        _posting.RemoveHistory(db, history);
+        if (postingContext is null)
+        {
+            _posting.RemoveHistory(db, history);
+        }
+        else
+        {
+            if (_historyWriter is null)
+                throw new InvalidOperationException("The V2 inventory history writer is unavailable.");
+            _historyWriter.AppendReversal(
+                postingContext, history, postingContext.Posting.DocumentRevision);
+        }
 
         foreach (var detail in details)
         {
@@ -1966,6 +2234,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
 
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -2344,6 +2620,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         TestHookAfterTrHistory?.Invoke();
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
 
         batch.BatchStatus = IvBatchStatuses.Posted;
         batch.PostedDate = now;
@@ -2388,6 +2665,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var ledger = await BeginStandaloneLedgerAsync(
+            db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        if (ledger.Fail is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ledger.Fail;
+        }
 
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -2520,8 +2805,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var repairedDates = new Dictionary<int, DateTime?>();
         foreach (var balLocId in orderedIds)
         {
-            repairedDates[balLocId] = await _posting.GetLatestRemainingMovementAsync(
-                db, companyCode, branchCode, balLocId, batchNo, cancellationToken);
+            var lockedRow = lockedById[balLocId];
+            repairedDates[balLocId] = await ResolveRollbackTransDateAsync(
+                db,
+                companyCode,
+                branchCode,
+                balLocId,
+                batchNo,
+                lockedRow.TransDate,
+                lockedRow.StdQty + netByBalLocId[balLocId],
+                cancellationToken);
         }
 
         foreach (var balLocId in orderedIds)
@@ -2544,7 +2837,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
-        _posting.RemoveHistory(db, history);
+        ApplyHistoryRollback(db, history, ledger.Context);
 
         foreach (var detail in details)
         {
@@ -2564,6 +2857,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
 
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 

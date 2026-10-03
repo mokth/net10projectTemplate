@@ -297,6 +297,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
     public async Task SqlServer_two_posts_merge_into_one_handoff_lot()
     {
         var cs = TryResolveScratch();
@@ -305,9 +306,9 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
             return;
         }
 
-        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(cs);
-        await connection.OpenAsync();
-        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options;
+        // A connection string (not one shared SqlConnection) ensures every factory context owns an
+        // independent physical connection, matching production transaction behavior.
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
         IDbContextFactory<AppDbContext> factory = new TestDbContextFactory(options);
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -520,20 +521,43 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
 
     private static string? TryResolveScratch()
     {
+        var required = string.Equals(
+            Environment.GetEnvironmentVariable("ERPWEB_REQUIRE_SQLSERVER_TESTS"),
+            "1",
+            StringComparison.Ordinal);
         var config = new ConfigurationBuilder()
             .AddJsonFile("appsettings.json", optional: true)
+            .AddJsonFile("../ErpWeb/appsettings.json", optional: true)
             .AddEnvironmentVariables()
             .Build();
         var cs = config.GetConnectionString("SqlServerTestConnection");
-        if (string.IsNullOrWhiteSpace(cs)) return null;
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (required)
+                Assert.Fail("Production handoff SQL Server test requires ConnectionStrings__SqlServerTestConnection.");
+            return null;
+        }
         try
         {
+            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs);
+            if (!builder.InitialCatalog.Contains("test", StringComparison.OrdinalIgnoreCase))
+            {
+                if (required)
+                    Assert.Fail("Production handoff SQL Server test requires a database name containing 'test'.");
+                return null;
+            }
             var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
             using var db = new AppDbContext(options);
-            return db.Database.IsSqlServer() && db.Database.CanConnect() ? cs : null;
+            if (db.Database.IsSqlServer() && db.Database.CanConnect())
+                return cs;
+            if (required)
+                Assert.Fail("Production handoff SQL Server test database is unavailable.");
+            return null;
         }
-        catch
+        catch (Exception ex)
         {
+            if (required)
+                Assert.Fail($"Production handoff SQL Server test database is unavailable: {ex.Message}");
             return null;
         }
     }

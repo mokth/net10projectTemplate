@@ -361,7 +361,8 @@ public class IvScrapPostingServiceTests : IAsyncLifetime
             LotNo = string.Empty,
             IStatus = "ACTIVE",
             StdQty = qty,
-            StdUom = "EA"
+            StdUom = "EA",
+            TransDate = FixedToday
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();

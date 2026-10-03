@@ -82,11 +82,20 @@ public static class ProductionBalLotSignedQty
             ProductionBalLotMovementTypes.Issue
                 or ProductionBalLotMovementTypes.Produce
                 or ProductionBalLotMovementTypes.ConsumeReversal
-                or ProductionBalLotMovementTypes.ReturnReversal => baseQty,
+                or ProductionBalLotMovementTypes.ReturnReversal
+                or ProductionBalLotMovementTypes.OpeningIn
+                or ProductionBalLotMovementTypes.TransferIn
+                or ProductionBalLotMovementTypes.StatusIn
+                or ProductionBalLotMovementTypes.AdjustIn => baseQty,
             ProductionBalLotMovementTypes.IssueReversal
                 or ProductionBalLotMovementTypes.ProduceReversal
                 or ProductionBalLotMovementTypes.Consume
-                or ProductionBalLotMovementTypes.Return => -baseQty,
+                or ProductionBalLotMovementTypes.Return
+                or ProductionBalLotMovementTypes.TransferOut
+                or ProductionBalLotMovementTypes.StatusOut
+                or ProductionBalLotMovementTypes.AdjustOut
+                or ProductionBalLotMovementTypes.ScrapOut
+                or ProductionBalLotMovementTypes.FgReceiptOut => -baseQty,
             _ => throw new ArgumentOutOfRangeException(nameof(movementType), movementType, "Unknown bal-lot movement type."),
         };
 

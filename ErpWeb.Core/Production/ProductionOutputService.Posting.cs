@@ -27,6 +27,15 @@ public sealed partial class ProductionOutputService
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
+            StockPostingContext? ledgerContext = null;
+            if (_stockCoordinator is not null)
+            {
+                var command = BuildOutputPostingCommand(
+                    output, reversal: false, output.ProductionDate, null, null);
+                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+                if (ledger.Error is not null) return Fail(ledger.Error.Message);
+                ledgerContext = ledger.Context;
+            }
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
@@ -142,7 +151,14 @@ public sealed partial class ProductionOutputService
 
             var now = _clock.Now;
             var user = TruncateUser(scope.UserId);
-            var consumeFacts = new List<(ProductionWorkOrderMaterial Material, ProductionBalLot Lot, decimal Qty, decimal BaseQty, decimal Cost)>();
+            var consumeFacts = new List<(
+                ProductionWorkOrderMaterial Material,
+                ProductionBalLot Lot,
+                decimal MaterialQty,
+                decimal LotQty,
+                decimal BaseQty,
+                decimal Cost)>();
+            var remainingBaseByLot = new Dictionary<long, decimal>();
 
             foreach (var material in materials)
             {
@@ -191,15 +207,20 @@ public sealed partial class ProductionOutputService
                     if (lot.LastMovementDate.HasValue && lot.LastMovementDate.Value > output.ProductionDate)
                         return Fail($"Lot {lot.LotNo} has a future LastMovementDate.");
 
-                    var takeBase = Math.Min(lot.BaseQty, remainingBase);
-                    var takeQty = material.ConversionFactorToBase > 0m
+                    var availableBase = remainingBaseByLot.GetValueOrDefault(lot.Uid, lot.BaseQty);
+                    var takeBase = Math.Min(availableBase, remainingBase);
+                    var materialQty = material.ConversionFactorToBase > 0m
                         ? IvQty.Round(takeBase / material.ConversionFactorToBase)
+                        : takeBase;
+                    var lotQty = lot.ConversionFactorToBase > 0m
+                        ? IvQty.Round(takeBase / lot.ConversionFactorToBase)
                         : takeBase;
                     var takeCost = lot.BaseQty > 0m
                         ? IvQty.Round(lot.TotalCost * (takeBase / lot.BaseQty))
                         : 0m;
 
-                    consumeFacts.Add((material, lot, takeQty, takeBase, takeCost));
+                    consumeFacts.Add((material, lot, materialQty, lotQty, takeBase, takeCost));
+                    remainingBaseByLot[lot.Uid] = IvQty.Round(availableBase - takeBase);
                     remainingBase = IvQty.Round(remainingBase - takeBase);
                 }
 
@@ -214,7 +235,7 @@ public sealed partial class ProductionOutputService
             foreach (var fact in consumeFacts.OrderBy(x => x.Lot.Uid))
             {
                 var lot = fact.Lot;
-                lot.Qty = IvQty.Round(lot.Qty - fact.Qty);
+                lot.Qty = IvQty.Round(lot.Qty - fact.LotQty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty - fact.BaseQty);
                 lot.TotalCost = IvQty.Round(lot.TotalCost - fact.Cost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
@@ -224,8 +245,8 @@ public sealed partial class ProductionOutputService
                 {
                     ProductionBalLotId = lot.Uid,
                     MovementType = ProductionBalLotMovementTypes.Consume,
-                    Qty = fact.Qty,
-                    Uom = fact.Material.RequiredUom ?? lot.Uom,
+                    Qty = fact.LotQty,
+                    Uom = lot.Uom,
                     BaseQty = fact.BaseQty,
                     BaseUom = lot.BaseUom,
                     UnitCost = fact.BaseQty > 0m ? IvQty.Round(fact.Cost / fact.BaseQty) : 0m,
@@ -255,7 +276,7 @@ public sealed partial class ProductionOutputService
                     MovementType = ProductionMaterialMovementTypes.Consume,
                     MovementDate = output.ProductionDate,
                     ItemCode = fact.Material.ComponentCode,
-                    Qty = fact.Qty,
+                    Qty = fact.MaterialQty,
                     Uom = fact.Material.RequiredUom ?? lot.Uom,
                     BaseQty = fact.BaseQty,
                     BaseUom = lot.BaseUom,
@@ -376,6 +397,10 @@ public sealed partial class ProductionOutputService
                 db.ProductionBalLotMovements.Add(produceMov);
             }
 
+            // Material and balance movement facts must form one complete persisted set before
+            // execution aggregates are projected from the database.
+            await db.SaveChangesAsync(cancellationToken);
+
             operation.GoodQty = IvQty.Round(operation.GoodQty + output.GoodQty);
             operation.ScrapQty = IvQty.Round(operation.ScrapQty + output.ScrapQty);
             operation.RejectQty = IvQty.Round(operation.RejectQty + output.RejectQty);
@@ -430,6 +455,12 @@ public sealed partial class ProductionOutputService
             });
 
             await db.SaveChangesAsync(cancellationToken);
+            if (ledgerContext is not null)
+            {
+                await StampOutputLedgerFactsAsync(
+                    ledgerContext, output.Uid, link.Uid, order.WorkOrderNo, cancellationToken);
+                await _stockCoordinator!.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+            }
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
         }
@@ -438,6 +469,86 @@ public sealed partial class ProductionOutputService
             await tx.RollbackAsync(cancellationToken);
             return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency);
         }
+    }
+
+    private static StockPostingCommand BuildOutputPostingCommand(
+        ProductionOutput output,
+        bool reversal,
+        DateTime effectiveAt,
+        string? reversalRequestId,
+        long? reversesPostingId)
+    {
+        var requestId = Guid.ParseExact(
+            reversal ? reversalRequestId! : output.PostingRequestId, "N");
+        var evidence = StockPostingFingerprint.Create(
+            new
+            {
+                output.Uid, output.DocumentNo, output.SnapshotRevision,
+                output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty,
+                output.OutputItemCode, output.OutputUom, output.OutputLotNo,
+                effectiveAt, reversal, reversesPostingId
+            },
+            new { output.WorkOrderId, output.WorkOrderOperationId, output.RouteStepId });
+        return new StockPostingCommand
+        {
+            RequestId = requestId,
+            CommandType = reversal ? "PRODUCTION_OUTPUT_ROLLBACK" : "PRODUCTION_OUTPUT_POST",
+            SourceModule = "PRODUCTION",
+            SourceDocumentType = ProductionDocumentTypes.ProductionOutput,
+            SourceDocumentId = output.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            SourceDocumentNo = output.DocumentNo,
+            DocumentRevision = output.SnapshotRevision,
+            PostingRole = reversal ? "REVERSAL" : "PRIMARY",
+            EffectiveAt = effectiveAt,
+            Evidence = evidence,
+            ReversesPostingId = reversesPostingId,
+        };
+    }
+
+    private static async Task StampOutputLedgerFactsAsync(
+        StockPostingContext context,
+        long outputId,
+        long postingLinkId,
+        string workOrderNo,
+        CancellationToken cancellationToken)
+    {
+        var movements = await context.Db.ProductionBalLotMovements
+            .Where(x => x.ProductionOutputId == outputId && x.PostingLinkId == postingLinkId)
+            .OrderBy(x => x.Uid).ToListAsync(cancellationToken);
+        var lots = await context.Db.ProductionBalLots
+            .Where(x => movements.Select(m => m.ProductionBalLotId).Contains(x.Uid))
+            .ToDictionaryAsync(x => x.Uid, cancellationToken);
+        var line = 0;
+        foreach (var movement in movements)
+        {
+            var lot = lots[movement.ProductionBalLotId];
+            movement.LedgerVersion = 2;
+            movement.LedgerEpochId = context.Epoch.Id;
+            movement.StockPostingId = context.Posting.Id;
+            movement.PostingLineNo = ++line;
+            movement.CompanyCode = context.CompanyCode;
+            movement.BranchCode = context.BranchCode;
+            movement.ItemCode = lot.ItemCode;
+            movement.ItemDescription = lot.Description;
+            movement.BalanceStage = lot.BalanceStage ?? "PROCESS_WIP";
+            movement.ProductionLocationId = lot.ProductionLocationId;
+            movement.StockStatusCode = lot.StockStatusCode ?? "AVAILABLE";
+            movement.WorkOrderNo = workOrderNo;
+            movement.LotIdentity = lot.PoolCode ?? lot.LotNo;
+            movement.PhysicalLotNo = lot.PhysicalLotNo;
+            movement.ConversionFactorToBase = lot.ConversionFactorToBase;
+            movement.SourceLineId = movement.WorkOrderMaterialId?.ToString()
+                ?? movement.WorkOrderOperationId?.ToString()
+                ?? movement.Uid.ToString();
+            movement.SplitOrdinal = 0;
+            movement.ValuationStatus = "UNVALUED";
+            lot.LastStockEventEffectiveAt = context.Posting.EffectiveAt;
+        }
+        var material = await context.Db.ProductionMaterialMovements
+            .Where(x => x.ProductionOutputId == outputId && x.PostingLinkId == postingLinkId)
+            .ToListAsync(cancellationToken);
+        foreach (var movement in material)
+            movement.StockPostingId = context.Posting.Id;
     }
 
     private static async Task<(ProductionBalLot? Lot, string? Error)> LockOrCreateHandoffLotAsync(

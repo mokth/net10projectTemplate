@@ -1,6 +1,7 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
+using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -82,6 +83,7 @@ public sealed partial class IvInventoryPostingService
 
     /// <summary>
     /// After inverse qty, repair TransDate from remaining history (including zero-net BalLocs).
+    /// Opening piles with leftover quantity keep their current stock date when no other history remains.
     /// </summary>
     private async Task RepairTransDatesAfterRollbackAsync(
         AppDbContext db,
@@ -93,10 +95,43 @@ public sealed partial class IvInventoryPostingService
     {
         foreach (var balLocId in balLocIds.Distinct().OrderBy(x => x))
         {
-            var latest = await _posting.GetLatestRemainingMovementAsync(
-                db, companyCode, branchCode, balLocId, excludeBatchNo, cancellationToken);
+            var current = await db.IvBalLocs
+                .AsNoTracking()
+                .Where(x => x.Id == balLocId)
+                .Select(x => new { x.TransDate, x.StdQty })
+                .FirstOrDefaultAsync(cancellationToken);
+            var repaired = await ResolveRollbackTransDateAsync(
+                db,
+                companyCode,
+                branchCode,
+                balLocId,
+                excludeBatchNo,
+                current?.TransDate,
+                current?.StdQty ?? 0m,
+                cancellationToken);
             await _posting.SetBalLocTransDateAsync(
-                db, balLocId, companyCode, branchCode, latest, cancellationToken);
+                db, balLocId, companyCode, branchCode, repaired, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Restore TransDate from remaining movements. If this batch was the only history and
+    /// quantity remains (opening stock), keep the pile's current date instead of nulling it.
+    /// </summary>
+    private async Task<DateTime?> ResolveRollbackTransDateAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int balLocId,
+        int excludeBatchNo,
+        DateTime? currentTransDate,
+        decimal quantityAfterRollback,
+        CancellationToken cancellationToken)
+    {
+        var latest = await _posting.GetLatestRemainingMovementAsync(
+            db, companyCode, branchCode, balLocId, excludeBatchNo, cancellationToken);
+        if (latest.HasValue)
+            return latest;
+        return quantityAfterRollback > 0m ? currentTransDate : null;
     }
 }

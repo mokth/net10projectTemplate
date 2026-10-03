@@ -89,6 +89,21 @@ public sealed partial class ProductionOutputService
             db.ProductionPostingLinks.Add(rollbackLink);
             await db.SaveChangesAsync(cancellationToken);
 
+            StockPostingContext? ledgerContext = null;
+            if (_stockCoordinator is not null)
+            {
+                var originalPostingId = await db.ProductionBalLotMovements.AsNoTracking()
+                    .Where(x => x.ProductionOutputId == output.Uid && x.PostingLinkId == postLink.Uid && x.StockPostingId != null)
+                    .Select(x => x.StockPostingId)
+                    .FirstOrDefaultAsync(cancellationToken);
+                var command = BuildOutputPostingCommand(
+                    output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId);
+                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+                if (ledger.Error is not null)
+                    return Fail(ledger.Error.Message);
+                ledgerContext = ledger.Context;
+            }
+
             // Prefix-balance guard for PRODUCE before mutating.
             var produceMovements = await db.ProductionBalLotMovements
                 .Where(x => x.ProductionOutputId == output.Uid
@@ -137,21 +152,21 @@ public sealed partial class ProductionOutputService
                 var originalBal = balById.GetValueOrDefault(consume.ProductionBalLotMovementId.Value);
                 if (originalBal is null) return Fail("Bal-lot consume movement was not found.");
 
-                lot.Qty = IvQty.Round(lot.Qty + consume.Qty);
-                lot.BaseQty = IvQty.Round(lot.BaseQty + consume.BaseQty);
-                lot.TotalCost = IvQty.Round(lot.TotalCost + consume.TotalCost);
+                lot.Qty = IvQty.Round(lot.Qty + originalBal.Qty);
+                lot.BaseQty = IvQty.Round(lot.BaseQty + originalBal.BaseQty);
+                lot.TotalCost = IvQty.Round(lot.TotalCost + originalBal.TotalCost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var balRev = new ProductionBalLotMovement
                 {
                     ProductionBalLotId = lot.Uid,
                     MovementType = ProductionBalLotMovementTypes.ConsumeReversal,
-                    Qty = consume.Qty,
-                    Uom = consume.Uom,
-                    BaseQty = consume.BaseQty,
-                    BaseUom = consume.BaseUom,
-                    UnitCost = consume.UnitCost,
-                    TotalCost = consume.TotalCost,
+                    Qty = originalBal.Qty,
+                    Uom = originalBal.Uom,
+                    BaseQty = originalBal.BaseQty,
+                    BaseUom = originalBal.BaseUom,
+                    UnitCost = originalBal.UnitCost,
+                    TotalCost = originalBal.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderMaterialId = consume.WorkOrderMaterialId,
                     WorkOrderOperationId = operation.Uid,
@@ -204,8 +219,6 @@ public sealed partial class ProductionOutputService
                 var allLotMovements = await db.ProductionBalLotMovements.AsNoTracking()
                     .Where(x => x.ProductionBalLotId == lot.Uid)
                     .ToListAsync(cancellationToken);
-                // Include the pending reversal in-memory for LastMovementDate.
-                allLotMovements.Add(balRev);
                 lot.LastMovementDate = ProductionBalLotSignedQty.LatestEffectiveMovementDate(allLotMovements);
             }
 
@@ -251,7 +264,6 @@ public sealed partial class ProductionOutputService
                 var allLotMovements = await db.ProductionBalLotMovements.AsNoTracking()
                     .Where(x => x.ProductionBalLotId == lot.Uid)
                     .ToListAsync(cancellationToken);
-                allLotMovements.Add(balRev);
                 lot.LastMovementDate = ProductionBalLotSignedQty.LatestEffectiveMovementDate(allLotMovements);
             }
 
@@ -260,8 +272,12 @@ public sealed partial class ProductionOutputService
                 var lot = await LockBalLotByIdAsync(db, produce.ProductionBalLotId, cancellationToken);
                 if (lot is null) return Fail("WIP production balance lot was not found.");
 
-                lot.Qty = IvQty.Round(Math.Max(lot.Qty - produce.Qty, 0m));
-                lot.BaseQty = IvQty.Round(Math.Max(lot.BaseQty - produce.BaseQty, 0m));
+                var nextQty = IvQty.Round(lot.Qty - produce.Qty);
+                var nextBaseQty = IvQty.Round(lot.BaseQty - produce.BaseQty);
+                if (nextQty < 0m || nextBaseQty < 0m)
+                    return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
+                lot.Qty = nextQty;
+                lot.BaseQty = nextBaseQty;
                 lot.TotalCost = 0m;
                 lot.AverageUnitCost = 0m;
 
@@ -296,10 +312,17 @@ public sealed partial class ProductionOutputService
                 lot.LastMovementDate = ProductionBalLotSignedQty.LatestEffectiveMovementDate(allLotMovements);
             }
 
-            operation.GoodQty = IvQty.Round(Math.Max(operation.GoodQty - output.GoodQty, 0m));
-            operation.ScrapQty = IvQty.Round(Math.Max(operation.ScrapQty - output.ScrapQty, 0m));
-            operation.RejectQty = IvQty.Round(Math.Max(operation.RejectQty - output.RejectQty, 0m));
-            operation.HoldQty = IvQty.Round(Math.Max(operation.HoldQty - output.HoldQty, 0m));
+            var nextOperationGood = IvQty.Round(operation.GoodQty - output.GoodQty);
+            var nextOperationScrap = IvQty.Round(operation.ScrapQty - output.ScrapQty);
+            var nextOperationReject = IvQty.Round(operation.RejectQty - output.RejectQty);
+            var nextOperationHold = IvQty.Round(operation.HoldQty - output.HoldQty);
+            if (nextOperationGood < 0m || nextOperationScrap < 0m
+                || nextOperationReject < 0m || nextOperationHold < 0m)
+                return Fail("Reversing output would make an operation outcome quantity negative.");
+            operation.GoodQty = nextOperationGood;
+            operation.ScrapQty = nextOperationScrap;
+            operation.RejectQty = nextOperationReject;
+            operation.HoldQty = nextOperationHold;
             operation.ProcessedQty = IvQty.Round(
                 operation.GoodQty + operation.ScrapQty + operation.RejectQty + operation.HoldQty);
             operation.RemainingQty = IvQty.Round(Math.Max(operation.PlannedOutputQty - operation.GoodQty, 0m));
@@ -309,13 +332,24 @@ public sealed partial class ProductionOutputService
             if (isFinalFg)
             {
                 var factor = routeStep.OutputConversionFactorToBase ?? 1m;
-                order.GoodQty = IvQty.Round(Math.Max(order.GoodQty - IvQty.Round(output.GoodQty * factor), 0m));
-                order.ScrapQty = IvQty.Round(Math.Max(order.ScrapQty - IvQty.Round(output.ScrapQty * factor), 0m));
-                order.RejectQty = IvQty.Round(Math.Max(order.RejectQty - IvQty.Round(output.RejectQty * factor), 0m));
-                order.HoldQty = IvQty.Round(Math.Max(order.HoldQty - IvQty.Round(output.HoldQty * factor), 0m));
+                var nextOrderGood = IvQty.Round(order.GoodQty - IvQty.Round(output.GoodQty * factor));
+                var nextOrderScrap = IvQty.Round(order.ScrapQty - IvQty.Round(output.ScrapQty * factor));
+                var nextOrderReject = IvQty.Round(order.RejectQty - IvQty.Round(output.RejectQty * factor));
+                var nextOrderHold = IvQty.Round(order.HoldQty - IvQty.Round(output.HoldQty * factor));
+                if (nextOrderGood < 0m || nextOrderScrap < 0m
+                    || nextOrderReject < 0m || nextOrderHold < 0m)
+                    return Fail("Reversing output would make a Work Order outcome quantity negative.");
+                order.GoodQty = nextOrderGood;
+                order.ScrapQty = nextOrderScrap;
+                order.RejectQty = nextOrderReject;
+                order.HoldQty = nextOrderHold;
                 order.RemainingQty = ProductionWorkOrderCalc.OpenProductionQty(
                     order.PlannedQty, order.GoodQty, order.ApprovedVarianceQty);
             }
+
+            // Persist every reversal fact before deriving material aggregates. Mixing a database
+            // total with the full pending list double-counts reversals flushed by earlier loops.
+            await db.SaveChangesAsync(cancellationToken);
 
             foreach (var material in materials)
             {
@@ -323,13 +357,9 @@ public sealed partial class ProductionOutputService
                     .Where(x => x.WorkOrderMaterialId == material.Uid)
                     .Select(x => new { x.MovementType, x.Qty })
                     .ToListAsync(cancellationToken);
-                var pendingConsumeReversal = consumeMaterial
-                    .Where(x => x.WorkOrderMaterialId == material.Uid)
-                    .Sum(x => x.Qty);
                 material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
                     facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty)
-                        + pendingConsumeReversal);
+                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
             }
 
             output.Status = ProductionOutputStatuses.Reversed;
@@ -355,6 +385,12 @@ public sealed partial class ProductionOutputService
             });
 
             await db.SaveChangesAsync(cancellationToken);
+            if (ledgerContext is not null)
+            {
+                await StampOutputLedgerFactsAsync(
+                    ledgerContext, output.Uid, rollbackLink.Uid, order.WorkOrderNo, cancellationToken);
+                await _stockCoordinator!.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+            }
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
         }

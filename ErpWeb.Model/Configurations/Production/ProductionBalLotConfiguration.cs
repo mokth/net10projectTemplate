@@ -16,6 +16,8 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
                 "[Qty] >= 0 AND [BaseQty] >= 0 AND [ConversionFactorToBase] > 0");
             table.HasCheckConstraint("CK_PrProductionBalLot_Cost",
                 "[TotalCost] >= 0 AND [AverageUnitCost] >= 0");
+            table.HasCheckConstraint("CK_PrProductionBalLot_V2",
+                "[BalanceStage] IS NULL OR ([ProductionLocationID] IS NOT NULL AND [StockStatusCode] IS NOT NULL AND [OriginType] IS NOT NULL)");
         });
 
         builder.HasKey(x => x.Uid);
@@ -40,6 +42,15 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.WarehouseCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.LocationCode).HasMaxLength(10).IsRequired();
         builder.Property(x => x.LotNo).HasMaxLength(50).IsRequired();
+        builder.Property(x => x.BalanceStage).HasMaxLength(20);
+        builder.Property(x => x.ProductionLocationId).HasColumnName("ProductionLocationID");
+        builder.Property(x => x.StockStatusCode).HasMaxLength(20);
+        builder.Property(x => x.PoolCode).HasMaxLength(64);
+        builder.Property(x => x.PhysicalLotNo).HasMaxLength(50);
+        builder.Property(x => x.LotIdentityKind).HasMaxLength(20);
+        builder.Property(x => x.FirstReceiptEffectiveAt).HasColumnType("datetime2(7)");
+        builder.Property(x => x.LastStockEventEffectiveAt).HasColumnType("datetime2(7)");
+        builder.Property(x => x.OriginType).HasMaxLength(20);
         builder.Property(x => x.ProducingRouteStepId).HasColumnName("ProducingRouteStepID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");
         builder.Property(x => x.OutputType).HasMaxLength(20);
@@ -53,6 +64,10 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
         builder.HasOne(x => x.OriginalIssueMovement).WithMany().HasForeignKey(x => x.OriginalIssueMovementId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.ProducingRouteStep).WithMany().HasForeignKey(x => x.ProducingRouteStepId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.WorkOrderOperation).WithMany().HasForeignKey(x => x.WorkOrderOperationId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ProductionLocation).WithMany()
+            .HasForeignKey(x => new { x.CompanyCode, x.BranchCode, x.ProductionLocationId })
+            .HasPrincipalKey(x => new { x.CompanyCode, x.BranchCode, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.Kind, x.WorkOrderId, x.WorkOrderMaterialId, x.OriginalIssueMovementId })
             .IsUnique()
@@ -64,5 +79,18 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
             .HasDatabaseName("UQ_PrProductionBalLot_Wip");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ItemCode, x.LotNo })
             .HasDatabaseName("IX_PrProductionBalLot_Item_Lot");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ContributionKey, x.ProductionLocationId, x.StockStatusCode })
+            .IsUnique()
+            .HasFilter("[BalanceStage] = N'MATERIAL' AND [ContributionKey] IS NOT NULL")
+            .HasDatabaseName("UQ_PrProductionBalLot_V2_Material");
+        builder.HasIndex(x => new
+            {
+                x.CompanyCode, x.BranchCode, x.WorkOrderId, x.ProducingRouteStepId,
+                x.BalanceStage, x.ItemCode, x.PoolCode, x.PhysicalLotNo,
+                x.ProductionLocationId, x.StockStatusCode
+            })
+            .IsUnique()
+            .HasFilter("[BalanceStage] IN (N'PROCESS_WIP',N'ROUTE_WIP',N'FG_STAGING')")
+            .HasDatabaseName("UQ_PrProductionBalLot_V2_Wip");
     }
 }

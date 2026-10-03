@@ -147,7 +147,8 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
         var balId = await SeedBalLocAsync(100m);
         var mi = CreateMi();
         var save = await mi.SaveNewAsync(IssueRequest(balId, 30m));
-        Assert.True((await mi.PostAsync([save.BatchNo])).Succeeded);
+        var posted = await mi.PostAsync([save.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -339,7 +340,8 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             LotNo = string.Empty,
             IStatus = status,
             StdQty = forceZero ? 0m : qty,
-            StdUom = "EA"
+            StdUom = "EA",
+            TransDate = FixedToday
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();

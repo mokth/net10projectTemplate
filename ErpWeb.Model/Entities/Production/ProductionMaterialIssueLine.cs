@@ -15,6 +15,8 @@ public sealed class ProductionMaterialIssueLine
     public int InventoryBatchDetailId { get; set; }
     public IvTrxBatchDetail? InventoryBatchDetail { get; set; }
     public int InventoryBatchNo { get; set; }
+    /// <summary>Inventory document generation captured by this immutable issue mapping.</summary>
+    public int DocumentRevision { get; set; }
     public short InventoryTrxLineNo { get; set; }
     public long WorkOrderId { get; set; }
     public ProductionWorkOrder? WorkOrder { get; set; }

@@ -5,6 +5,7 @@ using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Model.Data;
@@ -51,6 +52,11 @@ public class AppDbContext : DbContext
     public DbSet<IvStockCountLine> IvStockCountLines => Set<IvStockCountLine>();
     public DbSet<IvPeriodCloseHdr> IvPeriodCloseHdrs => Set<IvPeriodCloseHdr>();
     public DbSet<IvPeriodCloseBal> IvPeriodCloseBals => Set<IvPeriodCloseBal>();
+    public DbSet<StockLedgerEpoch> StockLedgerEpochs => Set<StockLedgerEpoch>();
+    public DbSet<StockPosting> StockPostings => Set<StockPosting>();
+    public DbSet<StockPostingBranchSequence> StockPostingBranchSequences => Set<StockPostingBranchSequence>();
+    public DbSet<StockPeriodSnapshotHdr> StockPeriodSnapshotHdrs => Set<StockPeriodSnapshotHdr>();
+    public DbSet<StockPeriodSnapshotLine> StockPeriodSnapshotLines => Set<StockPeriodSnapshotLine>();
 
     public DbSet<SaCust> SaCusts => Set<SaCust>();
     public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();
@@ -174,6 +180,8 @@ public class AppDbContext : DbContext
     public DbSet<ProductionMaterialIssueLine> ProductionMaterialIssueLines => Set<ProductionMaterialIssueLine>();
     public DbSet<ProductionBalLot> ProductionBalLots => Set<ProductionBalLot>();
     public DbSet<ProductionBalLotMovement> ProductionBalLotMovements => Set<ProductionBalLotMovement>();
+    public DbSet<ProductionMovementAllocation> ProductionMovementAllocations => Set<ProductionMovementAllocation>();
+    public DbSet<ProductionLocation> ProductionLocations => Set<ProductionLocation>();
     public DbSet<ProductionOutput> ProductionOutputs => Set<ProductionOutput>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
@@ -215,6 +223,7 @@ public class AppDbContext : DbContext
                 foreach (var check in entityType.GetCheckConstraints().ToList())
                 {
                     if (check.Sql?.Contains("N'", StringComparison.Ordinal) == true
+                        || check.Sql?.Contains("LEN(", StringComparison.OrdinalIgnoreCase) == true
                         || check.Name == "CK_PrMaterialMovement_Type")
                         entityType.RemoveCheckConstraint(check.Name);
                 }

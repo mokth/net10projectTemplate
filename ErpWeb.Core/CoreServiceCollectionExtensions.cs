@@ -9,6 +9,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -80,6 +81,11 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ITenantScopeContext, TenantScopeContext>();
 
         services.AddScoped<IInventoryTenantContext, InventoryTenantContext>();
+        services.AddScoped<IStockPostingCoordinator, StockPostingCoordinator>();
+        services.AddScoped<IBranchStockTransactionLock, BranchStockTransactionLock>();
+        services.AddScoped<IStockPeriodGuard, StockPeriodGuard>();
+        services.AddScoped<IStockFreezeGuard, NoActiveStockFreezeGuard>();
+        services.AddSingleton<IStockMovementRegistry, StockMovementRegistry>();
 
         services.AddMemoryCache();
 
@@ -156,6 +162,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IIvPeriodCloseService, IvPeriodCloseService>();
 
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
+        services.AddScoped<IIvInventoryHistoryWriter, IvInventoryHistoryWriter>();
         services.AddScoped<IInventoryAsOfStockService, InventoryAsOfStockService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
@@ -174,9 +181,12 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
         services.AddScoped<IProductionMaterialAllocationService, ProductionMaterialAllocationService>();
+        services.AddSingleton<IProductionContributionAllocator, ProductionContributionAllocator>();
+        services.AddScoped<IProductionStockWriter, ProductionStockWriter>();
         services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
         services.AddScoped<IProductionOutputService, ProductionOutputService>();
         services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
+        services.AddScoped<IProductionStockHistoryService, ProductionStockHistoryService>();
         // Version-2 snapshot quantity contract (plan §7.3).
         services.AddScoped<IWorkOrderQuantityCalculator, WorkOrderQuantityCalculator>();
         services.AddScoped<IWorkOrderReadinessValidator, WorkOrderReadinessValidator>();

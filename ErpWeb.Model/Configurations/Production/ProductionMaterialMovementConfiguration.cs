@@ -49,6 +49,10 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.Property(x => x.TotalCost).HasPrecision(18, 4);
         builder.Property(x => x.PostingLinkId).HasColumnName("PostingLinkID");
         builder.Property(x => x.OriginalMovementId).HasColumnName("OriginalMovementID");
+        builder.Property(x => x.StockPostingId).HasColumnName("StockPostingID");
+        builder.Property(x => x.SourceLineId).HasMaxLength(64);
+        builder.Property(x => x.SourceIssueMovementId).HasColumnName("SourceIssueMovementID");
+        builder.Property(x => x.ReversesMaterialMovementId).HasColumnName("ReversesMaterialMovementID");
         builder.Property(x => x.Reason).HasMaxLength(50);
         builder.Property(x => x.Remarks).HasMaxLength(250);
         builder.Property(x => x.CreatedBy).HasMaxLength(10).IsRequired();
@@ -58,6 +62,12 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.HasOne(x => x.WorkOrderOperation).WithMany().HasForeignKey(x => x.WorkOrderOperationId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.PostingLink).WithMany().HasForeignKey(x => x.PostingLinkId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.OriginalMovement).WithMany().HasForeignKey(x => x.OriginalMovementId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.SourceIssueMovement).WithMany().HasForeignKey(x => x.SourceIssueMovementId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ReversesMaterialMovement).WithMany().HasForeignKey(x => x.ReversesMaterialMovementId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ErpWeb.Model.Entities.StockLedger.StockPosting>().WithMany()
+            .HasForeignKey(x => new { x.CompanyCode, x.BranchCode, x.StockPostingId })
+            .HasPrincipalKey(x => new { x.CompanyCode, x.BranchCode, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.InventoryBatch).WithMany().HasForeignKey(x => x.InventoryBatchId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.InventoryBatchDetail).WithMany().HasForeignKey(x => x.InventoryBatchDetailId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.FromBalLoc).WithMany().HasForeignKey(x => x.FromBalLocId).OnDelete(DeleteBehavior.Restrict);
@@ -79,5 +89,13 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
             .IsUnique()
             .HasFilter("[ProductionBalLotMovementID] IS NOT NULL")
             .HasDatabaseName("UQ_PrMaterialMovement_PostingBalLotLine");
+        builder.HasIndex(x => new { x.StockPostingId, x.SourceLineId, x.SplitOrdinal, x.MovementType })
+            .IsUnique()
+            .HasFilter("[StockPostingID] IS NOT NULL")
+            .HasDatabaseName("UQ_PrMaterialMovement_V2_SourceLine");
+        builder.HasIndex(x => x.ReversesMaterialMovementId)
+            .IsUnique()
+            .HasFilter("[ReversesMaterialMovementID] IS NOT NULL")
+            .HasDatabaseName("UQ_PrMaterialMovement_V2_Reversal");
     }
 }

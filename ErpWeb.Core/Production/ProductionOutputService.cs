@@ -6,6 +6,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
+using ErpWeb.Core.StockLedger;
 
 namespace ErpWeb.Core.Production;
 
@@ -16,19 +17,22 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly IAccessRightService _access;
     private readonly ICurrentDateService _clock;
     private readonly IRunningNumberService _runningNumbers;
+    private readonly IStockPostingCoordinator? _stockCoordinator;
 
     public ProductionOutputService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
         ICurrentDateService clock,
-        IRunningNumberService runningNumbers)
+        IRunningNumberService runningNumbers,
+        IStockPostingCoordinator? stockCoordinator = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _clock = clock;
         _runningNumbers = runningNumbers;
+        _stockCoordinator = stockCoordinator;
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputDetail>> CreateAsync(

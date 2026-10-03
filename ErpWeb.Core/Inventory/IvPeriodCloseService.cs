@@ -2,6 +2,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -329,6 +330,9 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
         header.TotalInValue = totalIn;
         header.TotalOutValue = totalOut;
         header.TotalClosingValue = totalClosing;
+
+        await AppendQuantityPeriodSnapshotAsync(
+            db, company, branch, periodFrom, snapshot, uid, cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
@@ -685,4 +689,72 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
         string.IsNullOrEmpty(value) ? null
         : value.Length <= maxLength ? value
         : value[..maxLength];
+
+    private static async Task AppendQuantityPeriodSnapshotAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        DateTime periodFrom,
+        IvPeriodCloseSnapshotResult snapshot,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var epoch = await db.StockLedgerEpochs.AsNoTracking()
+            .SingleOrDefaultAsync(x =>
+                x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.Status == StockLedgerEpochStatuses.Active,
+                cancellationToken);
+        if (epoch is null)
+            return;
+
+        var periodKey = periodFrom.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+        var revision = 1 + (await db.StockPeriodSnapshotHdrs
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.PeriodKey == periodKey)
+            .Select(x => (int?)x.Revision)
+            .MaxAsync(cancellationToken) ?? 0);
+        var watermark = await db.StockPostings
+            .Where(x => x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.LedgerEpochId == epoch.Id
+                && x.SealedAtUtc != null)
+            .Select(x => (long?)x.PostingSequence)
+            .MaxAsync(cancellationToken) ?? 0L;
+
+        var header = new StockPeriodSnapshotHdr
+        {
+            CompanyCode = company,
+            BranchCode = branch,
+            LedgerEpochId = epoch.Id,
+            PeriodKey = periodKey,
+            Revision = revision,
+            PostingSequenceWatermark = watermark,
+            SourceDataHash = StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    company,
+                    branch,
+                    periodKey,
+                    revision,
+                    watermark,
+                    lines = snapshot.Lines.Count
+                }))),
+            QuantityStatus = "SEALED",
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedBy = userId
+        };
+        foreach (var line in snapshot.Lines)
+        {
+            header.Lines.Add(new StockPeriodSnapshotLine
+            {
+                LedgerArea = "INVENTORY",
+                StockIdentity = $"{line.Slice.ICode}|{line.Slice.WhCode}|{line.Slice.LocCode}|{line.Slice.LotNo}|{line.Slice.IStatus}",
+                ItemCode = line.Slice.ICode,
+                BaseUom = line.StdUom ?? string.Empty,
+                BaseQty = line.ClosingQty
+            });
+        }
+
+        db.StockPeriodSnapshotHdrs.Add(header);
+    }
 }

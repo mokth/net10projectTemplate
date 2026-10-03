@@ -1,4 +1,5 @@
 using ErpWeb.Model.Data;
+using ErpWeb.Core.StockLedger;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -47,6 +48,15 @@ public sealed class IvInventoryPostingBatchResult
 
 public interface IIvInventoryPostingService
 {
+    Task<StockPostingBeginResult> BeginPostingInTransactionAsync(
+        AppDbContext db, string companyCode, string branchCode, int batchNo,
+        bool reversal, DateTime effectiveAt, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new StockPostingBeginResult(false, false, null, null));
+
+    Task CompletePostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
     Task<IvInventoryPostingResult> PostAsync(
         string trxType,
         IReadOnlyList<int> batchNos,
@@ -70,6 +80,12 @@ public interface IIvInventoryPostingService
         string expectedTrxType,
         CancellationToken cancellationToken = default);
 
+    Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
+        PostStockOutInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+
     /// <summary>
     /// Stock-out rollback on the caller's context and transaction. Does not SaveChanges or Commit.
     /// Caller must already have begun a transaction on <paramref name="db"/>.
@@ -82,6 +98,12 @@ public interface IIvInventoryPostingService
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken = default);
+
+    Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
+        RollBackStockOutInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
 
     /// <summary>
     /// Stock-in (MR or CR) post on the caller's context and transaction. Does not SaveChanges or Commit.
@@ -96,6 +118,12 @@ public interface IIvInventoryPostingService
         string expectedTrxType, // MR or CR
         CancellationToken cancellationToken = default);
 
+    Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
+        PostStockInInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+
     /// <summary>
     /// Stock-in (MR or CR) rollback on the caller's context and transaction. Does not SaveChanges or Commit.
     /// Caller must already have begun a transaction on <paramref name="db"/>.
@@ -108,6 +136,12 @@ public interface IIvInventoryPostingService
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken = default);
+
+    Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
+        RollBackStockInInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
 
     /// <summary>Physically delete a NEW CR/MR batch (details + header) on the caller's db/tx. No SaveChanges or Commit.
     /// Throws <see cref="InvalidOperationException"/> if the batch is not found, has the wrong type, or is not NEW.</summary>
@@ -134,4 +168,10 @@ public interface IIvInventoryPostingService
         string userId,
         int batchNo,
         CancellationToken cancellationToken = default);
+
+    Task<IvInventoryPostingBatchResult> PostStockAdjustmentInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db, string companyCode, string branchCode, string userId,
+        int batchNo, CancellationToken cancellationToken = default) =>
+        PostStockAdjustmentInTransactionAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken);
 }

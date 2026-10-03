@@ -60,6 +60,13 @@ public class ProductionMaterialMovement
     public ProductionPostingLink? PostingLink { get; set; }
     public long? OriginalMovementId { get; set; }
     public ProductionMaterialMovement? OriginalMovement { get; set; }
+    public long? StockPostingId { get; set; }
+    public string? SourceLineId { get; set; }
+    public int? SplitOrdinal { get; set; }
+    public long? SourceIssueMovementId { get; set; }
+    public ProductionMaterialMovement? SourceIssueMovement { get; set; }
+    public long? ReversesMaterialMovementId { get; set; }
+    public ProductionMaterialMovement? ReversesMaterialMovement { get; set; }
 
     public string? Reason { get; set; }
     public string? Remarks { get; set; }

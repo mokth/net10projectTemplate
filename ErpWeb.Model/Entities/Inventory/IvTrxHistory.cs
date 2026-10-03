@@ -54,6 +54,16 @@ public class IvTrxHistory
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }
 
+    // V2 rows are append-only; these fields are null on legacy history.
+    public byte? LedgerVersion { get; set; }
+    public long? LedgerEpochId { get; set; }
+    public long? StockPostingId { get; set; }
+    public int? PostingLineNo { get; set; }
+    public int? DocumentRevision { get; set; }
+    public string? EntryRole { get; set; }
+    public int? ReversesHistoryId { get; set; }
+    public IvTrxHistory? ReversesHistory { get; set; }
+
     public IvBalLoc? FromBalLoc { get; set; }
     public IvBalLoc? ToBalLoc { get; set; }
     public IvLot? FromLot { get; set; }

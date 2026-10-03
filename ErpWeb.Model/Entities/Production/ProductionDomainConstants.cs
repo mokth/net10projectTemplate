@@ -92,6 +92,7 @@ public static class ProductionBalLotKinds
 
 public static class ProductionBalLotMovementTypes
 {
+    public const string OpeningIn = "OPENING_IN";
     public const string Issue = "ISSUE";
     public const string IssueReversal = "ISSUE_REVERSAL";
     public const string Produce = "PRODUCE";
@@ -100,6 +101,14 @@ public static class ProductionBalLotMovementTypes
     public const string ConsumeReversal = "CONSUME_REVERSAL";
     public const string Return = "RETURN";
     public const string ReturnReversal = "RETURN_REVERSAL";
+    public const string TransferOut = "TRANSFER_OUT";
+    public const string TransferIn = "TRANSFER_IN";
+    public const string StatusOut = "STATUS_OUT";
+    public const string StatusIn = "STATUS_IN";
+    public const string AdjustIn = "ADJUST_IN";
+    public const string AdjustOut = "ADJUST_OUT";
+    public const string ScrapOut = "SCRAP_OUT";
+    public const string FgReceiptOut = "FG_RECEIPT_OUT";
 }
 
 public static class ProductionOutputStatuses

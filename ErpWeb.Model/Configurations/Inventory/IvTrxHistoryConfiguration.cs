@@ -8,7 +8,9 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
 {
     public void Configure(EntityTypeBuilder<IvTrxHistory> builder)
     {
-        builder.ToTable("IvTrxHistory");
+        builder.ToTable("IvTrxHistory", table =>
+            table.HasCheckConstraint("CK_IvTrxHistory_V2",
+                "[LedgerVersion] IS NULL OR ([LedgerVersion] = 2 AND [LedgerEpochId] IS NOT NULL AND [StockPostingId] IS NOT NULL AND [PostingLineNo] > 0 AND [DocumentRevision] >= 0 AND [EntryRole] IS NOT NULL)"));
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();
@@ -53,6 +55,10 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
         builder.Property(e => e.CreatedDate).HasColumnName("Created");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(10);
         builder.Property(e => e.ModifiedDate).HasColumnName("Updated");
+        builder.Property(e => e.LedgerEpochId).HasColumnName("LedgerEpochID");
+        builder.Property(e => e.StockPostingId).HasColumnName("StockPostingID");
+        builder.Property(e => e.EntryRole).HasMaxLength(20);
+        builder.Property(e => e.ReversesHistoryId).HasColumnName("ReversesHistoryID");
 
         builder.HasOne(e => e.FromBalLoc)
             .WithMany()
@@ -73,10 +79,28 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
             .WithMany()
             .HasForeignKey(e => e.ToLotId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(e => e.ReversesHistory)
+            .WithMany()
+            .HasForeignKey(e => e.ReversesHistoryId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ErpWeb.Model.Entities.StockLedger.StockPosting>()
+            .WithMany()
+            .HasForeignKey(e => new { e.CompanyCode, e.BranchCode, e.StockPostingId })
+            .HasPrincipalKey(e => new { e.CompanyCode, e.BranchCode, e.Id })
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.BatchNo, e.TrxLineNo })
             .IsUnique()
+            .HasFilter("[LedgerVersion] IS NULL")
             .HasDatabaseName("UQ_IvTrxHistory_Company_Branch_Batch_Line");
+        builder.HasIndex(e => new { e.StockPostingId, e.PostingLineNo })
+            .IsUnique()
+            .HasFilter("[StockPostingID] IS NOT NULL")
+            .HasDatabaseName("UQ_IvTrxHistory_V2_PostingLine");
+        builder.HasIndex(e => e.ReversesHistoryId)
+            .IsUnique()
+            .HasFilter("[ReversesHistoryID] IS NOT NULL")
+            .HasDatabaseName("UQ_IvTrxHistory_V2_Reversal");
 
         builder.HasIndex(e => new { e.ICode, e.TrxDtTime })
             .HasDatabaseName("IX_IvTrxHistory_ICode_TrxDtTime");

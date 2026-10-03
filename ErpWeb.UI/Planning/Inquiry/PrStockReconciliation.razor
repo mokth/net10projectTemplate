@@ -1,0 +1,87 @@
+@page "/planning/stock-reconciliation"
+@inherits PageBase
+
+<PageTitle>Production Stock Reconciliation</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningStockReconciliation">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(CoverageWarning))
+        {
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>@CoverageWarning</span>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-scale-unbalanced"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Inquiry</p>
+                <h1 class="iv-title">Production Stock Reconciliation</h1>
+                <p class="iv-subtitle">
+                    Read-only comparison of live production balances to sealed V2 movements.
+                    This page never repairs stock.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Watermark: @Watermark.ToString("N0")</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Findings</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Item" ColSpanMd="4">
+                    <DxTextBox @bind-Text="@ItemCode"
+                               NullText="All items"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Base UOM" ColSpanMd="2">
+                    <DxTextBox @bind-Text="@BaseUom"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+            </DxFormLayout>
+            <div class="iv-toolbar-row">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="RECONCILE" IconCssClass="fa-solid fa-scale-balanced" Click="@ReloadAsync" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                </div>
+            }
+            else
+            {
+                <CommonDataGridEx T="ProductionStockReconcileFinding"
+                                  Columns="@Columns"
+                                  Buttons="@Buttons"
+                                  ActionButtons="@ActionButtons"
+                                  KeyName="@nameof(ProductionStockReconcileFinding.ProductionBalLotId)"
+                                  GridKey="pln-stock-reconciliation"
+                                  Title="Findings"
+                                  CustomDataSource="@DataSource"
+                                  ShowToolbarText="true"
+                                  UseBuiltInExport="false"
+                                  ShowSearchBox="false"
+                                  ShowFilterRow="false"
+                                  ShowGroupPanel="false"
+                                  allowSelect="false"
+                                  OnGridInstance="@OnGridInstance"
+                                  OnButtonEventHandle="@OnButtonClick" />
+            }
+        </section>
+    </div>
+</MenuAuthorize>

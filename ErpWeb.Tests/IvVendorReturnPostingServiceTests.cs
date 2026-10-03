@@ -463,7 +463,8 @@ public class IvVendorReturnPostingServiceTests : IAsyncLifetime
             LotNo = string.Empty,
             IStatus = status,
             StdQty = forceZero ? 0m : qty,
-            StdUom = "EA"
+            StdUom = "EA",
+            TransDate = FixedToday
         };
         db.IvBalLocs.Add(bal);
         await db.SaveChangesAsync();

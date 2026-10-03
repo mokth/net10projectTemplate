@@ -294,6 +294,14 @@
             Icon="fa-solid fa-chart-column" />
       <Menu Code="PLN_PRODUCTION_BALANCE" Name="Production Balance by Lot" Route="/planning/production-balance" SortOrder="2"
             Icon="fa-solid fa-scale-balanced" />
+      <Menu Code="PLN_STOCK_CARD" Name="Production Stock Card" Route="/planning/stock-card" SortOrder="3"
+            Icon="fa-solid fa-book" />
+      <Menu Code="PLN_STOCK_MOVEMENT" Name="Production Stock Movements" Route="/planning/stock-movements" SortOrder="4"
+            Icon="fa-solid fa-list" />
+      <Menu Code="PLN_STOCK_ASOF" Name="Production Stock As Of" Route="/planning/stock-as-of" SortOrder="5"
+            Icon="fa-solid fa-calendar-check" />
+      <Menu Code="PLN_STOCK_RECONCILIATION" Name="Production Stock Reconciliation" Route="/planning/stock-reconciliation" SortOrder="6"
+            Icon="fa-solid fa-scale-unbalanced" />
     </Menu>
   </Menu>
 

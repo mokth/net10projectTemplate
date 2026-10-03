@@ -1596,7 +1596,13 @@ public sealed class SaCdnService : ISaCdnService
                     }
 
                     // Post the CR batch
+                    var ledger = await _posting.BeginPostingInTransactionAsync(
+                        db, context.CompanyCode!, context.BranchCode!, crBatch.BatchNo, false,
+                        crBatch.TrxDtTime, cancellationToken);
+                    if (ledger.Error is not null)
+                        return SaCdnPostingItemResult.Failed(docNo, ledger.Error.Message);
                     var core = await _posting.PostStockInInTransactionAsync(
+                        ledger.Context,
                         db,
                         context.CompanyCode!,
                         context.BranchCode!,
@@ -1610,6 +1616,7 @@ public sealed class SaCdnService : ISaCdnService
                         await tx.RollbackAsync(cancellationToken);
                         return SaCdnPostingItemResult.Failed(docNo, core.ErrorMessage ?? "Stock return post failed.");
                     }
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
 
                     TestHookAfterStockIn?.Invoke();
                 }
@@ -1704,7 +1711,15 @@ public sealed class SaCdnService : ISaCdnService
             if (crBatch is not null
                 && string.Equals(crBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
+                var effectiveAt = await ErpWeb.Core.StockLedger.StockBusinessTime.NowAsync(
+                    db, context.CompanyCode!, cancellationToken);
+                var ledger = await _posting.BeginPostingInTransactionAsync(
+                    db, context.CompanyCode!, context.BranchCode!, crBatch.BatchNo, true,
+                    effectiveAt, cancellationToken);
+                if (ledger.Error is not null)
+                    return SaCdnPostingItemResult.Failed(docNo, ledger.Error.Message);
                 var core = await _posting.RollBackStockInInTransactionAsync(
+                    ledger.Context,
                     db,
                     context.CompanyCode!,
                     context.BranchCode!,
@@ -1719,6 +1734,7 @@ public sealed class SaCdnService : ISaCdnService
                     await tx.RollbackAsync(cancellationToken);
                     return SaCdnPostingItemResult.Failed(docNo, core.ErrorMessage ?? "Stock return rollback failed.");
                 }
+                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
 
                 TestHookAfterStockRollback?.Invoke();
             }

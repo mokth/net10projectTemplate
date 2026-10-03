@@ -177,6 +177,10 @@ public sealed partial class ProductionMaterialIssueService
             }
             if (await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, batch.TrxDtTime, ct) is string periodError)
                 return periodError;
+            var ledger = await _inventoryPosting!.BeginPostingInTransactionAsync(
+                db, company, branch, batchNo, false, batch.TrxDtTime, ct)
+                ?? new StockPostingBeginResult(false, false, null, null);
+            if (ledger.Error is not null) return ledger.Error.Message;
             var balanceIds = details.Select(x => x.FromBalLocId!.Value).Distinct().ToArray();
             var sliceKeys = await db.IvBalLocs.AsNoTracking().Where(x => balanceIds.Contains(x.Id))
                 .Select(x => new { x.Id, Key = new IvStockSliceKey(x.CompanyCode, x.BranchCode, x.ICode, x.WhCode, x.LocCode, x.LotNo, x.IStatus) }).ToListAsync(ct);
@@ -218,7 +222,7 @@ public sealed partial class ProductionMaterialIssueService
             foreach (var detail in details)
                 detail.UnitPrice = locked[detail.FromBalLocId!.Value].UnitPrice ?? 0m;
             link.Status = ProductionPostingLinkStatuses.Pending;
-            var posted = await _inventoryPosting!.PostStockOutInTransactionAsync(db, company, branch,
+            var posted = await _inventoryPosting!.PostStockOutInTransactionAsync(ledger.Context, db, company, branch,
                 userId.Length > 10 ? userId[..10] : userId, batchNo, IvTrxTypes.IssueToProduction, ct);
             if (!posted.Succeeded) return posted.ErrorMessage ?? "Inventory posting failed.";
             await db.SaveChangesAsync(ct);
@@ -258,6 +262,8 @@ public sealed partial class ProductionMaterialIssueService
                 material.ModifiedDate = now; material.ModifiedBy = user;
             }
             await CreateMaterialInLotsAsync(db, order, link, now, user, ct);
+            if (ledger.Context is not null)
+                StampIssueLedgerFacts(ledger.Context, link.Uid);
             var fromStatus = order.Status;
             if (order.Status == ProductionWorkOrderStatuses.Released) order.Status = ProductionWorkOrderStatuses.InProgress;
             order.ModifiedDate = now; order.ModifiedBy = user;
@@ -267,6 +273,7 @@ public sealed partial class ProductionMaterialIssueService
             link.PostingOperationId = posted.OperationId?.ToString("N"); link.Status = ProductionPostingLinkStatuses.Succeeded;
             link.ResultCode = "OK"; link.ResultMessage = $"Posted IP batch {batchNo}."; link.CompletedDate = now;
             await db.SaveChangesAsync(ct);
+            await _inventoryPosting.CompletePostingInTransactionAsync(ledger.Context, ct);
             await tx.CommitAsync(ct);
             return null;
         }
@@ -275,6 +282,45 @@ public sealed partial class ProductionMaterialIssueService
             await tx.RollbackAsync(ct);
             return "Posting conflicted with another change; reload and retry.";
         }
+    }
+
+    private static void StampIssueLedgerFacts(
+        ErpWeb.Core.StockLedger.StockPostingContext context,
+        long postingLinkId)
+    {
+        var line = context.Db.ChangeTracker.Entries<ProductionBalLotMovement>()
+            .Where(x => x.State == EntityState.Added && x.Entity.PostingLinkId == postingLinkId)
+            .OrderBy(x => x.Entity.Uid)
+            .ToArray();
+        var postingLine = context.Db.ChangeTracker.Entries<IvTrxHistory>()
+            .Where(x => x.State == EntityState.Added && x.Entity.StockPostingId == context.Posting.Id)
+            .Select(x => x.Entity.PostingLineNo ?? 0).DefaultIfEmpty().Max();
+        foreach (var entry in line)
+        {
+            var movement = entry.Entity;
+            var lot = context.Db.ChangeTracker.Entries<ProductionBalLot>()
+                .Select(x => x.Entity).First(x => x.Uid == movement.ProductionBalLotId);
+            movement.LedgerVersion = 2;
+            movement.LedgerEpochId = context.Epoch.Id;
+            movement.StockPostingId = context.Posting.Id;
+            movement.PostingLineNo = ++postingLine;
+            movement.CompanyCode = context.CompanyCode;
+            movement.BranchCode = context.BranchCode;
+            movement.ItemCode = lot.ItemCode;
+            movement.ItemDescription = lot.Description;
+            movement.BalanceStage = lot.BalanceStage ?? "MATERIAL";
+            movement.WorkOrderNo = lot.WorkOrderNo;
+            movement.LotIdentity = lot.PoolCode ?? lot.LotNo;
+            movement.PhysicalLotNo = lot.PhysicalLotNo;
+            movement.StockStatusCode = lot.StockStatusCode ?? "AVAILABLE";
+            movement.ConversionFactorToBase = lot.ConversionFactorToBase;
+            movement.SourceLineId = movement.WorkOrderMaterialId?.ToString() ?? movement.Uid.ToString();
+            movement.SplitOrdinal = 0;
+            movement.ValuationStatus = "UNVALUED";
+        }
+        foreach (var material in context.Db.ChangeTracker.Entries<ProductionMaterialMovement>()
+            .Where(x => x.State == EntityState.Added && x.Entity.PostingLinkId == postingLinkId))
+            material.Entity.StockPostingId = context.Posting.Id;
     }
 
     private static async Task CreateMaterialInLotsAsync(

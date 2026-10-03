@@ -12,6 +12,8 @@ public class IvTrxBatchDetail
     public string CompanyCode { get; set; } = string.Empty;
     public string BranchCode { get; set; } = string.Empty;
     public int BatchNo { get; set; }
+    /// <summary>Immutable source-document generation. Legacy details use revision zero.</summary>
+    public int DocumentRevision { get; set; }
     public short TrxLineNo { get; set; }
     public string TrxType { get; set; } = string.Empty;
     public string? ProdCode { get; set; }

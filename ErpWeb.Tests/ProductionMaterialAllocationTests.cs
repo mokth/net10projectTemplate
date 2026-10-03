@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
@@ -481,6 +482,124 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Issue_can_reverse_after_its_consume_has_been_reversed()
+    {
+        var materialId = await SeedAsync(lotControl: false, location: null);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(Balance(34, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
+            await db.SaveChangesAsync();
+        }
+        var sut = CreatePostingSut(CreateInventoryPosting());
+#pragma warning disable CS0618 // Compatibility adapter is intentional in this end-to-end regression.
+        var posted = await sut.PostAsync(await CreatePostRequestAsync(materialId, 34, issueQty: 4m));
+#pragma warning restore CS0618
+        Assert.True(posted.Succeeded, posted.Message);
+
+        long outputId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync();
+            order.SnapshotHashVersion = ProductionSnapshotHashVersions.Current;
+            var route = await db.ProductionWorkOrderRouteSteps.SingleAsync();
+            route.OutputItemCode = "FG001";
+            route.OutputType = PrRouteOutputTypes.WipNonstock;
+            route.YieldPercent = 100m;
+            route.OutputUom = "KG";
+            route.OutputBaseUom = "KG";
+            route.OutputConversionFactorToBase = 1m;
+            var operation = await db.ProductionWorkOrderOperations.SingleAsync();
+            operation.ProcessSequence = 10;
+            operation.PlannedInputUom = "KG";
+            operation.PlannedOutputUom = "KG";
+            operation.IsFinalOperation = true;
+            operation.RemainingQty = operation.PlannedOutputQty;
+
+            var token = Guid.NewGuid().ToString("N");
+            var link = new ProductionPostingLink
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                CommandType = ProductionPostingCommandTypes.OutputPost,
+                PostingRequestId = token,
+                WorkOrderId = order.Uid,
+                ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+                ProductionDocumentNo = "OUT-CHAIN",
+                SnapshotRevision = order.SnapshotRevision,
+                SnapshotHash = order.SnapshotHash,
+                Status = ProductionPostingLinkStatuses.Draft,
+                CreatedDate = new DateTime(2026, 10, 1),
+                CreatedBy = "admin",
+            };
+            var output = new ProductionOutput
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocumentNo = "OUT-CHAIN",
+                WorkOrderId = order.Uid,
+                RouteStepId = route.Uid,
+                WorkOrderOperationId = operation.Uid,
+                ProductionDate = new DateTime(2026, 10, 1, 8, 0, 0),
+                GoodQty = 4m,
+                OutputUom = "KG",
+                OutputItemCode = "FG001",
+                OutputType = PrRouteOutputTypes.WipNonstock,
+                OutputLotNo = "CHAIN",
+                SnapshotRevision = order.SnapshotRevision,
+                SnapshotHash = order.SnapshotHash,
+                PostingRequestId = token,
+                CreatedDate = new DateTime(2026, 10, 1),
+                CreatedBy = "admin",
+                RowVersion = [1],
+            };
+            db.ProductionPostingLinks.Add(link);
+            db.ProductionOutputs.Add(output);
+            await db.SaveChangesAsync();
+            outputId = output.Uid;
+        }
+
+        var outputAccess = Access(canViewCost: true);
+        outputAccess.Setup(x => x.CanAsync(
+                MenuCodes.PlanningDailyProduction,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var outputService = new ProductionOutputService(
+            _factory,
+            InventoryTenantTestHelper.CreateTenantContext(),
+            outputAccess.Object,
+            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
+            Mock.Of<IRunningNumberService>());
+        var consumed = await outputService.PostAsync(outputId);
+        Assert.True(consumed.Succeeded, consumed.Message);
+        var consumeReversed = await outputService.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = outputId,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "Reverse consume before issue",
+        });
+        Assert.True(consumeReversed.Succeeded, consumeReversed.Message);
+
+        var result = await sut.RollbackAsync(new ProductionMaterialIssueRollbackRequest
+        {
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            InventoryBatchNo = posted.Data!.BatchNo,
+            Reason = "Downstream consume was reversed",
+        });
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 34)).StdQty);
+        Assert.Equal(0m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
+        var issueReversal = await verify.ProductionMaterialMovements.SingleAsync(
+            x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal);
+        Assert.NotNull(issueReversal.OriginalMovementId);
+        var balanceReversal = await verify.ProductionBalLotMovements.SingleAsync(
+            x => x.MovementType == ProductionBalLotMovementTypes.IssueReversal);
+        Assert.NotNull(balanceReversal.OriginalMovementId);
+    }
+
+    [Fact]
     public async Task Inventory_failure_rolls_back_batch_stock_link_and_production_changes()
     {
         var materialId = await SeedAsync(lotControl: false, location: null);
@@ -494,14 +613,22 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         var failedPosting = new Mock<IIvInventoryPostingService>();
         failedPosting
             .Setup(x => x.PostStockOutInTransactionAsync(
+                It.IsAny<StockPostingContext>(),
                 It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(async (AppDbContext db, string company, string branch, string user, int batchNo, string trxType, CancellationToken ct) =>
+            .Returns(async (
+                StockPostingContext? context,
+                AppDbContext db, string company, string branch, string user, int batchNo, string trxType, CancellationToken ct) =>
             {
-                var staged = await inner.PostStockOutInTransactionAsync(db, company, branch, user, batchNo, trxType, ct);
+                var staged = await inner.PostStockOutInTransactionAsync(context, db, company, branch, user, batchNo, trxType, ct);
                 Assert.True(staged.Succeeded, staged.ErrorMessage);
                 return IvInventoryPostingBatchResult.Fail(batchNo, "Forced failure after inventory changes were staged.");
             });
+        failedPosting
+            .Setup(x => x.BeginPostingInTransactionAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new StockPostingBeginResult(false, false, null, null));
 
         var result = await CreatePostingSut(failedPosting.Object)
             .PostAsync(await CreatePostRequestAsync(materialId, 31, issueQty: 4m));

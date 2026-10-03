@@ -1,0 +1,94 @@
+@page "/planning/stock-as-of"
+@inherits PageBase
+
+<PageTitle>Production Stock As Of</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningStockAsOf">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(CoverageWarning))
+        {
+            <div class="iv-toast iv-toast--wait" role="status">
+                <span>@CoverageWarning</span>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-calendar-check"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Inquiry</p>
+                <h1 class="iv-title">Production Stock As Of</h1>
+                <p class="iv-subtitle">Reconstructed V2 balances at a business-effective instant.</p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Watermark: @Watermark.ToString("N0")</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Identities</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="As of" ColSpanMd="3">
+                    <DxDateEdit @bind-Date="@AsOf"
+                                DisplayFormat="dd/MM/yyyy"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Item" ColSpanMd="4">
+                    <DxTextBox @bind-Text="@ItemCode"
+                               NullText="Item code"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Base UOM" ColSpanMd="2">
+                    <DxTextBox @bind-Text="@BaseUom"
+                               NullText="EA"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Work order" ColSpanMd="3">
+                    <DxTextBox @bind-Text="@WorkOrderNo"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </DxFormLayoutItem>
+            </DxFormLayout>
+            <div class="iv-toolbar-row">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="APPLY" IconCssClass="fa-solid fa-filter" Click="@ReloadAsync" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                </div>
+            }
+            else
+            {
+                <CommonDataGridEx T="ProductionStockAsOfRow"
+                                  Columns="@Columns"
+                                  Buttons="@Buttons"
+                                  ActionButtons="@ActionButtons"
+                                  KeyName="@nameof(ProductionStockAsOfRow.ItemCode)"
+                                  GridKey="pln-stock-as-of"
+                                  Title="Balances"
+                                  CustomDataSource="@DataSource"
+                                  ShowToolbarText="true"
+                                  UseBuiltInExport="false"
+                                  ShowSearchBox="false"
+                                  ShowFilterRow="false"
+                                  ShowGroupPanel="false"
+                                  allowSelect="false"
+                                  OnGridInstance="@OnGridInstance"
+                                  OnButtonEventHandle="@OnButtonClick" />
+            }
+        </section>
+    </div>
+</MenuAuthorize>

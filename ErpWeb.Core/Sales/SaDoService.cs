@@ -1695,7 +1695,13 @@ public sealed class SaDoService : ISaDoService
                         validate.ErrorMessage ?? "Shipment validation failed.");
                 }
 
+                var ledger = await _posting.BeginPostingInTransactionAsync(
+                    db, context.CompanyCode!, context.BranchCode!, batch.BatchNo, false,
+                    batch.TrxDtTime, cancellationToken);
+                if (ledger.Error is not null)
+                    return SaDoPostingItemResult.Failed(doNo, ledger.Error.Message);
                 var core = await _posting.PostStockOutInTransactionAsync(
+                    ledger.Context,
                     db,
                     context.CompanyCode!,
                     context.BranchCode!,
@@ -1708,6 +1714,7 @@ public sealed class SaDoService : ISaDoService
                     await tx.RollbackAsync(cancellationToken);
                     return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock post failed.");
                 }
+                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
             }
 
             var now = DateTime.UtcNow;
@@ -1801,7 +1808,15 @@ public sealed class SaDoService : ISaDoService
             if (batch is not null
                 && string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
+                var effectiveAt = await ErpWeb.Core.StockLedger.StockBusinessTime.NowAsync(
+                    db, context.CompanyCode!, cancellationToken);
+                var ledger = await _posting.BeginPostingInTransactionAsync(
+                    db, context.CompanyCode!, context.BranchCode!, batch.BatchNo, true,
+                    effectiveAt, cancellationToken);
+                if (ledger.Error is not null)
+                    return SaDoPostingItemResult.Failed(doNo, ledger.Error.Message);
                 var core = await _posting.RollBackStockOutInTransactionAsync(
+                    ledger.Context,
                     db,
                     context.CompanyCode!,
                     context.BranchCode!,
@@ -1814,6 +1829,7 @@ public sealed class SaDoService : ISaDoService
                     await tx.RollbackAsync(cancellationToken);
                     return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock rollback failed.");
                 }
+                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
             }
             // SP batch is kept (not deleted) — status reverts to NEW by the posting service.
 

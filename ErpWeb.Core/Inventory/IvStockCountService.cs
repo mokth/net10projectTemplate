@@ -1232,13 +1232,20 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             await db.SaveChangesAsync(cancellationToken);
 
+            var ledger = await _posting.BeginPostingInTransactionAsync(
+                db, context.CompanyCode!, context.BranchCode!, batchNo, false,
+                batch.TrxDtTime, cancellationToken);
+            if (ledger.Error is not null)
+                return IvStockCountOperationResult.Fail(ledger.Error.Message);
             var result = await _posting.PostStockAdjustmentInTransactionAsync(
+                ledger.Context,
                 db, context.CompanyCode!, context.BranchCode!, uid, batchNo, cancellationToken);
             if (!result.Succeeded)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvStockCountOperationResult.Fail(result.ErrorMessage ?? "Stock post failed.");
             }
+            await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);

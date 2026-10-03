@@ -85,6 +85,15 @@ public interface IIvStockPostingRepository
         int batchNo,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<IvTrxHistory>> LoadHistoryGenerationAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        int documentRevision,
+        long? stockPostingId,
+        CancellationToken cancellationToken = default);
+
     Task<bool> HistoryExistsForBatchAsync(
         AppDbContext db,
         string companyCode,
@@ -516,13 +525,38 @@ WHERE CompanyCode = {company}
         ArgumentNullException.ThrowIfNull(db);
         var company = (companyCode ?? string.Empty).Trim();
         var branch = (branchCode ?? string.Empty).Trim();
-        return await db.IvTrxHistories
+        var all = await db.IvTrxHistories
             .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo)
-            .OrderBy(x => x.TrxLineNo)
+            .OrderBy(x => x.PostingLineNo ?? x.TrxLineNo)
+            .ThenBy(x => x.TrxLineNo)
+            .ToListAsync(cancellationToken);
+        return CurrentGeneration(all);
+    }
+
+    public async Task<IReadOnlyList<IvTrxHistory>> LoadHistoryGenerationAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        int documentRevision,
+        long? stockPostingId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        var company = (companyCode ?? string.Empty).Trim();
+        var branch = (branchCode ?? string.Empty).Trim();
+        return await db.IvTrxHistories
+            .Where(x => x.CompanyCode == company
+                && x.BranchCode == branch
+                && x.BatchNo == batchNo
+                && (x.LedgerVersion == null
+                    ? documentRevision == 0 && stockPostingId == null
+                    : x.DocumentRevision == documentRevision && x.StockPostingId == stockPostingId))
+            .OrderBy(x => x.PostingLineNo ?? x.TrxLineNo)
             .ToListAsync(cancellationToken);
     }
 
-    public Task<bool> HistoryExistsForBatchAsync(
+    public async Task<bool> HistoryExistsForBatchAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
@@ -532,9 +566,21 @@ WHERE CompanyCode = {company}
         ArgumentNullException.ThrowIfNull(db);
         var company = (companyCode ?? string.Empty).Trim();
         var branch = (branchCode ?? string.Empty).Trim();
-        return db.IvTrxHistories.AnyAsync(
-            x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo,
-            cancellationToken);
+        var rows = await db.IvTrxHistories
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo)
+            .ToListAsync(cancellationToken);
+        return CurrentGeneration(rows).Count > 0;
+    }
+
+    private static IReadOnlyList<IvTrxHistory> CurrentGeneration(IReadOnlyList<IvTrxHistory> rows)
+    {
+        var reversed = rows
+            .Where(x => x.ReversesHistoryId.HasValue)
+            .Select(x => x.ReversesHistoryId!.Value)
+            .ToHashSet();
+        return rows
+            .Where(x => (x.EntryRole is null or "ORIGINAL") && !reversed.Contains(x.Id))
+            .ToList();
     }
 
     public void AddHistory(AppDbContext db, IvTrxHistory history)
@@ -548,7 +594,10 @@ WHERE CompanyCode = {company}
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(rows);
-        db.IvTrxHistories.RemoveRange(rows);
+        var materialized = rows.ToArray();
+        if (materialized.Any(x => x.LedgerVersion == 2 || x.StockPostingId.HasValue))
+            throw new InvalidOperationException("V2 inventory history is append-only; append a reversal generation.");
+        db.IvTrxHistories.RemoveRange(materialized);
     }
 
     public async Task<IvBalLocLockResult?> LockBalLocByIdForTenantAsync(

@@ -2045,7 +2045,13 @@ public sealed class PoCdnService : IPoCdnService
                     await db.SaveChangesAsync(cancellationToken);
                 }
 
+                var ledger = await _posting.BeginPostingInTransactionAsync(
+                    db, write.CompanyCode!, write.BranchCode!, vrBatch.BatchNo, false,
+                    vrBatch.TrxDtTime, cancellationToken);
+                if (ledger.Error is not null)
+                    return PoCdnPostingItemResult.Failed(no, ledger.Error.Message);
                 var core = await _posting.PostStockOutInTransactionAsync(
+                    ledger.Context,
                     db, write.CompanyCode!, write.BranchCode!, write.UserId!, vrBatch.BatchNo,
                     IvTrxTypes.VendorReturn, cancellationToken);
                 if (!core.Succeeded)
@@ -2057,6 +2063,7 @@ public sealed class PoCdnService : IPoCdnService
                     return PoCdnPostingItemResult.Failed(
                         no, core.ErrorMessage ?? "Vendor return post failed.");
                 }
+                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
 
                 TestHookAfterStockOut?.Invoke();
                 cdn.VrBatchNo = vrBatch.BatchNo;
@@ -2185,7 +2192,15 @@ public sealed class PoCdnService : IPoCdnService
             if (vrBatch is not null
                 && string.Equals(vrBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
+                var effectiveAt = await ErpWeb.Core.StockLedger.StockBusinessTime.NowAsync(
+                    db, write.CompanyCode!, cancellationToken);
+                var ledger = await _posting.BeginPostingInTransactionAsync(
+                    db, write.CompanyCode!, write.BranchCode!, vrBatch.BatchNo, true,
+                    effectiveAt, cancellationToken);
+                if (ledger.Error is not null)
+                    return PoCdnPostingItemResult.Failed(no, ledger.Error.Message);
                 var core = await _posting.RollBackStockOutInTransactionAsync(
+                    ledger.Context,
                     db, write.CompanyCode!, write.BranchCode!, write.UserId!, vrBatch.BatchNo,
                     IvTrxTypes.VendorReturn, cancellationToken);
                 if (!core.Succeeded)
@@ -2197,6 +2212,7 @@ public sealed class PoCdnService : IPoCdnService
                     return PoCdnPostingItemResult.Failed(
                         no, core.ErrorMessage ?? "Vendor return rollback failed.");
                 }
+                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
 
                 TestHookAfterStockRollback?.Invoke();
             }

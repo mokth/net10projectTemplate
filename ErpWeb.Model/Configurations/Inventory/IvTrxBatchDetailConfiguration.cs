@@ -77,9 +77,9 @@ public class IvTrxBatchDetailConfiguration : IEntityTypeConfiguration<IvTrxBatch
             .HasForeignKey(e => e.ToLotId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.BatchNo, e.TrxLineNo })
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.BatchNo, e.DocumentRevision, e.TrxLineNo })
             .IsUnique()
-            .HasDatabaseName("UQ_IvTrxBatchDetail_Company_Branch_Batch_Line");
+            .HasDatabaseName("UQ_IvTrxBatchDetail_Company_Branch_Batch_Revision_Line");
 
         builder.HasIndex(e => new { e.CompanyCode, e.ICode })
             .HasDatabaseName("IX_IvTrxBatchDetail_Company_ICode");

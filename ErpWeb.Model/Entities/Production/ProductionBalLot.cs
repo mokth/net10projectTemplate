@@ -37,6 +37,19 @@ public class ProductionBalLot
     public string LocationCode { get; set; } = string.Empty;
     public string LotNo { get; set; } = string.Empty;
 
+    // V2 dimensions remain nullable while legacy rows are in service.
+    public string? BalanceStage { get; set; }
+    public long? ProductionLocationId { get; set; }
+    public ProductionLocation? ProductionLocation { get; set; }
+    public string? StockStatusCode { get; set; }
+    public string? PoolCode { get; set; }
+    public string? PhysicalLotNo { get; set; }
+    public string? LotIdentityKind { get; set; }
+    public DateTime? FirstReceiptEffectiveAt { get; set; }
+    public DateTime? LastStockEventEffectiveAt { get; set; }
+    public Guid? ContributionKey { get; set; }
+    public string? OriginType { get; set; }
+
     public long? ProducingRouteStepId { get; set; }
     public ProductionWorkOrderRouteStep? ProducingRouteStep { get; set; }
     public long? WorkOrderOperationId { get; set; }

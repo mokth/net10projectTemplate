@@ -27,7 +27,7 @@ public sealed class ProductionMaterialIssueLineConfiguration : IEntityTypeConfig
         builder.Property(x => x.BaseQty).HasPrecision(18, 4);
         builder.Property(x => x.CreatedBy).HasMaxLength(10).IsRequired();
         builder.HasIndex(x => x.InventoryBatchDetailId).IsUnique().HasDatabaseName("UQ_PrMaterialIssueLine_InventoryDetail");
-        builder.HasIndex(x => new { x.PostingLinkId, x.InventoryTrxLineNo }).IsUnique().HasDatabaseName("UQ_PrMaterialIssueLine_PostingLine");
+        builder.HasIndex(x => new { x.PostingLinkId, x.DocumentRevision, x.InventoryTrxLineNo }).IsUnique().HasDatabaseName("UQ_PrMaterialIssueLine_PostingRevisionLine");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.InventoryBatchNo }).HasDatabaseName("IX_PrMaterialIssueLine_Batch");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.WorkOrderMaterialId }).HasDatabaseName("IX_PrMaterialIssueLine_Material");
         builder.HasIndex(x => new { x.WorkOrderOperationId, x.WorkOrderMaterialId }).HasDatabaseName("IX_PrMaterialIssueLine_Operation");
