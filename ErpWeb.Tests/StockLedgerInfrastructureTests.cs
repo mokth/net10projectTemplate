@@ -2,10 +2,12 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace ErpWeb.Tests;
 
@@ -43,6 +45,18 @@ public sealed class StockLedgerInfrastructureTests : IAsyncDisposable
             index.IsUnique && index.Properties.Select(x => x.Name)
                 .SequenceEqual(["StockPostingId", "PostingLineNo"]));
         Assert.NotNull(db.Model.FindEntityType(typeof(ProductionMovementAllocation)));
+
+        foreach (var type in new[]
+                 {
+                     typeof(StockPosting), typeof(IvTrxHistory),
+                     typeof(ProductionBalLotMovement), typeof(ProductionMaterialMovement),
+                     typeof(ProductionMovementAllocation), typeof(IvBalLoc), typeof(ProductionBalLot)
+                 })
+        {
+            var entityType = db.Model.FindEntityType(type)
+                ?? throw new InvalidOperationException($"{type.Name} is not mapped.");
+            Assert.False(entityType.IsSqlOutputClauseUsed(), $"{type.Name} must not use SQL Server OUTPUT.");
+        }
     }
 
     [Fact]

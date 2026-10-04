@@ -8,7 +8,10 @@ public class IvBalLocConfiguration : IEntityTypeConfiguration<IvBalLoc>
 {
     public void Configure(EntityTypeBuilder<IvBalLoc> builder)
     {
-        builder.ToTable("IvBalLoc");
+        builder.ToTable("IvBalLoc", table =>
+        {
+            table.UseSqlOutputClause(false);
+        });
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

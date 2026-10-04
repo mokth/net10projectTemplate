@@ -10,6 +10,7 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
     {
         builder.ToTable("PrProductionBalLot", table =>
         {
+            table.UseSqlOutputClause(false);
             table.HasCheckConstraint("CK_PrProductionBalLot_Kind",
                 "[Kind] IN ('MATERIAL_IN', 'WIP')");
             table.HasCheckConstraint("CK_PrProductionBalLot_Qty",

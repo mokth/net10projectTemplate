@@ -71,10 +71,85 @@ IF COL_LENGTH(N'dbo.PrProductionBalLotMovement', N'ValuationStatus') IS NULL ALT
 IF COL_LENGTH(N'dbo.PrProductionBalLotMovement', N'CostBasisVersion') IS NULL ALTER TABLE dbo.PrProductionBalLotMovement ADD CostBasisVersion int NULL;
 GO
 
-IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_PrProductionBalLotMovement_Type')
+DECLARE @ProductionMovementTableId int = OBJECT_ID(N'dbo.PrProductionBalLotMovement', N'U');
+DECLARE @MovementTypeColumnId int = COLUMNPROPERTY(@ProductionMovementTableId, N'MovementType', 'ColumnId');
+DECLARE @MovementTypeSystemType sysname;
+DECLARE @MovementTypeMaxLength smallint;
+DECLARE @MovementTypeConstraintId int;
+DECLARE @MovementTypeConstraintDefinition nvarchar(max);
+DECLARE @NeedsWiden bit = 0;
+DECLARE @NeedsConstraintRefresh bit = 0;
+DECLARE @MustDropMovementTypeConstraint bit = 0;
+
+IF @MovementTypeColumnId IS NULL
+    THROW 51012, 'PrProductionBalLotMovement.MovementType is missing; manual remediation is required.', 1;
+
+SELECT
+    @MovementTypeSystemType = type_name(c.system_type_id),
+    @MovementTypeMaxLength = c.max_length
+FROM sys.columns AS c
+WHERE c.object_id = @ProductionMovementTableId
+  AND c.column_id = @MovementTypeColumnId;
+
+IF @MovementTypeSystemType <> N'nvarchar'
+    THROW 51012, 'PrProductionBalLotMovement.MovementType is not nvarchar; manual remediation is required.', 1;
+
+SELECT
+    @MovementTypeConstraintId = cc.object_id,
+    @MovementTypeConstraintDefinition = cc.definition
+FROM sys.check_constraints AS cc
+WHERE cc.parent_object_id = @ProductionMovementTableId
+  AND cc.name = N'CK_PrProductionBalLotMovement_Type';
+
+DECLARE @ExpectedMovementTypes table (Code nvarchar(32) NOT NULL PRIMARY KEY);
+INSERT INTO @ExpectedMovementTypes (Code) VALUES
+    (N'OPENING_IN'), (N'ISSUE'), (N'ISSUE_REVERSAL'), (N'PRODUCE'), (N'PRODUCE_REVERSAL'),
+    (N'CONSUME'), (N'CONSUME_REVERSAL'), (N'RETURN'), (N'RETURN_REVERSAL'),
+    (N'TRANSFER_OUT'), (N'TRANSFER_IN'), (N'STATUS_OUT'), (N'STATUS_IN'),
+    (N'ADJUST_IN'), (N'ADJUST_OUT'), (N'SCRAP_OUT'), (N'FG_RECEIPT_OUT');
+
+SET @NeedsWiden = CASE
+    WHEN @MovementTypeMaxLength > 0 AND @MovementTypeMaxLength < 64 THEN 1
+    ELSE 0
+END;
+
+SET @NeedsConstraintRefresh = CASE
+    WHEN @MovementTypeConstraintId IS NULL THEN 1
+    WHEN EXISTS
+    (
+        SELECT 1
+        FROM @ExpectedMovementTypes AS expected
+        WHERE CHARINDEX(
+            N'''' + expected.Code + N'''',
+            UPPER(@MovementTypeConstraintDefinition) COLLATE Latin1_General_100_CI_AS) = 0
+    ) THEN 1
+    ELSE 0
+END;
+
+SET @MustDropMovementTypeConstraint = @NeedsConstraintRefresh;
+
+-- SQL Server normally permits a widening ALTER with this check in place. If the
+-- deployed check is recorded as a column dependency, remove and recreate only it.
+IF @NeedsWiden = 1
+   AND @MovementTypeConstraintId IS NOT NULL
+   AND EXISTS
+   (
+       SELECT 1
+       FROM sys.sql_expression_dependencies AS dependency
+       WHERE dependency.referencing_id = @MovementTypeConstraintId
+         AND dependency.referenced_id = @ProductionMovementTableId
+         AND dependency.referenced_minor_id = @MovementTypeColumnId
+   )
+    SET @MustDropMovementTypeConstraint = 1;
+
+IF @MustDropMovementTypeConstraint = 1
+   AND @MovementTypeConstraintId IS NOT NULL
     ALTER TABLE dbo.PrProductionBalLotMovement DROP CONSTRAINT CK_PrProductionBalLotMovement_Type;
-ALTER TABLE dbo.PrProductionBalLotMovement ALTER COLUMN MovementType nvarchar(32) NOT NULL;
-IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_PrProductionBalLotMovement_Type')
+
+IF @NeedsWiden = 1
+    ALTER TABLE dbo.PrProductionBalLotMovement ALTER COLUMN MovementType nvarchar(32) NOT NULL;
+
+IF @MovementTypeConstraintId IS NULL OR @MustDropMovementTypeConstraint = 1
     ALTER TABLE dbo.PrProductionBalLotMovement ADD CONSTRAINT CK_PrProductionBalLotMovement_Type CHECK
         (MovementType IN (N'OPENING_IN',N'ISSUE',N'ISSUE_REVERSAL',N'PRODUCE',N'PRODUCE_REVERSAL',N'CONSUME',N'CONSUME_REVERSAL',N'RETURN',N'RETURN_REVERSAL',N'TRANSFER_OUT',N'TRANSFER_IN',N'STATUS_OUT',N'STATUS_IN',N'ADJUST_IN',N'ADJUST_OUT',N'SCRAP_OUT',N'FG_RECEIPT_OUT'));
 IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_PrProductionBalLotMovement_V2')
