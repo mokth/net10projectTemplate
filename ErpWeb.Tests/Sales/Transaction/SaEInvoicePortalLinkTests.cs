@@ -1,7 +1,6 @@
 using ErpWeb.Core.EInvoice;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// <see cref="SaEInvoicePortalLink.Create"/> / <see cref="SaEInvoicePortalLink.IsPortalViewable"/> - the
 /// ONE gate that decides whether a grid's MyInvois UUID cell may be opened at the LHDN portal.

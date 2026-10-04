@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales Monitor Phase A acceptance matrix (plan-salesDecisionSupport.prompt.md). Each test gets a fresh
 /// SQLite database.

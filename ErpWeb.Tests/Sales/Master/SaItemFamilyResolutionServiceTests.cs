@@ -10,8 +10,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Resolution over the real database (plan §7/§8/§8.5/§24): the service entry points load the customer's
 /// own <c>PriceMethod</c>/<c>CustPriceCode</c>, the candidate rows, and the legacy <c>float</c> columns,

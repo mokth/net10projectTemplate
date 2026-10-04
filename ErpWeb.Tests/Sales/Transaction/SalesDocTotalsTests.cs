@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>R7 — the <see cref="SalesDocTotals"/> projection must agree across document kinds.</summary>
 [Trait(TestCategories.Name, TestCategories.Sales)]
 [Trait(TestCategories.Name, TestCategories.SalesPricing)]

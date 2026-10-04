@@ -17,8 +17,7 @@ using Moq;
 using CdnStatuses = ErpWeb.Core.Sales.SaCdnStatuses;
 using CdnTypes = ErpWeb.Core.Sales.SaCdnTypes;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 [Trait(TestCategories.Name, TestCategories.Sales)]
 [Trait(TestCategories.Name, TestCategories.SalesInvoice)]
 public class SaInvoiceCalcTests

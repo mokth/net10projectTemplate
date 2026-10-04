@@ -4,8 +4,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.Model.Repositories.Inventory;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// The stock-alert rules (Phase 2, item 10). Every case in the plan's mandatory fixture list is an
 /// asserted test rather than a manual smoke: NULL and zero thresholds, exactly-on-the-threshold and

@@ -15,8 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// Issues DO numbers for the "DO" module (DO{yy}{MM}-{seq:D4} / prefix "DO").
 /// Falls through to the INV pattern for any other module, so these tests can share the

@@ -1,7 +1,6 @@
 using ErpWeb.Core.Settings;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 /// <summary>
 /// Cache isolation and eviction. The counters are tested directly because the invalidation matrix is
 /// pure logic, and then end to end through the service because a wrong cache key is exactly the kind of

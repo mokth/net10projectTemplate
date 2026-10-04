@@ -12,8 +12,8 @@ using Microsoft.Extensions.Configuration;
 using System.Data;
 using System.Text.RegularExpressions;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 [Trait(TestCategories.Name, TestCategories.SqlServer)]
 public sealed class ProductionStockLedgerSqlServerTests
 {

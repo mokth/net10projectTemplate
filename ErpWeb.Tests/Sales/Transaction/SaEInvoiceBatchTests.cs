@@ -5,8 +5,7 @@ using ErpWeb.EInvoiceLib.Model;
 using ErpWeb.EInvoiceLib.Model.Document;
 using ErpWeb.Model.Repositories.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The batch e-Invoice surface on the Sales Invoice list: Submit, E-Status (refresh) and Cancel over a
 /// selection of documents.

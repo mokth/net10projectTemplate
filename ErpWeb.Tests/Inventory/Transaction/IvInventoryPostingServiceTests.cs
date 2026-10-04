@@ -12,8 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
 /// <summary>
 /// Business-logic posting/rollback tests (SQLite). Does not prove SQL Server UPDLOCK/HOLDLOCK.
 /// </summary>

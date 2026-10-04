@@ -1,8 +1,7 @@
 using ErpWeb.Core.Security;
 using Microsoft.Extensions.Options;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 [Trait(TestCategories.Name, TestCategories.Admin)]
 public class PasswordPolicyTests
 {

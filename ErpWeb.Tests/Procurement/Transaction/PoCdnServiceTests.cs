@@ -14,8 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>Issues PCN/PDN document numbers; anything else gets PINV so invoice seeding works too.</summary>
 internal sealed class FakePoCdnDocumentNumberingService : IDocumentNumberingService
 {

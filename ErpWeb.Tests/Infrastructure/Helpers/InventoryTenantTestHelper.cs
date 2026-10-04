@@ -2,8 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Services;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Helpers;
 internal static class InventoryTenantTestHelper
 {
     public static IInventoryTenantContext CreateTenantContext(

@@ -1,7 +1,6 @@
 using ErpWeb.UI.Services;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 public class DocumentReturnNavigationTests
 {
     [Fact]

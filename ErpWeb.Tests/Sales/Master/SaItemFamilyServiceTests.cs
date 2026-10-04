@@ -10,8 +10,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Sales item family (plan plans/sales-item-family-v2-plan.md §24):
 /// price lists + lines, customer items and item discount rules — including the two rules that carry the

@@ -9,8 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Sales item family — SQL Server concurrency (plan §24 "Concurrency" row, §10).
 ///

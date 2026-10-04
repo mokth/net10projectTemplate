@@ -15,8 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>
 /// SQL Server concurrency/atomicity tests for Purchase Requisitions. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.

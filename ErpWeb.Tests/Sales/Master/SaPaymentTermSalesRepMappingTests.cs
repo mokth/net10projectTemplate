@@ -3,8 +3,7 @@ using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 [Trait(TestCategories.Name, TestCategories.Sales)]
 [Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public sealed class SaPaymentTermSalesRepMappingTests : IDisposable

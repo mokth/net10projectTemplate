@@ -10,8 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Transaction;
 /// <summary>
 /// SQL Server race tests for numbering admin vs invoice allocation.
 /// Skipped unless ConnectionStrings:DefaultConnection points at SQL Server.

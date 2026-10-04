@@ -1,7 +1,6 @@
 using ErpWeb.Core.Purchase;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Inquiry;
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
 public class PoDeliveryPerformanceCalcTests

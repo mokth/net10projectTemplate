@@ -5,8 +5,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public sealed class PrShiftServiceBreakTests : IDisposable
 {

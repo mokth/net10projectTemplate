@@ -7,8 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Xunit;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 /// <summary>
 /// Guards the DI graph that <c>Program.cs</c> builds at startup.
 ///

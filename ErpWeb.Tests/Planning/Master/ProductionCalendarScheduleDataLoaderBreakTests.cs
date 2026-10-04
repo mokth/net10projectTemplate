@@ -4,8 +4,7 @@ using ErpWeb.Model.Entities.Planning;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public sealed class ProductionCalendarScheduleDataLoaderBreakTests : IDisposable
 {

@@ -6,8 +6,7 @@ using ErpWeb.Model.Entities.Purchase;
 using PoCdnTypes = ErpWeb.Core.Purchase.PoCdnTypes;
 using PoCdnStatuses = ErpWeb.Core.Purchase.PoCdnStatuses;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>
 /// Pure-domain tests for the PoCdn controls (plan C6, C9, C17, C24, C26, C30, C34, C37, C43,
 /// C44, C45, C46, C47). No database, no services.

@@ -2,8 +2,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.EInvoiceLib.Model;
 using ErpWeb.EInvoiceLib.Model.Document;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The pure mapping from the MyInvois Get Document Details payload to <see cref="SaEInvoiceDetailView"/>.
 ///

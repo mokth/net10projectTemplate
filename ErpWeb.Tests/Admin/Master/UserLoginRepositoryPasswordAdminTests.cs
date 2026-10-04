@@ -6,8 +6,7 @@ using ErpWeb.Model.Repositories;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 [Trait(TestCategories.Name, TestCategories.Admin)]
 public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
 {

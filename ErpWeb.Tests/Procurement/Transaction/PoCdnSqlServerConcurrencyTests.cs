@@ -18,8 +18,7 @@ using Moq;
 // alias is required for the name to resolve. (The duplication is worth collapsing in the product code.)
 using PoCdnStatuses = ErpWeb.Core.Purchase.PoCdnStatuses;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>
 /// Captures logged exceptions so a failing test can explain itself.
 ///

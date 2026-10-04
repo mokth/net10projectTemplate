@@ -14,8 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Master;
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.PurchaseMasters)]
 public class PoSupplierServiceTests : IAsyncLifetime

@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales Inquiry Phase 1 acceptance matrix (plan-salesReportsAndInquiries.prompt.md). Each test gets a
 /// fresh SQLite database. Locked rules under test: tenant + branch isolation, half-open dates,

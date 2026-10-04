@@ -1,8 +1,7 @@
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Settings;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 /// <summary>
 /// Integrity of the catalogue itself. These are the tests that stop a half-declared setting shipping:
 /// every definition must be resolvable, parseable, scoped and — for a token — enumerable.

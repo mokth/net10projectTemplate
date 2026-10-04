@@ -1,9 +1,8 @@
 using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Production;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionOperationSequenceGateTests
 {
     [Fact]

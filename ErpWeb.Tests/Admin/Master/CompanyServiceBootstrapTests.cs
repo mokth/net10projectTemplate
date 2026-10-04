@@ -10,8 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 [Trait(TestCategories.Name, TestCategories.Admin)]
 public class CompanyServiceBootstrapTests : IAsyncLifetime
 {

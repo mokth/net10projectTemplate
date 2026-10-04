@@ -1,8 +1,7 @@
 using ErpWeb.Core.Purchase;
 using ErpWeb.Model.Entities.Purchase;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.PurchaseOrder)]
 public class PoOrderCalcTests

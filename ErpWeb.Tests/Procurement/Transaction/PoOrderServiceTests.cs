@@ -14,8 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 internal sealed class FakePoOrderDocumentNumberingService : IDocumentNumberingService
 {
     private int _poSeq;

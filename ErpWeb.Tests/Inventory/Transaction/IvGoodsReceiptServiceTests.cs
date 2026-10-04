@@ -14,9 +14,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using ErpWeb.Tests.Procurement.Transaction;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryGoodsReceipt)]
 public class IvGoodsReceiptServiceTests : IAsyncLifetime

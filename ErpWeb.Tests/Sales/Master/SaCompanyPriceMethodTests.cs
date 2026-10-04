@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Company pricing mode + the four-stage pipeline contract (plan sections "Company pricing mode",
 /// "Line pricing pipeline", "Target resolution order").

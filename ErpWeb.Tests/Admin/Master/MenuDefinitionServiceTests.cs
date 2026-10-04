@@ -4,8 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 [Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuDefinitionServiceTests
 {

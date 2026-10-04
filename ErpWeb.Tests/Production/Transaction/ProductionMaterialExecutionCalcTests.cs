@@ -1,8 +1,7 @@
 using ErpWeb.Core.Production;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionMaterialExecutionCalcTests
 {
     [Fact]

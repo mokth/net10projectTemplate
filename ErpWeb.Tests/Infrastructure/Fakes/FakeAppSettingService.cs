@@ -2,8 +2,7 @@ using System.Globalization;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Settings;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Fakes;
 /// <summary>
 /// Settings stub for tests that must not depend on the registry.
 ///

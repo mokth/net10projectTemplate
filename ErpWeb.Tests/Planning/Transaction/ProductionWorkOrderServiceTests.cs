@@ -11,8 +11,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 {

@@ -3,8 +3,7 @@ using ErpWeb.Core.Menus;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// Inventory reconciliation (Phase 3, item 16). The load-bearing test here is D18: both sides must be
 /// aggregated on the same 7-part stock slice before they are compared, so a legacy database holding two

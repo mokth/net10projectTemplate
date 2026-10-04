@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Inquiry;
 /// <summary>Purchase Inquiry Phase 2 — Price History, Matching/RNI, Delivery Performance.</summary>
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.PurchaseOrder)]

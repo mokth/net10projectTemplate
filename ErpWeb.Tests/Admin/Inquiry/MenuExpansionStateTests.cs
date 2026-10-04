@@ -1,7 +1,6 @@
 using ErpWeb.Core.Menus;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Inquiry;
 [Trait(TestCategories.Name, TestCategories.Menus)]
 public class MenuExpansionStateTests
 {

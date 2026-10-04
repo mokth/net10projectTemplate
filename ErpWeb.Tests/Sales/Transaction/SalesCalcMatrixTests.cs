@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The locked R2 golden calculation matrix (sales_trans_enhancement_plan.md §9).
 /// <para>

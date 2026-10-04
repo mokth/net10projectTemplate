@@ -1,7 +1,6 @@
 using ErpWeb.Core.Inventory;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Master;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryMasters)]
 public class IvLotNumberGeneratorTests

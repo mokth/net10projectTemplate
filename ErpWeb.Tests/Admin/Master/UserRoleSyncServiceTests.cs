@@ -5,8 +5,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 [Trait(TestCategories.Name, TestCategories.Admin)]
 public class UserRoleSyncServiceTests : IAsyncLifetime
 {

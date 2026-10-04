@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Plan §7 — the snapshot builder must copy the authored definition faithfully, re-point the
 /// references that cannot survive a copy, and refuse to invent anything the definition omits.

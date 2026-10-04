@@ -16,8 +16,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// Sales Quotation service tests. The plan's Phase F list drives these: the state machine and its
 /// invalid transitions, the expiry rules (including "ACCEPTED never auto-expires" and "ACCEPTED past

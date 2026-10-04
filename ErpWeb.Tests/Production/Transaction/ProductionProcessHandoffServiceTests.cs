@@ -13,9 +13,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
 {
     private readonly SqliteConnection _connection = new("DataSource=:memory:");

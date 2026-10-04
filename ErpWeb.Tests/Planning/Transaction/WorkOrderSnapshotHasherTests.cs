@@ -2,8 +2,7 @@ using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Plan §4.2 — the snapshot hash and the definition source hash must be reproducible tokens, not
 /// incidental checksums: same content hashes the same, changed content hashes differently, and

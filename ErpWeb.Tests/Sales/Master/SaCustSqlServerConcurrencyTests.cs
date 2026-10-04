@@ -9,8 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// SQL Server concurrency tests for Customer Profile. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server.

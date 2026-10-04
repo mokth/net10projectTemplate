@@ -12,8 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
 /// <summary>
 /// SQL Server REQUIRED concurrency/integrity tests. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server.

@@ -1,8 +1,7 @@
 using ErpWeb.Core.Planning;
 using ErpWeb.Model.Entities.Planning;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public class PrBomStructureMergeTests
 {

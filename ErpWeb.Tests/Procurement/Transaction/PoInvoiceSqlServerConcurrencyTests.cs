@@ -15,8 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>
 /// SQL Server concurrency tests for the purchase invoice / 3-way match (plan v2 §6).
 /// Skipped unless ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.

@@ -5,8 +5,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The LHDN code translation the e-Invoice payload depends on: an ERP UOM is sent as its
 /// <c>MsUOM.UNECE_UOM</c> code and an ERP tax group as its <c>SaTaxGroup.TaxType</c>, with <c>H87</c>

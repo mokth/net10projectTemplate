@@ -7,8 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Milestone 1 schema contract (plan §6). These tests pin the parts of the model that the plan
 /// calls out explicitly, so a later refactor cannot silently:

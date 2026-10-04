@@ -14,8 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Plan §12.3 — Work Order SQL Server fixture. Proves CHECK constraints, filtered indexes,
 /// Option A1 labour delete paths, aggregate row-version concurrency, Release races, and the

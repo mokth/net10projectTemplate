@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales-analysis Phase 1 acceptance matrix. Each test gets a fresh SQLite database, so no test
 /// depends on another test's rows.

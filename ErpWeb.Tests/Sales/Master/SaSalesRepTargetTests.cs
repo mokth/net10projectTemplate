@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Sales-rep monthly targets (sales-analysis Phase 1). These guard the M3 contract: the row key is
 /// company-wide (no branch), save is an upsert, and the month / year / amount validations hold.

@@ -5,8 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Inquiry;
 /// <summary>
 /// Guards the deployment coupling between <see cref="MenuCodes"/>, <c>ErpWeb/Menus/menus.xml</c> and
 /// the startup menu sync.

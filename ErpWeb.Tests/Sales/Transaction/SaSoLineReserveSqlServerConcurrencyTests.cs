@@ -12,8 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// SQL Server concurrency tests for SO soft-reserve. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with DEMO masters.

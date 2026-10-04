@@ -11,8 +11,7 @@ using Moq;
 using PoCdnStatus = ErpWeb.Core.Purchase.PoCdnStatuses;
 using PoCdnType = ErpWeb.Core.Purchase.PoCdnTypes;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Inquiry;
 /// <summary>Purchase Inquiry Workbench — presets, summaries, calculation integrity, ACCESS.</summary>
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.PurchaseOrder)]

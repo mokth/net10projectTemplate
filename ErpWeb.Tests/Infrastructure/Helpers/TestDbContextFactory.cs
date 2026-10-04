@@ -1,8 +1,7 @@
 using ErpWeb.Model.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Helpers;
 internal sealed class TestDbContextFactory : IDbContextFactory<AppDbContext>
 {
     private readonly DbContextOptions<AppDbContext> _options;

@@ -15,8 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.TestHosts;
 /// <summary>
 /// Fixture for the <see cref="SaEInvoiceService"/> lifecycle tests: a real SQLite database, the real
 /// <see cref="EInvoiceValidator"/>, mapper and <see cref="ClientSecretStore"/>, and a scripted

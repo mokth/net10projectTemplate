@@ -1,7 +1,6 @@
 using ErpWeb.Core.Services;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 /// <summary>
 /// Contract tests for the shared validation-message formatter. These pin the three rules that the
 /// entry pages depend on: deterministic ordering, a headline that always names a cause, and the

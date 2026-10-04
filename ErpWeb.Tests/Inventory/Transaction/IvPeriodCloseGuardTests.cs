@@ -10,8 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
 /// <summary>
 /// The period-close guard: posting and rollback refuse a batch whose <c>TrxDtTime</c> falls in a CLOSED
 /// period for the tenant — keyed on the batch's OWN date, never on the execution date (Critical finding 2).

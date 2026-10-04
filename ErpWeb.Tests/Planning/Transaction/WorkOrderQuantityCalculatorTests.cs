@@ -2,8 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Milestone 2 quantity contract (plan §7.3). These are pure calculation tests: the snapshot graph
 /// is built in memory and no database is involved.

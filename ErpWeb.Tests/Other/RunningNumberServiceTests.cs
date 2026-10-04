@@ -4,8 +4,7 @@ using ErpWeb.Model.Entities;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 [Trait(TestCategories.Name, TestCategories.Shared)]
 public class RunningNumberServiceTests : IAsyncLifetime
 {

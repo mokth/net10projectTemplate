@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// Shared SQLite fixture for the inquiry-suite tests (transaction inquiry, stock card). Owns the
 /// connection, the master data and the row seeders so the two test classes cannot drift apart.

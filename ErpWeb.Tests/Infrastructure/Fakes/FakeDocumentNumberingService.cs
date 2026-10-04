@@ -1,8 +1,7 @@
 using ErpWeb.Core.Numbering;
 using ErpWeb.Model.Data;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Fakes;
 /// <summary>
 /// SQLite invoice tests mock numbering — no UPDLOCK emulation.
 /// Allocates INV{yy}{MM}-{seq:D4} with Prefix INV (table-driven; ignores customer InvoicePrefix).

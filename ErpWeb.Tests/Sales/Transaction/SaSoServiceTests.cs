@@ -15,8 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 internal sealed class FakeSalesDocumentNumberingService : IDocumentNumberingService
 {
     private int _doSeq;

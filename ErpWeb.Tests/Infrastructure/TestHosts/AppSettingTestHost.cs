@@ -9,8 +9,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.TestHosts;
 /// <summary>
 /// Shared fixture for the settings tests: an in-memory SQLite database plus a real
 /// <see cref="AppSettingService"/> wired with the real provider registry and a real <see cref="IMemoryCache"/>.

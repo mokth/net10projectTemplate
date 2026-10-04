@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales Dashboard Phase 3 acceptance matrix (plan-salesReportsAndInquiries.prompt.md). Locked rules
 /// under test: the KPI chip definitions (POSTED-only sales windows, open QT/SO status sets, pending

@@ -1,7 +1,6 @@
 using ErpWeb.Core.Services;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 /// <summary>
 /// The E.164 recognition rules behind every phone field: what is accepted and canonicalised, what is a
 /// placeholder, what is rejected, and — most importantly — what a rejected value is stored as. The

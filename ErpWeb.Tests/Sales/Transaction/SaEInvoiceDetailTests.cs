@@ -3,8 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.EInvoiceLib.Model;
 using ErpWeb.EInvoiceLib.Model.Document;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// <see cref="ISaEInvoiceService.GetDocumentDetailAsync"/> — the read-only MyInvois Get Document
 /// Details read behind the LHDN detail screen.

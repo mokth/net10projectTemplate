@@ -11,8 +11,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The line-pricing ORCHESTRATOR over a real database (plan Phase 1 step 1.10): the four-stage
 /// pipeline, the per-company mode read server-side, the tax-basis conversion and the end-to-end

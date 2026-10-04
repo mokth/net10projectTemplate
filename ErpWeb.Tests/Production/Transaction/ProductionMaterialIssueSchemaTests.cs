@@ -6,9 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionMaterialIssueSchemaTests
 {
     private static readonly IModel Model = BuildModel();

@@ -5,8 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The e-Invoice locking that SQLite cannot prove: two operators racing to submit the same document, and
 /// an outcome write that loses the <c>RowVersion</c> check because another session touched the row while

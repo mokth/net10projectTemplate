@@ -1,7 +1,6 @@
 using ErpWeb.Core.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public class ProductionWorkOrderCalcTests
 {

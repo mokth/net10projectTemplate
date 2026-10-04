@@ -9,8 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Master;
 /// <summary>
 /// SQL Server concurrency tests for Supplier Profile. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with GlCode applied.

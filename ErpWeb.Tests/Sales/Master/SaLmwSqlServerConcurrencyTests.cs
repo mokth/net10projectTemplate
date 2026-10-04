@@ -7,8 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// TC29 — the only control that can catch the D-9 mistake. Two REAL concurrent writers insert
 /// overlapping system windows for the same customer; exactly one may commit.

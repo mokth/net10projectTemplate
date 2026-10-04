@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// D15 — a Sales Order carrying a DO force-close write-off must never be revisable or deletable:
 /// revision rebuilds fresh <c>SaSoDetail</c> rows via <c>AddDetails</c> and would silently drop

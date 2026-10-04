@@ -1,7 +1,6 @@
 using ErpWeb.Core.Planning;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 public class PreventiveWindowNormalizerTests
 {
     [Fact]

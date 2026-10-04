@@ -3,8 +3,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.EInvoiceLib.GenerateDoc;
 using ErpWeb.Model.Repositories.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// Two rules that together make "correct the customer profile, then submit again" sufficient to repair a
 /// rejected e-Invoice.

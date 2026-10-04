@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 [Trait(TestCategories.Name, TestCategories.Sales)]
 [Trait(TestCategories.Name, TestCategories.SalesShared)]
 public sealed class SaDocPickerLinesTests

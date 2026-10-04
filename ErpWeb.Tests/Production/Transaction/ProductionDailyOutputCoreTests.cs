@@ -1,9 +1,8 @@
 using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Production;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Transaction;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionBalLotSignedQtyTests
 {
     private static ProductionBalLotMovement Mov(
@@ -103,7 +102,7 @@ public sealed class ProductionBalLotSignedQtyTests
     }
 }
 
-[Trait(TestCategories.Name, TestCategories.Planning)]
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionMaterialMovementTotalsTests
 {
     [Fact]
@@ -155,7 +154,7 @@ public sealed class ProductionMaterialMovementTotalsTests
     }
 }
 
-[Trait(TestCategories.Name, TestCategories.Planning)]
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionBalLotOpeningTests
 {
     [Fact]

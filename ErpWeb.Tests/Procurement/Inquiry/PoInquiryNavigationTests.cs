@@ -1,7 +1,6 @@
 using ErpWeb.UI.Purchase.Inquiry;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Inquiry;
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 public class PoInquiryNavigationTests
 {

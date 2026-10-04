@@ -6,8 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Data.Common;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 public sealed class InventoryAsOfStockServiceTests : IAsyncLifetime
 {

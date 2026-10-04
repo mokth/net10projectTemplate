@@ -4,8 +4,7 @@ using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 [Trait(TestCategories.Name, TestCategories.Planning)]
 public sealed class ProductDefinitionPhase1SchemaTests
 {

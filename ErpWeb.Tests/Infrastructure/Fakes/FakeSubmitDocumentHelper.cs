@@ -4,8 +4,7 @@ using ErpWeb.EInvoiceLib.Model;
 using ErpWeb.EInvoiceLib.Model.Document;
 using ErpWeb.EInvoiceLib.Model.InputData;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Fakes;
 /// <summary>
 /// Scriptable stand-in for the MyInvois helper.
 ///

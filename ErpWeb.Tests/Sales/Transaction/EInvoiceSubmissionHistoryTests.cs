@@ -5,8 +5,7 @@ using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// <c>dbo.EInvDocSubmission</c> — the e-Invoice submission registry: one row per <b>accepted</b>
 /// submitted document, written by <see cref="EInvoiceSubmissionWriter"/> from the four lifecycle hooks

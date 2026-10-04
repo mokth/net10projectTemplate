@@ -2,8 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Repositories.Inventory;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// The stock summary (Phase 2, item 12). The mandatory fixtures: a mixed UOM inside one group and the
 /// caption/UOM rule it drives (D16), zero-quantity piles, the same item in two warehouses, the same item

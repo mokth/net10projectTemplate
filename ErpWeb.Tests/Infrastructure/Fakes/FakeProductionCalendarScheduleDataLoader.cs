@@ -1,7 +1,6 @@
 using ErpWeb.Core.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Infrastructure.Fakes;
 /// <summary>In-memory loader used by WO unit tests — unlimited Mon–Fri 08:00–17:00 capacity.</summary>
 public sealed class FakeProductionCalendarScheduleDataLoader : IProductionCalendarScheduleDataLoader
 {

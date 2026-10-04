@@ -9,8 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
 /// <summary>
 /// Close / reopen workflow and the stored-snapshot generation (plan-inventoryPeriodClose Phase 2).
 /// </summary>

@@ -11,8 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Transaction;
 /// <summary>
 /// Race behaviour that only a real SQL Server can exercise: a server-generated <c>rowversion</c>, and a
 /// genuine duplicate-key collision between two concurrent inserts.

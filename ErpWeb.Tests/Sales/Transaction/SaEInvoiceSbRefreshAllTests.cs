@@ -4,8 +4,7 @@ using ErpWeb.Core.Purchase;
 using ErpWeb.EInvoiceLib.Model;
 using ErpWeb.EInvoiceLib.Model.Document;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The self-billed (LHDN 11 / 12 / 13) no-selection E-STATUS mode:
 /// <see cref="ISaEInvoiceService.RefreshSubmittedAsync(string, PoSbQuery?, IProgress{SaEInvoiceRefreshProgress}?, CancellationToken)"/>.

@@ -9,8 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 [Trait(TestCategories.Name, TestCategories.Sales)]
 [Trait(TestCategories.Name, TestCategories.SalesMasters)]
 public class SaSalesMasterServiceTests : IAsyncLifetime

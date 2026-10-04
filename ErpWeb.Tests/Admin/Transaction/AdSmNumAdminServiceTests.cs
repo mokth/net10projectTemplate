@@ -9,8 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Transaction;
 [Trait(TestCategories.Name, TestCategories.Admin)]
 public class AdSmNumSampleDateTests
 {

@@ -5,8 +5,7 @@ using ErpWeb.Model.Entities.Production;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 /// <summary>
 /// Plan §7.2 — revision resolution must be cardinality-safe. Zero matches and overlapping
 /// matches both fail; a tie is never broken by picking a revision.

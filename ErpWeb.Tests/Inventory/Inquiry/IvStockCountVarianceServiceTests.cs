@@ -10,8 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// The stock-count variance report (Phase 3, item 14). Every case in the plan's mandatory fixture list
 /// is asserted here: zero system quantity against a positive count and the reverse, both zero, an

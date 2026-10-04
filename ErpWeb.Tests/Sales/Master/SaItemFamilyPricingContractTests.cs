@@ -1,7 +1,6 @@
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Price and discount resolution contract — the pure rules (plan §7, §7.1, §7.2, §8, §8.1, §8.1.1,
 /// §8.3, §8.3.1, §9.1 "artefact + test").

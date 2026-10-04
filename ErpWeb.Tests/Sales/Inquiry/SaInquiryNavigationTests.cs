@@ -1,8 +1,7 @@
 using ErpWeb.UI.Sales.Inquiry;
 using ErpWeb.UI.Services;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales inquiry → document drill-down: the view-route resolver and the safe <c>returnUrl</c> that makes
 /// a document's Close button come back to the inquiry (and keeps the sidebar from expanding

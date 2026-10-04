@@ -11,8 +11,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 /// <summary>
 /// Department + Project reference masters (Phase 8 of the Department &amp; Project plan).
 ///

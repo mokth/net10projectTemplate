@@ -1,8 +1,7 @@
 using ErpWeb.Core.Menus;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 [Trait(TestCategories.Name, TestCategories.Shared)]
 public class NavigationServiceTests
 {

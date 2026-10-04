@@ -4,8 +4,7 @@ using ErpWeb.EInvoiceLib.Model.Document;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// <see cref="ISaEInvoiceService.RepairSubmissionAsync"/> — the UUID-addressed repair that runs behind
 /// the E-UUID click on the sales invoice list.

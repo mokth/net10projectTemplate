@@ -12,8 +12,7 @@ using Moq;
 using PoCdnStatus = ErpWeb.Core.Purchase.PoCdnStatuses;
 using PoCdnType = ErpWeb.Core.Purchase.PoCdnTypes;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Inquiry;
 /// <summary>
 /// Purchase Inquiry Phase 1 acceptance matrix (plans/Procurement-Inquiry-Assessment.md Step 0.5).
 /// </summary>

@@ -3,8 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Model.Repositories.Inventory;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// <b>Est. Inventory Value</b> (Phase 3, item 15). The screen reuses the Stock Summary composition, so
 /// these tests focus on what makes it a DIFFERENT screen: the value-first emphasis, the D16 unit rule,

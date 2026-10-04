@@ -8,9 +8,8 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
-[Trait(TestCategories.Name, TestCategories.Planning)]
+namespace ErpWeb.Tests.Production.Inquiry;
+[Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class ProductionStockCardTests : IAsyncDisposable
 {
     private readonly SqliteConnection _connection = new("DataSource=:memory:");

@@ -2,8 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Settings;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Transaction;
 /// <summary>
 /// The settings service end to end against a real database: precedence, scope containment, the
 /// read-only price-method projection, gated writes, and the exactly-one-value delete rule.

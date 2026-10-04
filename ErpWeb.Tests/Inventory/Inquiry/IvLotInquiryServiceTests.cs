@@ -4,8 +4,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.Model.Repositories.Inventory;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// The lot / batch inquiry (Phase 2, item 11) — the lot passport with its on-hand piles and its posted
 /// movements, including the ageing figures and the inclusive expiry window.

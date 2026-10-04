@@ -6,8 +6,7 @@ using ErpWeb.EInvoiceLib.GenerateDoc;
 using ErpWeb.EInvoiceLib.Model.InputData;
 using Newtonsoft.Json;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The self-billed e-Invoice payload (LHDN 11 / 12 / 13) built from the Purchase self-billed documents.
 ///

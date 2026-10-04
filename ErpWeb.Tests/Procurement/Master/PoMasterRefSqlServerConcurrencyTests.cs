@@ -8,8 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Procurement.Master;
 /// <summary>
 /// SQL Server RowVersion concurrency for Purchase Category. Skipped unless
 /// ConnectionStrings:DefaultConnection points at SQL Server with POCategory present.

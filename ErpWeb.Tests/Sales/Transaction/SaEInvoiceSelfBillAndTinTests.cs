@@ -4,8 +4,7 @@ using ErpWeb.EInvoiceLib.GenerateDoc;
 using ErpWeb.EInvoiceLib.Model.Document;
 using ErpWeb.EInvoiceLib.Model.InputData;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// Phase 4 add-ons: the additive self-billed document-type mapping (LHDN 11/12/13) and the read-only
 /// TIN tools.

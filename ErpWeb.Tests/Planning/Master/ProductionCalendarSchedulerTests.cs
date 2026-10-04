@@ -1,8 +1,7 @@
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 public class ProductionCalendarSchedulerTests
 {
     private static ShiftSourceDefinition Shift(TimeOnly start, TimeOnly end, params (TimeOnly a, TimeOnly b)[] breaks) =>

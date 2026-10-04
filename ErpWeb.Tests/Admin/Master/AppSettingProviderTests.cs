@@ -8,8 +8,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 /// <summary>
 /// The <c>ExistingColumn</c> contract: a definition backed by an existing column must have exactly one
 /// registered provider, no provider may be orphaned, and a MISSING provider must fail loudly rather than

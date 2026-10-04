@@ -1,8 +1,7 @@
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Sales;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The e-Invoice caps have ONE definition — <see cref="SaEInvoiceLimits"/> — and the invoice-named
 /// constants forward to it, so the invoice and credit/debit-note paths can never silently behave

@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Inquiry;
 /// <summary>
 /// Sales-analysis Phase 2 acceptance matrix (plan-salesReportsAndInquiries.prompt.md): the
 /// item / category / warehouse detail grids over POSTED invoice lines. Locked rules under test:

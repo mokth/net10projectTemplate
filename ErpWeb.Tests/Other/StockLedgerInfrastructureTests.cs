@@ -9,8 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Other;
 [Trait(TestCategories.Name, TestCategories.Shared)]
 public sealed class StockLedgerInfrastructureTests : IAsyncDisposable
 {

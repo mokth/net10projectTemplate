@@ -8,8 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Master;
 /// <summary>
 /// Milestone 0 of the Production Work Order Enhancement Plan: Product Definition must author every
 /// field the Work Order snapshot needs (route steps, process type, output per cycle, supply source,

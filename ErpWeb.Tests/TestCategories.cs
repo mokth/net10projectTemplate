@@ -13,7 +13,9 @@ namespace ErpWeb.Tests;
 /// All dimensions use the same trait name, so they compose in a single filter:
 /// <list type="bullet">
 ///   <item><description><b>module</b> — <see cref="Sales"/>, <see cref="Purchase"/>, <see cref="Inventory"/>,
-///   <see cref="Menus"/>, <see cref="Settings"/>, <see cref="Admin"/>, <see cref="Shared"/>. Exactly one per class.</description></item>
+///   <see cref="Planning"/>, <see cref="Production"/>, <see cref="Menus"/>, <see cref="Settings"/>,
+///   <see cref="Admin"/>, <see cref="Shared"/>. Exactly one per class. Source folders use
+///   <c>Procurement</c> while the trait value remains <see cref="Purchase"/> for filter compatibility.</description></item>
 ///   <item><description><b>screen / document family</b> — e.g. <see cref="SalesInvoice"/>, <see cref="PurchaseOrder"/>,
 ///   <see cref="InventoryTransfer"/>. An EXTRA trait on the classes that belong to one screen, so
 ///   <c>Category=Sales</c> is the whole module while <c>Category=SalesInvoice</c> is just that document.</description></item>
@@ -49,8 +51,11 @@ public static class TestCategories
     /// <summary>All inventory: masters, receipts, issues, transfers, returns, adjustments, postings.</summary>
     public const string Inventory = "Inventory";
 
-    /// <summary>Planning masters (product definition / BOM) and future production planning.</summary>
+    /// <summary>Planning masters (product definition / BOM), calendars, and work-order planning.</summary>
     public const string Planning = "Planning";
+
+    /// <summary>Shop-floor production execution after a work order is planned/released.</summary>
+    public const string Production = "Production";
 
     /// <summary>Menu definition, deployment parity and navigation chrome.</summary>
     public const string Menus = "Menus";

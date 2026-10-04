@@ -1,8 +1,7 @@
 using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Production;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
 /// Milestone 4 release-readiness gate (plan §9.1). Each test breaks exactly one rule on an
 /// otherwise releasable snapshot so the reported code is unambiguous.

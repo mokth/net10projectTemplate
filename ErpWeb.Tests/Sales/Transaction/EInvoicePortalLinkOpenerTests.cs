@@ -4,8 +4,7 @@ using ErpWeb.UI.Components.Common.DataGrid;
 using Microsoft.JSInterop;
 using Moq;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// <see cref="EInvoicePortalLinkOpener"/> — the shared E-UUID click behaviour.
 ///

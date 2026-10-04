@@ -1,7 +1,7 @@
 using ErpWeb.Core.Inventory;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Inventory.Transaction;
+[Trait(TestCategories.Name, TestCategories.Inventory)]
 public sealed class IvStockDateRulesTests
 {
     [Fact]
@@ -23,6 +23,7 @@ public sealed class IvStockDateRulesTests
     }
 }
 
+[Trait(TestCategories.Name, TestCategories.Inventory)]
 public sealed class IvStockMovementRulesTests
 {
     [Fact]

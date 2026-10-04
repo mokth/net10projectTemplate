@@ -1,7 +1,6 @@
 using ErpWeb.Core.Settings;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Admin.Master;
 /// <summary>
 /// The pure resolution ladder — Branch → Company → Global → code default. No fixture, no database.
 ///

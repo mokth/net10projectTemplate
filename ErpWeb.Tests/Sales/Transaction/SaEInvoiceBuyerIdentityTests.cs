@@ -1,8 +1,7 @@
 using ErpWeb.Core.EInvoice;
 using Microsoft.EntityFrameworkCore;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// Buyer-identity policy for e-Invoice: the customer master is the live source of truth, and the
 /// invoice's <c>BuyerTin</c> / <c>BuyerBrn</c> / <c>BuyerRegType</c> / <c>InvEmail</c> columns become

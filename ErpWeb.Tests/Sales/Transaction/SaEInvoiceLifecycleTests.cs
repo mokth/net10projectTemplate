@@ -2,8 +2,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.EInvoiceLib.Model.Document;
 
-namespace ErpWeb.Tests;
-
+namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// The production rules the LHDN e-Invoice façade owns: the lifecycle and its locking, the pre-submit
 /// gate and duplicate protection, the recovery algorithm for an uncertain submission, the cancellation
