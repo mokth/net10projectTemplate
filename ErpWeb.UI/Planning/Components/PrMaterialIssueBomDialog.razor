@@ -1,5 +1,6 @@
-<DxPopup HeaderText="Process BOM calculation" CloseOnOutsideClick="false" Width="1050px"
-         CssClass="common-popup" ShowFooter="true"
+<DxPopup HeaderText="Process BOM calculation" CloseOnOutsideClick="false"
+         Width="90vw" MaxWidth="1200px" MaxHeight="90vh"
+         CssClass="common-popup pr-popup-grid-dialog" ShowFooter="true"
          Visible="@Visible" VisibleChanged="@OnVisibleChanged">
     <Content>
         @if (Operation is not null)
@@ -15,19 +16,31 @@
         @if (!string.IsNullOrWhiteSpace(DialogError)) { <div class="alert alert-danger">@DialogError</div> }
         @if (Preview is not null)
         {
-            <div class="table-responsive"><table class="table table-sm align-middle">
-                <thead><tr><th>Material</th><th>Standard for output</th><th>Max incl. tol.</th><th>Suggested issue</th><th>Status</th></tr></thead>
-                <tbody>@foreach (var line in Preview.Lines)
-                {
-                    <tr class="@(!line.CanManualIssue ? "table-light text-muted" : null)">
-                        <td><strong>@line.ItemCode</strong></td>
-                        <td class="text-end">@line.RequestedMaterialQty.ToString("n4")</td>
-                        <td class="text-end">@line.MaxIssueQty.ToString("n4")</td>
-                        <td class="text-end">@line.SuggestedIssueQty.ToString("n4")</td>
-                        <td>@(line.CanManualIssue ? "Ready" : line.BlockingReason)</td>
-                    </tr>
-                }</tbody>
-            </table></div>
+            <div class="pr-popup-grid-shell">
+                <table class="pr-popup-grid">
+                    <thead>
+                        <tr>
+                            <th>Material</th>
+                            <th class="pr-popup-grid__num">Standard for output</th>
+                            <th class="pr-popup-grid__num">Max incl. tol.</th>
+                            <th class="pr-popup-grid__num">Suggested issue</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var line in Preview.Lines)
+                    {
+                        <tr class="@(!line.CanManualIssue ? "text-muted" : null)">
+                            <td><span class="pr-popup-grid__primary">@line.ItemCode</span></td>
+                            <td class="pr-popup-grid__num">@line.RequestedMaterialQty.ToString("n4")</td>
+                            <td class="pr-popup-grid__num">@line.MaxIssueQty.ToString("n4")</td>
+                            <td class="pr-popup-grid__num pr-popup-grid__num--emphasis">@line.SuggestedIssueQty.ToString("n4")</td>
+                            <td>@(line.CanManualIssue ? "Ready" : line.BlockingReason)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
         }
     </Content>
     <FooterContentTemplate><div class="d-flex gap-2 justify-content-end w-100">

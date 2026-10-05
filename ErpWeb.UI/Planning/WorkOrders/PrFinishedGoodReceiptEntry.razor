@@ -634,7 +634,9 @@
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
              Width="90vw"
-             CssClass="common-popup"
+             MaxWidth="1200px"
+             MaxHeight="90vh"
+             CssClass="common-popup pr-popup-grid-dialog"
              Closed="@CloseSourcePicker">
         <BodyContentTemplate>
             <div class="pr-dp-picker">
@@ -826,31 +828,45 @@
         }
         else
         {
-            <div class="pr-dp-ops">
-                @foreach (var source in Sources)
-                {
-                    <article class="pr-dp-op">
-                        <div class="pr-dp-op__main">
-                            <div class="pr-dp-cell">
-                                <span class="pr-dp-cell__primary code-style">@source.WorkOrderNo</span>
-                                <span class="pr-dp-cell__secondary">@source.ItemCode · lot @(string.IsNullOrWhiteSpace(source.LotNo) ? "—" : source.LotNo)</span>
-                            </div>
-                            <div class="pr-dp-cell">
-                                <span class="pr-dp-cell__primary">@source.WorkCentre / @source.Process</span>
-                                <span class="pr-dp-cell__secondary">@(source.LotControl ? "Lot-controlled" : "Non-lot")</span>
-                            </div>
-                            <div class="pr-dp-op__qty">
-                                <span class="iv-field__label">Available</span>
-                                <strong>@source.AvailableQty.ToString("n4") @source.Uom</strong>
-                                <small>@source.Readiness</small>
-                            </div>
-                        </div>
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                  Text="SELECT"
-                                  Click="@(() => AddSourceAsync(source))"
-                                  Enabled="@(!IsSubmitting)" />
-                    </article>
-                }
+            <div class="pr-popup-grid-shell">
+                <table class="pr-popup-grid">
+                    <thead>
+                        <tr>
+                            <th>Work Order</th>
+                            <th>Item / Lot</th>
+                            <th>Work centre / Process</th>
+                            <th class="pr-popup-grid__num">Available</th>
+                            <th>Readiness</th>
+                            <th class="pr-popup-grid__action">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var source in Sources)
+                    {
+                        <tr>
+                            <td>
+                                <span class="pr-popup-grid__primary code-style">@source.WorkOrderNo</span>
+                            </td>
+                            <td>
+                                <span class="pr-popup-grid__primary">@source.ItemCode</span>
+                                <span class="pr-popup-grid__secondary">Lot @(string.IsNullOrWhiteSpace(source.LotNo) ? "—" : source.LotNo)</span>
+                            </td>
+                            <td>
+                                <span class="pr-popup-grid__primary">@source.WorkCentre / @source.Process</span>
+                                <span class="pr-popup-grid__secondary">@(source.LotControl ? "Lot-controlled" : "Non-lot")</span>
+                            </td>
+                            <td class="pr-popup-grid__num pr-popup-grid__num--emphasis">@source.AvailableQty.ToString("n4") @source.Uom</td>
+                            <td>@source.Readiness</td>
+                            <td class="pr-popup-grid__action">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="SELECT"
+                                          Click="@(() => AddSourceAsync(source))"
+                                          Enabled="@(!IsSubmitting)" />
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
             </div>
             <div class="pr-dp-pager">
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"

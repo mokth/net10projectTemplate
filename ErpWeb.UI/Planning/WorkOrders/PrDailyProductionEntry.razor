@@ -364,35 +364,47 @@
                 }
                 else
                 {
-                    <div class="pr-dp-ops">
-                        @foreach (var op in OperationRows)
-                        {
-                            <article class="pr-dp-op">
-                                <div class="pr-dp-op__main">
-                                    <div class="pr-dp-cell">
-                                        <span class="pr-dp-cell__primary code-style">@op.WorkOrderNo</span>
-                                        <span class="pr-dp-cell__secondary">@op.ProductCode · @op.ProductDescription</span>
-                                    </div>
-                                    <div class="pr-dp-cell">
-                                        <span class="pr-dp-cell__primary">@op.WorkCentreCode / @op.OperationCode</span>
-                                        <span class="pr-dp-cell__secondary">Stage @op.StageSequence · Process Seq @op.ProcessSequence · @op.OperationDescription</span>
-                                    </div>
-                                    <div class="pr-dp-cell">
-                                        <span class="pr-dp-cell__primary code-style">@op.OutputItemCode</span>
-                                        <span class="pr-dp-cell__secondary">Planned machine: @(op.SelectedMachineCode ?? "—")</span>
-                                    </div>
-                                    <div class="pr-dp-op__qty">
-                                        <span class="iv-field__label">Planned</span>
-                                        <strong>@op.PlannedOutputQty.ToString("n4") @op.OutputUom</strong>
-                                        <small>Good completed @op.GoodQty.ToString("n4") · Remaining @op.RemainingQty.ToString("n4")</small>
-                                    </div>
-                                </div>
-                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                          Text="SELECT"
-                                          Click="@(() => ApplyOperationAsync(op))"
-                                          Enabled="@(!IsSubmitting)" />
-                            </article>
-                        }
+                    <div class="pr-popup-grid-shell">
+                        <table class="pr-popup-grid">
+                            <thead>
+                                <tr>
+                                    <th>Work Order</th>
+                                    <th>Operation</th>
+                                    <th>Output</th>
+                                    <th class="pr-popup-grid__num">Planned</th>
+                                    <th class="pr-popup-grid__action">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var op in OperationRows)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="pr-popup-grid__primary code-style">@op.WorkOrderNo</span>
+                                        <span class="pr-popup-grid__secondary">@op.ProductCode · @op.ProductDescription</span>
+                                    </td>
+                                    <td>
+                                        <span class="pr-popup-grid__primary">@op.WorkCentreCode / @op.OperationCode</span>
+                                        <span class="pr-popup-grid__secondary">Stage @op.StageSequence · Process Seq @op.ProcessSequence · @op.OperationDescription</span>
+                                    </td>
+                                    <td>
+                                        <span class="pr-popup-grid__primary code-style">@op.OutputItemCode</span>
+                                        <span class="pr-popup-grid__secondary">Planned machine: @(op.SelectedMachineCode ?? "—")</span>
+                                    </td>
+                                    <td class="pr-popup-grid__num">
+                                        <span class="pr-popup-grid__primary">@op.PlannedOutputQty.ToString("n4") @op.OutputUom</span>
+                                        <span class="pr-popup-grid__secondary">Good completed @op.GoodQty.ToString("n4") · Remaining @op.RemainingQty.ToString("n4")</span>
+                                    </td>
+                                    <td class="pr-popup-grid__action">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  Text="SELECT"
+                                                  Click="@(() => ApplyOperationAsync(op))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
                     </div>
                     <div class="pr-dp-pager">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"

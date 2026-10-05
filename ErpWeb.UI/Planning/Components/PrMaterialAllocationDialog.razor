@@ -1,5 +1,6 @@
-<DxPopup HeaderText="Allocate stock" CloseOnOutsideClick="false" CloseOnEscape="false" Width="980px"
-         CssClass="common-popup pr-allocation-popup" ShowFooter="true"
+<DxPopup HeaderText="Allocate stock" CloseOnOutsideClick="false" CloseOnEscape="false"
+         Width="90vw" MaxWidth="1200px" MaxHeight="90vh"
+         CssClass="common-popup pr-allocation-popup pr-popup-grid-dialog" ShowFooter="true"
          Visible="@Visible" VisibleChanged="@OnVisibleChanged">
     <Content>
         <div class="pr-allocation">
@@ -14,26 +15,52 @@
             <p class="pr-allocation__help"><i class="fa-solid fa-circle-info"></i> Auto allocation uses FEFO for expiring lots and FIFO when expiry dates are unavailable.</p>
             @if (IsLoading) { <p class="text-muted">Loading eligible stock…</p> }
             else if (!string.IsNullOrWhiteSpace(DialogError)) { <div class="alert alert-danger">@DialogError</div> }
+            else if (Rows.Count == 0) { <p class="text-muted">No eligible stock is available for this material.</p> }
             else
             {
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle pr-allocation__table">
-                        <thead><tr><th>Warehouse</th><th>Location</th><th>Lot</th><th>Current</th><th>At issue time</th><th>Reserved other IP</th><th>Available</th><th>Expiry</th><th>Stock date</th><th>Suggested</th><th>Allocate</th><th>Base UOM</th>@if (CanViewCost) { <th>Unit cost</th> }</tr></thead>
+                <div class="pr-popup-grid-shell">
+                    <table class="pr-popup-grid pr-popup-grid--wide">
+                        <thead>
+                            <tr>
+                                <th>Warehouse</th>
+                                <th>Location</th>
+                                <th>Lot</th>
+                                <th class="pr-popup-grid__num">Current</th>
+                                <th class="pr-popup-grid__num" title="Quantity at issue time">At issue</th>
+                                <th class="pr-popup-grid__num" title="Reserved by other in-progress issues">Reserved</th>
+                                <th class="pr-popup-grid__num">Available</th>
+                                <th>Expiry</th>
+                                <th>Stock date</th>
+                                <th class="pr-popup-grid__num">Suggested</th>
+                                <th class="pr-popup-grid__allocate">Allocate</th>
+                                <th>UOM</th>
+                                @if (CanViewCost) { <th class="pr-popup-grid__num">Unit cost</th> }
+                            </tr>
+                        </thead>
                         <tbody>
                         @foreach (var row in Rows)
                         {
-                            <tr class="@(row.IssueBaseQty > 0 ? "table-primary" : null)">
-                                <td>@row.Warehouse</td><td>@row.Location</td><td>@(string.IsNullOrWhiteSpace(row.LotNo) ? "—" : row.LotNo)</td>
-                                <td class="text-end">@row.CurrentBaseQty.ToString("n4")</td><td class="text-end">@row.AsOfBaseQty.ToString("n4")</td><td class="text-end">@row.ReservedOtherDraftBaseQty.ToString("n4")</td><td class="text-end fw-semibold">@row.AvailableBaseQty.ToString("n4")</td><td>@DateText(row.ExpiryDate)</td><td>@DateText(row.StockDate)</td>
-                                <td class="text-end">@row.SuggestedBaseQty.ToString("n4")</td>
-                                <td><InputNumber TValue="decimal" class="form-control form-control-sm text-end" @bind-Value="row.IssueBaseQty" min="0" step="0.0001" /></td>
-                                <td>@row.BaseUom</td>@if (CanViewCost) { <td class="text-end">@row.UnitPrice?.ToString("n4")</td> }
+                            <tr class="@(row.IssueBaseQty > 0 ? "is-selected" : null)">
+                                <td>@row.Warehouse</td>
+                                <td>@row.Location</td>
+                                <td>@(string.IsNullOrWhiteSpace(row.LotNo) ? "—" : row.LotNo)</td>
+                                <td class="pr-popup-grid__num">@row.CurrentBaseQty.ToString("n4")</td>
+                                <td class="pr-popup-grid__num">@row.AsOfBaseQty.ToString("n4")</td>
+                                <td class="pr-popup-grid__num">@row.ReservedOtherDraftBaseQty.ToString("n4")</td>
+                                <td class="pr-popup-grid__num pr-popup-grid__num--emphasis">@row.AvailableBaseQty.ToString("n4")</td>
+                                <td>@DateText(row.ExpiryDate)</td>
+                                <td>@DateText(row.StockDate)</td>
+                                <td class="pr-popup-grid__num">@row.SuggestedBaseQty.ToString("n4")</td>
+                                <td class="pr-popup-grid__allocate">
+                                    <InputNumber TValue="decimal" class="form-control form-control-sm text-end" @bind-Value="row.IssueBaseQty" min="0" step="0.0001" />
+                                </td>
+                                <td>@row.BaseUom</td>
+                                @if (CanViewCost) { <td class="pr-popup-grid__num">@row.UnitPrice?.ToString("n4")</td> }
                             </tr>
                         }
                         </tbody>
                     </table>
                 </div>
-                @if (Rows.Count == 0) { <p class="text-muted">No eligible stock is available for this material.</p> }
             }
         </div>
     </Content>
