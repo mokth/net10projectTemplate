@@ -34,6 +34,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             .Options);
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -115,7 +116,9 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
 
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync()).BatchStatus);
-        Assert.Empty(await db.ProductionMaterialMovements.ToListAsync());
+        Assert.Empty(await db.ProductionMaterialMovements
+            .Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .ToListAsync());
     }
 
     [Fact]
@@ -241,12 +244,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     }
 
     private ProductionOutputService CreateOutputService() =>
-        new(
-            _factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            Access().Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
+        ProductionLedgerTestFixture.CreateProductionOutputService(_factory);
 
     private ProductionMaterialIssueService CreateIssueService()
     {
@@ -257,10 +255,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         return new ProductionMaterialIssueService(
             _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)),
             allocation, new RunningNumberService(), new IvStockPostingRepository(),
-            new IvInventoryPostingService(
-                _factory, tenant, access.Object, new IvStockPostingRepository(),
-                new IvStockCommonRepository(_factory), new PoOrderRepository(),
-                NullLogger<IvInventoryPostingService>.Instance));
+            ProductionLedgerTestFixture.CreateInventoryPosting(_factory));
     }
 
     private static Mock<IAccessRightService> Access()
@@ -332,6 +327,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             StdUom = "EA",
             TransDate = new DateTime(2026, 9, 1),
             UnitPrice = 2m,
+            PriceEvidence = ProductionLedgerTestFixture.TestPriceEvidence,
             RowVersion = [1],
         });
         await db.SaveChangesAsync();
@@ -353,6 +349,56 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         order.Operations.Add(first);
         order.Operations.Add(later);
         db.ProductionWorkOrderMaterials.Add(material);
+        var p1Material = new ProductionWorkOrderMaterial
+        {
+            WorkOrder = order,
+            WorkOrderOperation = first,
+            LineNo = 1,
+            ComponentCode = "RM-P1",
+            IssueMethod = PrMaterialIssueMethods.Manual,
+            SupplySource = PrMaterialSupplySources.Purchased,
+            RequiredQty = 100m,
+            RequiredUom = "EA",
+            RequiredBaseQty = 100m,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            WarehouseCode = "WH01",
+            LocationCode = "BIN-A",
+            RowVersion = [1],
+        };
+        db.ProductionWorkOrderMaterials.Add(p1Material);
+        await db.SaveChangesAsync();
+        db.ProductionBalLots.Add(new ProductionBalLot
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Kind = ProductionBalLotKinds.MaterialIn,
+            ItemCode = "RM-P1",
+            Qty = 500m,
+            Uom = "EA",
+            BaseQty = 500m,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            TotalCost = 500m,
+            AverageUnitCost = 1m,
+            WorkOrderId = order.Uid,
+            WorkOrderNo = workOrderNo,
+            WorkOrderMaterialId = p1Material.Uid,
+            WarehouseCode = "WH01",
+            LocationCode = "BIN-A",
+            LotNo = "P1-LOT",
+            LastMovementDate = new DateTime(2026, 9, 30),
+            RowVersion = [1],
+        });
+        await db.SaveChangesAsync();
+        var p1Lot = await db.ProductionBalLots.SingleAsync(x => x.WorkOrderMaterialId == p1Material.Uid);
+        db.ProductionPoolValuationRows.Add(new ProductionPoolValuation
+        {
+            ProductionBalLotId = p1Lot.Uid,
+            Status = ProductionPoolValuationService.Verified,
+            TrackedBaseQty = p1Lot.BaseQty,
+            TrackedValue = p1Lot.TotalCost,
+        });
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
         return new GraphIds(workOrderNo, order.Uid, first.Uid, later.Uid, material.Uid);
@@ -468,6 +514,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     {
         WorkOrder = order,
         WorkOrderOperation = operation,
+        LineNo = 2,
         ComponentCode = "RM001",
         IssueMethod = PrMaterialIssueMethods.Manual,
         SupplySource = PrMaterialSupplySources.Purchased,

@@ -12,12 +12,14 @@ namespace ErpWeb.Core.Production;
 
 public sealed partial class ProductionOutputService : IProductionOutputService
 {
+    internal static Action? TestHookAfterOutputValuation;
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _access;
     private readonly ICurrentDateService _clock;
     private readonly IRunningNumberService _runningNumbers;
-    private readonly IStockPostingCoordinator? _stockCoordinator;
+    private readonly IStockPostingCoordinator _stockCoordinator;
     private readonly IProductionOperationEligibilityService _operationEligibility;
 
     public ProductionOutputService(
@@ -26,7 +28,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         IAccessRightService access,
         ICurrentDateService clock,
         IRunningNumberService runningNumbers,
-        IStockPostingCoordinator? stockCoordinator = null,
+        IStockPostingCoordinator stockCoordinator,
         IProductionOperationEligibilityService? operationEligibility = null)
     {
         _dbFactory = dbFactory;
@@ -34,7 +36,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         _access = access;
         _clock = clock;
         _runningNumbers = runningNumbers;
-        _stockCoordinator = stockCoordinator;
+        _stockCoordinator = stockCoordinator ?? throw new ArgumentNullException(nameof(stockCoordinator));
         _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
     }
 

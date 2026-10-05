@@ -120,19 +120,16 @@ public sealed partial class ProductionOutputService
             await db.SaveChangesAsync(cancellationToken);
 
             StockPostingContext? ledgerContext = null;
-            if (_stockCoordinator is not null)
-            {
-                var originalPostingId = await db.ProductionBalLotMovements.AsNoTracking()
-                    .Where(x => x.ProductionOutputId == output.Uid && x.PostingLinkId == postLink.Uid && x.StockPostingId != null)
-                    .Select(x => x.StockPostingId)
-                    .FirstOrDefaultAsync(cancellationToken);
-                var command = BuildOutputPostingCommand(
-                    output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId);
-                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
-                if (ledger.Error is not null)
-                    return Fail(ledger.Error.Message);
-                ledgerContext = ledger.Context;
-            }
+            var originalPostingId = await db.ProductionBalLotMovements.AsNoTracking()
+                .Where(x => x.ProductionOutputId == output.Uid && x.PostingLinkId == postLink.Uid && x.StockPostingId != null)
+                .Select(x => x.StockPostingId)
+                .FirstOrDefaultAsync(cancellationToken);
+            var command = BuildOutputPostingCommand(
+                output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId);
+            var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+            if (ledger.Error is not null)
+                return Fail(ledger.Error.Message);
+            ledgerContext = ledger.Context;
 
             // Prefix-balance guard for PRODUCE before mutating.
             var produceMovements = await db.ProductionBalLotMovements
@@ -416,7 +413,7 @@ public sealed partial class ProductionOutputService
             {
                 await StampOutputLedgerFactsAsync(
                     ledgerContext, output.Uid, rollbackLink.Uid, order.WorkOrderNo, cancellationToken);
-                await _stockCoordinator!.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+                await _stockCoordinator.CompleteInTransactionAsync(ledgerContext, cancellationToken);
             }
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));

@@ -66,3 +66,25 @@ remain an activation blocker until routed through `ProductionStockWriter`.
 - [x] Production stock-card readers select active-epoch V2 semantics explicitly; inventory card remains V1-compatible with generation-scoped history.
 - [x] Quantity close writes immutable `StockPeriodSnapshotHdr/Line` revisions when an ACTIVE epoch exists.
 - [x] SQL Server atomicity and idempotency tests exist and fail when `ERPWEB_REQUIRE_SQLSERVER_TESTS=1` without a scratch database.
+
+## Production V2 cost gates and cutover
+
+Forward Issue to Production and Daily Production require an ACTIVE V2 epoch, verified cost
+lineage, and a sealed `StockPosting` in the same transaction. Do not backfill `VERIFIED` onto
+legacy production pools. Activation remains a manual DBA step.
+
+Required order:
+
+1. Reverse FG, then later Daily, then earlier Daily/handoffs, then Issue to Production.
+2. Repair inventory `UnitPrice` / `PriceEvidence` on locked `IvBalLoc` rows.
+3. Confirm usable legacy positive `PrProductionBalLot` count is zero (or explicitly quarantined
+   `UNVALUED` and unused by new Daily/FG posting).
+4. `scripts/preflight-production-stock-ledger.sql`
+5. Schema scripts: `scripts/create-stock-posting-ledger.sql`,
+   `scripts/alter-inventory-history-ledger.sql`, `scripts/alter-production-stock-ledger.sql`
+6. `scripts/create-stock-ledger-write-guard.sql` before activation
+7. SQL Server scratch/restored-database release gates
+8. `scripts/activate-stock-ledger-epoch.sql`
+9. `scripts/verify-stock-ledger-cutover.sql`
+10. Repost IP, then Daily in route/process order, then FG
+

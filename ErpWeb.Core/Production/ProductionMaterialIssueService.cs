@@ -12,6 +12,8 @@ namespace ErpWeb.Core.Production;
 
 public sealed partial class ProductionMaterialIssueService : IProductionMaterialIssueService
 {
+    internal static Action? TestHookAfterIssueValuation;
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _access;

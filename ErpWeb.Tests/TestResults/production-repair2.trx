@@ -1,0 +1,152 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="4bba7ba4-6815-445b-b04e-8f258c89c8eb" name="Mokth@MOKTH 2026-10-05 16:09:18" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-05T16:09:18.6640120+08:00" queuing="2026-10-05T16:09:18.6640127+08:00" start="2026-10-05T16:09:09.1082807+08:00" finish="2026-10-05T16:09:26.2286316+08:00" />
+  <TestSettings name="default" id="3a5960f6-a4cd-4ea0-9e8d-6b47bddd9603">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-10-05_16_09_18" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="a5cf848d-5702-42dc-b7f4-05ec4eb86342" testId="c2ef6b0b-3c40-2efe-eab0-13bba5b57a00" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_sealed_replay_from_new_draft_is_reconciliation_failure" computerName="MOKTH" duration="00:00:00.6490397" startTime="2026-10-05T16:09:22.8802292+08:00" endTime="2026-10-05T16:09:23.5289035+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a5cf848d-5702-42dc-b7f4-05ec4eb86342" />
+    <UnitTestResult executionId="8744c73a-d1cf-44a9-a412-f885bced88a9" testId="b5795a25-663a-1624-8e48-fb246cdb1d5f" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_invariant_failure_rolls_back_the_transaction" computerName="MOKTH" duration="00:00:00.6386607" startTime="2026-10-05T16:09:23.5292016+08:00" endTime="2026-10-05T16:09:24.1677617+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8744c73a-d1cf-44a9-a412-f885bced88a9" />
+    <UnitTestResult executionId="d6aa16f6-90a2-41c0-8b98-e144f1ecc06e" testId="d4ee0f95-67e0-428e-9b6b-4a7218805b85" testName="ErpWeb.Tests.Production.Transaction.ProductionOutputEntryServiceTests.Signed_lot_consumption_still_blocks_rollback_when_projected_good_stays_positive" computerName="MOKTH" duration="00:00:06.1979874" startTime="2026-10-05T16:09:11.9815036+08:00" endTime="2026-10-05T16:09:18.1624005+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d6aa16f6-90a2-41c0-8b98-e144f1ecc06e" />
+    <UnitTestResult executionId="d7cc873d-380c-480f-8037-5b75e75d9b65" testId="8f645098-cbb2-f82f-8e7d-781c9ab70522" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_invariant_and_ledger_failures_roll_back" computerName="MOKTH" duration="00:00:00.4198480" startTime="2026-10-05T16:09:25.3415395+08:00" endTime="2026-10-05T16:09:25.7612354+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d7cc873d-380c-480f-8037-5b75e75d9b65" />
+    <UnitTestResult executionId="d7dc602b-7271-46e2-8105-2817d3ca0e06" testId="28119c9c-74c0-75c3-652b-82064da0d7df" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_sealed_replay_from_new_draft_is_reconciliation_failure" computerName="MOKTH" duration="00:00:00.3589030" startTime="2026-10-05T16:09:25.7615635+08:00" endTime="2026-10-05T16:09:26.1203988+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d7dc602b-7271-46e2-8105-2817d3ca0e06" />
+    <UnitTestResult executionId="2287540e-fea4-41c3-ae58-381d4ee8a167" testId="28c4a2b7-4036-9d4a-9576-da6e55e6c551" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_success_creates_sealed_verified_consume_and_produce_lineage" computerName="MOKTH" duration="00:00:00.7819495" startTime="2026-10-05T16:09:19.5551069+08:00" endTime="2026-10-05T16:09:20.3330565+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2287540e-fea4-41c3-ae58-381d4ee8a167" />
+    <UnitTestResult executionId="9ad360cb-d662-440c-97f2-b36d3b12d511" testId="cc85ad70-97b2-3210-5840-13a973c46c34" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_rejects_missing_negative_and_blank_cost_evidence_and_allows_evidenced_zero" computerName="MOKTH" duration="00:00:00.7666392" startTime="2026-10-05T16:09:24.1680679+08:00" endTime="2026-10-05T16:09:24.9346398+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9ad360cb-d662-440c-97f2-b36d3b12d511" />
+    <UnitTestResult executionId="e0ba21b9-50d3-43f5-96d9-94ed722045a3" testId="ec2af765-be90-9a37-9abe-d5b3876408dd" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_stock_ledger_exception_is_a_controlled_rollback" computerName="MOKTH" duration="00:00:00.6548272" startTime="2026-10-05T16:09:20.9644382+08:00" endTime="2026-10-05T16:09:21.6187619+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e0ba21b9-50d3-43f5-96d9-94ed722045a3" />
+    <UnitTestResult executionId="fe956d11-9b72-48b8-911d-349137ca1e8e" testId="92977774-db2d-1212-39d9-34c1e492964e" testName="ErpWeb.Tests.Production.Transaction.ProductionProcessHandoffServiceTests.Posting_process1_stages_handoff_and_process2_is_capped_by_available" computerName="MOKTH" duration="00:00:06.0811607" startTime="2026-10-05T16:09:11.9830262+08:00" endTime="2026-10-05T16:09:18.0495040+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="fe956d11-9b72-48b8-911d-349137ca1e8e" />
+    <UnitTestResult executionId="840813b3-7c39-4a1a-bb60-8ebf647825d6" testId="86b5982a-a15a-4371-0839-3c8a6484f325" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_success_creates_sealed_verified_issue_lineage" computerName="MOKTH" duration="00:00:00.6303662" startTime="2026-10-05T16:09:20.3334502+08:00" endTime="2026-10-05T16:09:20.9637012+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="840813b3-7c39-4a1a-bb60-8ebf647825d6" />
+    <UnitTestResult executionId="1fcba003-a84f-46e9-9839-51bdda384a3e" testId="cced04a3-c7a2-f975-5cc3-bba3a3c8cebd" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent" computerName="MOKTH" duration="00:00:06.6356994" startTime="2026-10-05T16:09:11.9829707+08:00" endTime="2026-10-05T16:09:18.6138200+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1fcba003-a84f-46e9-9839-51bdda384a3e">
+      <Output>
+        <ErrorInfo>
+          <Message>Posting conflicted with another change; reload and retry.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent() in C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs:line 493&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent() in C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs:line 505&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1030a375-3deb-4828-be13-654bd5e96a00" testId="60f60040-0016-f2ff-7c07-1343f5426686" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_without_active_epoch_fails_before_production_mutation" computerName="MOKTH" duration="00:00:00.4062741" startTime="2026-10-05T16:09:24.9349902+08:00" endTime="2026-10-05T16:09:25.3411626+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1030a375-3deb-4828-be13-654bd5e96a00" />
+    <UnitTestResult executionId="76368f92-3226-41d8-840c-e8b79fe86467" testId="e8cb9e66-4736-4a44-f31f-e58b8fbfb733" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_rejects_missing_unvalued_and_mismatched_pools_and_zero_cost_basis" computerName="MOKTH" duration="00:00:00.6423435" startTime="2026-10-05T16:09:22.2373717+08:00" endTime="2026-10-05T16:09:22.8797674+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="76368f92-3226-41d8-840c-e8b79fe86467" />
+    <UnitTestResult executionId="ffac08b4-0d72-4b8a-9655-993f2867fb67" testId="e85b4321-3037-1559-6528-0c13c16c5e53" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Rollback_then_edit_qty_and_repost_preserves_historical_batch_details" computerName="MOKTH" duration="00:00:00.9356925" startTime="2026-10-05T16:09:18.6411779+08:00" endTime="2026-10-05T16:09:19.5496666+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ffac08b4-0d72-4b8a-9655-993f2867fb67">
+      <Output>
+        <ErrorInfo>
+          <Message>Posting conflicted with another change; reload and retry.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Rollback_then_edit_qty_and_repost_preserves_historical_batch_details() in C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs:line 585&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="87cb01d1-273e-4335-a460-374eadfd3fac" testId="2cfad309-4758-20b6-28bf-822bde5c07b2" testName="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_without_active_epoch_fails_before_stock_mutation" computerName="MOKTH" duration="00:00:00.6181403" startTime="2026-10-05T16:09:21.6191084+08:00" endTime="2026-10-05T16:09:22.2371000+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="87cb01d1-273e-4335-a460-374eadfd3fac" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_without_active_epoch_fails_before_stock_mutation" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2cfad309-4758-20b6-28bf-822bde5c07b2">
+      <Execution id="87cb01d1-273e-4335-a460-374eadfd3fac" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_without_active_epoch_fails_before_stock_mutation" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_success_creates_sealed_verified_consume_and_produce_lineage" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="28c4a2b7-4036-9d4a-9576-da6e55e6c551">
+      <Execution id="2287540e-fea4-41c3-ae58-381d4ee8a167" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Daily_success_creates_sealed_verified_consume_and_produce_lineage" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_without_active_epoch_fails_before_production_mutation" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="60f60040-0016-f2ff-7c07-1343f5426686">
+      <Execution id="1030a375-3deb-4828-be13-654bd5e96a00" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Daily_without_active_epoch_fails_before_production_mutation" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_sealed_replay_from_new_draft_is_reconciliation_failure" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c2ef6b0b-3c40-2efe-eab0-13bba5b57a00">
+      <Execution id="a5cf848d-5702-42dc-b7f4-05ec4eb86342" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_sealed_replay_from_new_draft_is_reconciliation_failure" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_rejects_missing_unvalued_and_mismatched_pools_and_zero_cost_basis" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="e8cb9e66-4736-4a44-f31f-e58b8fbfb733">
+      <Execution id="76368f92-3226-41d8-840c-e8b79fe86467" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Daily_rejects_missing_unvalued_and_mismatched_pools_and_zero_cost_basis" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_success_creates_sealed_verified_issue_lineage" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="86b5982a-a15a-4371-0839-3c8a6484f325">
+      <Execution id="840813b3-7c39-4a1a-bb60-8ebf647825d6" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_success_creates_sealed_verified_issue_lineage" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionProcessHandoffServiceTests.Posting_process1_stages_handoff_and_process2_is_capped_by_available" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="92977774-db2d-1212-39d9-34c1e492964e">
+      <Execution id="fe956d11-9b72-48b8-911d-349137ca1e8e" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionProcessHandoffServiceTests" name="Posting_process1_stages_handoff_and_process2_is_capped_by_available" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_invariant_failure_rolls_back_the_transaction" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="b5795a25-663a-1624-8e48-fb246cdb1d5f">
+      <Execution id="8744c73a-d1cf-44a9-a412-f885bced88a9" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_invariant_failure_rolls_back_the_transaction" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_stock_ledger_exception_is_a_controlled_rollback" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="ec2af765-be90-9a37-9abe-d5b3876408dd">
+      <Execution id="e0ba21b9-50d3-43f5-96d9-94ed722045a3" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_stock_ledger_exception_is_a_controlled_rollback" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Ip_rejects_missing_negative_and_blank_cost_evidence_and_allows_evidenced_zero" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="cc85ad70-97b2-3210-5840-13a973c46c34">
+      <Execution id="9ad360cb-d662-440c-97f2-b36d3b12d511" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Ip_rejects_missing_negative_and_blank_cost_evidence_and_allows_evidenced_zero" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_sealed_replay_from_new_draft_is_reconciliation_failure" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="28119c9c-74c0-75c3-652b-82064da0d7df">
+      <Execution id="d7dc602b-7271-46e2-8105-2817d3ca0e06" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Daily_sealed_replay_from_new_draft_is_reconciliation_failure" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionOutputEntryServiceTests.Signed_lot_consumption_still_blocks_rollback_when_projected_good_stays_positive" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d4ee0f95-67e0-428e-9b6b-4a7218805b85">
+      <Execution id="d6aa16f6-90a2-41c0-8b98-e144f1ecc06e" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionOutputEntryServiceTests" name="Signed_lot_consumption_still_blocks_rollback_when_projected_good_stays_positive" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Rollback_then_edit_qty_and_repost_preserves_historical_batch_details" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="e85b4321-3037-1559-6528-0c13c16c5e53">
+      <Execution id="ffac08b4-0d72-4b8a-9655-993f2867fb67" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests" name="Rollback_then_edit_qty_and_repost_preserves_historical_batch_details" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="cced04a3-c7a2-f975-5cc3-bba3a3c8cebd">
+      <Execution id="1fcba003-a84f-46e9-9839-51bdda384a3e" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests" name="Post_creates_inventory_and_production_facts_and_replay_is_idempotent" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests.Daily_invariant_and_ledger_failures_roll_back" storage="c:\wincom\net10projects\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8f645098-cbb2-f82f-8e7d-781c9ab70522">
+      <Execution id="d7cc873d-380c-480f-8037-5b75e75d9b65" />
+      <TestMethod codeBase="C:\wincom\net10projects\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionCostGateTests" name="Daily_invariant_and_ledger_failures_roll_back" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="c2ef6b0b-3c40-2efe-eab0-13bba5b57a00" executionId="a5cf848d-5702-42dc-b7f4-05ec4eb86342" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b5795a25-663a-1624-8e48-fb246cdb1d5f" executionId="8744c73a-d1cf-44a9-a412-f885bced88a9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d4ee0f95-67e0-428e-9b6b-4a7218805b85" executionId="d6aa16f6-90a2-41c0-8b98-e144f1ecc06e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8f645098-cbb2-f82f-8e7d-781c9ab70522" executionId="d7cc873d-380c-480f-8037-5b75e75d9b65" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="28119c9c-74c0-75c3-652b-82064da0d7df" executionId="d7dc602b-7271-46e2-8105-2817d3ca0e06" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="28c4a2b7-4036-9d4a-9576-da6e55e6c551" executionId="2287540e-fea4-41c3-ae58-381d4ee8a167" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="cc85ad70-97b2-3210-5840-13a973c46c34" executionId="9ad360cb-d662-440c-97f2-b36d3b12d511" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ec2af765-be90-9a37-9abe-d5b3876408dd" executionId="e0ba21b9-50d3-43f5-96d9-94ed722045a3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="92977774-db2d-1212-39d9-34c1e492964e" executionId="fe956d11-9b72-48b8-911d-349137ca1e8e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="86b5982a-a15a-4371-0839-3c8a6484f325" executionId="840813b3-7c39-4a1a-bb60-8ebf647825d6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="cced04a3-c7a2-f975-5cc3-bba3a3c8cebd" executionId="1fcba003-a84f-46e9-9839-51bdda384a3e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="60f60040-0016-f2ff-7c07-1343f5426686" executionId="1030a375-3deb-4828-be13-654bd5e96a00" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e8cb9e66-4736-4a44-f31f-e58b8fbfb733" executionId="76368f92-3226-41d8-840c-e8b79fe86467" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e85b4321-3037-1559-6528-0c13c16c5e53" executionId="ffac08b4-0d72-4b8a-9655-993f2867fb67" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2cfad309-4758-20b6-28bf-822bde5c07b2" executionId="87cb01d1-273e-4335-a460-374eadfd3fac" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="15" executed="15" passed="13" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.12)&#xD;
+[xUnit.net 00:00:01.80]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.10]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.13]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:08.81]       Posting conflicted with another change; reload and retry.&#xD;
+[xUnit.net 00:00:08.82]       Stack Trace:&#xD;
+[xUnit.net 00:00:08.82]         C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs(493,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent()&#xD;
+[xUnit.net 00:00:08.82]         C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs(505,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent()&#xD;
+[xUnit.net 00:00:08.82]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:09.74]       Posting conflicted with another change; reload and retry.&#xD;
+[xUnit.net 00:00:09.75]       Stack Trace:&#xD;
+[xUnit.net 00:00:09.75]         C:\wincom\net10projects\ErpWeb.Tests\Production\Transaction\ProductionMaterialAllocationTests.cs(585,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Rollback_then_edit_qty_and_repost_preserves_historical_batch_details()&#xD;
+[xUnit.net 00:00:09.75]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:16.32]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-10-05T16:09:18.6191047+08:00">
+        <Text>[xUnit.net 00:00:08.81]     ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Post_creates_inventory_and_production_facts_and_replay_is_idempotent [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-10-05T16:09:19.5511144+08:00">
+        <Text>[xUnit.net 00:00:09.74]     ErpWeb.Tests.Production.Transaction.ProductionMaterialAllocationTests.Rollback_then_edit_qty_and_repost_preserves_historical_batch_details [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

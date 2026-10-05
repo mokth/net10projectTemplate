@@ -30,6 +30,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
 
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -173,7 +174,11 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         Assert.Contains("final process must be the last process", posted.Message, StringComparison.OrdinalIgnoreCase);
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.ProductionBalLots.Where(x => x.WorkOrderId == graph.OrderId).ToListAsync());
+        Assert.Empty(await db.ProductionBalLots
+            .Where(x => x.WorkOrderId == graph.OrderId && x.Kind != ProductionBalLotKinds.MaterialIn)
+            .ToListAsync());
+        Assert.Equal(1000m, (await db.ProductionBalLots.SingleAsync(x =>
+            x.WorkOrderId == graph.OrderId && x.Kind == ProductionBalLotKinds.MaterialIn)).Qty);
         Assert.Equal(ProductionOutputStatuses.New,
             (await db.ProductionOutputs.SingleAsync(x => x.Uid == created.Data.Uid)).Status);
     }
@@ -377,16 +382,12 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         await using (var db = await factory.CreateDbContextAsync())
         {
             await db.Database.EnsureCreatedAsync();
+            await ProductionLedgerTestFixture.SeedActiveEpochAsync(db);
         }
 
         var graph = await SeedTwoProcessOnFactoryAsync(factory, "WO-SQL-H");
         await SetPlannedOutputAsync(factory, graph.Process1Id, 15m);
-        var sut = new ProductionOutputService(
-            factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            AllowDailyAccessOnly().Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
+        var sut = ProductionLedgerTestFixture.CreateProductionOutputService(factory);
 
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 10m)).Succeeded);
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 5m,
@@ -406,10 +407,14 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     {
         await using var db = await _factory.CreateDbContextAsync();
         var handoffs = await db.ProductionBalLots
-            .Where(x => x.WorkOrderId == orderId && x.ProducingRouteStepId == null)
+            .Where(x => x.WorkOrderId == orderId
+                && x.Kind != ProductionBalLotKinds.MaterialIn
+                && x.ProducingRouteStepId == null)
             .ToListAsync();
         var routes = await db.ProductionBalLots
-            .Where(x => x.WorkOrderId == orderId && x.ProducingRouteStepId != null)
+            .Where(x => x.WorkOrderId == orderId
+                && x.Kind != ProductionBalLotKinds.MaterialIn
+                && x.ProducingRouteStepId != null)
             .ToListAsync();
         Assert.Equal(expectedHandoffQty, handoffs.Sum(x => x.Qty));
         Assert.Equal(expectedRouteQty, routes.Sum(x => x.Qty));
@@ -425,6 +430,14 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         var operation = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == operationId);
         operation.PlannedOutputQty = plannedOutputQty;
         operation.RemainingQty = IvQty.Round(Math.Max(plannedOutputQty - operation.GoodQty, 0m));
+        var materials = await db.ProductionWorkOrderMaterials
+            .Where(x => x.WorkOrderOperationId == operationId)
+            .ToListAsync();
+        foreach (var material in materials)
+        {
+            material.RequiredQty = plannedOutputQty;
+            material.RequiredBaseQty = IvQty.Round(plannedOutputQty * material.ConversionFactorToBase);
+        }
         await db.SaveChangesAsync();
     }
 
@@ -449,12 +462,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     }
 
     private ProductionOutputService CreateService() =>
-        new(
-            _factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            AllowDailyAccessOnly().Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
+        ProductionLedgerTestFixture.CreateProductionOutputService(_factory);
 
     private static Mock<IAccessRightService> AllowDailyAccessOnly()
     {
@@ -587,6 +595,47 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
             await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
         db.ProductionWorkOrders.Add(order);
         await db.SaveChangesAsync();
+        var p1Material = new ProductionWorkOrderMaterial
+        {
+            WorkOrder = order,
+            WorkOrderOperation = ops[0],
+            ComponentCode = "RM-P1",
+            IssueMethod = PrMaterialIssueMethods.Manual,
+            SupplySource = PrMaterialSupplySources.Purchased,
+            RequiredQty = 500m,
+            RequiredBaseQty = 500m,
+            RequiredUom = "EA",
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            RowVersion = [1],
+        };
+        db.ProductionWorkOrderMaterials.Add(p1Material);
+        await db.SaveChangesAsync();
+        var lot = new ProductionBalLot
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Kind = ProductionBalLotKinds.MaterialIn,
+            ItemCode = "RM-P1",
+            Qty = 1000m,
+            Uom = "EA",
+            BaseQty = 1000m,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            TotalCost = 1000m,
+            AverageUnitCost = 1m,
+            WorkOrderId = order.Uid,
+            WorkOrderNo = workOrderNo,
+            WorkOrderMaterialId = p1Material.Uid,
+            WarehouseCode = "WH01",
+            LocationCode = "BIN-A",
+            LotNo = "P1-LOT",
+            LastMovementDate = new DateTime(2026, 9, 30),
+            RowVersion = [1],
+        };
+        db.ProductionBalLots.Add(lot);
+        await db.SaveChangesAsync();
+        await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, lot);
         if (db.Database.IsSqlite())
             await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
 

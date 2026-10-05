@@ -193,6 +193,29 @@ public sealed class FinishedGoodReceiptSqlServerTests
         Assert.False((await f.Service.PostAsync(new(draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()))).Succeeded);
     }
 
+    [Fact]
+    public async Task Missing_production_location_is_not_ready_and_cannot_post()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        await using (var db = await f.Factory.CreateDbContextAsync())
+        {
+            var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId);
+            lot.ProductionLocationId = null;
+            await db.SaveChangesAsync();
+        }
+
+        var search = await f.Service.SearchSourcesAsync(new());
+        Assert.True(search.Succeeded, search.Message);
+        var row = Assert.Single(search.Data!.Rows, x => x.Id == f.PoolId);
+        Assert.Contains("production location", row.Readiness, StringComparison.OrdinalIgnoreCase);
+
+        var draft = await f.Service.SaveAsync(f.Draft(1));
+        Assert.True(draft.Succeeded, draft.Message);
+        var posted = await f.Service.PostAsync(new(draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(posted.Succeeded);
+        Assert.Contains("production location", posted.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class FailureWriter(Func<bool> fail) : IProductionStockWriter
     {
         public async Task<IReadOnlyList<ProductionBalLotMovement>> ApplyAsync(StockPostingContext context, IReadOnlyCollection<ProductionStockLeg> legs, CancellationToken cancellationToken = default)

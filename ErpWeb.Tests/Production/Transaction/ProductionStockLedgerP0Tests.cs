@@ -28,6 +28,7 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
             .Options);
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -271,6 +272,32 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
         db.ProductionOutputs.Add(output);
         await db.SaveChangesAsync();
         link.ProductionDocumentLineId = output.Uid;
+        var woMaterials = await db.ProductionWorkOrderMaterials
+            .Where(x => x.WorkOrderId == order.Uid)
+            .OrderBy(x => x.LineNo)
+            .ToListAsync();
+        foreach (var material in woMaterials)
+        {
+            db.ProductionOutputMaterials.Add(new ProductionOutputMaterial
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                ProductionOutputId = output.Uid,
+                WorkOrderMaterialId = material.Uid,
+                ComponentCode = material.ComponentCode,
+                RequiredUom = material.RequiredUom ?? "EA",
+                SupplySource = material.SupplySource,
+                IssueMethod = material.IssueMethod,
+                WoBomRequiredQty = material.RequiredQty,
+                ConversionFactorToBase = material.ConversionFactorToBase,
+                BaseUom = material.BaseUom,
+                StandardQty = material.RequiredQty,
+                ConsumeQty = material.RequiredQty,
+                CreatedDate = new DateTime(2026, 10, 1),
+                CreatedBy = "admin",
+                RowVersion = [1],
+            });
+        }
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
         return new Fixture(order.Uid, route.Uid, output.Uid);
@@ -305,23 +332,12 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
             LastMovementDate = new DateTime(2026, 9, 30),
         });
         await db.SaveChangesAsync();
+        var lot = await db.ProductionBalLots.OrderByDescending(x => x.Uid).FirstAsync();
+        await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, lot);
     }
 
-    private ProductionOutputService CreateService()
-    {
-        var access = new Mock<IAccessRightService>();
-        access.Setup(x => x.CanAsync(
-                MenuCodes.PlanningDailyProduction,
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        return new ProductionOutputService(
-            _factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            access.Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
-    }
+    private ProductionOutputService CreateService() =>
+        ProductionLedgerTestFixture.CreateProductionOutputService(_factory);
 
     public async ValueTask DisposeAsync() => await _connection.DisposeAsync();
 

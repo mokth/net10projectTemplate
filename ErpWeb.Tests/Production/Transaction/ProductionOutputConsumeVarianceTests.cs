@@ -34,6 +34,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         db.PrMachines.Add(new PrMachine { CompCode = "DEMO", BranchCode = "HQ", MachineCd = "MC1", ProcessCd = "OP10", MachineDes = "Line 1", Active = true });
         db.PrOperators.Add(new PrOperator { CompanyCode = "DEMO", BranchCode = "HQ", Code = "OP1", Name = "Active operator", Active = true });
         db.SaveChanges();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -402,12 +403,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
     }
 
     private ProductionOutputService CreateService(string company = "DEMO", string branch = "HQ") =>
-        new(
-            _factory,
-            InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch),
-            Allow(MenuCodes.PlanningDailyProduction),
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
+        ProductionLedgerTestFixture.CreateProductionOutputService(_factory, company, branch, Allow(MenuCodes.PlanningDailyProduction));
 
     private ProductionMaterialConsumeVarianceInquiryService CreateInquiry(string branch = "HQ") =>
         new(
@@ -465,6 +461,8 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
             RowVersion = [1],
         });
         await db.SaveChangesAsync();
+        var lot = await db.ProductionBalLots.OrderByDescending(x => x.Uid).FirstAsync();
+        await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, lot);
     }
 
     private async Task<ProductionOutput> CreatePostedHeaderAsync(AppDbContext db, GraphIds graph, string documentNo)

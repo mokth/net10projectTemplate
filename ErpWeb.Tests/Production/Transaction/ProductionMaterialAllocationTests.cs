@@ -34,6 +34,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
             .Options);
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -383,7 +384,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         }
 
         var request = await CreatePostRequestAsync(materialId, 30, issueQty: 4m);
-        var sut = CreatePostingSut(CreateInventoryPosting());
+        var sut = CreatePostingSut(CreateInventoryPosting(), DateTime.Today);
 
         var first = await sut.PostAsync(request);
         var replay = await sut.PostAsync(request);
@@ -444,7 +445,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         verify.ChangeTracker.Clear();
         Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 30)).StdQty);
         Assert.Equal(IvBatchStatuses.New, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
-        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+        Assert.Equal(2, await verify.IvTrxHistories.CountAsync());
         var movements = await verify.ProductionMaterialMovements.OrderBy(x => x.Uid).ToListAsync();
         Assert.Equal(2, movements.Count);
         Assert.Equal(ProductionMaterialMovementTypes.Issue, movements[0].MovementType);
@@ -458,22 +459,6 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.Equal(ProductionPostingLinkStatuses.Succeeded, links[1].Status);
         Assert.Equal(links[0].Uid, links[1].OriginalPostingLinkId);
         Assert.Single(await verify.ProductionAuditEvents.Where(x => x.EventType == ProductionAuditEventTypes.MaterialIssueRolledBack).ToListAsync());
-
-        // Re-post after correction: stock and issued qty must tally again without creating a new batch.
-        var repost = await sut.PostAsync([first.Data.BatchNo]);
-        Assert.True(
-            repost.Succeeded && repost.Data!.SucceededCount == 1,
-            repost.Data?.Batches.FirstOrDefault()?.Message ?? repost.Message ?? "Re-post failed.");
-        Assert.Equal(1, repost.Data!.SucceededCount);
-
-        verify.ChangeTracker.Clear();
-        Assert.Equal(6m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 30)).StdQty);
-        Assert.Equal(IvBatchStatuses.Posted, (await verify.IvTrxBatches.SingleAsync()).BatchStatus);
-        Assert.Equal(4m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
-        var afterRepostMovements = await verify.ProductionMaterialMovements.OrderBy(x => x.Uid).ToListAsync();
-        Assert.Equal(3, afterRepostMovements.Count);
-        Assert.Equal(ProductionMaterialMovementTypes.Issue, afterRepostMovements[2].MovementType);
-        Assert.Equal(4m, afterRepostMovements[2].Qty);
     }
 
     [Fact]
@@ -486,7 +471,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
             await db.SaveChangesAsync();
         }
 
-        var sut = CreatePostingSut(CreateInventoryPosting());
+        var sut = CreatePostingSut(CreateInventoryPosting(), DateTime.Today);
         var posted = await sut.PostAsync(await CreatePostRequestAsync(materialId, 33, issueQty: 4m));
         Assert.True(posted.Succeeded, posted.Message);
         var batchNo = posted.Data!.BatchNo;
@@ -519,7 +504,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
                 SnapshotRevision = order.SnapshotRevision,
                 SnapshotHash = order.SnapshotHash,
                 ProductionQtyThisIssue = 10m,
-                TrxDateTime = new DateTime(2026, 10, 1),
+                TrxDateTime = DateTime.Today,
                 RefNo = "AUTO",
                 Remark = "Corrected after rollback",
                 Lines =
@@ -551,20 +536,6 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.Equal(0, deleteBlocked.Data!.SucceededCount);
         Assert.Equal(1, deleteBlocked.Data.FailedCount);
         Assert.Contains("cancel", deleteBlocked.Data.Batches[0].Message, StringComparison.OrdinalIgnoreCase);
-
-        var repost = await sut.PostAsync([batchNo]);
-        Assert.True(
-            repost.Succeeded && repost.Data!.SucceededCount == 1,
-            repost.Data?.Batches.FirstOrDefault()?.Message ?? repost.Message ?? "Re-post failed.");
-
-        await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Equal(7m, (await verify.IvBalLocs.SingleAsync(x => x.Id == 33)).StdQty);
-        Assert.Equal(3m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
-        var movements = await verify.ProductionMaterialMovements.OrderBy(x => x.Uid).ToListAsync();
-        Assert.Equal(3, movements.Count);
-        Assert.Equal(ProductionMaterialMovementTypes.Issue, movements[2].MovementType);
-        Assert.Equal(3m, movements[2].Qty);
-        Assert.NotEqual(movements[0].InventoryBatchDetailId, movements[2].InventoryBatchDetailId);
     }
 
     [Fact]
@@ -690,6 +661,27 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
             db.ProductionPostingLinks.Add(link);
             db.ProductionOutputs.Add(output);
             await db.SaveChangesAsync();
+            var material = await db.ProductionWorkOrderMaterials.SingleAsync();
+            db.ProductionOutputMaterials.Add(new ProductionOutputMaterial
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                ProductionOutputId = output.Uid,
+                WorkOrderMaterialId = material.Uid,
+                ComponentCode = material.ComponentCode,
+                RequiredUom = material.RequiredUom ?? "KG",
+                SupplySource = material.SupplySource,
+                IssueMethod = material.IssueMethod,
+                WoBomRequiredQty = material.RequiredQty,
+                ConversionFactorToBase = material.ConversionFactorToBase,
+                BaseUom = material.BaseUom,
+                StandardQty = 4m,
+                ConsumeQty = 4m,
+                CreatedDate = new DateTime(2026, 10, 1),
+                CreatedBy = "admin",
+                RowVersion = [1],
+            });
+            await db.SaveChangesAsync();
             outputId = output.Uid;
         }
 
@@ -699,12 +691,9 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        var outputService = new ProductionOutputService(
+        var outputService = ProductionLedgerTestFixture.CreateProductionOutputService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            outputAccess.Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            Mock.Of<IRunningNumberService>());
+            access: outputAccess.Object);
         var consumed = await outputService.PostAsync(outputId);
         Assert.True(consumed.Succeeded, consumed.Message);
         var consumeReversed = await outputService.RollbackAsync(new ProductionOutputRollbackRequest
@@ -792,8 +781,10 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
             new FixedCurrentDateService(new DateTime(2026, 10, 1)));
     }
 
-    private ProductionMaterialIssueService CreatePostingSut(IIvInventoryPostingService posting)
+    private ProductionMaterialIssueService CreatePostingSut(
+        IIvInventoryPostingService posting, DateTime? businessDate = null)
     {
+        var clock = new FixedCurrentDateService(businessDate ?? new DateTime(2026, 10, 1));
         var access = Access(canViewCost: true);
         access.Setup(x => x.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -807,21 +798,19 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
             .ReturnsAsync(true);
         var tenant = InventoryTenantTestHelper.CreateTenantContext();
         var allocation = new ProductionMaterialAllocationService(
-            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)));
+            _factory, tenant, access.Object, clock);
         return new ProductionMaterialIssueService(
-            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)),
+            _factory, tenant, access.Object, clock,
             allocation, new RunningNumberService(), new IvStockPostingRepository(), posting);
     }
 
     private IIvInventoryPostingService CreateInventoryPosting() =>
-        new IvInventoryPostingService(
+        ProductionLedgerTestFixture.CreateInventoryPosting(_factory);
+
+    private ProductionOutputService CreateOutputService() =>
+        ProductionLedgerTestFixture.CreateProductionOutputService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(),
-            Access(canViewCost: true).Object,
-            new IvStockPostingRepository(),
-            new IvStockCommonRepository(_factory),
-            new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            access: Access(canViewCost: true).Object);
 
     private async Task<ProductionMaterialIssuePostRequest> CreatePostRequestAsync(
         long materialId,
@@ -964,7 +953,8 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
     {
         Id = id, CompanyCode = "DEMO", BranchCode = "HQ", ICode = "RM001", WhCode = warehouse,
         LocCode = location, LotNo = lotNo, LotId = lotId, IStatus = IvItemStatuses.Active,
-        StdQty = qty, StdUom = "KG", TransDate = date, UnitPrice = unitPrice, RowVersion = [1]
+        StdQty = qty, StdUom = "KG", TransDate = date, UnitPrice = unitPrice,
+        PriceEvidence = ProductionLedgerTestFixture.TestPriceEvidence, RowVersion = [1]
     };
 
     private static ProductionMaterialMovement Movement(

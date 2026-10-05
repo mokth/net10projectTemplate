@@ -28,7 +28,6 @@ public sealed partial class ProductionOutputService
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
-            StockPostingContext? ledgerContext = null;
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
@@ -66,14 +65,15 @@ public sealed partial class ProductionOutputService
             if (!sequence.IsEligible)
                 return Fail(sequence.BlockingReason!);
 
-            if (_stockCoordinator is not null)
-            {
-                var command = BuildOutputPostingCommand(
-                    output, reversal: false, output.ProductionDate, null, null);
-                var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
-                if (ledger.Error is not null) return Fail(ledger.Error.Message);
-                ledgerContext = ledger.Context;
-            }
+            var command = BuildOutputPostingCommand(
+                output, reversal: false, output.ProductionDate, null, null);
+            var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+            if (ledger.Error is not null) return Fail(ledger.Error.Message);
+            if (ledger.WasReplay)
+                return Fail("A sealed V2 posting already exists for this Daily Production request, but the Production document is not marked posted. Posting was not repeated. Run posting reconciliation.");
+            if (!ledger.LedgerEnabled || ledger.Context is null)
+                return Fail("Daily Production requires an active V2 stock ledger for this company/branch.");
+            var ledgerContext = ledger.Context;
 
             var siblings = await db.ProductionWorkOrderOperations
                 .Where(x => x.RouteStepId == routeStep.Uid)
@@ -257,6 +257,29 @@ public sealed partial class ProductionOutputService
                 if (remainingBase > 0m)
                     return Fail($"Insufficient production balance for {material.ComponentCode}.");
             }
+
+            var consumedLots = consumeFacts
+                .Select(x => x.Lot)
+                .Concat(
+                    handoffLot is not null && handoffConsumeBase > 0m
+                        ? [handoffLot]
+                        : [])
+                .DistinctBy(x => x.Uid)
+                .OrderBy(x => x.Uid)
+                .ToList();
+            foreach (var lot in consumedLots)
+            {
+                if (await ProductionCostReadiness.PoolValuationError(db, lot, cancellationToken) is { } poolError)
+                    return Fail(poolError);
+            }
+
+            var willProducePool =
+                (producesHandoff && output.GoodQty > 0m && producerContract is not null)
+                || (operation.IsFinalOperation
+                    && output.GoodQty > 0m
+                    && routeStep.OutputType is PrRouteOutputTypes.WipStocked or PrRouteOutputTypes.FinishedGoods);
+            if (willProducePool && consumedLots.Count == 0)
+                return Fail("Daily Production has Good Qty but no verified consumed cost basis. Posting would create an UNVALUED production pool.");
 
             link.Status = ProductionPostingLinkStatuses.Pending;
             await db.SaveChangesAsync(cancellationToken);
@@ -466,6 +489,13 @@ public sealed partial class ProductionOutputService
                     order.PlannedQty, order.GoodQty, order.ApprovedVarianceQty);
             }
 
+            await db.SaveChangesAsync(cancellationToken);
+            await StampOutputLedgerFactsAsync(
+                ledgerContext, output.Uid, link.Uid, order.WorkOrderNo, cancellationToken);
+            TestHookAfterOutputValuation?.Invoke();
+            await ProductionPostingInvariant.AssertOutputVerifiedAsync(
+                ledgerContext, output.Uid, link.Uid, cancellationToken);
+
             var fromStatus = order.Status;
             if (order.Status == ProductionWorkOrderStatuses.Released)
                 order.Status = ProductionWorkOrderStatuses.InProgress;
@@ -491,18 +521,24 @@ public sealed partial class ProductionOutputService
             });
 
             await db.SaveChangesAsync(cancellationToken);
-            if (ledgerContext is not null)
-            {
-                await StampOutputLedgerFactsAsync(
-                    ledgerContext, output.Uid, link.Uid, order.WorkOrderNo, cancellationToken);
-                await _stockCoordinator!.CompleteInTransactionAsync(ledgerContext, cancellationToken);
-            }
+            await _stockCoordinator.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+            ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
         }
+        catch (ProductionPostingInvariantException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Message);
+        }
+        catch (StockLedgerException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Error.Message);
+        }
         catch (DbUpdateException)
         {
-            await tx.RollbackAsync(cancellationToken);
+            await tx.RollbackAsync(CancellationToken.None);
             return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency);
         }
     }

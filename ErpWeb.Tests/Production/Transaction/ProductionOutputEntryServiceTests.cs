@@ -38,6 +38,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
             new PrOperator { CompanyCode = "DEMO", BranchCode = "HQ", Code = "OP1", Name = "Active operator", Active = true },
             new PrOperator { CompanyCode = "DEMO", BranchCode = "HQ", Code = "OPX", Name = "Inactive operator", Active = false });
         db.SaveChanges();
+        ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
     }
 
     [Fact]
@@ -371,7 +372,8 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
             PostingRequestId = Guid.NewGuid().ToString("N"),
             Reason = "unconsumed predecessor increment",
         });
-        Assert.True(rollback.Succeeded, rollback.Message);
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("active pooled-value dependency", rollback.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -407,15 +409,18 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
 
         var first = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
         Assert.True(first.Succeeded, first.Message);
-        Assert.True((await sut.PostAsync(first.Data!.Uid)).Succeeded);
+        var firstPost = await sut.PostAsync(first.Data!.Uid);
+        Assert.True(firstPost.Succeeded, firstPost.Message);
 
         var extra = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 10m, new DateTime(2026, 10, 1, 8, 30, 0)));
         Assert.True(extra.Succeeded, extra.Message);
-        Assert.True((await sut.PostAsync(extra.Data!.Uid)).Succeeded);
+        var extraPost = await sut.PostAsync(extra.Data!.Uid);
+        Assert.True(extraPost.Succeeded, extraPost.Message);
 
         var p2 = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 45m, new DateTime(2026, 10, 1, 9, 0, 0)));
         Assert.True(p2.Succeeded, p2.Message);
-        Assert.True((await sut.PostAsync(p2.Data!.Uid)).Succeeded);
+        var p2Post = await sut.PostAsync(p2.Data!.Uid);
+        Assert.True(p2Post.Succeeded, p2Post.Message);
 
         var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
         {
@@ -424,7 +429,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
             Reason = "later consumption of earlier produce",
         });
         Assert.False(rollback.Succeeded);
-        Assert.Contains("later effective consumption", rollback.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("active pooled-value dependency", rollback.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("downstream Daily Production", rollback.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -459,6 +464,8 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
                 RowVersion = [1],
             });
             await db.SaveChangesAsync();
+            var lot = await db.ProductionBalLots.SingleAsync(x => x.WorkOrderId == graph.OrderId);
+            await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, lot);
         }
 
         var sut = CreateService();
@@ -511,12 +518,8 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         IAccessRightService? access = null,
         string company = "DEMO",
         string branch = "HQ") =>
-        new(
-            _factory,
-            InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch),
-            access ?? AllowDailyAccessOnly().Object,
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService());
+        ProductionLedgerTestFixture.CreateProductionOutputService(
+            _factory, company, branch, access ?? AllowDailyAccessOnly().Object);
 
     private static Mock<IAccessRightService> AllowDailyAccessOnly()
     {
@@ -765,6 +768,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
         db.ProductionWorkOrders.Add(order);
         await db.SaveChangesAsync();
+        await AddVerifiedPurchasedInputAsync(db, order, first, 500m);
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
         return new TwoProcessGraphIds(order.Uid, first.Uid, later.Uid);
     }
@@ -810,6 +814,53 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         RemainingQty = 10m,
         RowVersion = [1],
     };
+
+    private static async Task AddVerifiedPurchasedInputAsync(
+        AppDbContext db, ProductionWorkOrder order, ProductionWorkOrderOperation operation, decimal qty)
+    {
+        var material = new ProductionWorkOrderMaterial
+        {
+            WorkOrder = order,
+            WorkOrderOperation = operation,
+            LineNo = 1,
+            ComponentCode = "RM-P1",
+            IssueMethod = PrMaterialIssueMethods.Manual,
+            SupplySource = PrMaterialSupplySources.Purchased,
+            RequiredQty = qty,
+            RequiredBaseQty = qty,
+            RequiredUom = "EA",
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            RowVersion = [1],
+        };
+        db.ProductionWorkOrderMaterials.Add(material);
+        await db.SaveChangesAsync();
+        var lot = new ProductionBalLot
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Kind = ProductionBalLotKinds.MaterialIn,
+            ItemCode = "RM-P1",
+            Qty = qty,
+            Uom = "EA",
+            BaseQty = qty,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            TotalCost = qty,
+            AverageUnitCost = 1m,
+            WorkOrderId = order.Uid,
+            WorkOrderNo = order.WorkOrderNo,
+            WorkOrderMaterialId = material.Uid,
+            WarehouseCode = "WH01",
+            LocationCode = "BIN-A",
+            LotNo = "P1-LOT",
+            LastMovementDate = new DateTime(2026, 9, 30),
+            RowVersion = [1],
+        };
+        db.ProductionBalLots.Add(lot);
+        await db.SaveChangesAsync();
+        await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, lot);
+    }
 
     public async ValueTask DisposeAsync() => await _connection.DisposeAsync();
 

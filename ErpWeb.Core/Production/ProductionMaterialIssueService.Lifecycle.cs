@@ -197,8 +197,13 @@ public sealed partial class ProductionMaterialIssueService
                 return periodError;
             var ledger = await _inventoryPosting!.BeginPostingInTransactionAsync(
                 db, company, branch, batchNo, false, batch.TrxDtTime, ct)
-                ?? new StockPostingBeginResult(false, false, null, null);
+                ?? new ErpWeb.Core.StockLedger.StockPostingBeginResult(false, false, null, null);
             if (ledger.Error is not null) return ledger.Error.Message;
+            if (ledger.WasReplay)
+                return "A sealed V2 posting already exists for this Issue to Production request, but the Production document is not marked posted. Posting was not repeated. Run posting reconciliation.";
+            if (!ledger.LedgerEnabled || ledger.Context is null)
+                return "Issue to Production requires an active V2 stock ledger for this company/branch.";
+            var ledgerContext = ledger.Context;
             var balanceIds = details.Select(x => x.FromBalLocId!.Value).Distinct().ToArray();
             var sliceKeys = await db.IvBalLocs.AsNoTracking().Where(x => balanceIds.Contains(x.Id))
                 .Select(x => new { x.Id, Key = new IvStockSliceKey(x.CompanyCode, x.BranchCode, x.ICode, x.WhCode, x.LocCode, x.LotNo, x.IStatus) }).ToListAsync(ct);
@@ -237,20 +242,23 @@ public sealed partial class ProductionMaterialIssueService
                         return $"Stock balance {balance.Id} has an invalid or expired lot.";
                 }
             }
+            foreach (var balanceId in details
+                .Select(x => x.FromBalLocId!.Value)
+                .Distinct()
+                .OrderBy(x => x))
+            {
+                if (ProductionCostReadiness.InventoryBalanceError(locked[balanceId]) is { } costError)
+                    return costError;
+            }
             foreach (var detail in details)
                 detail.UnitPrice = locked[detail.FromBalLocId!.Value].UnitPrice;
             link.Status = ProductionPostingLinkStatuses.Pending;
-            var posted = await _inventoryPosting!.PostStockOutInTransactionAsync(ledger.Context, db, company, branch,
+            var posted = await _inventoryPosting!.PostStockOutInTransactionAsync(ledgerContext, db, company, branch,
                 userId.Length > 10 ? userId[..10] : userId, batchNo, IvTrxTypes.IssueToProduction, ct);
             if (!posted.Succeeded) return posted.ErrorMessage ?? "Inventory posting failed.";
             await db.SaveChangesAsync(ct);
             var historyQuery = db.IvTrxHistories.Where(x => x.CompanyCode == company && x.BranchCode == branch
-                && x.BatchNo == batchNo);
-            if (ledger.Context is not null)
-            {
-                var postingId = ledger.Context.Posting.Id;
-                historyQuery = historyQuery.Where(x => x.StockPostingId == postingId);
-            }
+                && x.BatchNo == batchNo && x.StockPostingId == ledgerContext.Posting.Id);
             var histories = await historyQuery.ToListAsync(ct);
             if (histories.Count != details.Count) return "Inventory history did not match every draft allocation.";
             var now = _clock.Now; var user = userId.Length > 10 ? userId[..10] : userId;
@@ -287,8 +295,9 @@ public sealed partial class ProductionMaterialIssueService
                 material.ModifiedDate = now; material.ModifiedBy = user;
             }
             await CreateMaterialInLotsAsync(db, order, link, now, user, ct);
-            if (ledger.Context is not null)
-                await StampIssueLedgerFactsAsync(ledger.Context, link.Uid, ct);
+            await StampIssueLedgerFactsAsync(ledgerContext, link.Uid, ct);
+            TestHookAfterIssueValuation?.Invoke();
+            await ProductionPostingInvariant.AssertIssueVerifiedAsync(ledgerContext, link.Uid, ct);
             var fromStatus = order.Status;
             if (order.Status == ProductionWorkOrderStatuses.Released) order.Status = ProductionWorkOrderStatuses.InProgress;
             order.ModifiedDate = now; order.ModifiedBy = user;
@@ -298,13 +307,24 @@ public sealed partial class ProductionMaterialIssueService
             link.PostingOperationId = posted.OperationId?.ToString("N"); link.Status = ProductionPostingLinkStatuses.Succeeded;
             link.ResultCode = "OK"; link.ResultMessage = $"Posted IP batch {batchNo}."; link.CompletedDate = now;
             await db.SaveChangesAsync(ct);
-            await _inventoryPosting.CompletePostingInTransactionAsync(ledger.Context, ct);
+            await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, ct);
+            ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(ct);
             return null;
         }
+        catch (ProductionPostingInvariantException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return ex.Message;
+        }
+        catch (ErpWeb.Core.StockLedger.StockLedgerException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return ex.Error.Message;
+        }
         catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
-            await tx.RollbackAsync(ct);
+            await tx.RollbackAsync(CancellationToken.None);
             return "Posting conflicted with another change; reload and retry.";
         }
     }
