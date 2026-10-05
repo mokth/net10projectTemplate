@@ -31,6 +31,7 @@ public sealed partial class ProductionMaterialIssueService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
             var replay = await LockRollbackLinkAsync(
                 db, scope.CompanyCode, scope.BranchCode!, request.PostingRequestId, cancellationToken);
             if (replay is not null)
@@ -94,6 +95,10 @@ public sealed partial class ProductionMaterialIssueService
                 db, originalIds, cancellationToken);
             if (ProductionMaterialMovementTotals.HasBlockingDownstreamDependency(dependentMovements))
                 return RollbackFail(IvMasterErrorCode.InUse, "Rollback is blocked because later production movements depend on this issue.");
+
+            var originalBalanceMovements = originalMovements.Where(x => x.ProductionBalLotMovementId.HasValue).Select(x => x.ProductionBalLotMovementId!.Value).ToArray();
+            if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, originalBalanceMovements, cancellationToken))
+                return RollbackFail(IvMasterErrorCode.InUse, "Rollback is blocked by an active pooled-value dependency.");
 
             // MATERIAL_IN piles must still hold the full original issue base qty.
             foreach (var original in originalMovements)
@@ -319,8 +324,11 @@ public sealed partial class ProductionMaterialIssueService
 
             await db.SaveChangesAsync(cancellationToken);
             if (ledger.Context is not null)
-                await _inventoryPosting.CompletePostingInTransactionAsync(
-                    ledger.Context, cancellationToken);
+            {
+                var balanceReversals = await db.ProductionBalLotMovements.Where(x => x.StockPostingId == ledger.Context.Posting.Id).ToListAsync(cancellationToken);
+                await ProductionPoolValuationService.RecordAsync(ledger.Context, balanceReversals, cancellationToken);
+                await _inventoryPosting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+            }
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Ok(
                 await BuildRollbackResultAsync(db, rollbackLink, cancellationToken));

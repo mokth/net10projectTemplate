@@ -44,6 +44,16 @@ public sealed class StockLedgerInfrastructureTests : IAsyncDisposable
             index.IsUnique && index.Properties.Select(x => x.Name)
                 .SequenceEqual(["StockPostingId", "PostingLineNo"]));
         Assert.NotNull(db.Model.FindEntityType(typeof(ProductionMovementAllocation)));
+        var valuation = db.Model.FindEntityType(typeof(StockValuationFact))!;
+        Assert.Contains(valuation.GetIndexes(), index =>
+            index.IsUnique && index.Properties.Select(x => x.Name)
+                .SequenceEqual(["StockPostingId", "PostingLineNo", "SplitOrdinal"]));
+        Assert.Equal(typeof(int?), valuation.FindProperty(nameof(StockValuationFact.InventoryHistoryId))!.ClrType);
+        Assert.Equal(typeof(int?), valuation.FindProperty(nameof(StockValuationFact.FromBalLocId))!.ClrType);
+        Assert.Equal(typeof(int?), valuation.FindProperty(nameof(StockValuationFact.LotId))!.ClrType);
+        Assert.Equal(typeof(long), valuation.FindProperty(nameof(StockValuationFact.StockPostingId))!.ClrType);
+        Assert.NotNull(db.Model.FindEntityType(typeof(StockCostState)));
+        Assert.NotNull(db.Model.FindEntityType(typeof(StockValuationPeriodSnapshotHdr)));
 
         foreach (var type in new[]
                  {

@@ -157,11 +157,11 @@ public sealed class IvStockHistoryRepository : IIvStockHistoryRepository
         // purpose — a plain C# helper cannot appear inside an expression tree (it will not translate).
         // Cost / CostPrice / AsNowCost are legacy, sparse and deliberately excluded.
         var inValue = await inQuery.SumAsync(
-            x => (x.Trx.ToStdQty ?? 0m)
+            x => x.Trx.TrxType == "FG" ? (x.Trx.ExactTransferredValue ?? 0m) : (x.Trx.ToStdQty ?? 0m)
                  * (x.Trx.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null) ?? 0m),
             cancellationToken);
         var outValue = await outQuery.SumAsync(
-            x => (x.Trx.FrStdQty ?? 0m)
+            x => x.Trx.TrxType == "FG" ? (x.Trx.ExactTransferredValue ?? 0m) : (x.Trx.FrStdQty ?? 0m)
                  * (x.Trx.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null) ?? 0m),
             cancellationToken);
 
@@ -482,7 +482,8 @@ public sealed class IvStockHistoryRepository : IIvStockHistoryRepository
             SoNo = x.Trx.SoNo,
             PoNo = x.Trx.PoNo,
             Remarks = x.Trx.Remarks,
-            UnitPrice = x.Trx.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null),
+            ExactTransferredValue = x.Trx.TrxType == "FG" ? x.Trx.ExactTransferredValue : null,
+            UnitPrice = x.Trx.TrxType == "FG" ? x.Trx.UnitPrice : x.Trx.UnitPrice ?? (x.Sm != null ? x.Sm.PurchasePrice : (decimal?)null),
             CreatedDate = x.Trx.CreatedDate,
             CreatedBy = x.Trx.CreatedBy,
             ModifiedDate = x.Trx.ModifiedDate,

@@ -9,6 +9,7 @@ public class IvTrxBatchDetailConfiguration : IEntityTypeConfiguration<IvTrxBatch
     public void Configure(EntityTypeBuilder<IvTrxBatchDetail> builder)
     {
         builder.ToTable("IvTrxBatchDetail");
+        builder.Property(x => x.PriceEvidence).HasMaxLength(200);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

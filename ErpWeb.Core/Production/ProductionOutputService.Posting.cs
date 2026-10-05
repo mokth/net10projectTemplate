@@ -21,6 +21,7 @@ public sealed partial class ProductionOutputService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, outputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
             if (output.Status == ProductionOutputStatuses.Posted)
@@ -578,6 +579,21 @@ public sealed partial class ProductionOutputService
                 && x.MovementType == movement.MovementType && x.Uid < movement.Uid);
             movement.MovementDate = context.Posting.EffectiveAt;
         }
+        await context.Db.SaveChangesAsync(cancellationToken);
+        await ProductionPoolValuationService.RecordAsync(context, movements, cancellationToken);
+    }
+
+    private static async Task<long> ResolveProductionLocationAsync(AppDbContext db, InventoryTenantScope scope, string workCentre, CancellationToken ct)
+    {
+        var code = workCentre.Length > 20 ? workCentre[..20] : workCentre;
+        var location = await db.ProductionLocations.SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.Code == code, ct);
+        if (location is null)
+        {
+            location = new ProductionLocation { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, Code = code, Description = workCentre, WorkCentreCode = workCentre };
+            db.ProductionLocations.Add(location); await db.SaveChangesAsync(ct);
+        }
+        if (!location.IsActive) throw new InvalidOperationException("Production location is inactive.");
+        return location.Id;
     }
 
     private static async Task<(ProductionBalLot? Lot, string? Error)> LockOrCreateHandoffLotAsync(
@@ -739,6 +755,11 @@ public sealed partial class ProductionOutputService
             AverageUnitCost = produceBase > 0m ? IvQty.Round(producedCost / produceBase) : 0m,
             WorkOrderId = order.Uid,
             WorkOrderNo = order.WorkOrderNo,
+            BalanceStage = routeStep.OutputType == PrRouteOutputTypes.FinishedGoods ? "FG_STAGING" : "PROCESS_WIP",
+            StockStatusCode = "AVAILABLE",
+            OriginType = "PRODUCED",
+            PhysicalLotNo = output.OutputLotNo,
+            ProductionLocationId = await ResolveProductionLocationAsync(db, scope, routeStep.WorkCentreCode, ct),
             ProducingRouteStepId = routeStep.Uid,
             WorkOrderOperationId = operation.Uid,
             OutputType = routeStep.OutputType,

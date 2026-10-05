@@ -8,7 +8,7 @@ public class IvLotConfiguration : IEntityTypeConfiguration<IvLot>
 {
     public void Configure(EntityTypeBuilder<IvLot> builder)
     {
-        builder.ToTable("IvLot");
+        builder.ToTable("IvLot", t => t.UseSqlOutputClause(false));
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

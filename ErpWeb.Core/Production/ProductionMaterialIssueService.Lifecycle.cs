@@ -116,6 +116,7 @@ public sealed partial class ProductionMaterialIssueService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, company, branch, ct);
             var batch = await LockIssueBatchAsync(db, company, branch, batchNo, ct);
             var link = await LockIssueLinkByBatchAsync(db, company, branch, batchNo, ct);
             if (batch is null || link is null || batch.BatchStatus != IvBatchStatuses.New || link.Status != ProductionPostingLinkStatuses.Draft)
@@ -237,7 +238,7 @@ public sealed partial class ProductionMaterialIssueService
                 }
             }
             foreach (var detail in details)
-                detail.UnitPrice = locked[detail.FromBalLocId!.Value].UnitPrice ?? 0m;
+                detail.UnitPrice = locked[detail.FromBalLocId!.Value].UnitPrice;
             link.Status = ProductionPostingLinkStatuses.Pending;
             var posted = await _inventoryPosting!.PostStockOutInTransactionAsync(ledger.Context, db, company, branch,
                 userId.Length > 10 ? userId[..10] : userId, batchNo, IvTrxTypes.IssueToProduction, ct);
@@ -267,8 +268,8 @@ public sealed partial class ProductionMaterialIssueService
                     LotId = history.FromLotId, FromBalLocId = history.FromBalLocId!.Value, ItemStatus = history.IStatus ?? "",
                     InventoryBatchId = batch.Id, InventoryBatchNo = batchNo, InventoryBatchDetailId = detail.Id,
                     InventoryTrxLineNo = detail.TrxLineNo, InventoryHistoryId = history.Id,
-                    InventoryPostingOperationId = posted.OperationId?.ToString("N"), UnitCost = history.UnitPrice ?? 0m,
-                    TotalCost = IvQty.Round(map.BaseQty * (history.UnitPrice ?? 0m)), PostingLinkId = link.Uid,
+                    InventoryPostingOperationId = posted.OperationId?.ToString("N"), UnitCost = map.BaseQty > 0 ? IvQty.Round((history.FrStdQty ?? 0m) * (history.UnitPrice ?? 0m) / map.BaseQty) : 0m,
+                    TotalCost = IvQty.Round((history.FrStdQty ?? 0m) * (history.UnitPrice ?? 0m)), PostingLinkId = link.Uid,
                     Remarks = batch.Remarks, CreatedDate = now, CreatedBy = user });
             }
             await db.SaveChangesAsync(ct);
@@ -357,6 +358,8 @@ public sealed partial class ProductionMaterialIssueService
                 ?? throw new InvalidOperationException("Issue movement is missing an inventory detail identity.");
             material.SplitOrdinal = 0;
         }
+        await context.Db.SaveChangesAsync(cancellationToken);
+        await ProductionPoolValuationService.RecordAsync(context, movements, cancellationToken);
     }
 
     private static async Task CreateMaterialInLotsAsync(
@@ -420,6 +423,7 @@ public sealed partial class ProductionMaterialIssueService
                 WorkOrderMaterialId = movement.WorkOrderMaterialId,
                 WorkOrderOperationId = movement.WorkOrderOperationId,
                 PostingLinkId = link.Uid,
+                InventoryHistoryId = movement.InventoryHistoryId,
                 DocumentType = ProductionDocumentTypes.MaterialIssue,
                 DocumentNo = movement.InventoryBatchNo?.ToString() ?? link.ProductionDocumentNo ?? string.Empty,
                 MovementDate = movement.MovementDate,

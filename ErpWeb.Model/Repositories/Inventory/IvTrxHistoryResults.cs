@@ -125,6 +125,7 @@ public sealed class IvTrxHistoryRow
     /// Signed <c>IvQty.Round(NetQty * UnitPrice)</c>, or <c>null</c> when the caller may not view money.
     /// <c>IvTrxHistory.Cost</c>/<c>CostPrice</c>/<c>AsNowCost</c> are deliberately NOT the basis (D13).
     /// </summary>
+    public decimal? ExactTransferredValue { get; set; }
     public decimal? EstValue { get; set; }
 
     public DateTime? CreatedDate { get; init; }

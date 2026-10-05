@@ -12,6 +12,7 @@ public class IvBalLocConfiguration : IEntityTypeConfiguration<IvBalLoc>
         {
             table.UseSqlOutputClause(false);
         });
+        builder.Property(x => x.PriceEvidence).HasMaxLength(200);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

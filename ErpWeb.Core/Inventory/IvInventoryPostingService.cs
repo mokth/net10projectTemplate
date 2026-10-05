@@ -286,6 +286,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -499,6 +500,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         foreach (var slice in ordered)
         {
             var bal = locked[slice];
+            var priceLines = linePlans.Where(x => x.ToSlice == slice).Select(x => x.Detail).ToArray();
+            var verifiedReceipt = priceLines.Length > 0 && priceLines.All(x => x.PriceEvidence != null && x.UnitPrice.HasValue);
+            if (bal.StdQty == 0m && verifiedReceipt)
+            {
+                bal.UnitPrice = IvQty.Round(priceLines.Sum(x => (x.ToStdQty ?? 0m) * x.UnitPrice!.Value) / deltaBySlice[slice]);
+                bal.Cost = bal.UnitPrice; bal.PriceEvidence = "EXPLICIT_COMPANY_BASE_PRICE";
+            }
+            else if (!verifiedReceipt || priceLines.Any(x => x.UnitPrice != bal.UnitPrice)) bal.PriceEvidence = null;
             bal.StdQty += deltaBySlice[slice];
             bal.ModifiedDate = now;
             bal.TransDate = batch.TrxDtTime;
@@ -544,6 +553,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 PoRelNo = detail.PoRelNo,
                 PoLineNo = detail.PoLineNo,
                 Remarks = detail.Remarks,
+                PriceEvidence = detail.PriceEvidence,
                 UnitPrice = detail.UnitPrice,
                 Cost = detail.Cost,
                 CostPrice = detail.CostPrice,
@@ -578,6 +588,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -769,6 +780,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
         if (snapshot.Error is not null)
@@ -829,6 +841,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
         if (snapshot.Error is not null)
@@ -943,6 +956,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 PoRelNo = detail.PoRelNo,
                 PoLineNo = detail.PoLineNo,
                 Remarks = detail.Remarks,
+                PriceEvidence = detail.PriceEvidence,
                 UnitPrice = detail.UnitPrice,
                 LocationCode = detail.LocationCode,
                 CreatedDate = now,
@@ -1014,6 +1028,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -1219,6 +1234,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             {
                 detail.FromBalLocId = balLocId;
                 detail.FromLotId = lockedRow.LotId;
+                detail.PriceEvidence = lockedRow.PriceEvidence;
             }
 
             var history = new IvTrxHistory
@@ -1237,6 +1253,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 IDesc = detail.IDesc,
                 IStatus = detail.IStatus,
                 Remarks = detail.Remarks,
+                PriceEvidence = detail.PriceEvidence,
                 UnitPrice = detail.UnitPrice,
                 Cost = detail.Cost,
                 CostPrice = detail.CostPrice,
@@ -1293,6 +1310,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -1762,6 +1780,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -1952,6 +1971,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var lockedRow = locked[plan.FromBalLocId];
             detail.FromBalLocId = plan.FromBalLocId;
             detail.FromLotId = lockedRow.LotId;
+            detail.PriceEvidence = lockedRow.PriceEvidence;
 
             _posting.AddHistory(db, new IvTrxHistory
             {
@@ -1974,6 +1994,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 FrStdUom = detail.FrStdUom,
                 IStatus = detail.IStatus,
                 Remarks = detail.Remarks,
+                PriceEvidence = detail.PriceEvidence,
                 UnitPrice = detail.UnitPrice,
                 Cost = detail.Cost,
                 CostPrice = detail.CostPrice,
@@ -2009,6 +2030,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -2234,6 +2256,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -2536,6 +2559,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             {
                 var (srcCost, srcUnitPrice) = sourceCostById[sourceId];
                 ApplyDestCostFromSource(balance, srcCost, srcUnitPrice);
+                balance.PriceEvidence = lockedBySlice[sourceSliceById[sourceId]].PriceEvidence;
             }
 
             balance.StdQty += delta;
@@ -2605,6 +2629,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 ToStdUom = detail.ToStdUom,
                 IStatus = detail.IStatus,
                 Remarks = detail.Remarks,
+                PriceEvidence = lockedSource.PriceEvidence,
                 UnitPrice = srcUnitPrice,
                 Cost = srcCost,
                 CostPrice = detail.CostPrice,
@@ -2665,6 +2690,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);

@@ -286,7 +286,8 @@
               Icon="fa-solid fa-dolly" />
         <Menu Code="PLN_DAILY_PRODUCTION" Name="Daily Production" Route="/planning/daily-production" SortOrder="3"
               Icon="fa-solid fa-industry" />
-        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="4"
+        <Menu Code="PLN_FINISHED_GOOD_RECEIPT" Name="Finished Good Receipt" Route="/planning/finished-good-receipts" SortOrder="4" Icon="fa-solid fa-boxes-stacked" />
+        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="5"
             Icon="fa-solid fa-screwdriver-wrench" />
     </Menu>
     <Menu Code="PLN_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">

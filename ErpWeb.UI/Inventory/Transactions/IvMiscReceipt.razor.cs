@@ -172,6 +172,7 @@ public partial class IvMiscReceipt : PageBase
             Uom = x.Uom ?? string.Empty,
             IClassCode = x.IClassCode ?? string.Empty,
             IStatus = x.IStatus,
+            PriceConfirmed = x.PriceConfirmed,
             UnitPrice = x.UnitPrice,
             ExpiryDate = x.ExpiryDate,
             Reason = x.Reason,
@@ -264,6 +265,7 @@ public partial class IvMiscReceipt : PageBase
             ToWarehouse = line.ToWarehouse,
             Uom = line.Uom,
             ToLocation = line.ToLocation,
+            PriceConfirmed = line.PriceConfirmed,
             UnitPrice = line.UnitPrice,
             IClassCode = line.IClassCode,
             IStatus = line.IStatus,
@@ -310,6 +312,7 @@ public partial class IvMiscReceipt : PageBase
         Popup.Uom = item.StdUom ?? string.Empty;
         Popup.LotControl = item.LotControl;
         Popup.UnitPrice = item.PurchasePrice ?? 0m;
+        Popup.PriceConfirmed = false;
         _pendingDefLocation = item.DefLocation;
 
         if (!string.IsNullOrWhiteSpace(item.DefWarehouse) &&
@@ -486,7 +489,8 @@ public partial class IvMiscReceipt : PageBase
                     Uom = x.Uom,
                     IClassCode = x.IClassCode,
                     IStatus = x.IStatus,
-                    UnitPrice = x.UnitPrice,
+                    PriceConfirmed = x.PriceConfirmed,
+            UnitPrice = x.UnitPrice,
                     ExpiryDate = x.ExpiryDate,
                     Reason = x.Reason,
                     Remarks = x.Remarks
@@ -686,6 +690,7 @@ public partial class IvMiscReceipt : PageBase
         line.IClassCode = Popup.IClassCode.Trim();
         line.IStatus = Popup.IStatus.Trim().ToUpperInvariant();
         line.UnitPrice = Popup.UnitPrice;
+        line.PriceConfirmed = Popup.PriceConfirmed;
         line.ExpiryDate = Popup.LotControl ? Popup.ExpiryDate : null;
         line.Reason = string.IsNullOrWhiteSpace(Popup.Reason) ? null : Popup.Reason.Trim();
         line.Remarks = string.IsNullOrWhiteSpace(Popup.Remarks) ? null : Popup.Remarks.Trim();
@@ -740,6 +745,7 @@ public sealed class IvMiscReceiptLineVm
     public string Uom { get; set; } = string.Empty;
     public string IClassCode { get; set; } = string.Empty;
     public string IStatus { get; set; } = IvItemStatuses.Active;
+    public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
@@ -757,6 +763,7 @@ public sealed class IvMiscReceiptPopupVm
     public string ToWarehouse { get; set; } = string.Empty;
     public string Uom { get; set; } = string.Empty;
     public string ToLocation { get; set; } = string.Empty;
+    public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
     public string IClassCode { get; set; } = string.Empty;
     public string IStatus { get; set; } = IvItemStatuses.Active;

@@ -44,7 +44,6 @@ public sealed partial class IvPeriodCloseService
 
         var sliceById = new Dictionary<int, IvStockSliceKey>();
         var pileQtyBySlice = new Dictionary<IvStockSliceKey, decimal>();
-        var pileUnitPriceBySlice = new Dictionary<IvStockSliceKey, decimal?>();
         var pileUomBySlice = new Dictionary<IvStockSliceKey, string?>();
         foreach (var p in piles)
         {
@@ -52,20 +51,31 @@ public sealed partial class IvPeriodCloseService
                 p.CompanyCode, p.BranchCode, p.ICode, p.WhCode, p.LocCode, p.LotNo, p.IStatus);
             sliceById[p.Id] = slice;
             pileQtyBySlice[slice] = pileQtyBySlice.GetValueOrDefault(slice) + p.StdQty;
-            pileUnitPriceBySlice.TryAdd(slice, p.UnitPrice);
             pileUomBySlice.TryAdd(slice, p.StdUom);
         }
 
-        // Item purchase-price fallback for slices whose pile has no UnitPrice.
+        // Historical money comes only from sealed valuation facts. Mutable balance/master prices
+        // are intentionally excluded from the close calculation.
         var itemCodes = piles.Select(x => x.ICode)
             .Concat(movements.Select(x => x.ICode))
             .Distinct()
             .ToList();
-        var purchasePrices = itemCodes.Count == 0
-            ? new Dictionary<string, decimal>()
-            : await db.IvStockMasters.AsNoTracking()
-                .Where(x => x.CompanyCode == company && itemCodes.Contains(x.ICode))
-                .ToDictionaryAsync(x => x.ICode, x => x.PurchasePrice ?? 0m, cancellationToken);
+        var valuedFacts = itemCodes.Count == 0
+            ? []
+            : await db.StockValuationFacts.AsNoTracking()
+                .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                            && itemCodes.Contains(x.ItemCode)
+                            && x.EffectiveAt < periodTo.Date.AddDays(1)
+                            && x.StockPosting!.SealedAtUtc != null)
+                .Select(x => new { x.ItemCode, x.Direction, x.BaseQty, x.CostAmount })
+                .ToListAsync(cancellationToken);
+        var authoritativeUnitCost = valuedFacts.GroupBy(x => x.ItemCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x =>
+            {
+                var qty = x.Sum(y => y.BaseQty * y.Direction);
+                var value = x.Sum(y => y.CostAmount * y.Direction);
+                return qty == 0m ? 0m : decimal.Round(value / qty, 6, MidpointRounding.AwayFromZero);
+            }, StringComparer.OrdinalIgnoreCase);
 
         var openingBySlice = new Dictionary<IvStockSliceKey, decimal>();
         var inBySlice = new Dictionary<IvStockSliceKey, decimal>();
@@ -190,7 +200,7 @@ public sealed partial class IvPeriodCloseService
                 AdjustNetQty = adjust,
                 ClosingQty = closing,
                 StdUom = pileUomBySlice.GetValueOrDefault(slice),
-                UnitPrice = ResolveUnitPrice(slice, pileUnitPriceBySlice, purchasePrices),
+                UnitPrice = authoritativeUnitCost.GetValueOrDefault(slice.ICode),
                 LegCount = legCountBySlice.GetValueOrDefault(slice),
                 CarryForwardOk = carryForwardOk,
                 CurrentBalanceDelta = currentDelta
@@ -224,19 +234,6 @@ public sealed partial class IvPeriodCloseService
             CurrentBalanceMismatchSlices = d11Mismatches.Count,
             D11Mismatches = d11Mismatches
         };
-    }
-
-    private static decimal ResolveUnitPrice(
-        IvStockSliceKey slice,
-        IReadOnlyDictionary<IvStockSliceKey, decimal?> pileUnitPriceBySlice,
-        IReadOnlyDictionary<string, decimal> purchasePrices)
-    {
-        if (pileUnitPriceBySlice.TryGetValue(slice, out var up) && up is decimal pilePrice)
-        {
-            return pilePrice;
-        }
-
-        return purchasePrices.GetValueOrDefault(slice.ICode);
     }
 
     private sealed class IvPeriodCloseSnapshotLine

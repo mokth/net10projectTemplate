@@ -422,6 +422,8 @@ WHERE CompanyCode = {company}
         var existing = await LockLotExactAsync(db, company, code, lot, forUpdate: true, cancellationToken);
         if (existing is not null)
         {
+            if (sourceType != "FG" && await db.ProductionFinishedGoodLotOriginRows.AnyAsync(x => x.LotId == existing.Id, cancellationToken))
+                throw new InvalidOperationException("This lot is owned by finished production. Use an FG receipt with matching origin for a top-up.");
             return existing;
         }
 
@@ -657,6 +659,7 @@ WHERE ID = {id}
                 StdQty = row.StdQty,
                 StdUom = row.StdUom,
                 LotId = row.LotId,
+                PriceEvidence = row.PriceEvidence,
                 UnitPrice = row.UnitPrice
             };
     }

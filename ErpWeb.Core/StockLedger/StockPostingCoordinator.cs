@@ -36,19 +36,22 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
     private readonly IBranchStockTransactionLock _branchLock;
     private readonly IStockPeriodGuard _periodGuard;
     private readonly IStockFreezeGuard _freezeGuard;
+    private readonly IInventoryValuationService? _valuation;
 
     public StockPostingCoordinator(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IBranchStockTransactionLock branchLock,
         IStockPeriodGuard periodGuard,
-        IStockFreezeGuard freezeGuard)
+        IStockFreezeGuard freezeGuard,
+        IInventoryValuationService? valuation = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _branchLock = branchLock;
         _periodGuard = periodGuard;
         _freezeGuard = freezeGuard;
+        _valuation = valuation;
     }
 
     public async Task<StockPostingExecutionResult<T>> ExecuteAsync<T>(
@@ -166,6 +169,8 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
             var context = new StockPostingContext(db, epoch, posting, scope.UserId);
             var value = await handler(context, cancellationToken);
             context.EnsureUnsealed();
+            if (_valuation is not null)
+                await _valuation.ValuePendingAsync(context, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
 
             posting.SealedAtUtc = DateTime.UtcNow;
@@ -267,6 +272,8 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
     {
         ArgumentNullException.ThrowIfNull(context);
         context.EnsureUnsealed();
+        if (_valuation is not null)
+            await _valuation.ValuePendingAsync(context, cancellationToken);
         await context.Db.SaveChangesAsync(cancellationToken);
         context.Posting.SealedAtUtc = DateTime.UtcNow;
         await context.Db.SaveChangesAsync(cancellationToken);

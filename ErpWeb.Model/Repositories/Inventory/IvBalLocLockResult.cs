@@ -5,6 +5,7 @@ namespace ErpWeb.Model.Repositories.Inventory;
 /// </summary>
 public sealed class IvBalLocLockResult
 {
+    public string? PriceEvidence { get; init; }
     public int Id { get; init; }
     public string CompanyCode { get; init; } = string.Empty;
     public string BranchCode { get; init; } = string.Empty;

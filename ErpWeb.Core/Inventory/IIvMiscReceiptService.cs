@@ -144,6 +144,7 @@ public sealed class IvMiscReceiptLineDto
     public string? Uom { get; init; }
     public string? IClassCode { get; init; }
     public string IStatus { get; init; } = IvItemStatuses.Active;
+    public bool PriceConfirmed { get; init; }
     public decimal UnitPrice { get; init; }
     public DateTime? ExpiryDate { get; init; }
     public string? Reason { get; init; }
@@ -172,6 +173,7 @@ public sealed class IvMiscReceiptLineRequest
     public string? Uom { get; set; }
     public string? IClassCode { get; set; }
     public string IStatus { get; set; } = IvItemStatuses.Active;
+    public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }

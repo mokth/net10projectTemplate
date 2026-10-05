@@ -1,0 +1,48 @@
+@page "/planning/finished-good-receipts"
+@inherits PageBase
+<PageTitle>Finished Good Receipt</PageTitle>
+<MenuAuthorize MenuCode="@MenuCodes.PlanningFinishedGoodReceipt">
+    <div class="iv-page">
+        <header class="iv-hero">
+            <div class="iv-hero__mark"><i class="fa-solid fa-boxes-stacked"></i></div>
+            <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Finished Good Receipt</h1><span class="iv-chip">@TotalCount documents</span></div>
+        </header>
+        @if (!string.IsNullOrEmpty(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <DxTextBox Text="SearchText" TextChanged="SearchChanged" NullText="Search Work Order or reference…" />
+                <DxComboBox Data="Statuses" Value="Status" ValueChanged="@((string value) => FilterChanged(value))" />
+            </div>
+            @if (DataSource is not null)
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="FinishedGoodReceiptSummary" Columns="Columns" Buttons="Buttons" ActionButtons="Actions"
+                        KeyName="Id" GridKey="pln-fg-receipts" Title="Finished Good Receipt" CustomDataSource="DataSource"
+                        ShowToolbarText="true" UseBuiltInExport="false" ShowSearchBox="false" ShowFilterRow="false" ShowGroupPanel="false"
+                        allowSelect="true" OnGridInstance="GridReady" OnSelectionsEventHandle="SelectionChanged"
+                        OnButtonEventHandle="ButtonClicked" OnActionEventHandle="ActionClicked" />
+                </div>
+                <div class="iv-list-compact">
+                    @if (CanAdd) { <DxButton Text="New receipt" Click="NewReceipt" /> }
+                    @foreach (var row in CompactRows)
+                    {
+                        <button class="iv-compact-row" @onclick="@(() => Open(row.Id))">
+                            <strong>FG @row.BatchNo · @row.WorkOrderNo</strong><span>@row.EffectiveDate.ToString("dd MMM yyyy") · @row.Status</span>
+                        </button>
+                    }
+                    <p>Showing up to 50 receipts. Refine search to find others.</p>
+                </div>
+            }
+        </section>
+        <DxPopup @bind-Visible="ConfirmVisible" HeaderText="@ConfirmAction" ShowFooter="true" CloseOnOutsideClick="false">
+            <BodyContentTemplate>
+                <p>@ConfirmAction @Selected.Count selected receipt(s)?</p>
+                @if (ConfirmAction == "ROLLBACK") { <DxMemo @bind-Text="Reason" NullText="Rollback reason" Rows="3" /> }
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton Text="Cancel" Enabled="@(!Busy)" Click="@(() => ConfirmVisible = false)" />
+                <DxButton Text="Confirm" Enabled="@(!Busy)" Click="ApplyAction" />
+            </FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

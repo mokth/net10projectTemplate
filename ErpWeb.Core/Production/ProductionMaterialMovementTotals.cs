@@ -81,7 +81,7 @@ public static class ProductionBalLotSignedQty
         {
             ProductionBalLotMovementTypes.Issue
                 or ProductionBalLotMovementTypes.Produce
-                or ProductionBalLotMovementTypes.ConsumeReversal
+                or ProductionBalLotMovementTypes.FgReceiptReversal or ProductionBalLotMovementTypes.ConsumeReversal
                 or ProductionBalLotMovementTypes.ReturnReversal
                 or ProductionBalLotMovementTypes.OpeningIn
                 or ProductionBalLotMovementTypes.TransferIn
@@ -157,6 +157,6 @@ public static class ProductionBalLotSignedQty
     private static bool IsReversalType(string movementType) =>
         movementType is ProductionBalLotMovementTypes.IssueReversal
             or ProductionBalLotMovementTypes.ProduceReversal
-            or ProductionBalLotMovementTypes.ConsumeReversal
+            or ProductionBalLotMovementTypes.FgReceiptReversal or ProductionBalLotMovementTypes.ConsumeReversal
             or ProductionBalLotMovementTypes.ReturnReversal;
 }

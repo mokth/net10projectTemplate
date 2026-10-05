@@ -250,6 +250,7 @@ public static class MenuCodes
     public const string PlanningMaterialIssue = "PLN_MATERIAL_ISSUE";
     public const string PlanningDailyProduction = "PLN_DAILY_PRODUCTION";
     public const string PlanningProductionBalance = "PLN_PRODUCTION_BALANCE";
+    public const string PlanningFinishedGoodReceipt = "PLN_FINISHED_GOOD_RECEIPT";
     public const string PlanningStockCard = "PLN_STOCK_CARD";
     public const string PlanningStockMovement = "PLN_STOCK_MOVEMENT";
     public const string PlanningStockAsOf = "PLN_STOCK_ASOF";

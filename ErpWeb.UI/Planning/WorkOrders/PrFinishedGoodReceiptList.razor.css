@@ -1,0 +1,18 @@
+.iv-list-compact {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .iv-list-desktop {
+        display: none;
+    }
+
+    .iv-list-compact {
+        display: block;
+    }
+}
+
+.code-style {
+    font-family: var(--bs-font-monospace);
+    font-weight: 700;
+}

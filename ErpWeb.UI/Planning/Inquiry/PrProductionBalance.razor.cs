@@ -68,6 +68,9 @@ public partial class PrProductionBalance : PageBase, IDisposable
         new() { Caption = "UOM", FieldName = nameof(ProductionBalanceLotRow.Uom), Width = "70px", VisibleIndex = 9 },
         new() { Caption = "Warehouse", FieldName = nameof(ProductionBalanceLotRow.WarehouseCode), Width = "110px", VisibleIndex = 10 },
         new() { Caption = "Bin", FieldName = nameof(ProductionBalanceLotRow.LocationCode), Width = "90px", VisibleIndex = 11 },
+        new() { Caption = "Net received (base)", FieldName = nameof(ProductionBalanceLotRow.NetReceivedBaseQty), DataType = "decimal", DisplayFormat = "n4", Width = "140px" },
+        new() { Caption = "Pending FG (base)", FieldName = nameof(ProductionBalanceLotRow.PendingReceiptBaseQty), DataType = "decimal", DisplayFormat = "n4", Width = "140px" },
+        new() { Caption = "Base UOM", FieldName = nameof(ProductionBalanceLotRow.BaseUom), Width = "80px" },
         new() { Caption = "Last movement", FieldName = nameof(ProductionBalanceLotRow.LastMovementDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "120px", VisibleIndex = 12 }
     ];
 

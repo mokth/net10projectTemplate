@@ -12,10 +12,49 @@ namespace ErpWeb.Model.Data;
 
 public class AppDbContext : DbContext
 {
+    // The FG service owns this lifecycle; generic inventory services never set this capability.
+    public bool FinishedGoodReceiptWrite { get; set; }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        ValidateFinishedGoodWrites();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        ValidateFinishedGoodWrites();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+    private void ValidateFinishedGoodWrites()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            if (entry.State != EntityState.Added && entry.Entity is StockValuationFact
+                or StockValuationPeriodSnapshotHdr or StockValuationPeriodSnapshotLine)
+                throw new InvalidOperationException("Valuation facts and financial snapshots are immutable; append a linked reversal or a new snapshot revision.");
+            if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
+                or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
+                throw new InvalidOperationException("Posted evidence and FG lot origin are immutable; append a linked reversal instead.");
+            if (!FinishedGoodReceiptWrite && (entry.Entity is ProductionFinishedGoodReceipt or ProductionFinishedGoodSource
+                || entry.Entity is IvTrxBatch b && b.TrxType == "FG" || entry.Entity is IvTrxBatchDetail d && d.TrxType == "FG"))
+                throw new InvalidOperationException("Finished Good Receipt documents must be changed through the FG service.");
+        }
+    }
+
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
     }
+
+    public DbSet<ProductionFinishedGoodReceipt> ProductionFinishedGoodReceiptRows => Set<ProductionFinishedGoodReceipt>();
+    public DbSet<ProductionFinishedGoodSource> ProductionFinishedGoodSourceRows => Set<ProductionFinishedGoodSource>();
+    public DbSet<ProductionFinishedGoodFact> ProductionFinishedGoodFactRows => Set<ProductionFinishedGoodFact>();
+    public DbSet<ProductionFinishedGoodPriceSnapshot> ProductionFinishedGoodPriceSnapshotRows => Set<ProductionFinishedGoodPriceSnapshot>();
+    public DbSet<ProductionFinishedGoodLotOrigin> ProductionFinishedGoodLotOriginRows => Set<ProductionFinishedGoodLotOrigin>();
+    public DbSet<ProductionPoolValuation> ProductionPoolValuationRows => Set<ProductionPoolValuation>();
+    public DbSet<ProductionValuationEvidence> ProductionValuationEvidenceRows => Set<ProductionValuationEvidence>();
+    public DbSet<ProductionPoolDependency> ProductionPoolDependencyRows => Set<ProductionPoolDependency>();
 
     public DbSet<UserLogin> UserLogins => Set<UserLogin>();
     public DbSet<Menu> Menus => Set<Menu>();
@@ -57,6 +96,10 @@ public class AppDbContext : DbContext
     public DbSet<StockPostingBranchSequence> StockPostingBranchSequences => Set<StockPostingBranchSequence>();
     public DbSet<StockPeriodSnapshotHdr> StockPeriodSnapshotHdrs => Set<StockPeriodSnapshotHdr>();
     public DbSet<StockPeriodSnapshotLine> StockPeriodSnapshotLines => Set<StockPeriodSnapshotLine>();
+    public DbSet<StockValuationFact> StockValuationFacts => Set<StockValuationFact>();
+    public DbSet<StockCostState> StockCostStates => Set<StockCostState>();
+    public DbSet<StockValuationPeriodSnapshotHdr> StockValuationPeriodSnapshotHdrs => Set<StockValuationPeriodSnapshotHdr>();
+    public DbSet<StockValuationPeriodSnapshotLine> StockValuationPeriodSnapshotLines => Set<StockValuationPeriodSnapshotLine>();
 
     public DbSet<SaCust> SaCusts => Set<SaCust>();
     public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();

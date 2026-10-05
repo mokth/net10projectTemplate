@@ -232,7 +232,10 @@ public sealed class IvTrxHistoryService : IIvTrxHistoryService
                 row.Reason = IvStockAdjustmentLineInvariant.ParseStoredRemarks(row.Remarks).Reason;
             }
 
-            row.EstValue = canViewValue ? IvQty.Round(row.NetQty * (row.UnitPrice ?? 0m)) : null;
+            row.EstValue = !canViewValue ? null : row.TrxType == "FG"
+                ? row.ExactTransferredValue * Math.Sign(row.NetQty)
+                : IvQty.Round(row.NetQty * (row.UnitPrice ?? 0m));
+            if (!canViewValue) row.ExactTransferredValue = null;
         }
     }
 

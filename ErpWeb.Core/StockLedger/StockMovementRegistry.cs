@@ -45,7 +45,8 @@ public sealed class StockMovementRegistry : IStockMovementRegistry
             new StockMovementDefinition("ADJUST_IN", 1, "ADJUST_OUT"),
             new StockMovementDefinition("ADJUST_OUT", -1, "ADJUST_IN"),
             new StockMovementDefinition("SCRAP_OUT", -1, null),
-            new StockMovementDefinition("FG_RECEIPT_OUT", -1, null),
+            new StockMovementDefinition("FG_RECEIPT_OUT", -1, "FG_RECEIPT_REVERSAL"),
+            new StockMovementDefinition("FG_RECEIPT_REVERSAL", 1, "FG_RECEIPT_OUT"),
         };
         return rows.ToDictionary(x => x.Code, StringComparer.Ordinal);
     }

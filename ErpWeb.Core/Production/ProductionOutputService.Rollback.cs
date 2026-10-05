@@ -27,6 +27,7 @@ public sealed partial class ProductionOutputService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
             var replay = await LockOutputRollbackLinkAsync(
                 db, scope.CompanyCode, scope.BranchCode!, request.PostingRequestId, cancellationToken);
             if (replay is not null)
@@ -136,6 +137,9 @@ public sealed partial class ProductionOutputService
                     && x.PostingLinkId == postLink.Uid)
                 .OrderBy(x => x.Uid)
                 .ToListAsync(cancellationToken);
+
+            if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, produceMovements.Select(x => x.Uid).ToArray(), cancellationToken))
+                return Fail("Rollback is blocked by an active pooled-value dependency. Reverse downstream production/FG receipts first.");
 
             foreach (var produce in produceMovements)
             {

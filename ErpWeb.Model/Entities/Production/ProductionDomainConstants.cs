@@ -73,6 +73,8 @@ public static class ProductionMaterialMovementTypes
 
 public static class ProductionPostingCommandTypes
 {
+    public const string FinishedGoodReceiptPost = "FG_RECEIPT_POST";
+    public const string FinishedGoodReceiptRollback = "FG_RECEIPT_ROLLBACK";
     public const string MaterialIssuePost = "MATERIAL_ISSUE_POST";
     public const string MaterialIssueRollback = "MATERIAL_ISSUE_ROLLBACK";
     public const string OutputPost = "OUTPUT_POST";
@@ -81,6 +83,7 @@ public static class ProductionPostingCommandTypes
 
 public static class ProductionDocumentTypes
 {
+    public const string FinishedGoodReceipt = "FG_RECEIPT";
     public const string MaterialIssue = "MATERIAL_ISSUE";
     public const string ProductionOutput = "PRODUCTION_OUTPUT";
 }
@@ -109,6 +112,7 @@ public static class ProductionBalLotMovementTypes
     public const string AdjustIn = "ADJUST_IN";
     public const string AdjustOut = "ADJUST_OUT";
     public const string ScrapOut = "SCRAP_OUT";
+    public const string FgReceiptReversal = "FG_RECEIPT_REVERSAL";
     public const string FgReceiptOut = "FG_RECEIPT_OUT";
 }
 

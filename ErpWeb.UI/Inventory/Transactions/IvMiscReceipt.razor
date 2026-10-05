@@ -317,6 +317,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                                 <Template>
+                                    <DxCheckBox @bind-Checked="Popup.PriceConfirmed">Price confirmed in company base currency (including zero)</DxCheckBox>
                                     <DxSpinEdit @bind-Value="@Popup.UnitPrice"
                                                 Increment="0.0001m"
                                                 MinValue="0m"

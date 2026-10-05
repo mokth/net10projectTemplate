@@ -40,6 +40,8 @@ public sealed class ProductionBalanceLotRow
     public string? ProcessCode { get; init; }
     public decimal Qty { get; init; }
     public string Uom { get; init; } = string.Empty;
+    public decimal NetReceivedBaseQty { get; init; }
+    public decimal PendingReceiptBaseQty { get; init; }
     public decimal BaseQty { get; init; }
     public string BaseUom { get; init; } = string.Empty;
     public string WarehouseCode { get; init; } = string.Empty;
@@ -49,6 +51,7 @@ public sealed class ProductionBalanceLotRow
 
 public sealed class ProductionBalanceLotMovementRow
 {
+    public int? FinishedGoodReceiptId { get; init; }
     public long Uid { get; init; }
     public string MovementType { get; init; } = string.Empty;
     public decimal Qty { get; init; }

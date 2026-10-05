@@ -2,6 +2,7 @@ namespace ErpWeb.Model.Entities.Inventory;
 
 public class IvTrxBatchDetail
 {
+    public string? PriceEvidence { get; set; }
     public int Id { get; set; }
     public int BatchId { get; set; }
     public int? FromBalLocId { get; set; }

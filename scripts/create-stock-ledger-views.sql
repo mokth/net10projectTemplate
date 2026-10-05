@@ -46,6 +46,7 @@ SELECT
             WHEN N'PRODUCE' THEN m.BaseQty
             WHEN N'CONSUME_REVERSAL' THEN m.BaseQty
             WHEN N'RETURN_REVERSAL' THEN m.BaseQty
+            WHEN N'FG_RECEIPT_REVERSAL' THEN m.BaseQty
             WHEN N'OPENING_IN' THEN m.BaseQty
             WHEN N'TRANSFER_IN' THEN m.BaseQty
             WHEN N'STATUS_IN' THEN m.BaseQty

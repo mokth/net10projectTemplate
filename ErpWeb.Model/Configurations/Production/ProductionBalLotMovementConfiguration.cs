@@ -15,7 +15,7 @@ public sealed class ProductionBalLotMovementConfiguration : IEntityTypeConfigura
             table.HasCheckConstraint("CK_PrProductionBalLotMovement_Cost", "[UnitCost] >= 0 AND [TotalCost] >= 0");
             table.HasCheckConstraint(
                 "CK_PrProductionBalLotMovement_Type",
-                "[MovementType] IN ('OPENING_IN','ISSUE','ISSUE_REVERSAL','PRODUCE','PRODUCE_REVERSAL','CONSUME','CONSUME_REVERSAL','RETURN','RETURN_REVERSAL','TRANSFER_OUT','TRANSFER_IN','STATUS_OUT','STATUS_IN','ADJUST_IN','ADJUST_OUT','SCRAP_OUT','FG_RECEIPT_OUT')");
+                "[MovementType] IN ('OPENING_IN','ISSUE','ISSUE_REVERSAL','PRODUCE','PRODUCE_REVERSAL','CONSUME','CONSUME_REVERSAL','RETURN','RETURN_REVERSAL','TRANSFER_OUT','TRANSFER_IN','STATUS_OUT','STATUS_IN','ADJUST_IN','ADJUST_OUT','SCRAP_OUT','FG_RECEIPT_OUT','FG_RECEIPT_REVERSAL')");
             table.HasCheckConstraint("CK_PrProductionBalLotMovement_V2",
                 "[LedgerVersion] IS NULL OR ([LedgerVersion] = 2 AND [LedgerEpochId] IS NOT NULL AND [StockPostingId] IS NOT NULL AND [PostingLineNo] > 0 AND [CompanyCode] IS NOT NULL AND [BranchCode] IS NOT NULL AND [ConversionFactorToBase] > 0)");
         });

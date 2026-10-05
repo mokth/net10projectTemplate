@@ -336,6 +336,13 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
         await AppendQuantityPeriodSnapshotAsync(
             db, company, branch, periodFrom, snapshot, uid, cancellationToken);
 
+        var valuationCloseError = await StockValuationSnapshotBuilder.AppendAsync(
+            db, company, branch, periodFrom, periodTo, uid, cancellationToken);
+        if (valuationCloseError is not null)
+        {
+            return IvPeriodCloseResult.Fail(valuationCloseError);
+        }
+
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 

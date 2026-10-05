@@ -255,6 +255,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                     Uom = d.ToPurUom ?? d.ToStdUom,
                     IClassCode = d.IClassCode,
                     IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
+                    PriceConfirmed = d.PriceEvidence != null,
                     UnitPrice = d.UnitPrice ?? 0m,
                     ExpiryDate = d.ExpiryDate,
                     Reason = d.Reason,
@@ -720,7 +721,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 IStatus = row.IStatus,
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
-                UnitPrice = IvQty.Round(row.UnitPrice),
+                PriceEvidence = row.PriceConfirmed ? "EXPLICIT_COMPANY_BASE_PRICE" : null,
+                UnitPrice = IvQty.Round(row.UnitPrice * row.EnteredQty / row.StdQty),
                 Reason = row.Reason,
                 Remarks = row.Remarks,
                 DoNo = supplierDoNo,
@@ -940,6 +942,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             iClassCode,
             expiry,
             line.UnitPrice,
+            line.PriceConfirmed,
             reason,
             remarks));
     }
@@ -1009,6 +1012,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string IClassCode,
         DateTime? ExpiryDate,
         decimal UnitPrice,
+        bool PriceConfirmed,
         string Reason,
         string? Remarks);
 

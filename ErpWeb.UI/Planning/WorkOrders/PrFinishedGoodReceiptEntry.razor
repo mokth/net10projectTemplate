@@ -1,0 +1,73 @@
+@page "/planning/finished-good-receipts/new"
+@page "/planning/finished-good-receipts/{Id:int}/edit"
+@page "/planning/finished-good-receipts/{Id:int}/view"
+@inherits PageBase
+<PageTitle>Finished Good Receipt</PageTitle>
+<NavigationLock ConfirmExternalNavigation="Dirty" OnBeforeInternalNavigation="BeforeNavigate" />
+<MenuAuthorize MenuCode="@MenuCodes.PlanningFinishedGoodReceipt">
+    <div class="iv-page">
+        <header class="iv-hero"><div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Finished Good Receipt @Document.BatchNo</h1>
+            <span class="iv-chip">@Document.Status</span> <span>@Document.WorkOrderNo</span></div>
+        </header>
+        @if (!string.IsNullOrEmpty(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
+        <section class="iv-card">
+            <div class="iv-toolbar-row">
+                <DxButton Text="Back" Click="Back" />
+                @if (Editable && Id > 0 && CanDelete) { <DxButton Text="Delete draft" Click="@(() => Confirm("DELETE"))" Enabled="@(!Busy)" /> }
+                @if (Id > 0 && Document.Status == "NEW" && CanPost) { <DxButton Text="Post" Click="@(() => Confirm("POST"))" Enabled="@(!Busy && !Dirty && Document.PostingEnabled)" /> }
+                @if (Document.Status == "POSTED" && CanRollback) { <DxButton Text="Rollback" Click="@(() => Confirm("ROLLBACK"))" Enabled="@(!Busy)" /> }
+                @if (Document.Status == "REVERSED" && CanAdd) { <DxButton Text="Create Correction" Click="Correction" Enabled="@(!Busy)" /> }
+            </div>
+            <DxFormLayout>
+                <DxFormLayoutItem Caption="Effective date" ColSpanMd="6"><DxDateEdit @bind-Date="Document.EffectiveDate" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Reference" ColSpanMd="6"><DxTextBox @bind-Text="Document.RefNo" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Remarks" ColSpanMd="12"><DxMemo @bind-Text="Document.Remarks" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+            </DxFormLayout>
+        </section>
+        @if (Editable)
+        {
+            <section class="iv-card">
+                <h2>Select Work Order and eligible source lots</h2>
+                <DxTextBox Text="SourceSearch" TextChanged="SearchSources" NullText="Search Work Order, item or production lot…" />
+                <div class="fg-sources">
+                    @foreach (var source in Sources)
+                    {
+                        <button class="iv-compact-row" disabled="@(Document.WorkOrderId != 0 && Document.WorkOrderId != source.WorkOrderId)" @onclick="@(() => AddSource(source))">
+                            <strong>@source.WorkOrderNo · @source.ItemCode · @source.LotNo</strong>
+                            <span>@source.AvailableQty.ToString("n4") @source.Uom · @source.WorkCentre / @source.Process</span><span>@source.Readiness</span>
+                        </button>
+                    }
+                </div>
+                <p>@SourceCount eligible pools. Showing @Sources.Count. Refine search for more.</p>
+            </section>
+        }
+        <section class="iv-card">
+            <h2>Receipt lines</h2>
+            @foreach (var line in Document.Lines)
+            {
+                <div class="fg-line" @key="line">
+                    <strong>@line.ItemCode · @line.SourceLot</strong><span>@line.WorkCentre / @line.Process · Available @line.AvailableQty.ToString("n4") @line.SourceUom</span>
+                    <DxFormLayout>
+                        <DxFormLayoutItem Caption="@($"Receipt qty ({line.SourceUom})")" ColSpanMd="4"><DxSpinEdit @bind-Value="line.Quantity" ReadOnly="@(!Editable)" MinValue="0m" DisplayFormat="n4" /></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4"><DxTextBox @bind-Text="line.Warehouse" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Bin/location" ColSpanMd="4"><DxTextBox @bind-Text="line.Location" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Destination lot" ColSpanMd="6"><DxTextBox @bind-Text="line.LotNo" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Expiry" ColSpanMd="6"><DxDateEdit @bind-Date="line.ExpiryDate" ReadOnly="@(!Editable)" /></DxFormLayoutItem>
+                    </DxFormLayout>
+                    <span>Destination: @line.DestinationQty.ToString("n4") @line.DestinationUom @(Dirty ? "(recalculated on save)" : "")</span>
+                    @if (Document.CanViewCost) { <span>@(Document.Status == "NEW" ? "Estimated value" : "Posted exact value"): @(line.TotalValue?.ToString("n4") ?? "Unverified")</span> }
+                    @if (Editable) { <DxButton Text="Remove" Click="@(() => Remove(line))" /> }
+                </div>
+            }
+        </section>
+        @if (Document.ReadinessErrors.Count > 0)
+        {
+            <section class="iv-card" role="status"><h2>Readiness</h2><ul>@foreach (var error in Document.ReadinessErrors) { <li>@error</li> }</ul></section>
+        }
+        @if (Editable) { <footer class="fg-footer"><span>Drafts do not reserve stock.</span><DxButton Text="Save Draft" Enabled="@(!Busy)" Click="Save" /></footer> }
+        <DxPopup @bind-Visible="ConfirmVisible" HeaderText="@Action" CloseOnOutsideClick="false" ShowFooter="true">
+            <BodyContentTemplate><p>Confirm @Action.ToLowerInvariant() for this receipt?</p>@if (Action == "ROLLBACK") { <DxMemo @bind-Text="Reason" NullText="Rollback reason" /> }</BodyContentTemplate>
+            <FooterContentTemplate><DxButton Text="Cancel" Click="@(() => ConfirmVisible = false)" Enabled="@(!Busy)" /><DxButton Text="Confirm" Click="Apply" Enabled="@(!Busy)" /></FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

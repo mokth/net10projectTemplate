@@ -73,6 +73,8 @@ public sealed class ProductionBalanceInquiryService : IProductionBalanceInquiryS
                 ProcessCode = x.ProcessCode,
                 Qty = x.Qty,
                 Uom = x.Uom,
+                NetReceivedBaseQty = (db.ProductionBalLotMovements.Where(m => m.ProductionBalLotId == x.Uid && m.MovementType == "FG_RECEIPT_OUT").Sum(m => (decimal?)m.BaseQty) ?? 0m) - (db.ProductionBalLotMovements.Where(m => m.ProductionBalLotId == x.Uid && m.MovementType == "FG_RECEIPT_REVERSAL").Sum(m => (decimal?)m.BaseQty) ?? 0m),
+                PendingReceiptBaseQty = x.BalanceStage == "FG_STAGING" && x.StockStatusCode == "AVAILABLE" ? x.BaseQty : 0m,
                 BaseQty = x.BaseQty,
                 BaseUom = x.BaseUom,
                 WarehouseCode = x.WarehouseCode,
@@ -114,6 +116,7 @@ public sealed class ProductionBalanceInquiryService : IProductionBalanceInquiryS
             .Select(x => new ProductionBalanceLotMovementRow
             {
                 Uid = x.Uid,
+                FinishedGoodReceiptId = db.ProductionFinishedGoodFactRows.Where(f => f.ProductionMovementId == x.Uid).Select(f => (int?)f.BatchId).FirstOrDefault(),
                 MovementType = x.MovementType,
                 Qty = x.Qty,
                 Uom = x.Uom,
@@ -129,6 +132,7 @@ public sealed class ProductionBalanceInquiryService : IProductionBalanceInquiryS
         var withSigned = rows.Select(x => new ProductionBalanceLotMovementRow
         {
             Uid = x.Uid,
+            FinishedGoodReceiptId = x.FinishedGoodReceiptId,
             MovementType = x.MovementType,
             Qty = x.Qty,
             Uom = x.Uom,

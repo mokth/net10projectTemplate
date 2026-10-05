@@ -14,6 +14,11 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
             table.HasCheckConstraint("CK_IvTrxHistory_V2",
                 "[LedgerVersion] IS NULL OR ([LedgerVersion] = 2 AND [LedgerEpochId] IS NOT NULL AND [StockPostingId] IS NOT NULL AND [PostingLineNo] > 0 AND [DocumentRevision] >= 0 AND [EntryRole] IS NOT NULL)");
         });
+        builder.Property(x => x.ExactTransferredValue).HasPrecision(18, 4);
+        builder.Property(x => x.EvidenceBaseQty).HasPrecision(18, 4);
+        builder.Property(x => x.EvidenceBaseUom).HasMaxLength(10);
+        builder.Property(x => x.ValuationStatus).HasMaxLength(20);
+        builder.Property(x => x.PriceEvidence).HasMaxLength(200);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

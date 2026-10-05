@@ -2,6 +2,7 @@ namespace ErpWeb.Model.Entities.Inventory;
 
 public class IvBalLoc
 {
+    public string? PriceEvidence { get; set; }
     public int Id { get; set; }
     public int? LotId { get; set; }
     public string CompanyCode { get; set; } = string.Empty;

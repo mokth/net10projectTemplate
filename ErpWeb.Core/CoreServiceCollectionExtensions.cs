@@ -82,6 +82,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IInventoryTenantContext, InventoryTenantContext>();
         services.AddScoped<IStockPostingCoordinator, StockPostingCoordinator>();
+        services.AddScoped<IInventoryValuationService, InventoryValuationService>();
+        services.AddScoped<IStockValuationQueryService, StockValuationQueryService>();
         services.AddScoped<IBranchStockTransactionLock, BranchStockTransactionLock>();
         services.AddScoped<IStockPeriodGuard, StockPeriodGuard>();
         services.AddScoped<IStockFreezeGuard, NoActiveStockFreezeGuard>();
@@ -187,6 +189,8 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IProductionContributionAllocator, ProductionContributionAllocator>();
         services.AddScoped<IProductionStockWriter, ProductionStockWriter>();
         services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
+        services.AddOptions<FinishedGoodReceiptOptions>().BindConfiguration("Production:FinishedGoodReceipt");
+        services.AddScoped<IProductionFinishedGoodReceiptService, ProductionFinishedGoodReceiptService>();
         services.AddScoped<IProductionOutputService, ProductionOutputService>();
         services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
         services.AddScoped<IProductionStockHistoryService, ProductionStockHistoryService>();
