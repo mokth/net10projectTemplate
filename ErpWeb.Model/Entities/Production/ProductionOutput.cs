@@ -46,4 +46,6 @@ public class ProductionOutput
     public DateTime? ModifiedDate { get; set; }
     public string? ModifiedBy { get; set; }
     public byte[] RowVersion { get; set; } = [];
+
+    public ICollection<ProductionOutputMaterial> Materials { get; set; } = [];
 }

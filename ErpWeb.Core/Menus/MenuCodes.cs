@@ -258,6 +258,7 @@ public static class MenuCodes
     public const string PlanningMachineMaintenance = "PLN_MAC_MAINT";
     public const string PlanningInquiry = "PLN_INQUIRY";
     public const string PlanningMachineSummary = "PLN_MAC_SUMMARY";
+    public const string PlanningMaterialConsumeVariance = "PLN_MAT_CONSUME_VAR";
 
 
     public const string Security = "SECURITY";

@@ -1,0 +1,51 @@
+.pr-var-page {
+    max-width: 1480px;
+    margin-inline: auto;
+}
+
+.pr-var-actions,
+.pr-var-pager {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.pr-var-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.pr-var-tabs button {
+    border: 1px solid var(--iv-line, #d0d5dd);
+    background: transparent;
+    color: inherit;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.pr-var-tabs button.is-active {
+    background: var(--iv-ink, #1d2939);
+    color: #fff;
+    border-color: transparent;
+}
+
+.pr-var-link {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--iv-link, #155eef);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: underline;
+}
+
+.pr-var-note {
+    color: var(--iv-muted, #667085);
+    font-size: 0.85rem;
+    margin: 0 0 12px;
+}

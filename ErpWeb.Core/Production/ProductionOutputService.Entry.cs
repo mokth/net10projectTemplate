@@ -203,7 +203,7 @@ public sealed partial class ProductionOutputService
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetWorkspaceAsync(
-        long workOrderOperationId, CancellationToken cancellationToken = default)
+        long workOrderOperationId, DateTime? productionDate = null, CancellationToken cancellationToken = default)
     {
         if (!await CanAccessAsync(PermissionCodes.Access, cancellationToken))
             return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(IvMasterErrorCode.AccessDenied, "Access denied.");
@@ -227,7 +227,9 @@ public sealed partial class ProductionOutputService
                 IvMasterErrorCode.Validation, sequence.BlockingReason!);
 
         return IvMasterOperationResult<ProductionOutputWorkspace>.Ok(
-            await BuildWorkspaceAsync(db, scope, operation, cancellationToken));
+            await BuildWorkspaceAsync(
+                db, scope, operation, productionDate ?? DateTime.Today, processedOverride: null,
+                savedFacts: null, historical: false, cancellationToken));
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
@@ -257,8 +259,24 @@ public sealed partial class ProductionOutputService
             return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
                 IvMasterErrorCode.NotFound, "Saved Work Order operation was not found.");
 
+        var output = await db.ProductionOutputs.AsNoTracking()
+            .Include(x => x.Materials)
+            .SingleOrDefaultAsync(x => x.Uid == outputId
+                && x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode, cancellationToken);
+        if (output is null)
+            return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
+                IvMasterErrorCode.NotFound, "Production output was not found.");
+
+        var historical = output.Status is ProductionOutputStatuses.Posted or ProductionOutputStatuses.Reversed;
         return IvMasterOperationResult<ProductionOutputWorkspace>.Ok(
-            await BuildWorkspaceAsync(db, scope, operation, cancellationToken));
+            await BuildWorkspaceAsync(
+                db, scope, operation, output.ProductionDate,
+                processedOverride: ProductionMaterialExecutionCalc.ProcessedThisPost(
+                    output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty),
+                savedFacts: output.Materials.ToList(),
+                historical: historical,
+                cancellationToken));
     }
 
     private static IQueryable<ProductionWorkOrderOperation> EligibleOperationsQuery(
@@ -386,60 +404,40 @@ public sealed partial class ProductionOutputService
         return (routeSteps, operations);
     }
 
-    private static async Task<ProductionOutputWorkspace> BuildWorkspaceAsync(
+    private async Task<ProductionOutputWorkspace> BuildWorkspaceAsync(
         AppDbContext db,
         InventoryTenantScope scope,
         ProductionWorkOrderOperation operation,
+        DateTime productionDate,
+        decimal? processedOverride,
+        IReadOnlyList<ProductionOutputMaterial>? savedFacts,
+        bool historical,
         CancellationToken cancellationToken)
     {
+        var processed = processedOverride
+            ?? 0m;
         var materials = new List<ProductionOutputMaterialLine>();
         foreach (var material in operation.Materials.OrderBy(x => x.MaterialSequence))
         {
-            var available = 0m;
-            string? blocking = null;
-            if (string.Equals(material.IssueMethod, PrMaterialIssueMethods.Manual, StringComparison.OrdinalIgnoreCase)
-                && (material.SupplySource is PrMaterialSupplySources.Purchased or PrMaterialSupplySources.ExternalSupply))
+            var blocking = ProductionOutputMaterialSupport.BlockingReason(material);
+            var available = blocking is null
+                ? await AvailableQtyAsync(db, scope, material, productionDate, cancellationToken)
+                : 0m;
+            var saved = savedFacts?.FirstOrDefault(x => x.WorkOrderMaterialId == material.Uid);
+            var standard = historical && saved is not null
+                ? saved.StandardQty
+                : ProductionMaterialExecutionCalc.DailyProductionStandardQty(
+                    material.RequiredQty, operation.PlannedOutputQty, processed);
+            var consume = saved is not null ? saved.ConsumeQty : standard;
+            var reasonCode = historical || saved is not null ? saved?.VarianceReasonCode : null;
+            var reasonText = historical || saved is not null ? saved?.VarianceReasonText : null;
+            if (historical && saved is not null)
             {
-                available = await db.ProductionBalLots.AsNoTracking()
-                    .Where(x => x.CompanyCode == scope.CompanyCode
-                        && x.BranchCode == scope.BranchCode
-                        && x.Kind == ProductionBalLotKinds.MaterialIn
-                        && x.WorkOrderMaterialId == material.Uid
-                        && x.BaseQty > 0m)
-                    .SumAsync(x => x.Qty, cancellationToken);
-            }
-            else if (string.Equals(material.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase))
-            {
-                if (material.ProducingRouteStepId is null)
-                    blocking = "Producing route step is missing.";
-                else
-                    available = await db.ProductionBalLots.AsNoTracking()
-                        .Where(x => x.CompanyCode == scope.CompanyCode
-                            && x.BranchCode == scope.BranchCode
-                            && x.Kind == ProductionBalLotKinds.Wip
-                            && x.WorkOrderId == operation.WorkOrderId
-                            && x.ProducingRouteStepId == material.ProducingRouteStepId
-                            && x.ItemCode == material.ComponentCode
-                            && x.BaseQty > 0m)
-                        .SumAsync(x => x.Qty, cancellationToken);
-            }
-            else
-            {
-                blocking = $"{material.IssueMethod}/{material.SupplySource} is not supported for Daily Production in this milestone.";
+                consume = saved.ConsumeQty;
+                standard = saved.StandardQty;
             }
 
-            materials.Add(new ProductionOutputMaterialLine
-            {
-                WorkOrderMaterialId = material.Uid,
-                ComponentCode = material.ComponentCode,
-                Description = material.ComponentDescription,
-                IssueMethod = material.IssueMethod,
-                SupplySource = material.SupplySource,
-                RequiredQty = material.RequiredQty,
-                RequiredUom = material.RequiredUom ?? "",
-                AvailableQty = IvQty.Round(available),
-                BlockingReason = blocking,
-            });
+            materials.Add(ToLine(material, standard, consume, reasonCode, reasonText, available, blocking));
         }
 
         if (operation.RouteStepId is long routeStepId)
@@ -452,35 +450,34 @@ public sealed partial class ProductionOutputService
             if (ProductionProcessHandoff.TryGetImmediatePrior(siblings, operation, out var prior) is null
                 && prior is not null)
             {
-                var available = 0m;
-                string? blocking = null;
-                var lotNo = ProductionProcessHandoff.HandoffLotNo(prior.Uid);
-                available = await db.ProductionBalLots.AsNoTracking()
-                    .Where(x => x.CompanyCode == scope.CompanyCode
-                        && x.BranchCode == scope.BranchCode
-                        && x.Kind == ProductionBalLotKinds.Wip
-                        && x.WorkOrderId == operation.WorkOrderId
-                        && x.ProducingRouteStepId == null
-                        && x.WorkOrderOperationId == prior.Uid
-                        && x.ItemCode == operation.RouteStep!.OutputItemCode
-                        && x.LotNo == lotNo
-                        && x.BaseQty > 0m)
-                    .SumAsync(x => x.Qty, cancellationToken);
-
-                var uom = operation.PlannedOutputUom
+                var savedHandoff = savedFacts?.FirstOrDefault(x => x.IsHandoff);
+                var available = await AvailableHandoffQtyAsync(
+                    db, scope, operation, prior.Uid, productionDate, cancellationToken);
+                var consume = historical && savedHandoff is not null ? savedHandoff.ConsumeQty : processed;
+                var standard = historical && savedHandoff is not null ? savedHandoff.StandardQty : processed;
+                var uom = savedHandoff?.RequiredUom
+                    ?? operation.PlannedOutputUom
                     ?? operation.RouteStep!.OutputUom
                     ?? string.Empty;
                 materials.Add(new ProductionOutputMaterialLine
                 {
                     WorkOrderMaterialId = ProductionProcessHandoff.SyntheticMaterialId(prior.Uid),
-                    ComponentCode = operation.RouteStep!.OutputItemCode,
+                    ComponentCode = savedHandoff?.ComponentCode ?? operation.RouteStep!.OutputItemCode,
                     Description = $"Previous process {prior.OperationCode}",
                     IssueMethod = ProductionProcessHandoff.IssueMethod,
                     SupplySource = ProductionProcessHandoff.SupplySource,
                     RequiredQty = 0m,
+                    WoBomRequiredQty = 0m,
                     RequiredUom = uom,
-                    AvailableQty = IvQty.Round(available),
-                    BlockingReason = blocking,
+                    StandardQty = standard,
+                    ConsumeQty = consume,
+                    MaxConsumeQty = consume,
+                    VarianceQty = 0m,
+                    AvailableQty = available,
+                    RemainingAfterConsume = IvQty.Round(available - consume),
+                    IsHandoff = true,
+                    HandoffFromOperationId = prior.Uid,
+                    IsConsumeEditable = false,
                 });
             }
         }

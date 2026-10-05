@@ -84,4 +84,33 @@ public sealed class ProductionMaterialExecutionCalcTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             ProductionMaterialExecutionCalc.BaseQtyForIssueQty(1m, conversion));
     }
+
+    [Fact]
+    public void Daily_production_processed_is_good_scrap_reject_hold()
+    {
+        Assert.Equal(160m, ProductionMaterialExecutionCalc.ProcessedThisPost(100m, 20m, 30m, 10m));
+    }
+
+    [Fact]
+    public void Daily_production_standard_prorates_wo_bom_for_this_post_only()
+    {
+        Assert.Equal(100m, ProductionMaterialExecutionCalc.DailyProductionStandardQty(1000m, 1000m, 100m));
+        Assert.Equal(0m, ProductionMaterialExecutionCalc.DailyProductionStandardQty(1000m, 1000m, 0m));
+        Assert.Equal(0m, ProductionMaterialExecutionCalc.DailyProductionStandardQty(1000m, 0m, 100m));
+    }
+
+    [Fact]
+    public void Daily_production_max_is_document_standard_times_tolerance_not_full_wo()
+    {
+        var standard = ProductionMaterialExecutionCalc.DailyProductionStandardQty(1000m, 1000m, 100m);
+        Assert.Equal(110m, ProductionMaterialExecutionCalc.DailyProductionMaxQty(standard, 10m));
+    }
+
+    [Fact]
+    public void Daily_production_variance_is_signed_and_rounded()
+    {
+        Assert.Equal(5m, ProductionMaterialExecutionCalc.DailyProductionVarianceQty(105m, 100m));
+        Assert.Equal(-5m, ProductionMaterialExecutionCalc.DailyProductionVarianceQty(95m, 100m));
+        Assert.Equal(0m, ProductionMaterialExecutionCalc.DailyProductionVarianceQty(100m, 100m));
+    }
 }

@@ -161,6 +161,28 @@ public sealed partial class ProductionOutputService
             foreach (var materialId in materials.Select(x => x.Uid))
                 await LockMaterialAsync(db, materialId, cancellationToken);
 
+            var outputFacts = await db.ProductionOutputMaterials
+                .Where(x => x.ProductionOutputId == output.Uid)
+                .ToListAsync(cancellationToken);
+            foreach (var material in materials)
+            {
+                var standard = ProductionMaterialExecutionCalc.DailyProductionStandardQty(
+                    material.RequiredQty, operation.PlannedOutputQty, processed);
+                var max = ProductionMaterialExecutionCalc.DailyProductionMaxQty(standard, material.Tolerance);
+                var fact = outputFacts.SingleOrDefault(x => x.WorkOrderMaterialId == material.Uid);
+                if (fact is null)
+                    return Fail($"Daily Production material fact is missing for {material.ComponentCode}.");
+                if (fact.StandardQty != standard)
+                    return Fail($"Saved standard for {material.ComponentCode} no longer matches the Work Order snapshot.");
+                var support = ProductionOutputMaterialSupport.BlockingReason(material);
+                if (standard > 0m && support is not null)
+                    return Fail(support);
+                var consumeError = ProductionOutputMaterialFacts.ValidateConsume(
+                    fact.ConsumeQty, standard, max, fact.VarianceReasonCode, fact.VarianceReasonText, interactive: false);
+                if (consumeError is not null)
+                    return Fail($"{material.ComponentCode}: {consumeError}");
+            }
+
             var now = _clock.Now;
             var user = TruncateUser(scope.UserId);
             var consumeFacts = new List<(
@@ -173,16 +195,13 @@ public sealed partial class ProductionOutputService
 
             foreach (var material in materials)
             {
-                var required = ProductionMaterialExecutionCalc.RequestedForProductionQty(
-                    material.RequiredQty, operation.PlannedOutputQty, processed);
+                var fact = outputFacts.Single(x => x.WorkOrderMaterialId == material.Uid);
+                var required = fact.ConsumeQty;
                 if (required <= 0m) continue;
 
-                if (string.Equals(material.IssueMethod, PrMaterialIssueMethods.Backflush, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(material.IssueMethod, PrMaterialIssueMethods.PickList, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(material.SupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.OrdinalIgnoreCase))
-                {
-                    return Fail($"{material.IssueMethod}/{material.SupplySource} is not supported in this milestone.");
-                }
+                var support = ProductionOutputMaterialSupport.BlockingReason(material);
+                if (support is not null)
+                    return Fail(support);
 
                 var requiredBase = IvQty.Round(required * material.ConversionFactorToBase);
                 List<ProductionBalLot> lots;
@@ -433,16 +452,9 @@ public sealed partial class ProductionOutputService
                 operation.GoodQty + operation.ScrapQty + operation.RejectQty + operation.HoldQty);
             operation.RemainingQty = IvQty.Round(Math.Max(operation.PlannedOutputQty - operation.GoodQty, 0m));
 
-            foreach (var material in materials)
-            {
-                var facts = await db.ProductionMaterialMovements.AsNoTracking()
-                    .Where(x => x.WorkOrderMaterialId == material.Uid)
-                    .Select(x => new { x.MovementType, x.Qty })
-                    .ToListAsync(cancellationToken);
-                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
-                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
-            }
+            await RebuildWorkOrderMaterialExecutionProjectionAsync(
+                db, materials.Select(x => x.Uid).ToList(), output.Uid,
+                ProductionOutputProjectionTransition.IncludeCurrentPost, cancellationToken);
 
             if (isFinalFg)
             {

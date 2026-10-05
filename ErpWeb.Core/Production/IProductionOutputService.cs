@@ -34,7 +34,7 @@ public interface IProductionOutputService
         long workOrderOperationId, CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetWorkspaceAsync(
-        long workOrderOperationId, CancellationToken cancellationToken = default);
+        long workOrderOperationId, DateTime? productionDate = null, CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
         long outputId, CancellationToken cancellationToken = default);
@@ -53,6 +53,15 @@ public class ProductionOutputCreateRequest
     public decimal RejectQty { get; set; }
     public decimal HoldQty { get; set; }
     public string OutputLotNo { get; set; } = string.Empty;
+    public IReadOnlyList<ProductionOutputMaterialInput> Materials { get; set; } = [];
+}
+
+public sealed class ProductionOutputMaterialInput
+{
+    public long WorkOrderMaterialId { get; set; }
+    public decimal ConsumeQty { get; set; }
+    public string? VarianceReasonCode { get; set; }
+    public string? VarianceReasonText { get; set; }
 }
 
 public sealed class ProductionOutputUpdateRequest : ProductionOutputCreateRequest
@@ -91,7 +100,7 @@ public sealed class ProductionEligibleOperationQuery
     public int Take { get; set; } = 20;
 }
 
-public sealed class ProductionOutputDetail
+public sealed record ProductionOutputDetail
 {
     public long Uid { get; init; }
     public string DocumentNo { get; init; } = string.Empty;
@@ -126,6 +135,7 @@ public sealed class ProductionOutputDetail
     public DateTime? ReversedDate { get; init; }
     public string? ReversedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public IReadOnlyList<ProductionOutputMaterialLine> Materials { get; init; } = [];
 }
 
 public sealed class ProductionOutputSearchPage
@@ -212,8 +222,20 @@ public sealed class ProductionOutputMaterialLine
     public string? Description { get; init; }
     public string IssueMethod { get; init; } = string.Empty;
     public string SupplySource { get; init; } = string.Empty;
+    public decimal TolerancePercent { get; init; }
     public decimal RequiredQty { get; init; }
+    public decimal WoBomRequiredQty { get; init; }
     public string RequiredUom { get; init; } = string.Empty;
+    public decimal StandardQty { get; init; }
+    public decimal ConsumeQty { get; init; }
+    public decimal MaxConsumeQty { get; init; }
+    public decimal VarianceQty { get; init; }
+    public string? VarianceReasonCode { get; init; }
+    public string? VarianceReasonText { get; init; }
     public decimal AvailableQty { get; init; }
+    public decimal RemainingAfterConsume { get; init; }
     public string? BlockingReason { get; init; }
+    public bool IsHandoff { get; init; }
+    public long? HandoffFromOperationId { get; init; }
+    public bool IsConsumeEditable { get; init; }
 }

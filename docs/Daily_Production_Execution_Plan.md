@@ -264,14 +264,27 @@ Include OutputItemCode, OutputType, OutputBaseQty, OutputUom, OutputBaseUom, Out
 ```text
 ProcessedThisPost = Good + Scrap + Reject + Hold
 
-MaterialRequiredThisPost =
+StandardThisPost =
   RequestedForProductionQty(
     FrozenRequiredQty,
     Operation.PlannedOutputQty,
     ProcessedThisPost)
+
+MaxThisPost = StandardThisPost * (1 + TolerancePercent / 100)
+VarianceThisPost = ConsumeQty - StandardThisPost
 ```
 
+`StandardThisPost` is the analytical BOM for this Daily Production document only. Do not show full WO `RequiredQty` as the consume target.
+
+DP tolerance is per document line — not Issue-to-Production cumulative remaining. A later DP cannot exceed its own `MaxThisPost` to catch up an earlier under-consume.
+
+`0 <= ConsumeQty <= MaxThisPost`. Variance requires a controlled reason (`DAMAGE` / `MACHINE` / `HUMAN` / `YIELD` / `SHORTAGE_ADJUST` / `OTHER`). `LEGACY_UNCLASSIFIED` is backfill-only.
+
+Handoff consume is locked to `ProcessedThisPost`. Persist `WorkOrderMaterialID = NULL` + `HandoffFromOperationID`; UI read identity is `SyntheticMaterialId(prior)`.
+
 Use frozen WO material RequiredQty (already includes ScrapPercent once). No second scrap. No Setup/OperationLoss in formula.
+
+Workspace, Create, Update, and Post share `ProductionOutputMaterialSupport`. Availability preview is `IssueQtyForBaseQty(SUM(BaseQty), ConversionFactorToBase)` as-of `ProductionDate` (same future-stock rule as Post).
 
 ### Guards
 
@@ -313,7 +326,15 @@ Only final op + GoodQty > 0 + WIP_STOCKED|FINISHED_GOODS. Good=0 reject/scrap st
 
 Allocate in **BaseQty**; reject bad UOM conversion. MATERIAL_IN cost: reduce TotalCost proportionally (`consumedBase/lotBase * TotalCost`). WIP cost columns stay 0.
 
-Daily Production does not bypass Issue IP tolerance.
+Daily Production does not bypass Issue IP tolerance on Issue documents. DP consume uses its own per-document max.
+
+Actual `ConsumeQty` drives FIFO allocation and produced WIP/FG cost. `StandardQty` is analytical only.
+
+WO `ConsumedQty` is effective CONSUME − CONSUME_REVERSAL. `VarianceQty` is effective consumed minus standard-to-date from POSTED `PrProductionOutputMaterial` rows. Post rebuilds with `IncludeCurrentPost`; rollback with `ExcludeCurrentRollback` so the helper does not depend on a flushed header status.
+
+Create replay of the same `PostingRequestId` succeeds only when the normalized header and material payload match.
+
+Path B backfill uses original CONSUME (not effective zero after reversal) and reconstructs handoff from `PrProductionBalLotMovement` CONSUME with a null Work Order material id.
 
 ---
 
@@ -323,8 +344,11 @@ Daily Production does not bypass Issue IP tolerance.
 CreateAsync / UpdateAsync / DeleteAsync   (NEW only)
 PostAsync / RollbackAsync
 SearchAsync / GetAsync
-SearchEligibleOperationsAsync / GetWorkspaceAsync
+SearchEligibleOperationsAsync / GetWorkspaceAsync(operationId, productionDate)
+GetDocumentWorkspaceAsync   (saved facts; historical for POSTED/REVERSED)
 ```
+
+`IProductionMaterialConsumeVarianceInquiryService` is ACCESS-only (`PLN_MAT_CONSUME_VAR`). Quantity summaries always group by component + UOM. Reason-only and Work Order-only summaries are counts.
 
 ### PostingLink lifecycle
 
@@ -399,7 +423,7 @@ Search: Work Order, Product, Work Centre, Process, Output Item, Machine.
 
 Entry: Production Date, Shift, Machine, Operator, Good/Scrap/Reject/Hold, Output Lot.
 
-Material grid: material, source type, required for this post, available production balance, selected lots, consumed qty.
+Material grid: material, supply/issue, WO BOM required, standard this post, max incl. tolerance, consume now (editable real / locked handoff), signed variance, reason / OTHER detail, current available, remaining after, UOM, status. Reset restores editable lines to standard. Production date refreshes availability.
 
 Post / Rollback.
 

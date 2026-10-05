@@ -381,16 +381,9 @@ public sealed partial class ProductionOutputService
             // total with the full pending list double-counts reversals flushed by earlier loops.
             await db.SaveChangesAsync(cancellationToken);
 
-            foreach (var material in materials)
-            {
-                var facts = await db.ProductionMaterialMovements.AsNoTracking()
-                    .Where(x => x.WorkOrderMaterialId == material.Uid)
-                    .Select(x => new { x.MovementType, x.Qty })
-                    .ToListAsync(cancellationToken);
-                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
-                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                    facts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
-            }
+            await RebuildWorkOrderMaterialExecutionProjectionAsync(
+                db, materials.Select(x => x.Uid).ToList(), output.Uid,
+                ProductionOutputProjectionTransition.ExcludeCurrentRollback, cancellationToken);
 
             output.Status = ProductionOutputStatuses.Reversed;
             output.ReversedDate = now;

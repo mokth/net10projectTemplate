@@ -47,8 +47,8 @@
                 </div>
             </div>
             <div class="iv-hero__kpi">
-                <span>@(IsViewMode ? "Materials" : "Ready lines")</span>
-                <strong>@(Workspace?.Materials.Count ?? 0)</strong>
+                <span>@(IsViewMode ? "Materials" : "Material lines")</span>
+                <strong>@(MaterialEdits.Count > 0 ? MaterialEdits.Count : Workspace?.Materials.Count ?? 0)</strong>
             </div>
         </header>
 
@@ -180,13 +180,13 @@
             <section class="iv-card pr-dp-grid">
                 <div class="pr-dp-section-head">
                     <div>
-                        <p class="iv-eyebrow">Readiness</p>
-                        <strong>Materials reference</strong>
-                        <small>Current Available is the live balance; posting revalidates availability at the production time.</small>
+                        <p class="iv-eyebrow">Consumption</p>
+                        <strong>Saved material facts</strong>
+                        <small>Standard, consume, variance, and reason are historical. Current Available is the live balance as of now.</small>
                     </div>
                 </div>
-                <DxGrid Data="@(Workspace?.Materials ?? [])"
-                        KeyFieldName="@nameof(ProductionOutputMaterialLine.WorkOrderMaterialId)"
+                <DxGrid Data="@MaterialEdits"
+                        KeyFieldName="@nameof(MaterialLineEdit.WorkOrderMaterialId)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
                         ShowSearchBox="false"
@@ -195,20 +195,27 @@
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                         CssClass="pr-dp-grid">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.ComponentCode)" Caption="Material" MinWidth="180" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.Description)" Caption="Description" MinWidth="180" />
-                        <DxGridDataColumn Caption="Supply / Issue Method" MinWidth="180">
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" MinWidth="150" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" MinWidth="160" />
+                        <DxGridDataColumn Caption="Supply / Issue" MinWidth="160">
                             <CellDisplayTemplate>
                                 @{
-                                    var line = (ProductionOutputMaterialLine)context.DataItem;
+                                    var line = (MaterialLineEdit)context.DataItem;
                                 }
                                 <span>@line.SupplySource / @line.IssueMethod</span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredQty)" Caption="WO BOM Required" Width="150px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.AvailableQty)" Caption="Current Available" Width="145px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredUom)" Caption="UOM" Width="90px" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.BlockingReason)" Caption="Status / Blocking Reason" MinWidth="220" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.WoBomRequiredQty)" Caption="WO BOM Required" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.StandardQty)" Caption="Standard This Post" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.MaxConsumeQty)" Caption="Max incl. Tolerance" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ConsumeQty)" Caption="Consume" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceQty)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceReasonCode)" Caption="Reason" Width="140px" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceReasonText)" Caption="Reason detail" MinWidth="140" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.AvailableQty)" Caption="Current Available" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RemainingAfterConsume)" Caption="Remaining After" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RequiredUom)" Caption="UOM" Width="80px" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.StatusText)" Caption="Status" MinWidth="160" />
                     </Columns>
                 </DxGrid>
             </section>
@@ -459,7 +466,8 @@
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
                     <DxFormLayoutItem Caption="Production date &amp; time" ColSpanMd="3">
                         <Template>
-                            <DxDateEdit @bind-Date="@ProductionDate"
+                            <DxDateEdit Date="@ProductionDate"
+                                        DateChanged="@((DateTime v) => OnProductionDateChanged(v))"
                                         DisplayFormat="dd/MM/yyyy HH:mm"
                                         TimeSectionVisible="true"
                                         Enabled="@CanEditFields"
@@ -534,22 +542,30 @@
                 <div class="pr-dp-qty-grid">
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Good</span>
-                        <DxSpinEdit @bind-Value="@GoodQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <DxSpinEdit Value="@GoodQty"
+                                    ValueChanged="@((decimal v) => OnOutputQtyChanged(v, ScrapQty, RejectQty, HoldQty))"
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Scrap</span>
-                        <DxSpinEdit @bind-Value="@ScrapQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <DxSpinEdit Value="@ScrapQty"
+                                    ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, v, RejectQty, HoldQty))"
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Reject</span>
-                        <DxSpinEdit @bind-Value="@RejectQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <DxSpinEdit Value="@RejectQty"
+                                    ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, v, HoldQty))"
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Hold</span>
-                        <DxSpinEdit @bind-Value="@HoldQty" Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                        <DxSpinEdit Value="@HoldQty"
+                                    ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, RejectQty, v))"
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                         <small>@OutputUom</small>
                     </div>
                 </div>
@@ -558,13 +574,21 @@
             <section class="iv-card pr-dp-grid">
                 <div class="pr-dp-section-head">
                     <div>
-                        <p class="iv-eyebrow">Readiness</p>
-                        <strong>Materials reference</strong>
-                        <small>Current Available is the live balance; posting revalidates availability at the production time.</small>
+                        <p class="iv-eyebrow">Consumption</p>
+                        <strong>Materials this post</strong>
+                        <small>Standard follows Good + Scrap + Reject + Hold. Override consume only for real materials; previous-process handoff stays locked.</small>
                     </div>
+                    @if (CanEditFields)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="RESET CONSUMES TO STANDARD"
+                                  IconCssClass="fa-solid fa-rotate-left"
+                                  Click="@ResetConsumesToStandard"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
                 </div>
-                <DxGrid Data="@Workspace.Materials"
-                        KeyFieldName="@nameof(ProductionOutputMaterialLine.WorkOrderMaterialId)"
+                <DxGrid Data="@MaterialEdits"
+                        KeyFieldName="@nameof(MaterialLineEdit.WorkOrderMaterialId)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
                         ShowSearchBox="false"
@@ -573,20 +597,64 @@
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                         CssClass="pr-dp-grid">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.ComponentCode)" Caption="Material" MinWidth="180" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.Description)" Caption="Description" MinWidth="180" />
-                        <DxGridDataColumn Caption="Supply / Issue Method" MinWidth="180">
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" MinWidth="140" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" MinWidth="150" />
+                        <DxGridDataColumn Caption="Supply / Issue" MinWidth="150">
                             <CellDisplayTemplate>
                                 @{
-                                    var line = (ProductionOutputMaterialLine)context.DataItem;
+                                    var line = (MaterialLineEdit)context.DataItem;
                                 }
                                 <span>@line.SupplySource / @line.IssueMethod</span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredQty)" Caption="WO BOM Required" Width="150px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.AvailableQty)" Caption="Current Available" Width="145px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.RequiredUom)" Caption="UOM" Width="90px" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionOutputMaterialLine.BlockingReason)" Caption="Status / Blocking Reason" MinWidth="220" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.WoBomRequiredQty)" Caption="WO BOM Required" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.StandardQty)" Caption="Standard This Post" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.MaxConsumeQty)" Caption="Max incl. Tolerance" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn Caption="Consume Now" Width="140px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (MaterialLineEdit)context.DataItem;
+                                }
+                                <DxSpinEdit Value="@line.ConsumeQty"
+                                            ValueChanged="@((decimal v) => OnConsumeChanged(line, v))"
+                                            Enabled="@(CanEditFields && line.IsConsumeEditable)"
+                                            MinValue="0m"
+                                            Increment="0.0001m"
+                                            DisplayFormat="n4"
+                                            ShowSpinButtons="false" />
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceQty)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn Caption="Reason" Width="160px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (MaterialLineEdit)context.DataItem;
+                                }
+                                <DxComboBox Data="@VarianceReasonChoices"
+                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                            Value="@line.VarianceReasonCode"
+                                            ValueChanged="@((string? v) => OnReasonChanged(line, v))"
+                                            NullText="Select reason"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                            Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)" />
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Reason detail" MinWidth="160">
+                            <CellDisplayTemplate>
+                                @{
+                                    var line = (MaterialLineEdit)context.DataItem;
+                                }
+                                <DxTextBox Text="@line.VarianceReasonText"
+                                           TextChanged="@((string v) => line.VarianceReasonText = v)"
+                                           NullText="Required for OTHER"
+                                           Enabled="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))" />
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.AvailableQty)" Caption="Current Available" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RemainingAfterConsume)" Caption="Remaining After" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RequiredUom)" Caption="UOM" Width="80px" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.StatusText)" Caption="Status" MinWidth="160" />
                     </Columns>
                 </DxGrid>
             </section>

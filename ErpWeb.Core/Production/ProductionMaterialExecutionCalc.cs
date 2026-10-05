@@ -24,6 +24,29 @@ public static class ProductionMaterialExecutionCalc
     }
 
     /// <summary>
+    /// Daily Production document-line standard. Zero processed or non-positive planned output yields 0.
+    /// Tolerance is applied at this document's standard, not against full-WO required or Issue-to-Production cumulative issue.
+    /// </summary>
+    public static decimal DailyProductionStandardQty(
+        decimal fullRequiredQty, decimal plannedOutputQty, decimal processedThisPost)
+    {
+        if (fullRequiredQty < 0m) throw new ArgumentOutOfRangeException(nameof(fullRequiredQty));
+        if (processedThisPost < 0m) throw new ArgumentOutOfRangeException(nameof(processedThisPost));
+        if (processedThisPost == 0m || plannedOutputQty <= 0m)
+            return 0m;
+        return RequestedForProductionQty(fullRequiredQty, plannedOutputQty, processedThisPost);
+    }
+
+    public static decimal DailyProductionMaxQty(decimal standardThisPost, decimal tolerancePercent) =>
+        MaxForProductionQty(standardThisPost, tolerancePercent);
+
+    public static decimal DailyProductionVarianceQty(decimal consumeQty, decimal standardThisPost) =>
+        IvQty.Round(consumeQty - standardThisPost);
+
+    public static decimal ProcessedThisPost(decimal goodQty, decimal scrapQty, decimal rejectQty, decimal holdQty) =>
+        IvQty.Round(goodQty + scrapQty + rejectQty + holdQty);
+
+    /// <summary>
     /// Maximum issue for a desired-output standard quantity after configured tolerance.
     /// </summary>
     public static decimal MaxForProductionQty(decimal requestedQty, decimal tolerancePercent) =>

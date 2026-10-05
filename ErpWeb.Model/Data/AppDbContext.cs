@@ -226,6 +226,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionMovementAllocation> ProductionMovementAllocations => Set<ProductionMovementAllocation>();
     public DbSet<ProductionLocation> ProductionLocations => Set<ProductionLocation>();
     public DbSet<ProductionOutput> ProductionOutputs => Set<ProductionOutput>();
+    public DbSet<ProductionOutputMaterial> ProductionOutputMaterials => Set<ProductionOutputMaterial>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
 

@@ -54,14 +54,16 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
-            var replay = await db.ProductionOutputs.SingleOrDefaultAsync(x =>
+            var replay = await db.ProductionOutputs
+                .Include(x => x.Materials)
+                .SingleOrDefaultAsync(x =>
                 x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
                 && x.PostingRequestId == request.PostingRequestId, cancellationToken);
             if (replay is not null)
             {
-                if (replay.WorkOrderOperationId != request.WorkOrderOperationId)
-                    return Fail("PostingRequestId is already associated with another operation.", IvMasterErrorCode.Concurrency);
+                if (!ReplayPayloadMatches(replay, request))
+                    return Fail("PostingRequestId was already used with a different Daily Production payload.", IvMasterErrorCode.Concurrency);
 
                 await tx.CommitAsync(cancellationToken);
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
@@ -139,6 +141,11 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         db.ProductionOutputs.Add(output);
         await db.SaveChangesAsync(cancellationToken);
 
+        var materialError = await PersistMaterialFactsAsync(
+            db, scope, output, operation, request.Materials ?? [], interactive: true, cancellationToken);
+        if (materialError is not null)
+            return Fail(materialError);
+
         db.ProductionPostingLinks.Add(new ProductionPostingLink
         {
             CompanyCode = scope.CompanyCode,
@@ -164,11 +171,13 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         {
             await tx.RollbackAsync(cancellationToken);
             db.ChangeTracker.Clear();
-            var replay = await db.ProductionOutputs.AsNoTracking().SingleOrDefaultAsync(x =>
+            var replay = await db.ProductionOutputs.AsNoTracking()
+                .Include(x => x.Materials)
+                .SingleOrDefaultAsync(x =>
                 x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
                 && x.PostingRequestId == request.PostingRequestId, cancellationToken);
-            if (replay is not null && replay.WorkOrderOperationId == request.WorkOrderOperationId)
+            if (replay is not null && ReplayPayloadMatches(replay, request))
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
 
             return Fail("Daily Production creation conflicted with another request; retry with the same PostingRequestId.",
@@ -220,6 +229,10 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         output.OutputLotNo = (request.OutputLotNo ?? string.Empty).Trim();
         output.ModifiedDate = _clock.Now;
         output.ModifiedBy = TruncateUser(scope.UserId);
+        var materialError = await PersistMaterialFactsAsync(
+            db, scope, output, operation, request.Materials ?? [], interactive: true, cancellationToken);
+        if (materialError is not null)
+            return Fail(materialError);
         await db.SaveChangesAsync(cancellationToken);
         return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
     }
@@ -465,7 +478,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private static async Task<ProductionOutputDetail?> MapDetailAsync(
         AppDbContext db, InventoryTenantScope scope, long uid, CancellationToken ct)
     {
-        return await db.ProductionOutputs.AsNoTracking()
+        var detail = await db.ProductionOutputs.AsNoTracking()
             .Where(x => x.Uid == uid
                 && x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode)
@@ -523,5 +536,40 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 ReversedBy = x.ReversedBy,
                 RowVersion = x.RowVersion,
             }).SingleOrDefaultAsync(ct);
+        if (detail is null)
+            return null;
+
+        var lines = await db.ProductionOutputMaterials.AsNoTracking()
+            .Where(x => x.ProductionOutputId == uid
+                && x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode)
+            .OrderBy(x => x.IsHandoff)
+            .ThenBy(x => x.WorkOrderMaterialId)
+            .ToListAsync(ct);
+        return detail with
+        {
+            Materials = lines.Select(x => new ProductionOutputMaterialLine
+            {
+                WorkOrderMaterialId = x.IsHandoff && x.HandoffFromOperationId is long prior
+                    ? ProductionProcessHandoff.SyntheticMaterialId(prior)
+                    : x.WorkOrderMaterialId ?? 0,
+                ComponentCode = x.ComponentCode,
+                IssueMethod = x.IssueMethod,
+                SupplySource = x.SupplySource,
+                TolerancePercent = x.TolerancePercent,
+                RequiredQty = x.WoBomRequiredQty,
+                WoBomRequiredQty = x.WoBomRequiredQty,
+                RequiredUom = x.RequiredUom,
+                StandardQty = x.StandardQty,
+                ConsumeQty = x.ConsumeQty,
+                MaxConsumeQty = ProductionMaterialExecutionCalc.DailyProductionMaxQty(x.StandardQty, x.TolerancePercent),
+                VarianceQty = x.VarianceQty,
+                VarianceReasonCode = x.VarianceReasonCode,
+                VarianceReasonText = x.VarianceReasonText,
+                IsHandoff = x.IsHandoff,
+                HandoffFromOperationId = x.HandoffFromOperationId,
+                IsConsumeEditable = !x.IsHandoff,
+            }).ToList(),
+        };
     }
 }

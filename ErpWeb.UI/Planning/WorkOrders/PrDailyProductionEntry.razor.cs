@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
@@ -32,6 +33,11 @@ public partial class PrDailyProductionEntry : PageBase
 
     protected ProductionOutputDetail? Document;
     protected ProductionOutputWorkspace? Workspace;
+    protected List<MaterialLineEdit> MaterialEdits { get; set; } = [];
+    protected IReadOnlyList<ProductionOutputChoice> VarianceReasonChoices { get; } =
+        ProductionMaterialVarianceReasonCodes.UserSelectable
+            .Select(code => new ProductionOutputChoice(code, code))
+            .ToList();
     protected ProductionOutputEntryLookups Lookups { get; set; } = new();
     protected ProductionEligibleOperationFilterOptions FilterOptions { get; set; } = new();
     protected List<ProductionEligibleOperationRow> OperationRows { get; set; } = [];
@@ -237,7 +243,8 @@ public partial class PrDailyProductionEntry : PageBase
     protected async Task SelectOperationAsync(long operationId)
     {
         ErrorMessage = null;
-        var workspace = await Outputs.GetWorkspaceAsync(operationId);
+        ProductionDate = DateTime.Now;
+        var workspace = await Outputs.GetWorkspaceAsync(operationId, ProductionDate);
         if (!workspace.Succeeded || workspace.Data is null)
         {
             ErrorMessage = workspace.Message ?? "Unable to load operation workspace.";
@@ -261,6 +268,8 @@ public partial class PrDailyProductionEntry : PageBase
         OperatorCode = null;
         OutputLotNo = string.Empty;
         GoodQty = ScrapQty = RejectQty = HoldQty = 0m;
+        BindMaterialEdits(workspace.Data.Materials, preserveOverrides: false);
+        RecalcMaterialStandards();
         await LoadEntryLookupsAsync(operationId, workspace.Data.Operation.SelectedMachineCode);
     }
 
@@ -318,6 +327,7 @@ public partial class PrDailyProductionEntry : PageBase
         if (workspace.Succeeded && workspace.Data is not null)
         {
             Workspace = workspace.Data;
+            BindMaterialEdits(workspace.Data.Materials, preserveOverrides: true);
             await LoadEntryLookupsAsync(d.WorkOrderOperationId);
             AddHistoricalChoiceValues();
         }
@@ -374,6 +384,7 @@ public partial class PrDailyProductionEntry : PageBase
                     RejectQty = RejectQty,
                     HoldQty = HoldQty,
                     OutputLotNo = OutputLotNo,
+                    Materials = BuildMaterialInputs(),
                 });
                 if (!created.Succeeded || created.Data is null)
                 {
@@ -401,6 +412,7 @@ public partial class PrDailyProductionEntry : PageBase
                 HoldQty = HoldQty,
                 OutputLotNo = OutputLotNo,
                 RowVersion = RowVersion,
+                Materials = BuildMaterialInputs(),
             });
             if (!updated.Succeeded || updated.Data is null)
             {
@@ -530,6 +542,7 @@ public partial class PrDailyProductionEntry : PageBase
 
         Workspace = null;
         SelectedOperationId = null;
+        MaterialEdits = [];
         Lookups = new();
         ResetFormFields();
         await LoadFilterOptionsAsync();
@@ -552,8 +565,230 @@ public partial class PrDailyProductionEntry : PageBase
         ProductionDate = DateTime.Now;
         HeaderStatus = ProductionOutputStatuses.New;
         RowVersion = [];
+        MaterialEdits = [];
     }
+
+    protected Task OnProductionDateChanged(DateTime value)
+    {
+        ProductionDate = value;
+        return CanEditFields && SelectedOperationId is > 0
+            ? RefreshAvailabilityAsync()
+            : Task.CompletedTask;
+    }
+
+    protected void OnOutputQtyChanged(decimal good, decimal scrap, decimal reject, decimal hold)
+    {
+        GoodQty = good;
+        ScrapQty = scrap;
+        RejectQty = reject;
+        HoldQty = hold;
+        RecalcMaterialStandards();
+    }
+
+    protected void OnConsumeChanged(MaterialLineEdit line, decimal consume)
+    {
+        if (!line.IsConsumeEditable)
+            return;
+        line.IsConsumeOverridden = true;
+        line.ConsumeQty = consume;
+        ApplyLineDerived(line);
+    }
+
+    protected void OnReasonChanged(MaterialLineEdit line, string? code)
+    {
+        line.VarianceReasonCode = code;
+        if (!string.Equals(code, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))
+            line.VarianceReasonText = null;
+        ApplyLineDerived(line);
+    }
+
+    protected void ResetConsumesToStandard()
+    {
+        foreach (var line in MaterialEdits.Where(x => x.IsConsumeEditable))
+        {
+            line.IsConsumeOverridden = false;
+            line.ConsumeQty = line.StandardQty;
+            line.VarianceReasonCode = null;
+            line.VarianceReasonText = null;
+            ApplyLineDerived(line);
+        }
+        MaterialEdits = MaterialEdits.ToList();
+    }
+
+    private async Task RefreshAvailabilityAsync()
+    {
+        if (SelectedOperationId is not > 0)
+            return;
+
+        var workspace = await Outputs.GetWorkspaceAsync(SelectedOperationId.Value, ProductionDate);
+        if (!workspace.Succeeded || workspace.Data is null)
+        {
+            ErrorMessage = workspace.Message ?? "Unable to refresh material availability.";
+            return;
+        }
+
+        Workspace = workspace.Data;
+        BindMaterialEdits(workspace.Data.Materials, preserveOverrides: true);
+        RecalcMaterialStandards();
+    }
+
+    private void BindMaterialEdits(IReadOnlyList<ProductionOutputMaterialLine> lines, bool preserveOverrides)
+    {
+        var previous = MaterialEdits.ToDictionary(x => x.WorkOrderMaterialId);
+        MaterialEdits = lines.Select(line =>
+        {
+            previous.TryGetValue(line.WorkOrderMaterialId, out var existing);
+            var consume = preserveOverrides && existing is { IsConsumeOverridden: true }
+                ? existing.ConsumeQty
+                : line.ConsumeQty;
+            var reasonCode = preserveOverrides && existing is { IsConsumeOverridden: true }
+                ? existing.VarianceReasonCode
+                : line.VarianceReasonCode;
+            var reasonText = preserveOverrides && existing is { IsConsumeOverridden: true }
+                ? existing.VarianceReasonText
+                : line.VarianceReasonText;
+            var edit = new MaterialLineEdit
+            {
+                WorkOrderMaterialId = line.WorkOrderMaterialId,
+                ComponentCode = line.ComponentCode,
+                Description = line.Description,
+                SupplySource = line.SupplySource,
+                IssueMethod = line.IssueMethod,
+                RequiredUom = line.RequiredUom,
+                WoBomRequiredQty = line.WoBomRequiredQty,
+                TolerancePercent = line.TolerancePercent,
+                StandardQty = line.StandardQty,
+                ConsumeQty = consume,
+                MaxConsumeQty = line.MaxConsumeQty,
+                AvailableQty = line.AvailableQty,
+                VarianceReasonCode = reasonCode,
+                VarianceReasonText = reasonText,
+                BlockingReason = line.BlockingReason,
+                IsHandoff = line.IsHandoff,
+                HandoffFromOperationId = line.HandoffFromOperationId,
+                IsConsumeEditable = line.IsConsumeEditable,
+                IsConsumeOverridden = preserveOverrides && existing is { IsConsumeOverridden: true },
+            };
+            ApplyLineDerived(edit);
+            if (!edit.IsHandoff && IvQty.Round(edit.ConsumeQty) != IvQty.Round(edit.StandardQty))
+                edit.IsConsumeOverridden = true;
+            return edit;
+        }).ToList();
+    }
+
+    private void RecalcMaterialStandards()
+    {
+        if (Workspace is null)
+            return;
+
+        var processed = ProductionMaterialExecutionCalc.ProcessedThisPost(GoodQty, ScrapQty, RejectQty, HoldQty);
+        var planned = Workspace.Operation.PlannedOutputQty;
+        foreach (var line in MaterialEdits)
+        {
+            if (line.IsHandoff)
+            {
+                line.StandardQty = processed;
+                line.MaxConsumeQty = processed;
+                line.ConsumeQty = processed;
+                line.VarianceQty = 0m;
+                line.VarianceReasonCode = null;
+                line.VarianceReasonText = null;
+                line.RemainingAfterConsume = IvQty.Round(line.AvailableQty - line.ConsumeQty);
+                line.StatusText = MaterialStatus(line);
+                continue;
+            }
+
+            line.StandardQty = ProductionMaterialExecutionCalc.DailyProductionStandardQty(
+                line.WoBomRequiredQty, planned, processed);
+            line.MaxConsumeQty = ProductionMaterialExecutionCalc.DailyProductionMaxQty(
+                line.StandardQty, line.TolerancePercent);
+            if (!line.IsConsumeOverridden)
+            {
+                line.ConsumeQty = line.StandardQty;
+                line.VarianceReasonCode = null;
+                line.VarianceReasonText = null;
+            }
+
+            ApplyLineDerived(line);
+        }
+
+        MaterialEdits = MaterialEdits.ToList();
+    }
+
+    private static void ApplyLineDerived(MaterialLineEdit line)
+    {
+        line.VarianceQty = ProductionMaterialExecutionCalc.DailyProductionVarianceQty(
+            line.ConsumeQty, line.StandardQty);
+        if (line.VarianceQty == 0m && !line.IsHandoff)
+        {
+            line.VarianceReasonCode = null;
+            line.VarianceReasonText = null;
+        }
+
+        line.RemainingAfterConsume = IvQty.Round(line.AvailableQty - line.ConsumeQty);
+        line.StatusText = MaterialStatus(line);
+    }
+
+    private static string MaterialStatus(MaterialLineEdit line)
+    {
+        if (!string.IsNullOrWhiteSpace(line.BlockingReason))
+            return line.BlockingReason;
+        if (line.IsHandoff)
+            return "Handoff locked";
+        if (line.ConsumeQty > line.MaxConsumeQty)
+            return "Over tolerance";
+        if (line.VarianceQty != 0m && string.IsNullOrWhiteSpace(line.VarianceReasonCode))
+            return "Reason required";
+        if (string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal)
+            && string.IsNullOrWhiteSpace(line.VarianceReasonText))
+            return "Reason detail required";
+        if (line.RemainingAfterConsume < 0m)
+            return $"Shortage {Math.Abs(line.RemainingAfterConsume):n4}";
+        if (line.VarianceQty > 0m)
+            return "Over consume";
+        if (line.VarianceQty < 0m)
+            return "Under consume";
+        return "OK";
+    }
+
+    private IReadOnlyList<ProductionOutputMaterialInput> BuildMaterialInputs() =>
+        MaterialEdits
+            .Where(x => !x.IsHandoff)
+            .Select(x => new ProductionOutputMaterialInput
+            {
+                WorkOrderMaterialId = x.WorkOrderMaterialId,
+                ConsumeQty = x.ConsumeQty,
+                VarianceReasonCode = x.VarianceReasonCode,
+                VarianceReasonText = x.VarianceReasonText,
+            })
+            .ToList();
 
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    protected sealed class MaterialLineEdit
+    {
+        public long WorkOrderMaterialId { get; set; }
+        public string ComponentCode { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string SupplySource { get; set; } = string.Empty;
+        public string IssueMethod { get; set; } = string.Empty;
+        public string RequiredUom { get; set; } = string.Empty;
+        public decimal WoBomRequiredQty { get; set; }
+        public decimal TolerancePercent { get; set; }
+        public decimal StandardQty { get; set; }
+        public decimal ConsumeQty { get; set; }
+        public decimal MaxConsumeQty { get; set; }
+        public decimal VarianceQty { get; set; }
+        public string? VarianceReasonCode { get; set; }
+        public string? VarianceReasonText { get; set; }
+        public decimal AvailableQty { get; set; }
+        public decimal RemainingAfterConsume { get; set; }
+        public string? BlockingReason { get; set; }
+        public bool IsHandoff { get; set; }
+        public long? HandoffFromOperationId { get; set; }
+        public bool IsConsumeEditable { get; set; }
+        public bool IsConsumeOverridden { get; set; }
+        public string StatusText { get; set; } = "OK";
+    }
 }

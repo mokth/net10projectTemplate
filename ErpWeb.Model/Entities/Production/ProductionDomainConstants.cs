@@ -123,6 +123,43 @@ public static class ProductionOutputStatuses
     public const string Reversed = "REVERSED";
 }
 
+/// <summary>Closed-list reasons for Daily Production consume vs standard variance.</summary>
+public static class ProductionMaterialVarianceReasonCodes
+{
+    public const string Damage = "DAMAGE";
+    public const string Machine = "MACHINE";
+    public const string Human = "HUMAN";
+    public const string Yield = "YIELD";
+    public const string ShortageAdjust = "SHORTAGE_ADJUST";
+    public const string Other = "OTHER";
+
+    /// <summary>Migration/backfill only. Never offered in the user dropdown.</summary>
+    public const string LegacyUnclassified = "LEGACY_UNCLASSIFIED";
+
+    public static IReadOnlyList<string> UserSelectable { get; } =
+        [Damage, Machine, Human, Yield, ShortageAdjust, Other];
+
+    public static string? Normalize(string? value)
+    {
+        var trimmed = (value ?? string.Empty).Trim().ToUpperInvariant();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public static bool IsUserSelectableCode(string? code)
+    {
+        var normalized = Normalize(code);
+        return normalized is not null && UserSelectable.Contains(normalized, StringComparer.Ordinal);
+    }
+
+    public static bool IsValidPersistedCode(string? code)
+    {
+        var normalized = Normalize(code);
+        return normalized is not null
+            && (UserSelectable.Contains(normalized, StringComparer.Ordinal)
+                || string.Equals(normalized, LegacyUnclassified, StringComparison.Ordinal));
+    }
+}
+
 public static class ProductionChangeOrderStatuses
 {
     public const string Draft = "DRAFT";

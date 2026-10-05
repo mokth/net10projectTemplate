@@ -303,6 +303,8 @@
             Icon="fa-solid fa-calendar-check" />
       <Menu Code="PLN_STOCK_RECONCILIATION" Name="Production Stock Reconciliation" Route="/planning/stock-reconciliation" SortOrder="6"
             Icon="fa-solid fa-scale-unbalanced" />
+      <Menu Code="PLN_MAT_CONSUME_VAR" Name="Material Consume Variance" Route="/planning/material-consume-variance" SortOrder="7"
+            Icon="fa-solid fa-chart-column" />
     </Menu>
   </Menu>
 

@@ -193,6 +193,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProductionFinishedGoodReceiptService, ProductionFinishedGoodReceiptService>();
         services.AddScoped<IProductionOutputService, ProductionOutputService>();
         services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
+        services.AddScoped<IProductionMaterialConsumeVarianceInquiryService, ProductionMaterialConsumeVarianceInquiryService>();
         services.AddScoped<IProductionStockHistoryService, ProductionStockHistoryService>();
         // Version-2 snapshot quantity contract (plan §7.3).
         services.AddScoped<IWorkOrderQuantityCalculator, WorkOrderQuantityCalculator>();

@@ -165,6 +165,49 @@ WHERE m.MenuCode = N'PLN_PRODUCTION_BALANCE'
   AND p.PermissionCode IN (N'ACCESS')
   AND mp.IsActive <> 1;
 
+IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PLN_MAT_CONSUME_VAR')
+BEGIN
+    INSERT INTO dbo.Menu
+        (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+    VALUES
+        (N'PLN_MAT_CONSUME_VAR', N'Material Consume Variance', @inquiryId, N'/planning/material-consume-variance', 7, 0, 1,
+         SYSUTCDATETIME(), N'SEED');
+END
+ELSE
+BEGIN
+    UPDATE dbo.Menu
+    SET ParentMenuId = @inquiryId,
+        MenuName = N'Material Consume Variance',
+        Route = N'/planning/material-consume-variance',
+        SortOrder = 7,
+        IsActive = 1,
+        ModifiedDate = SYSUTCDATETIME(),
+        ModifiedBy = N'SEED'
+    WHERE MenuCode = N'PLN_MAT_CONSUME_VAR';
+END;
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode = N'ACCESS'
+WHERE m.MenuCode = N'PLN_MAT_CONSUME_VAR'
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId
+        AND mp.PermissionId = p.PermissionId
+  );
+
+UPDATE mp
+SET mp.IsActive = 1
+FROM dbo.MenuPermission mp
+INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
+INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
+WHERE m.MenuCode = N'PLN_MAT_CONSUME_VAR'
+  AND p.PermissionCode IN (N'ACCESS')
+  AND mp.IsActive <> 1;
+
 IF OBJECT_ID(N'dbo.MsRunningNo', N'U') IS NOT NULL
    AND NOT EXISTS
    (
@@ -177,5 +220,5 @@ BEGIN
     VALUES (N'DEMO', N'PR_DAILY_OUTPUT', 0);
 END;
 
-PRINT N'PLN_DAILY_PRODUCTION and PLN_PRODUCTION_BALANCE menus/permissions ensured.';
+PRINT N'PLN_DAILY_PRODUCTION, PLN_PRODUCTION_BALANCE and PLN_MAT_CONSUME_VAR menus/permissions ensured.';
 GO
