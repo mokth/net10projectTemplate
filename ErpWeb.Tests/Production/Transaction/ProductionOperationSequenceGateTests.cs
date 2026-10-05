@@ -62,7 +62,7 @@ public sealed class ProductionOperationSequenceGateTests
     }
 
     [Fact]
-    public void First_and_parallel_processes_are_allowed_but_next_process_waits_for_group()
+    public void First_and_parallel_processes_are_allowed_and_partial_good_unlocks_next_process()
     {
         var graph = BuildGraph(Step(10, 10, "WC-A"));
         graph.Operations.AddRange([
@@ -74,18 +74,64 @@ public sealed class ProductionOperationSequenceGateTests
         Assert.True(Evaluate(graph, 101).Allowed);
         Assert.True(Evaluate(graph, 102).Allowed);
 
+        var opened = Evaluate(graph, 103);
+        Assert.True(opened.Allowed);
+
+        graph.Operations.Single(x => x.Uid == 102).GoodQty = 0m;
         var blocked = Evaluate(graph, 103);
         Assert.False(blocked.Allowed);
         Assert.Equal(ProductionSequenceBlockingLevels.Process, blocked.BlockingLevel);
         Assert.Equal(10, blocked.BlockingSequence);
         Assert.Equal("P102", blocked.BlockingOperationCode);
+        Assert.Equal([102], blocked.BlockingOperationIds);
+        Assert.Contains("must post Good qty first", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0.0000 of 100.0000 Good posted", blocked.Message, StringComparison.Ordinal);
 
-        graph.Operations.Single(x => x.Uid == 102).GoodQty = 100m;
+        graph.Operations.Single(x => x.Uid == 102).GoodQty = 1m;
         Assert.True(Evaluate(graph, 103).Allowed);
     }
 
     [Fact]
-    public void Scrap_reject_and_hold_do_not_complete_an_operation()
+    public void Partial_good_unlocks_the_next_process_while_zero_good_remains_blocked()
+    {
+        var graph = BuildGraph(Step(10, 10, "WC-A"));
+        graph.Operations.AddRange([
+            Operation(101, 10, 10),
+            Operation(102, 10, 20),
+        ]);
+
+        var blocked = Evaluate(graph, 102);
+        Assert.False(blocked.Allowed);
+        Assert.Equal(ProductionSequenceBlockingLevels.Process, blocked.BlockingLevel);
+        Assert.Equal([101], blocked.BlockingOperationIds);
+
+        graph.Operations.Single(x => x.Uid == 101).GoodQty = 80m;
+        var opened = Evaluate(graph, 102);
+        Assert.True(opened.Allowed);
+    }
+
+    [Fact]
+    public void Parallel_predecessor_process_group_requires_every_member_to_post_good()
+    {
+        var graph = BuildGraph(Step(10, 10, "WC-A"));
+        graph.Operations.AddRange([
+            Operation(101, 10, 10, good: 10m),
+            Operation(102, 10, 10),
+            Operation(103, 10, 20),
+        ]);
+
+        var blocked = Evaluate(graph, 103);
+        Assert.False(blocked.Allowed);
+        Assert.Equal(ProductionSequenceBlockingLevels.Process, blocked.BlockingLevel);
+        Assert.Equal("P102", blocked.BlockingOperationCode);
+        Assert.Equal([102], blocked.BlockingOperationIds);
+
+        graph.Operations.Single(x => x.Uid == 102).GoodQty = 1m;
+        Assert.True(Evaluate(graph, 103).Allowed);
+    }
+
+    [Fact]
+    public void Scrap_reject_and_hold_do_not_unlock_the_next_process()
     {
         var graph = BuildGraph(Step(10, 10, "WC-A"));
         var predecessor = Operation(101, 10, 10);
@@ -96,6 +142,22 @@ public sealed class ProductionOperationSequenceGateTests
 
         Assert.False(result.Allowed);
         Assert.Equal(ProductionSequenceBlockingLevels.Process, result.BlockingLevel);
+        Assert.Contains("must post Good qty first", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Later_stage_remains_blocked_when_prior_stage_has_only_partial_good()
+    {
+        var graph = BuildGraph(Step(10, 10, "WC-A"), Step(20, 20, "WC-B"));
+        graph.Operations.AddRange([
+            Operation(101, 10, 10, good: 80m),
+            Operation(102, 20, 10),
+        ]);
+
+        var blocked = Evaluate(graph, 102);
+        Assert.False(blocked.Allowed);
+        Assert.Equal(ProductionSequenceBlockingLevels.Stage, blocked.BlockingLevel);
+        Assert.Contains("Previous Stage 10 is not complete", blocked.Message, StringComparison.Ordinal);
     }
 
     [Fact]

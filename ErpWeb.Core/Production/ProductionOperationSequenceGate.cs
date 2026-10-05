@@ -13,14 +13,25 @@ public static class ProductionOperationSequenceGate
         "The Work Order routing snapshot is incomplete or invalid. Refresh/re-release the Work Order before recording production.";
 
     /// <summary>
-    /// An operation unlocks its dependants only when posted good output has satisfied its planned
-    /// output. Scrap, reject, hold, drafts, and WIP availability are deliberately excluded.
+    /// Stage and work-centre dependants require this predecessor to have posted enough Good to
+    /// satisfy its planned output. Scrap, reject, hold, drafts, material issue, and WIP
+    /// availability are deliberately excluded.
     /// </summary>
     public static bool IsOperationComplete(ProductionWorkOrderOperation operation) =>
         IsOperationComplete(operation.PlannedOutputQty, operation.GoodQty);
 
     public static bool IsOperationComplete(decimal plannedOutputQty, decimal goodQty) =>
         IvQty.Round(plannedOutputQty - goodQty) <= 0m;
+
+    /// <summary>
+    /// Same-route-step later processes unlock when this predecessor has posted any transferable
+    /// Good. Scrap, reject, hold, drafts, material issue, and WIP availability are excluded.
+    /// </summary>
+    public static bool HasPostedGood(ProductionWorkOrderOperation operation) =>
+        HasPostedGood(operation.GoodQty);
+
+    public static bool HasPostedGood(decimal goodQty) =>
+        IvQty.Round(goodQty) > 0m;
 
     /// <summary>
     /// Evaluates all lower sequence groups defensively. The caller supplies the complete route and
@@ -117,11 +128,11 @@ public static class ProductionOperationSequenceGate
                      .GroupBy(x => x.ProcessSequence)
                      .OrderBy(x => x.Key))
         {
-            var incomplete = processGroup
-                .Where(x => !IsOperationComplete(x))
+            var notStarted = processGroup
+                .Where(x => !HasPostedGood(x))
                 .OrderBy(x => x.Uid)
                 .FirstOrDefault();
-            if (incomplete is not null)
+            if (notStarted is not null)
             {
                 return new ProductionSequenceGateResult
                 {
@@ -129,13 +140,13 @@ public static class ProductionOperationSequenceGate
                     BlockingLevel = ProductionSequenceBlockingLevels.Process,
                     BlockingSequence = processGroup.Key,
                     BlockingWorkCentreCode = selectedRouteStep.WorkCentreCode,
-                    BlockingOperationCode = incomplete.OperationCode,
-                    BlockingOperationIds = processGroup.Where(operation => !IsOperationComplete(operation))
+                    BlockingOperationCode = notStarted.OperationCode,
+                    BlockingOperationIds = processGroup.Where(operation => !HasPostedGood(operation))
                         .Select(operation => operation.Uid).OrderBy(id => id).ToList(),
                     Message = $"Daily Production cannot start for {selected.OperationCode} (Process Seq {selected.ProcessSequence}). "
-                        + $"Process Seq {processGroup.Key} in {selectedRouteStep.WorkCentreCode} must complete first. "
-                        + $"Waiting for {incomplete.OperationCode}: {incomplete.GoodQty:n4} of "
-                        + $"{incomplete.PlannedOutputQty:n4} completed.",
+                        + $"Process Seq {processGroup.Key} in {selectedRouteStep.WorkCentreCode} must post Good qty first. "
+                        + $"Waiting for {notStarted.OperationCode}: {notStarted.GoodQty:n4} of "
+                        + $"{notStarted.PlannedOutputQty:n4} Good posted.",
                 };
             }
         }

@@ -88,7 +88,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
             Reason = "blocked upstream",
         });
         Assert.False(blocked.Succeeded);
-        Assert.Contains("downstream production", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("downstream Daily Production", blocked.Message, StringComparison.OrdinalIgnoreCase);
         await AssertBalancesUnchangedAsync(graph.OrderId, expectedHandoffQty: 0m, expectedRouteQty: 30m);
 
         var reverseP2 = await sut.RollbackAsync(new ProductionOutputRollbackRequest
@@ -236,7 +236,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         var earlyConsume = await CreateAndPostAsync(sut, graph.Process2Id, 5m,
             date: new DateTime(2026, 10, 1, 8, 0, 0));
         Assert.False(earlyConsume.Succeeded);
-        Assert.Contains("Process Seq 10", earlyConsume.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("future LastMovementDate", earlyConsume.Message, StringComparison.OrdinalIgnoreCase);
 
         Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 10m,
             date: new DateTime(2026, 10, 3, 8, 0, 0))).Succeeded);
@@ -282,6 +282,57 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         var replacement = await CreateAndPostAsync(sut, graph.Process1Id, 10m);
         Assert.True(replacement.Succeeded, replacement.Message);
         Assert.NotEqual(p1.Data.PostingRequestId, replacement.Data!.PostingRequestId);
+    }
+
+    [Fact]
+    public async Task Partial_pipeline_posts_accumulate_handoff_balance()
+    {
+        var graph = await SeedTwoProcessAsync("WO-H-PIPE");
+        await SetPlannedOutputAsync(graph.Process1Id, 100m);
+        await SetPlannedOutputAsync(graph.Process2Id, 100m);
+        var sut = CreateService();
+
+        Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 40m,
+            date: new DateTime(2026, 10, 1, 8, 0, 0))).Succeeded);
+        Assert.True((await CreateAndPostAsync(sut, graph.Process2Id, 25m,
+            date: new DateTime(2026, 10, 1, 9, 0, 0))).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var handoff = await HandoffLotAsync(db, graph.OrderId, graph.Process1Id);
+            Assert.Equal(15m, handoff!.Qty);
+            Assert.Equal(15m, handoff.BaseQty);
+        }
+
+        Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 30m,
+            date: new DateTime(2026, 10, 1, 10, 0, 0))).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var handoff = await HandoffLotAsync(db, graph.OrderId, graph.Process1Id);
+            Assert.Equal(45m, handoff!.Qty);
+            Assert.Equal(45m, handoff.BaseQty);
+        }
+
+        Assert.True((await CreateAndPostAsync(sut, graph.Process2Id, 45m,
+            date: new DateTime(2026, 10, 1, 11, 0, 0))).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var handoff = await HandoffLotAsync(db, graph.OrderId, graph.Process1Id);
+            Assert.Equal(0m, handoff!.Qty);
+            Assert.Equal(0m, handoff.BaseQty);
+        }
+    }
+
+    [Fact]
+    public void Parallel_immediate_prior_process_group_remains_unsupported_for_handoff()
+    {
+        var first = new ProductionWorkOrderOperation { Uid = 1, ProcessSequence = 10 };
+        var parallel = new ProductionWorkOrderOperation { Uid = 2, ProcessSequence = 10 };
+        var later = new ProductionWorkOrderOperation { Uid = 3, ProcessSequence = 20 };
+
+        var error = ProductionProcessHandoff.TryGetImmediatePrior([first, parallel, later], later, out var prior);
+
+        Assert.Equal("Parallel processes at the prior sequence are not supported for process handoff.", error);
+        Assert.Null(prior);
     }
 
     [Fact]

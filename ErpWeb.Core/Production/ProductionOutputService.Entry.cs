@@ -314,12 +314,12 @@ public sealed partial class ProductionOutputService
                     && lowerOperation.RouteStep != null
                     && lowerOperation.RouteStep.StageSequence < x.RouteStep.StageSequence
                     && lowerOperation.PlannedOutputQty - lowerOperation.GoodQty > 0m)
-                // All lower processes in the same route step must be complete. Equal processes
+                // All lower processes in the same route step must have posted Good. Equal processes
                 // remain parallel and therefore are intentionally excluded.
                 && !db.ProductionWorkOrderOperations.Any(lowerOperation =>
                     lowerOperation.RouteStepId == x.RouteStepId
                     && lowerOperation.ProcessSequence < x.ProcessSequence
-                    && lowerOperation.PlannedOutputQty - lowerOperation.GoodQty > 0m));
+                    && lowerOperation.GoodQty <= 0m));
 
     private static IQueryable<ProductionWorkOrderOperation> ApplyOperationFilters(
         IQueryable<ProductionWorkOrderOperation> operations,

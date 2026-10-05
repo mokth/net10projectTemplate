@@ -71,19 +71,23 @@ public sealed partial class ProductionOutputService
             if (projectedOperationGood < 0m)
                 return Fail("Reversing output would make an operation outcome quantity negative.");
 
-            var wasComplete = ProductionOperationSequenceGate.IsOperationComplete(operation);
-            var willComplete = ProductionOperationSequenceGate.IsOperationComplete(
+            var projectedHasPostedGood = ProductionOperationSequenceGate.HasPostedGood(projectedOperationGood);
+            var projectedComplete = ProductionOperationSequenceGate.IsOperationComplete(
                 operation.PlannedOutputQty, projectedOperationGood);
-            if (wasComplete && !willComplete)
+            if (!projectedComplete)
             {
-                var downstream = await FindPostedDownstreamOutputAsync(
+                var stage = await FindDownstreamStageExecutionAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, order.Uid, routeStep, cancellationToken);
+                if (stage is not null)
+                    return Fail(FormatDownstreamRollbackMessage(output.DocumentNo, stage));
+            }
+
+            if (!projectedHasPostedGood)
+            {
+                var process = await FindDownstreamProcessExecutionAsync(
                     db, scope.CompanyCode, scope.BranchCode!, order.Uid, routeStep, operation, cancellationToken);
-                if (downstream is not null)
-                {
-                    return Fail($"Cannot roll back {output.DocumentNo} because downstream production "
-                        + $"{downstream.DocumentNo} is already POSTED for {downstream.WorkCentreCode} / "
-                        + $"{downstream.OperationCode}.");
-                }
+                if (process is not null)
+                    return Fail(FormatDownstreamRollbackMessage(output.DocumentNo, process));
             }
 
             var materials = await db.ProductionWorkOrderMaterials
@@ -444,16 +448,15 @@ public sealed partial class ProductionOutputService
                 .SingleOrDefaultAsync(ct)
             : await db.ProductionBalLots.SingleOrDefaultAsync(x => x.Uid == id, ct);
 
-    private static async Task<DownstreamPostedOutput?> FindPostedDownstreamOutputAsync(
+    private static async Task<DownstreamExecution?> FindDownstreamStageExecutionAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         long workOrderId,
         ProductionWorkOrderRouteStep currentRouteStep,
-        ProductionWorkOrderOperation currentOperation,
         CancellationToken cancellationToken)
     {
-        return await (
+        var posted = await (
             from output in db.ProductionOutputs.AsNoTracking()
             join operation in db.ProductionWorkOrderOperations.AsNoTracking()
                 on output.WorkOrderOperationId equals operation.Uid
@@ -463,21 +466,114 @@ public sealed partial class ProductionOutputService
                 && output.BranchCode == branchCode
                 && output.WorkOrderId == workOrderId
                 && output.Status == ProductionOutputStatuses.Posted
-                && ((operation.RouteStepId == currentRouteStep.Uid
-                        && operation.ProcessSequence > currentOperation.ProcessSequence)
-                    || routeStep.StageSequence > currentRouteStep.StageSequence)
+                && routeStep.StageSequence > currentRouteStep.StageSequence
             orderby routeStep.StageSequence, operation.ProcessSequence, output.ProductionDate, output.Uid
-            select new DownstreamPostedOutput(
+            select new DownstreamExecution(
+                ProductionSequenceBlockingLevels.Stage,
+                DownstreamExecutionKinds.DailyProduction,
                 output.DocumentNo,
+                routeStep.WorkCentreCode,
+                operation.OperationCode))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (posted is not null)
+            return posted;
+
+        return await (
+            from material in db.ProductionWorkOrderMaterials.AsNoTracking()
+            join operation in db.ProductionWorkOrderOperations.AsNoTracking()
+                on material.WorkOrderOperationId equals operation.Uid
+            join routeStep in db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                on operation.RouteStepId equals (long?)routeStep.Uid
+            where material.WorkOrderId == workOrderId
+                && material.IssuedQty - material.ReturnedQty > 0m
+                && routeStep.StageSequence > currentRouteStep.StageSequence
+            orderby routeStep.StageSequence, operation.ProcessSequence, material.Uid
+            select new DownstreamExecution(
+                ProductionSequenceBlockingLevels.Stage,
+                DownstreamExecutionKinds.MaterialIssue,
+                null,
                 routeStep.WorkCentreCode,
                 operation.OperationCode))
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private sealed record DownstreamPostedOutput(
-        string DocumentNo,
+    private static async Task<DownstreamExecution?> FindDownstreamProcessExecutionAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long workOrderId,
+        ProductionWorkOrderRouteStep currentRouteStep,
+        ProductionWorkOrderOperation currentOperation,
+        CancellationToken cancellationToken)
+    {
+        var posted = await (
+            from output in db.ProductionOutputs.AsNoTracking()
+            join operation in db.ProductionWorkOrderOperations.AsNoTracking()
+                on output.WorkOrderOperationId equals operation.Uid
+            join routeStep in db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                on operation.RouteStepId equals (long?)routeStep.Uid
+            where output.CompanyCode == companyCode
+                && output.BranchCode == branchCode
+                && output.WorkOrderId == workOrderId
+                && output.Status == ProductionOutputStatuses.Posted
+                && operation.RouteStepId == currentRouteStep.Uid
+                && operation.ProcessSequence > currentOperation.ProcessSequence
+            orderby operation.ProcessSequence, output.ProductionDate, output.Uid
+            select new DownstreamExecution(
+                ProductionSequenceBlockingLevels.Process,
+                DownstreamExecutionKinds.DailyProduction,
+                output.DocumentNo,
+                routeStep.WorkCentreCode,
+                operation.OperationCode))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (posted is not null)
+            return posted;
+
+        return await (
+            from material in db.ProductionWorkOrderMaterials.AsNoTracking()
+            join operation in db.ProductionWorkOrderOperations.AsNoTracking()
+                on material.WorkOrderOperationId equals operation.Uid
+            join routeStep in db.ProductionWorkOrderRouteSteps.AsNoTracking()
+                on operation.RouteStepId equals (long?)routeStep.Uid
+            where material.WorkOrderId == workOrderId
+                && material.IssuedQty - material.ReturnedQty > 0m
+                && operation.RouteStepId == currentRouteStep.Uid
+                && operation.ProcessSequence > currentOperation.ProcessSequence
+            orderby operation.ProcessSequence, material.Uid
+            select new DownstreamExecution(
+                ProductionSequenceBlockingLevels.Process,
+                DownstreamExecutionKinds.MaterialIssue,
+                null,
+                routeStep.WorkCentreCode,
+                operation.OperationCode))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static string FormatDownstreamRollbackMessage(string documentNo, DownstreamExecution downstream)
+    {
+        if (downstream.ExecutionKind == DownstreamExecutionKinds.MaterialIssue)
+        {
+            return $"Cannot roll back {documentNo} because downstream Issue-to-Production "
+                + $"remains active for {downstream.WorkCentreCode} / {downstream.OperationCode}.";
+        }
+
+        return $"Cannot roll back {documentNo} because downstream Daily Production "
+            + $"{downstream.DocumentNo} is already POSTED for {downstream.WorkCentreCode} / "
+            + $"{downstream.OperationCode}.";
+    }
+
+    private sealed record DownstreamExecution(
+        string DependencyLevel,
+        string ExecutionKind,
+        string? DocumentNo,
         string WorkCentreCode,
         string OperationCode);
+
+    private static class DownstreamExecutionKinds
+    {
+        public const string DailyProduction = "DAILY_PRODUCTION";
+        public const string MaterialIssue = "MATERIAL_ISSUE";
+    }
 
     private static string? Truncate(string? value, int max) =>
         string.IsNullOrEmpty(value) ? value : value.Length <= max ? value : value[..max];

@@ -256,8 +256,176 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         });
 
         Assert.False(rollback.Succeeded);
-        Assert.Contains("downstream production", rollback.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("downstream Daily Production", rollback.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(later.Data.DocumentNo, rollback.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Same_route_step_partial_good_opens_next_process_and_handoff_caps_post()
+    {
+        var graph = await SeedTwoProcessSequenceGraphAsync("WO-PROCESS-OVERLAP");
+        var sut = CreateService();
+
+        var initial = await sut.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery
+        {
+            WorkOrderNo = "WO-PROCESS-OVERLAP",
+            ExactMatch = true,
+            Take = 20,
+        });
+        Assert.True(initial.Succeeded, initial.Message);
+        Assert.Equal(graph.Process1Id, Assert.Single(initial.Data!.Rows).WorkOrderOperationId);
+
+        var blockedWorkspace = await sut.GetWorkspaceAsync(graph.Process2Id);
+        Assert.False(blockedWorkspace.Succeeded);
+        Assert.Contains("must post Good qty first", blockedWorkspace.Message, StringComparison.OrdinalIgnoreCase);
+
+        var p1Request = ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0));
+        var p1 = await sut.CreateAsync(p1Request);
+        Assert.True(p1.Succeeded, p1.Message);
+        Assert.True((await sut.PostAsync(p1.Data!.Uid)).Succeeded);
+
+        var opened = await sut.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery
+        {
+            WorkOrderNo = "WO-PROCESS-OVERLAP",
+            ExactMatch = true,
+            Take = 20,
+        });
+        Assert.True(opened.Succeeded, opened.Message);
+        Assert.Equal(2, opened.Data!.TotalCount);
+        Assert.Contains(opened.Data.Rows, x => x.WorkOrderOperationId == graph.Process1Id);
+        Assert.Contains(opened.Data.Rows, x => x.WorkOrderOperationId == graph.Process2Id);
+
+        var workspace = await sut.GetWorkspaceAsync(graph.Process2Id);
+        Assert.True(workspace.Succeeded, workspace.Message);
+        var handoff = Assert.Single(workspace.Data!.Materials,
+            x => x.SupplySource == ProductionProcessHandoff.SupplySource);
+        Assert.Equal(40m, handoff.AvailableQty);
+
+        var over = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 41m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(over.Succeeded, over.Message);
+        var overPost = await sut.PostAsync(over.Data!.Uid);
+        Assert.False(overPost.Succeeded);
+        Assert.Contains("Insufficient previous-process balance", overPost.Message, StringComparison.OrdinalIgnoreCase);
+
+        var ok = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 40m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(ok.Succeeded, ok.Message);
+        Assert.True((await sut.PostAsync(ok.Data!.Uid)).Succeeded, ok.Message);
+
+        var after = await sut.SearchEligibleOperationsAsync(new ProductionEligibleOperationQuery
+        {
+            WorkOrderNo = "WO-PROCESS-OVERLAP",
+            ExactMatch = true,
+            Take = 20,
+        });
+        Assert.True(after.Succeeded, after.Message);
+        Assert.Contains(after.Data!.Rows, x => x.WorkOrderOperationId == graph.Process1Id);
+    }
+
+    [Fact]
+    public async Task Stale_next_process_draft_is_rejected_after_predecessor_good_returns_to_zero()
+    {
+        var graph = await SeedTwoProcessSequenceGraphAsync("WO-PROCESS-STALE");
+        var sut = CreateService();
+
+        var p1 = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(p1.Succeeded, p1.Message);
+        Assert.True((await sut.PostAsync(p1.Data!.Uid)).Succeeded);
+
+        var p2 = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 10m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(p2.Succeeded, p2.Message);
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = p1.Data.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "clear predecessor Good",
+        });
+        Assert.True(rollback.Succeeded, rollback.Message);
+
+        var stalePost = await sut.PostAsync(p2.Data!.Uid);
+        Assert.False(stalePost.Succeeded);
+        Assert.Contains("must post Good qty first", stalePost.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Process_rollback_allows_unconsumed_increment_when_projected_good_stays_positive()
+    {
+        var graph = await SeedTwoProcessSequenceGraphAsync("WO-PROCESS-RB-OK");
+        var sut = CreateService();
+
+        var first = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(first.Succeeded, first.Message);
+        Assert.True((await sut.PostAsync(first.Data!.Uid)).Succeeded);
+
+        var extra = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 10m, new DateTime(2026, 10, 1, 8, 30, 0)));
+        Assert.True(extra.Succeeded, extra.Message);
+        Assert.True((await sut.PostAsync(extra.Data!.Uid)).Succeeded);
+
+        var p2 = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 40m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(p2.Succeeded, p2.Message);
+        Assert.True((await sut.PostAsync(p2.Data!.Uid)).Succeeded);
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = extra.Data.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "unconsumed predecessor increment",
+        });
+        Assert.True(rollback.Succeeded, rollback.Message);
+    }
+
+    [Fact]
+    public async Task Process_rollback_to_zero_good_is_blocked_when_later_process_is_posted()
+    {
+        var graph = await SeedTwoProcessSequenceGraphAsync("WO-PROCESS-RB-ZERO");
+        var sut = CreateService();
+
+        var p1 = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(p1.Succeeded, p1.Message);
+        Assert.True((await sut.PostAsync(p1.Data!.Uid)).Succeeded);
+
+        var p2 = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 20m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(p2.Succeeded, p2.Message);
+        Assert.True((await sut.PostAsync(p2.Data!.Uid)).Succeeded);
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = p1.Data.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "would clear predecessor Good",
+        });
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("downstream Daily Production", rollback.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(p2.Data.DocumentNo, rollback.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Signed_lot_consumption_still_blocks_rollback_when_projected_good_stays_positive()
+    {
+        var graph = await SeedTwoProcessSequenceGraphAsync("WO-PROCESS-RB-LOT");
+        var sut = CreateService();
+
+        var first = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(first.Succeeded, first.Message);
+        Assert.True((await sut.PostAsync(first.Data!.Uid)).Succeeded);
+
+        var extra = await sut.CreateAsync(ProcessRequest(graph.Process1Id, 10m, new DateTime(2026, 10, 1, 8, 30, 0)));
+        Assert.True(extra.Succeeded, extra.Message);
+        Assert.True((await sut.PostAsync(extra.Data!.Uid)).Succeeded);
+
+        var p2 = await sut.CreateAsync(ProcessRequest(graph.Process2Id, 45m, new DateTime(2026, 10, 1, 9, 0, 0)));
+        Assert.True(p2.Succeeded, p2.Message);
+        Assert.True((await sut.PostAsync(p2.Data!.Uid)).Succeeded);
+
+        var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
+        {
+            OutputId = first.Data.Uid,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            Reason = "later consumption of earlier produce",
+        });
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("later effective consumption", rollback.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("downstream Daily Production", rollback.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -375,6 +543,15 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         ActualMachineCode = "MC1",
         OperatorCode = "OP1",
         GoodQty = 2m,
+        OutputLotNo = "LOT-1",
+    };
+
+    private static ProductionOutputCreateRequest ProcessRequest(long operationId, decimal goodQty, DateTime date) => new()
+    {
+        WorkOrderOperationId = operationId,
+        PostingRequestId = Guid.NewGuid().ToString("N"),
+        ProductionDate = date,
+        GoodQty = goodQty,
         OutputLotNo = "LOT-1",
     };
 
@@ -515,6 +692,83 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         return new SequenceGraphIds(first.Uid, later.Uid);
     }
 
+    private async Task<TwoProcessGraphIds> SeedTwoProcessSequenceGraphAsync(string workOrderNo)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var order = new ProductionWorkOrder
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WorkOrderNo = workOrderNo,
+            ProductCode = "FG-PROCESS",
+            OutputUom = "EA",
+            Status = ProductionWorkOrderStatuses.Released,
+            PlannedQty = 100m,
+            RemainingQty = 100m,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('C', 64),
+            SnapshotHashVersion = ProductionSnapshotHashVersions.Current,
+            SnapshotFormatVersion = ProductionSnapshotFormatVersions.Current,
+            IsLegacySnapshot = false,
+            DefinitionEffectiveDate = new DateTime(2026, 10, 1),
+            PlannedStartDateTime = new DateTime(2026, 10, 1),
+            PlannedCompletionDateTime = new DateTime(2026, 10, 2),
+            RowVersion = [1],
+        };
+        var route = new ProductionWorkOrderRouteStep
+        {
+            WorkOrder = order,
+            StageSequence = 10,
+            WorkCentreCode = "WC10",
+            OutputItemCode = "WIP-OUT",
+            OutputType = PrRouteOutputTypes.WipStocked,
+            YieldPercent = 100m,
+            OutputUom = "EA",
+            OutputBaseUom = "EA",
+            OutputConversionFactorToBase = 1m,
+            RowVersion = [1],
+        };
+        var first = new ProductionWorkOrderOperation
+        {
+            WorkOrder = order,
+            RouteStep = route,
+            OperationCode = "P1",
+            ProcessSequence = 10,
+            ProcessType = "MANUAL",
+            PlannedOutputQty = 100m,
+            PlannedInputUom = "EA",
+            PlannedOutputUom = "EA",
+            IsFinalOperation = false,
+            RemainingQty = 100m,
+            RowVersion = [1],
+        };
+        var later = new ProductionWorkOrderOperation
+        {
+            WorkOrder = order,
+            RouteStep = route,
+            OperationCode = "P2",
+            ProcessSequence = 20,
+            ProcessType = "MANUAL",
+            PlannedOutputQty = 100m,
+            PlannedInputUom = "EA",
+            PlannedOutputUom = "EA",
+            IsFinalOperation = true,
+            RemainingQty = 100m,
+            RowVersion = [1],
+        };
+        route.Operations.Add(first);
+        route.Operations.Add(later);
+        order.RouteSteps.Add(route);
+        order.Operations.Add(first);
+        order.Operations.Add(later);
+
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+        db.ProductionWorkOrders.Add(order);
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
+        return new TwoProcessGraphIds(order.Uid, first.Uid, later.Uid);
+    }
+
     private async Task SetOperationGoodAsync(long operationId, decimal goodQty)
     {
         await using var db = await _factory.CreateDbContextAsync();
@@ -561,6 +815,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
 
     private readonly record struct GraphIds(long OrderId, long OperationId);
     private readonly record struct SequenceGraphIds(long FirstOperationId, long LaterOperationId);
+    private readonly record struct TwoProcessGraphIds(long OrderId, long Process1Id, long Process2Id);
 
     private sealed class TestRunningNumberService : IRunningNumberService
     {
