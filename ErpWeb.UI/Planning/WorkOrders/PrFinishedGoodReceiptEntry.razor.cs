@@ -50,6 +50,8 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
     protected bool IsSearchingSources;
+    protected bool MoreFiltersVisible;
+    protected bool SourcePickerVisible;
     protected bool PostConfirmationVisible;
     protected bool DeleteConfirmationVisible;
     protected bool RollbackConfirmVisible;
@@ -67,9 +69,36 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected bool IsEditRequested =>
         Navigation.RelativePath.Contains("/edit", StringComparison.OrdinalIgnoreCase);
     protected bool IsNewMode => Id == 0;
+    protected bool LoadFailed =>
+        !IsBootstrapping
+        && Id > 0
+        && Document.Id == 0;
     protected bool IsViewMode =>
         IsViewRequested || (Id > 0 && !string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase));
     protected bool IsEditMode => Id > 0 && IsEditRequested && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase);
+    protected bool EntryPermissionDenied =>
+        !LoadFailed
+        && ((IsNewMode && !CanAdd)
+            || (IsEditRequested
+                && Id > 0
+                && Document.Id > 0
+                && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
+                && !CanEdit));
+    protected bool IsSelectingSource =>
+        !LoadFailed
+        && !EntryPermissionDenied
+        && !IsViewMode
+        && CanEditFields
+        && !HasLockedWorkOrder;
+    protected bool IsReceiptWorkspace =>
+        !LoadFailed
+        && !EntryPermissionDenied
+        && !IsViewMode
+        && CanEditFields
+        && HasLockedWorkOrder;
+    protected bool CanAddSourceLot =>
+        IsReceiptWorkspace
+        && Editors.Count < 200;
     protected string ModeChip => IsViewMode ? "VIEW" : IsEditMode ? "EDIT" : "NEW";
     protected string PageHeading => IsNewMode
         ? "New Finished Good Receipt"
@@ -115,6 +144,18 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         ? "1 source"
         : $"{SourceTotalCount:N0} sources";
     protected bool Dirty => CanEditFields && _saved != JsonSerializer.Serialize(ToRequest());
+    protected string SourceItemSummary => DistinctOrDash(Editors.Select(x => x.Line.ItemCode));
+    protected string SourceLotSummary => DistinctOrDash(Editors.Select(x => x.Line.SourceLot));
+    protected string SourceWorkCentreSummary => CommonOrMultiple(Editors.Select(x => x.Line.WorkCentre));
+    protected string SourceProcessSummary => CommonOrMultiple(Editors.Select(x => x.Line.Process));
+    protected bool ShowCompactReadiness =>
+        IsReceiptWorkspace
+        || (IsViewMode
+            && !LoadFailed
+            && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase));
+    protected string PermissionDeniedCopy => IsNewMode
+        ? "You do not have permission to create a finished good receipt."
+        : "You do not have permission to edit this finished good receipt.";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -127,6 +168,8 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         ErrorMessage = null;
         StatusMessage = null;
         _pending = null;
+        MoreFiltersVisible = false;
+        SourcePickerVisible = false;
 
         CanAdd = await Access.CanAsync(MenuCodes.PlanningFinishedGoodReceipt, PermissionCodes.Add);
         CanEdit = await Access.CanAsync(MenuCodes.PlanningFinishedGoodReceipt, PermissionCodes.Edit);
@@ -138,6 +181,10 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         Sources = [];
         SourceTotalCount = 0;
         SourcePage = 0;
+        SearchWo = string.Empty;
+        SearchWorkCentre = string.Empty;
+        SearchProcess = string.Empty;
+        SearchItem = string.Empty;
 
         if (Id > 0)
         {
@@ -151,6 +198,15 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
             }
 
             Document = result.Data;
+
+            if (IsEditRequested
+                && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
+                && !CanEdit)
+            {
+                _navigating = true;
+                Navigation.NavigateTo($"/planning/finished-good-receipts/{Id}/view", replace: true);
+                return;
+            }
         }
         else
         {
@@ -163,8 +219,12 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
             Editors = [];
             foreach (var line in Document.Lines)
                 Editors.Add(await CreateEditorAsync(line, defaultWarehouse: false));
-            await LoadFilterOptionsAsync();
-            await SearchSourcesAsync();
+
+            if (!HasLockedWorkOrder)
+            {
+                await LoadFilterOptionsAsync(workOrderId: null);
+                await SearchSourcesAsync();
+            }
         }
 
         _saved = JsonSerializer.Serialize(ToRequest());
@@ -177,11 +237,23 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         await SearchSourcesAsync();
     }
 
-    protected void ClearSourceFilters()
+    protected async Task ClearInitialSourceFiltersAsync()
     {
-        if (!HasLockedWorkOrder)
-            SearchWo = string.Empty;
-        SearchWorkCentre = SearchProcess = SearchItem = string.Empty;
+        SearchWo = string.Empty;
+        SearchWorkCentre = string.Empty;
+        SearchProcess = string.Empty;
+        SearchItem = string.Empty;
+        SourcePage = 0;
+        await SearchSourcesAsync();
+    }
+
+    protected async Task ClearPickerFiltersAsync()
+    {
+        SearchWorkCentre = string.Empty;
+        SearchProcess = string.Empty;
+        SearchItem = string.Empty;
+        SourcePage = 0;
+        await SearchSourcesAsync();
     }
 
     protected async Task ChangeSourcePageAsync(int delta)
@@ -192,6 +264,24 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         SourcePage = next;
         await SearchSourcesAsync();
     }
+
+    protected async Task OpenSourcePickerAsync()
+    {
+        if (!CanAddSourceLot)
+            return;
+
+        SearchWorkCentre = string.Empty;
+        SearchProcess = string.Empty;
+        SearchItem = string.Empty;
+        MoreFiltersVisible = false;
+        SourcePage = 0;
+        SourcePickerVisible = true;
+
+        await LoadFilterOptionsAsync(Document.WorkOrderId);
+        await SearchSourcesAsync();
+    }
+
+    protected void CloseSourcePicker() => SourcePickerVisible = false;
 
     protected async Task AddSourceAsync(FinishedGoodSourceRow source)
     {
@@ -221,16 +311,12 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
             ExpiryDate = null
         };
         Editors.Add(await CreateEditorAsync(line, defaultWarehouse: true));
+        SourcePickerVisible = false;
     }
 
     protected void RemoveLine(ReceiptLineEditor editor)
     {
         Editors.Remove(editor);
-        if (Editors.Count == 0)
-        {
-            Document.WorkOrderId = 0;
-            Document.WorkOrderNo = "";
-        }
     }
 
     protected async Task OnWarehouseChangedAsync(ReceiptLineEditor editor, string? warehouse)
@@ -238,6 +324,8 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         editor.Line.Warehouse = warehouse ?? "";
         editor.Line.Location = "";
         await LoadLineLocationsAsync(editor);
+        editor.LookupRevision++;
+        StateHasChanged();
     }
 
     protected async Task SaveAsync()
@@ -404,8 +492,15 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         Document.WorkOrderId = 0;
         Document.WorkOrderNo = "";
         SearchWo = string.Empty;
+        SearchWorkCentre = string.Empty;
+        SearchProcess = string.Empty;
+        SearchItem = string.Empty;
+        MoreFiltersVisible = false;
+        SourcePickerVisible = false;
         ChangeWorkOrderVisible = false;
         SourcePage = 0;
+
+        await LoadFilterOptionsAsync(workOrderId: null);
         await SearchSourcesAsync();
     }
 
@@ -483,9 +578,11 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         }
     }
 
-    private async Task LoadFilterOptionsAsync()
+    private async Task LoadFilterOptionsAsync(long? workOrderId)
     {
-        var result = await Receipts.GetSourceFilterOptionsAsync();
+        var result = workOrderId.HasValue
+            ? await Receipts.GetSourceFilterOptionsAsync(workOrderId.Value)
+            : await Receipts.GetSourceFilterOptionsAsync();
         FilterOptions = result.Data ?? new FinishedGoodSourceFilterOptions();
         if (!result.Succeeded)
             ErrorMessage = result.Message ?? "Unable to load source filters.";
@@ -581,10 +678,34 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private static string DistinctOrDash(IEnumerable<string?> values)
+    {
+        var distinct = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return distinct.Count == 0 ? "—" : string.Join(", ", distinct);
+    }
+
+    private static string CommonOrMultiple(IEnumerable<string?> values)
+    {
+        var distinct = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (distinct.Count == 0)
+            return "—";
+        return distinct.Count == 1 ? distinct[0] : "Multiple";
+    }
+
     protected sealed class ReceiptLineEditor
     {
         public Guid Key { get; } = Guid.NewGuid();
         public FinishedGoodReceiptLine Line { get; init; } = new();
         public List<ProductionOutputChoice> Locations { get; set; } = [];
+        public int LookupRevision { get; set; }
     }
 }

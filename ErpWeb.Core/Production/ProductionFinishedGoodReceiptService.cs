@@ -144,13 +144,22 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             && !db.ProductionWorkOrderRouteSteps.Any(r => r.WorkOrderId == x.WorkOrderId && r.StageSequence > x.ProducingRouteStep!.StageSequence)
             && db.IvStockMasters.Any(m => m.CompanyCode == scope.CompanyCode && m.ICode == x.ItemCode && m.IsActive && m.StockControl));
 
-    public async Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default)
+    public Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default)
+        => GetSourceFilterOptionsCoreAsync(null, ct);
+
+    public Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(long workOrderId, CancellationToken ct = default)
+        => GetSourceFilterOptionsCoreAsync(workOrderId, ct);
+
+    private async Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsCoreAsync(long? workOrderId, CancellationToken ct)
     {
         try
         {
             var scope = await ScopeAsync(PermissionCodes.Access, ct);
             await using var db = await factory.CreateDbContextAsync(ct);
-            var lots = await EligibleSources(db, scope).AsNoTracking()
+            var lotsQuery = EligibleSources(db, scope).AsNoTracking();
+            if (workOrderId.HasValue)
+                lotsQuery = lotsQuery.Where(x => x.WorkOrderId == workOrderId.Value);
+            var lots = await lotsQuery
                 .Select(x => new { x.WorkOrderNo, ProductCode = x.WorkOrder!.ProductCode, x.WorkOrder.ProductDescription, x.WorkCentreCode, x.ProcessCode, x.ItemCode })
                 .ToListAsync(ct);
             static IReadOnlyList<ProductionOutputChoice> DistinctChoices(IEnumerable<(string Code, string Label)> rows) =>
@@ -231,17 +240,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
         catch (FgException e) { return Fail<FinishedGoodSourcePage>(e.Message, e.Code); }
     }
 
-    private static async Task<string?> SourceReadinessAsync(AppDbContext db, ProductionBalLot lot, CancellationToken ct)
-    {
-        if (lot.ProductionLocationId is null || string.IsNullOrWhiteSpace(lot.BaseUom) || lot.ConversionFactorToBase <= 0)
-            return $"Source {lot.Uid}: production location or UOM evidence is missing.";
-        var pool = await db.ProductionPoolValuationRows.SingleOrDefaultAsync(x => x.ProductionBalLotId == lot.Uid, ct);
-        if (pool?.Status != ProductionPoolValuationService.Verified)
-            return $"Source {lot.Uid}: pooled cost is unverified; upstream cost evidence is required.";
-        if (pool.TrackedBaseQty != lot.BaseQty || pool.TrackedValue != lot.TotalCost || (lot.BaseQty == 0 && lot.TotalCost != 0))
-            return $"Source {lot.Uid}: quantity/value reconciliation failed.";
-        return null;
-    }
+    private static Task<string?> SourceReadinessAsync(AppDbContext db, ProductionBalLot lot, CancellationToken ct)
+        => ProductionCostReadiness.FinishedGoodSourceError(db, lot, ct);
 
     public async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> GetAsync(int id, CancellationToken ct = default)
     {

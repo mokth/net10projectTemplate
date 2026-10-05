@@ -7,6 +7,7 @@ public interface IProductionFinishedGoodReceiptService
     Task<IvMasterOperationResult<FinishedGoodReceiptPage>> SearchAsync(FinishedGoodReceiptQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodSourcePage>> SearchSourcesAsync(FinishedGoodSourceQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default);
+    Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(long workOrderId, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> GetAsync(int id, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveAsync(FinishedGoodReceiptSaveRequest request, CancellationToken ct = default);
     Task<IvMasterOperationResult<bool>> DeleteAsync(int id, byte[] expectedVersion, CancellationToken ct = default);

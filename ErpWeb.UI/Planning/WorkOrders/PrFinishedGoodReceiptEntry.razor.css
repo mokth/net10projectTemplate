@@ -95,16 +95,11 @@
 
 .pr-dp-op__main {
     display: grid;
-    grid-template-columns: minmax(150px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(210px, 1.2fr);
+    grid-template-columns: minmax(150px, 1.2fr) minmax(150px, 1fr) minmax(210px, 1.2fr);
     align-items: center;
     gap: 18px;
     min-width: 0;
     flex: 1;
-}
-
-.pr-dp-op__main--line {
-    grid-template-columns: minmax(160px, 1.1fr) minmax(140px, 0.8fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(150px, 0.9fr) minmax(150px, 0.9fr);
-    align-items: start;
 }
 
 .pr-dp-cell {
@@ -210,30 +205,42 @@
     text-transform: uppercase;
 }
 
-.pr-dp-readonly {
-    min-height: 38px;
-    padding: 9px 11px;
+.pr-dp-grid-action {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.pr-dp-readiness {
+    margin: 8px 0 16px;
+    padding: 12px 14px;
     border: 1px solid var(--iv-border);
-    border-radius: 6px;
+    border-radius: 12px;
+    background: var(--iv-surface);
+}
+
+.pr-dp-readiness__title {
+    display: block;
+    margin-bottom: 6px;
     color: var(--iv-ink);
-    background: var(--iv-surface-muted);
+    font-size: 0.9rem;
 }
 
-.pr-dp-qty-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 14px;
+.pr-dp-readiness__copy,
+.pr-dp-readiness__list {
+    margin: 0;
+    color: var(--iv-muted);
+    font-size: 0.82rem;
 }
 
-.pr-dp-qty-field {
+.pr-dp-readiness__list {
+    padding-left: 1.1rem;
+}
+
+.pr-dp-picker {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-}
-
-.pr-dp-qty-field small {
-    color: var(--iv-muted);
-    font-size: 0.8rem;
+    gap: 12px;
+    min-height: 240px;
 }
 
 .pr-dp-footer {
@@ -261,22 +268,12 @@
     font-weight: 700;
 }
 
-@media (max-width: 1100px) {
-    .pr-dp-op__main--line {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
 @media (max-width: 900px) {
     .pr-dp-meta {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .pr-dp-op__main {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .pr-dp-qty-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -296,9 +293,7 @@
     }
 
     .pr-dp-op__main,
-    .pr-dp-op__main--line,
-    .pr-dp-meta,
-    .pr-dp-qty-grid {
+    .pr-dp-meta {
         grid-template-columns: 1fr;
     }
 }

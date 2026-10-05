@@ -118,6 +118,16 @@
                 </div>
             </section>
         }
+        else if (LoadFailed)
+        {
+            <section class="iv-card">
+                <div class="pr-dp-empty">
+                    <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3>Finished good receipt could not be loaded</h3>
+                    <p>@(string.IsNullOrWhiteSpace(ErrorMessage) ? "Return to the list and try again." : ErrorMessage)</p>
+                </div>
+            </section>
+        }
         else if (IsViewMode)
         {
             <section class="iv-card">
@@ -166,214 +176,199 @@
                 }
                 else
                 {
-                    <div class="pr-dp-ops">
-                        @foreach (var line in Document.Lines)
-                        {
-                            <article class="pr-dp-op">
-                                <div class="pr-dp-op__main">
+                    <DxGrid Data="@Document.Lines"
+                            KeyFieldName="@nameof(FinishedGoodReceiptLine.SourceId)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="20"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            CssClass="pr-dp-grid">
+                        <Columns>
+                            <DxGridDataColumn Caption="Source" MinWidth="170">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
                                     <div class="pr-dp-cell">
                                         <span class="pr-dp-cell__primary code-style">@line.ItemCode</span>
                                         <span class="pr-dp-cell__secondary">@line.WorkCentre / @line.Process</span>
                                     </div>
-                                    <div class="pr-dp-cell">
-                                        <span class="pr-dp-cell__primary">@line.Quantity.ToString("n4") @line.SourceUom</span>
-                                        <span class="pr-dp-cell__secondary">Dest @line.DestinationQty.ToString("n4") @line.DestinationUom</span>
-                                    </div>
-                                    <div class="pr-dp-cell">
-                                        <span class="pr-dp-cell__primary code-style">@line.Warehouse @(string.IsNullOrWhiteSpace(line.Location) ? "" : $"· {line.Location}")</span>
-                                        <span class="pr-dp-cell__secondary">
-                                            @(line.LotControl
-                                                ? $"Lot {(string.IsNullOrWhiteSpace(line.LotNo) ? "—" : line.LotNo)}{(line.ExpiryDate is null ? "" : $" · Exp {line.ExpiryDate:dd MMM yyyy}")}"
-                                                : "Non-lot item")
-                                        </span>
-                                    </div>
-                                    <div class="pr-dp-op__qty">
-                                        <span class="iv-field__label">Source lot</span>
-                                        <strong>@(string.IsNullOrWhiteSpace(line.SourceLot) ? "—" : line.SourceLot)</strong>
-                                        @if (Document.CanViewCost)
-                                        {
-                                            <small>@(Document.Status == "NEW" ? "Estimated" : "Posted"): @(line.TotalValue?.ToString("n4") ?? "Unverified")</small>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Source Lot" Width="140px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@(string.IsNullOrWhiteSpace(line.SourceLot) ? "—" : line.SourceLot)</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Available" Width="130px" TextAlignment="GridTextAlignment.Right">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@line.AvailableQty.ToString("n4") @line.SourceUom</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Receipt Qty" Width="150px" TextAlignment="GridTextAlignment.Right">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@line.Quantity.ToString("n4") @line.SourceUom</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(FinishedGoodReceiptLine.Warehouse)" Caption="Warehouse" Width="180px" />
+                            <DxGridDataColumn Caption="Location" Width="170px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@(string.IsNullOrWhiteSpace(line.Location) ? "—" : line.Location)</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Destination Lot" Width="170px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@(line.LotControl ? (string.IsNullOrWhiteSpace(line.LotNo) ? "—" : line.LotNo) : "—")</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Expiry" Width="140px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@(line.LotControl && line.ExpiryDate is not null ? line.ExpiryDate.Value.ToString("dd MMM yyyy") : "—")</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Destination Qty" Width="150px" TextAlignment="GridTextAlignment.Right">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var line = (FinishedGoodReceiptLine)context.DataItem;
+                                    }
+                                    <span>@line.DestinationQty.ToString("n4") @line.DestinationUom</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            @if (Document.CanViewCost)
+                            {
+                                <DxGridDataColumn Caption="Value" Width="140px" TextAlignment="GridTextAlignment.Right">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var line = (FinishedGoodReceiptLine)context.DataItem;
                                         }
-                                    </div>
-                                </div>
-                            </article>
-                        }
-                    </div>
+                                        <span>@(line.TotalValue?.ToString("n4") ?? "Unverified")</span>
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            }
+                        </Columns>
+                    </DxGrid>
                 }
             </section>
 
+            @if (ShowCompactReadiness)
+            {
+                @ReadinessBlock
+            }
+        }
+        else if (EntryPermissionDenied)
+        {
+            <section class="iv-card">
+                <div class="pr-dp-empty">
+                    <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></div>
+                    <h3>Access denied</h3>
+                    <p>@PermissionDeniedCopy</p>
+                </div>
+            </section>
+        }
+        else if (IsSelectingSource)
+        {
+            <section class="iv-card">
+                <header class="pr-dp-section-head">
+                    <div>
+                        <strong>Find eligible source lots</strong>
+                        <small>Select a final production lot. Non-ready sources can be added; POST is the readiness gate.</small>
+                    </div>
+                </header>
+
+                @SourceFilterForm(lockedWorkOrder: false)
+
+                <div class="pr-dp-filter-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(MoreFiltersVisible ? "Fewer filters" : "More filters")"
+                              IconCssClass="fa-solid fa-sliders"
+                              Click="@(() => MoreFiltersVisible = !MoreFiltersVisible)" />
+                    <div class="pr-dp-filter-actions__right">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CLEAR"
+                                  Click="@ClearInitialSourceFiltersAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="FIND"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  Click="@FindSourcesAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card pr-dp-lines">
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Results</p>
+                        <strong>Matching production lots</strong>
+                    </div>
+                    <span class="pr-dp-count">@SourceResultLabel · page @(SourcePage + 1) / @SourcePageCount</span>
+                </div>
+                @SourceResults
+            </section>
+        }
+        else if (IsReceiptWorkspace)
+        {
             <section class="iv-card">
                 <div class="pr-dp-section-head">
                     <div>
-                        <p class="iv-eyebrow">Readiness</p>
-                        <strong>@(Document.PostingEnabled ? "Posting checks" : "Posting disabled")</strong>
-                        <small>
-                            @(Document.PostingEnabled
-                                ? "POST remains the readiness gate. Non-ready sources can still be saved as a draft."
-                                : "FG posting is disabled pending release acceptance.")
-                        </small>
+                        <p class="iv-eyebrow">Context</p>
+                        <strong>Work Order / source</strong>
+                        <small>This receipt is locked to one Work Order. Use CHANGE WORK ORDER to start over.</small>
+                    </div>
+                    <span class="pr-dp-pill">@Document.Status</span>
+                </div>
+                <div class="pr-dp-meta">
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Order</span>
+                        <strong class="code-style">@(string.IsNullOrWhiteSpace(Document.WorkOrderNo) ? "—" : Document.WorkOrderNo)</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Selected source lines</span>
+                        <strong>@Editors.Count</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Item</span>
+                        <strong class="code-style">@SourceItemSummary</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Source lot</span>
+                        <strong>@SourceLotSummary</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Centre</span>
+                        <strong>@SourceWorkCentreSummary</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Process</span>
+                        <strong>@SourceProcessSummary</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Status</span>
+                        <strong>@Document.Status</strong>
                     </div>
                 </div>
-                @if (Document.ReadinessErrors.Count == 0)
-                {
-                    <p class="text-muted mb-0">No readiness messages.</p>
-                }
-                else
-                {
-                    <ul class="mb-0">
-                        @foreach (var error in Document.ReadinessErrors)
-                        {
-                            <li>@error</li>
-                        }
-                    </ul>
-                }
             </section>
-        }
-        else
-        {
-            @if (CanEditFields)
-            {
-                <section class="iv-card">
-                    <header class="pr-dp-section-head">
-                        <div>
-                            <strong>Find eligible source lots</strong>
-                            <small>Select a final production lot. Non-ready sources can be added; POST is the readiness gate.</small>
-                        </div>
-                    </header>
-
-                    <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
-                        <DxFormLayoutItem Caption="Work Order" ColSpanMd="3">
-                            <Template>
-                                <DxComboBox Data="@FilterOptions.WorkOrders"
-                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
-                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
-                                            @bind-Value="@SearchWo"
-                                            NullText="All eligible Work Orders"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                            Enabled="@(!HasLockedWorkOrder)" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Work Centre" ColSpanMd="3">
-                            <Template>
-                                <DxComboBox Data="@FilterOptions.WorkCentres"
-                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
-                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
-                                            @bind-Value="@SearchWorkCentre"
-                                            NullText="All work centres"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Process" ColSpanMd="3">
-                            <Template>
-                                <DxComboBox Data="@FilterOptions.Processes"
-                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
-                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
-                                            @bind-Value="@SearchProcess"
-                                            NullText="All processes"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Item" ColSpanMd="3">
-                            <Template>
-                                <DxComboBox Data="@FilterOptions.Items"
-                                            TextFieldName="@nameof(ProductionOutputChoice.Label)"
-                                            ValueFieldName="@nameof(ProductionOutputChoice.Code)"
-                                            @bind-Value="@SearchItem"
-                                            NullText="All items"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            SearchFilterCondition="ListSearchFilterCondition.Contains" />
-                            </Template>
-                        </DxFormLayoutItem>
-                    </DxFormLayout>
-
-                    <div class="pr-dp-filter-actions">
-                        <span class="pr-dp-count">@SourceResultLabel</span>
-                        <div class="pr-dp-filter-actions__right">
-                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="CLEAR"
-                                      Click="@ClearSourceFilters"
-                                      Enabled="@(!IsSubmitting)" />
-                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                      Text="FIND"
-                                      IconCssClass="fa-solid fa-magnifying-glass"
-                                      Click="@FindSourcesAsync"
-                                      Enabled="@(!IsSubmitting)" />
-                        </div>
-                    </div>
-                </section>
-
-                <section class="iv-card pr-dp-lines">
-                    <div class="pr-dp-section-head">
-                        <div>
-                            <p class="iv-eyebrow">Results</p>
-                            <strong>Matching production lots</strong>
-                        </div>
-                        <span class="pr-dp-count">page @(SourcePage + 1) / @SourcePageCount</span>
-                    </div>
-                    @if (IsSearchingSources)
-                    {
-                        <div class="iv-skeleton" aria-busy="true">
-                            <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
-                            <div class="iv-skeleton__line"></div>
-                        </div>
-                    }
-                    else if (Sources.Count == 0)
-                    {
-                        <div class="pr-dp-empty">
-                            <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-magnifying-glass"></i></div>
-                            <h3>No eligible sources</h3>
-                            <p>Change or clear the filters to see more production lots.</p>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="pr-dp-ops">
-                            @foreach (var source in Sources)
-                            {
-                                <article class="pr-dp-op">
-                                    <div class="pr-dp-op__main">
-                                        <div class="pr-dp-cell">
-                                            <span class="pr-dp-cell__primary code-style">@source.WorkOrderNo</span>
-                                            <span class="pr-dp-cell__secondary">@source.ItemCode · lot @(string.IsNullOrWhiteSpace(source.LotNo) ? "—" : source.LotNo)</span>
-                                        </div>
-                                        <div class="pr-dp-cell">
-                                            <span class="pr-dp-cell__primary">@source.WorkCentre / @source.Process</span>
-                                            <span class="pr-dp-cell__secondary">@(source.LotControl ? "Lot-controlled" : "Non-lot")</span>
-                                        </div>
-                                        <div class="pr-dp-op__qty">
-                                            <span class="iv-field__label">Available</span>
-                                            <strong>@source.AvailableQty.ToString("n4") @source.Uom</strong>
-                                            <small>@source.Readiness</small>
-                                        </div>
-                                    </div>
-                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                              Text="SELECT"
-                                              Click="@(() => AddSourceAsync(source))"
-                                              Enabled="@(!IsSubmitting)" />
-                                </article>
-                            }
-                        </div>
-                        <div class="pr-dp-pager">
-                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="Previous"
-                                      Click="@(() => ChangeSourcePageAsync(-1))"
-                                      Enabled="@(SourcePage > 0 && !IsSubmitting)" />
-                            <span>Page @(SourcePage + 1) of @SourcePageCount</span>
-                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="Next"
-                                      Click="@(() => ChangeSourcePageAsync(1))"
-                                      Enabled="@(SourcePage + 1 < SourcePageCount && !IsSubmitting)" />
-                        </div>
-                    }
-                </section>
-            }
 
             <section class="iv-card">
                 <div class="pr-dp-section-head">
@@ -382,7 +377,6 @@
                         <strong>Receipt details</strong>
                         <small>One Work Order per document. Drafts do not reserve production stock.</small>
                     </div>
-                    <span class="pr-dp-pill">@Document.Status</span>
                 </div>
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
                     <DxFormLayoutItem Caption="Receipt date" ColSpanMd="4">
@@ -400,11 +394,6 @@
                                        Enabled="@CanEditFields" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Work Order" ColSpanMd="4">
-                        <Template>
-                            <div class="pr-dp-readonly code-style">@(string.IsNullOrWhiteSpace(Document.WorkOrderNo) ? "Select a source lot" : Document.WorkOrderNo)</div>
-                        </Template>
-                    </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
                         <Template>
                             <DxMemo @bind-Text="@Remarks" Rows="2" maxlength="200" Enabled="@CanEditFields" />
@@ -420,148 +409,280 @@
                         <strong>Destination</strong>
                         <small>Warehouse is required. Location is optional and depends on the warehouse.</small>
                     </div>
+                    @if (CanAddSourceLot)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="ADD SOURCE LOT"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OpenSourcePickerAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
                 </div>
                 @if (Editors.Count == 0)
                 {
                     <div class="pr-dp-empty">
-                        <h3>No sources selected</h3>
-                        <p>Find and select a production lot to add a receipt line.</p>
+                        <h3>No destination lines</h3>
+                        <p>Use ADD SOURCE LOT to add an eligible lot from this Work Order, or CHANGE WORK ORDER to start over.</p>
                     </div>
                 }
                 else
                 {
-                    @foreach (var editor in Editors)
-                    {
-                        <article class="pr-dp-op" @key="editor.Key">
-                            <div class="pr-dp-op__main pr-dp-op__main--line">
-                                <div class="pr-dp-cell">
-                                    <span class="pr-dp-cell__primary code-style">@editor.Line.ItemCode</span>
-                                    <span class="pr-dp-cell__secondary">@editor.Line.WorkCentre / @editor.Line.Process · Available @editor.Line.AvailableQty.ToString("n4") @editor.Line.SourceUom</span>
-                                </div>
-                                <div class="pr-dp-qty-field">
-                                    <span class="iv-field__label">Receipt qty (@editor.Line.SourceUom)</span>
-                                    <DxSpinEdit @bind-Value="@editor.Line.Quantity"
+                    <DxGrid Data="@Editors"
+                            KeyFieldName="@nameof(ReceiptLineEditor.Key)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="20"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            CssClass="pr-dp-grid">
+                        <Columns>
+                            <DxGridDataColumn Caption="Source" MinWidth="170">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <div class="pr-dp-cell">
+                                        <span class="pr-dp-cell__primary code-style">@editor.Line.ItemCode</span>
+                                        <span class="pr-dp-cell__secondary">@editor.Line.WorkCentre / @editor.Line.Process</span>
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Source Lot" Width="140px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <span>@(string.IsNullOrWhiteSpace(editor.Line.SourceLot) ? "—" : editor.Line.SourceLot)</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Available" Width="130px" TextAlignment="GridTextAlignment.Right">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <span>@editor.Line.AvailableQty.ToString("n4") @editor.Line.SourceUom</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Receipt Qty" Width="150px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <DxSpinEdit Value="@editor.Line.Quantity"
+                                                ValueChanged="@((decimal value) => editor.Line.Quantity = value)"
                                                 Enabled="@CanEditFields"
                                                 MinValue="0m"
                                                 Increment="0.0001m"
                                                 DisplayFormat="n4"
                                                 ShowSpinButtons="false" />
-                                </div>
-                                <div class="pr-dp-qty-field">
-                                    <span class="iv-field__label">Warehouse</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Warehouse" Width="190px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
                                     <DxComboBox Data="@Warehouses"
                                                 TextFieldName="@nameof(ProductionOutputChoice.Label)"
                                                 ValueFieldName="@nameof(ProductionOutputChoice.Code)"
                                                 Value="@editor.Line.Warehouse"
-                                                ValueChanged="@(async (string? v) => await OnWarehouseChangedAsync(editor, v))"
+                                                ValueChanged="@(async (string? value) => await OnWarehouseChangedAsync(editor, value))"
                                                 NullText="Required warehouse"
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 SearchFilterCondition="ListSearchFilterCondition.Contains"
                                                 Enabled="@CanEditFields" />
-                                </div>
-                                <div class="pr-dp-qty-field">
-                                    <span class="iv-field__label">Location</span>
-                                    <DxComboBox Data="@editor.Locations"
-                                                TextFieldName="@nameof(ProductionOutputChoice.Label)"
-                                                ValueFieldName="@nameof(ProductionOutputChoice.Code)"
-                                                Value="@editor.Line.Location"
-                                                ValueChanged="@((string? v) => editor.Line.Location = v ?? "")"
-                                                NullText="Optional location"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                Enabled="@(CanEditFields && !string.IsNullOrWhiteSpace(editor.Line.Warehouse))" />
-                                </div>
-                                @if (editor.Line.LotControl)
-                                {
-                                    <div class="pr-dp-qty-field">
-                                        <span class="iv-field__label">Destination lot</span>
-                                        <DxTextBox @bind-Text="@editor.Line.LotNo" Enabled="@CanEditFields" NullText="Required lot" />
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Location" Width="180px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <div @key="editor.LookupRevision">
+                                        <DxComboBox Data="@editor.Locations"
+                                                    TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                                    ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                                    Value="@editor.Line.Location"
+                                                    ValueChanged="@((string? value) => editor.Line.Location = value ?? "")"
+                                                    NullText="Optional location"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    SearchMode="ListSearchMode.AutoSearch"
+                                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                    Enabled="@(CanEditFields && !string.IsNullOrWhiteSpace(editor.Line.Warehouse))" />
                                     </div>
-                                    <div class="pr-dp-qty-field">
-                                        <span class="iv-field__label">Expiry</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Destination Lot" Width="170px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    @if (editor.Line.LotControl)
+                                    {
+                                        <DxTextBox @bind-Text="@editor.Line.LotNo" Enabled="@CanEditFields" NullText="Required lot" />
+                                    }
+                                    else
+                                    {
+                                        <span>—</span>
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Expiry" Width="140px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    @if (editor.Line.LotControl)
+                                    {
                                         <DxDateEdit Date="@editor.Line.ExpiryDate"
-                                                    DateChanged="@((DateTime? v) => editor.Line.ExpiryDate = v)"
+                                                    DateChanged="@((DateTime? value) => editor.Line.ExpiryDate = value)"
                                                     Enabled="@CanEditFields"
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                    }
+                                    else
+                                    {
+                                        <span>—</span>
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Destination Qty" Width="150px" TextAlignment="GridTextAlignment.Right">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <span>@(Dirty ? "Recalculated on save" : $"{editor.Line.DestinationQty.ToString("n4")} {editor.Line.DestinationUom}")</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            @if (Document.CanViewCost)
+                            {
+                                <DxGridDataColumn Caption="Value" Width="140px" TextAlignment="GridTextAlignment.Right">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var editor = (ReceiptLineEditor)context.DataItem;
+                                        }
+                                        <span>@(Document.Status == "NEW" ? "Estimated" : "Posted"): @(editor.Line.TotalValue?.ToString("n4") ?? "Unverified")</span>
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            }
+                            <DxGridDataColumn Caption="" Width="110px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var editor = (ReceiptLineEditor)context.DataItem;
+                                    }
+                                    <div class="pr-dp-grid-action">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="REMOVE"
+                                                  Click="@(() => RemoveLine(editor))"
+                                                  Enabled="@(!IsSubmitting)" />
                                     </div>
-                                }
-                            </div>
-                            <div class="pr-dp-cell">
-                                <span class="pr-dp-cell__secondary">Dest @(Dirty ? "(recalculated on save)" : $"{editor.Line.DestinationQty.ToString("n4")} {editor.Line.DestinationUom}")</span>
-                                @if (Document.CanViewCost)
-                                {
-                                    <small>@(Document.Status == "NEW" ? "Estimated value" : "Posted exact value"): @(editor.Line.TotalValue?.ToString("n4") ?? "Unverified")</small>
-                                }
-                                @if (CanEditFields)
-                                {
-                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                              Text="Remove"
-                                              Click="@(() => RemoveLine(editor))"
-                                              Enabled="@(!IsSubmitting)" />
-                                }
-                            </div>
-                        </article>
-                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                        </Columns>
+                    </DxGrid>
                 }
             </section>
 
-            <section class="iv-card">
-                <div class="pr-dp-section-head">
-                    <div>
-                        <p class="iv-eyebrow">Readiness</p>
-                        <strong>@(Document.PostingEnabled ? "Posting checks" : "Posting disabled")</strong>
-                        <small>
-                            @(Document.PostingEnabled
-                                ? "POST remains the readiness gate. Non-ready sources can still be saved as a draft."
-                                : "FG posting is disabled pending release acceptance.")
-                        </small>
-                    </div>
-                </div>
-                @if (Document.ReadinessErrors.Count == 0)
-                {
-                    <p class="text-muted mb-0">No readiness messages.</p>
-                }
-                else
-                {
-                    <ul class="mb-0">
-                        @foreach (var error in Document.ReadinessErrors)
-                        {
-                            <li>@error</li>
-                        }
-                    </ul>
-                }
-            </section>
-
-            @if (CanEditFields)
+            @if (ShowCompactReadiness)
             {
-                <footer class="pr-dp-footer">
-                    <p class="pr-dp-footer__hint">
-                        @if (Editors.Count == 0)
-                        {
-                            @:Select at least one production lot, then save the draft.
-                        }
-                        else
-                        {
-                            @:Drafts do not reserve stock. Save to capture the destination snapshot.
-                        }
-                    </p>
-                    <div class="pr-dp-footer__actions">
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="CANCEL"
-                                  IconCssClass="fa-solid fa-xmark"
-                                  Click="@BackToList"
-                                  Enabled="@(!IsSubmitting)" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                  Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
-                                  IconCssClass="fa-solid fa-floppy-disk"
-                                  Click="@SaveAsync"
-                                  Enabled="@(!IsSubmitting && CanSave)" />
-                    </div>
-                </footer>
+                @ReadinessBlock
             }
+
+            <footer class="pr-dp-footer">
+                <p class="pr-dp-footer__hint">
+                    @if (Editors.Count == 0)
+                    {
+                        @:Use ADD SOURCE LOT to add a line, then save the draft.
+                    }
+                    else if (Document.Id == 0)
+                    {
+                        @:Save the draft before posting checks are available.
+                    }
+                    else
+                    {
+                        @:Drafts do not reserve stock. Save to capture the destination snapshot.
+                    }
+                </p>
+                <div class="pr-dp-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CANCEL"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@SaveAsync"
+                              Enabled="@(!IsSubmitting && CanSave)" />
+                </div>
+            </footer>
+        }
+        else
+        {
+            <section class="iv-card">
+                <div class="pr-dp-empty">
+                    <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></div>
+                    <h3>Unable to show this receipt</h3>
+                    <p>This page could not determine its current state. Return to the list and try again.</p>
+                </div>
+            </section>
         }
     </div>
+
+    <DxPopup Visible="@SourcePickerVisible"
+             HeaderText="Add source lot"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             Width="90vw"
+             CssClass="common-popup"
+             Closed="@CloseSourcePicker">
+        <BodyContentTemplate>
+            <div class="pr-dp-picker">
+                <div class="pr-dp-meta">
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Work Order</span>
+                        <strong class="code-style">@Document.WorkOrderNo</strong>
+                    </div>
+                    <div class="pr-dp-meta__item">
+                        <span class="iv-field__label">Lines</span>
+                        <strong>@Editors.Count / 200</strong>
+                    </div>
+                </div>
+
+                @SourceFilterForm(lockedWorkOrder: true)
+
+                <div class="pr-dp-filter-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(MoreFiltersVisible ? "Fewer filters" : "More filters")"
+                              IconCssClass="fa-solid fa-sliders"
+                              Click="@(() => MoreFiltersVisible = !MoreFiltersVisible)" />
+                    <div class="pr-dp-filter-actions__right">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CLEAR"
+                                  Click="@ClearPickerFiltersAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="FIND"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  Click="@FindSourcesAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+
+                <div class="pr-dp-section-head">
+                    <div>
+                        <p class="iv-eyebrow">Results</p>
+                        <strong>Matching production lots</strong>
+                    </div>
+                    <span class="pr-dp-count">@SourceResultLabel · page @(SourcePage + 1) / @SourcePageCount</span>
+                </div>
+                @SourceResults
+            </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="@CloseSourcePicker" Enabled="@(!IsSubmitting)" />
+        </FooterContentTemplate>
+    </DxPopup>
 
     <DxPopup Visible="@PostConfirmationVisible"
              HeaderText="Confirm Post"
@@ -624,3 +745,152 @@
         </FooterContentTemplate>
     </DxPopup>
 </MenuAuthorize>
+
+@code {
+    private RenderFragment SourceFilterForm(bool lockedWorkOrder) => __builder =>
+    {
+        <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
+            @if (!lockedWorkOrder)
+            {
+                <DxFormLayoutItem Caption="Work Order" ColSpanMd="4">
+                    <Template>
+                        <DxComboBox Data="@FilterOptions.WorkOrders"
+                                    TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                    ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                    @bind-Value="@SearchWo"
+                                    NullText="All eligible Work Orders"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                    </Template>
+                </DxFormLayoutItem>
+            }
+            <DxFormLayoutItem Caption="Work Centre" ColSpanMd="4">
+                <Template>
+                    <DxComboBox Data="@FilterOptions.WorkCentres"
+                                TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                @bind-Value="@SearchWorkCentre"
+                                NullText="All work centres"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                SearchMode="ListSearchMode.AutoSearch"
+                                SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                </Template>
+            </DxFormLayoutItem>
+            <DxFormLayoutItem Caption="Process" ColSpanMd="4">
+                <Template>
+                    <DxComboBox Data="@FilterOptions.Processes"
+                                TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                @bind-Value="@SearchProcess"
+                                NullText="All processes"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                SearchMode="ListSearchMode.AutoSearch"
+                                SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                </Template>
+            </DxFormLayoutItem>
+            @if (MoreFiltersVisible)
+            {
+                <DxFormLayoutItem Caption="Item" ColSpanMd="4">
+                    <Template>
+                        <DxComboBox Data="@FilterOptions.Items"
+                                    TextFieldName="@nameof(ProductionOutputChoice.Label)"
+                                    ValueFieldName="@nameof(ProductionOutputChoice.Code)"
+                                    @bind-Value="@SearchItem"
+                                    NullText="All items"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    SearchFilterCondition="ListSearchFilterCondition.Contains" />
+                    </Template>
+                </DxFormLayoutItem>
+            }
+        </DxFormLayout>
+    };
+
+    private RenderFragment SourceResults => __builder =>
+    {
+        @if (IsSearchingSources)
+        {
+            <div class="iv-skeleton" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line"></div>
+            </div>
+        }
+        else if (Sources.Count == 0)
+        {
+            <div class="pr-dp-empty">
+                <div class="pr-dp-empty__icon" aria-hidden="true"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <h3>No eligible sources</h3>
+                <p>Change or clear the filters to see more production lots.</p>
+            </div>
+        }
+        else
+        {
+            <div class="pr-dp-ops">
+                @foreach (var source in Sources)
+                {
+                    <article class="pr-dp-op">
+                        <div class="pr-dp-op__main">
+                            <div class="pr-dp-cell">
+                                <span class="pr-dp-cell__primary code-style">@source.WorkOrderNo</span>
+                                <span class="pr-dp-cell__secondary">@source.ItemCode · lot @(string.IsNullOrWhiteSpace(source.LotNo) ? "—" : source.LotNo)</span>
+                            </div>
+                            <div class="pr-dp-cell">
+                                <span class="pr-dp-cell__primary">@source.WorkCentre / @source.Process</span>
+                                <span class="pr-dp-cell__secondary">@(source.LotControl ? "Lot-controlled" : "Non-lot")</span>
+                            </div>
+                            <div class="pr-dp-op__qty">
+                                <span class="iv-field__label">Available</span>
+                                <strong>@source.AvailableQty.ToString("n4") @source.Uom</strong>
+                                <small>@source.Readiness</small>
+                            </div>
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="SELECT"
+                                  Click="@(() => AddSourceAsync(source))"
+                                  Enabled="@(!IsSubmitting)" />
+                    </article>
+                }
+            </div>
+            <div class="pr-dp-pager">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Previous"
+                          Click="@(() => ChangeSourcePageAsync(-1))"
+                          Enabled="@(SourcePage > 0 && !IsSubmitting)" />
+                <span>Page @(SourcePage + 1) of @SourcePageCount</span>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Next"
+                          Click="@(() => ChangeSourcePageAsync(1))"
+                          Enabled="@(SourcePage + 1 < SourcePageCount && !IsSubmitting)" />
+            </div>
+        }
+    };
+
+    private RenderFragment ReadinessBlock => __builder =>
+    {
+        <section class="pr-dp-readiness" aria-live="polite">
+            @if (Document.Id == 0)
+            {
+                <p class="pr-dp-readiness__copy">Save the draft before posting checks are available.</p>
+            }
+            else if (!Document.PostingEnabled)
+            {
+                <p class="pr-dp-readiness__copy">FG posting is disabled pending release acceptance.</p>
+            }
+            else if (Document.ReadinessErrors.Count > 0)
+            {
+                <strong class="pr-dp-readiness__title">Posting readiness</strong>
+                <ul class="pr-dp-readiness__list">
+                    @foreach (var error in Document.ReadinessErrors)
+                    {
+                        <li>@error</li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <p class="pr-dp-readiness__copy">No known posting-readiness issues.</p>
+            }
+        </section>
+    };
+}

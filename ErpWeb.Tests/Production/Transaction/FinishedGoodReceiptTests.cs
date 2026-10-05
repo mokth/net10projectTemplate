@@ -289,6 +289,137 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
+    public async Task Source_filter_options_can_scope_to_a_locked_work_order()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var secondOrderId = await SeedSecondEligibleWorkOrderAsync(f);
+
+        var unscoped = await f.Service.GetSourceFilterOptionsAsync();
+        Assert.True(unscoped.Succeeded, unscoped.Message);
+        Assert.Contains(unscoped.Data!.WorkOrders, x => x.Code == "WO-FG-HQ");
+        Assert.Contains(unscoped.Data.WorkOrders, x => x.Code == "WO-FG2-HQ");
+        Assert.Contains(unscoped.Data.WorkCentres, x => x.Code == "WC");
+        Assert.Contains(unscoped.Data.WorkCentres, x => x.Code == "WC2");
+        Assert.Contains(unscoped.Data.Processes, x => x.Code == "PACK");
+        Assert.Contains(unscoped.Data.Processes, x => x.Code == "ASSEMBLE");
+        Assert.Contains(unscoped.Data.Items, x => x.Code == "FG");
+        Assert.Contains(unscoped.Data.Items, x => x.Code == "FG2");
+
+        var scoped = await f.Service.GetSourceFilterOptionsAsync(f.OrderId);
+        Assert.True(scoped.Succeeded, scoped.Message);
+        Assert.Contains(scoped.Data!.WorkOrders, x => x.Code == "WO-FG-HQ");
+        Assert.DoesNotContain(scoped.Data.WorkOrders, x => x.Code == "WO-FG2-HQ");
+        Assert.Contains(scoped.Data.WorkCentres, x => x.Code == "WC");
+        Assert.DoesNotContain(scoped.Data.WorkCentres, x => x.Code == "WC2");
+        Assert.Contains(scoped.Data.Processes, x => x.Code == "PACK");
+        Assert.DoesNotContain(scoped.Data.Processes, x => x.Code == "ASSEMBLE");
+        Assert.Contains(scoped.Data.Items, x => x.Code == "FG");
+        Assert.DoesNotContain(scoped.Data.Items, x => x.Code == "FG2");
+
+        var secondScoped = await f.Service.GetSourceFilterOptionsAsync(secondOrderId);
+        Assert.True(secondScoped.Succeeded, secondScoped.Message);
+        Assert.Contains(secondScoped.Data!.WorkCentres, x => x.Code == "WC2");
+        Assert.DoesNotContain(secondScoped.Data.WorkCentres, x => x.Code == "WC");
+
+        await using var db = await f.Factory.CreateDbContextAsync();
+        var first = await db.ProductionWorkOrders.SingleAsync(x => x.Uid == f.OrderId);
+        first.Status = ProductionWorkOrderStatuses.Cancelled;
+        await db.SaveChangesAsync();
+        var afterCancel = await f.Service.GetSourceFilterOptionsAsync();
+        Assert.DoesNotContain(afterCancel.Data!.WorkOrders, x => x.Code == "WO-FG-HQ");
+        Assert.Contains(afterCancel.Data.WorkOrders, x => x.Code == "WO-FG2-HQ");
+        Assert.DoesNotContain((await f.Service.GetSourceFilterOptionsAsync(f.OrderId)).Data!.WorkCentres, x => x.Code == "WC");
+    }
+
+    private static async Task<long> SeedSecondEligibleWorkOrderAsync(Fixture f)
+    {
+        await using var db = await f.Factory.CreateDbContextAsync();
+        var bom = await db.PrBomHdrs.FirstOrDefaultAsync(x => x.CompanyCode == f.Company && x.ProdCode == "FG2");
+        if (bom is null)
+        {
+            bom = new PrBomHdr { CompanyCode = f.Company, ProdCode = "FG2", DefinitionCode = "FG2", BaseQty = 1, BaseUom = "EA" };
+            db.PrBomHdrs.Add(bom);
+            await db.SaveChangesAsync();
+        }
+
+        if (!await db.IvStockMasters.AnyAsync(x => x.CompanyCode == f.Company && x.ICode == "FG2"))
+            db.IvStockMasters.Add(new() { CompanyCode = f.Company, ICode = "FG2", StdUom = "EA", StockControl = true });
+
+        var location = await db.ProductionLocations.SingleAsync(x => x.CompanyCode == f.Company && x.Code == "FG");
+        var order = new ProductionWorkOrder
+        {
+            CompanyCode = f.Company,
+            BranchCode = "HQ",
+            WorkOrderNo = "WO-FG2-HQ",
+            Status = "COMPLETED",
+            ProductCode = "FG2",
+            PlannedQty = 10,
+            OutputUom = "EA",
+            CreatedBy = "TEST",
+            SourceBomHdrId = bom.Uid
+        };
+        db.ProductionWorkOrders.Add(order);
+        await db.SaveChangesAsync();
+
+        var route = new ProductionWorkOrderRouteStep
+        {
+            WorkOrderId = order.Uid,
+            StageSequence = 1,
+            WorkCentreCode = "WC2",
+            OutputItemCode = "FG2",
+            OutputUom = "EA",
+            OutputType = "FINISHED_GOODS",
+            OutputBaseUom = "EA",
+            OutputConversionFactorToBase = 1
+        };
+        db.ProductionWorkOrderRouteSteps.Add(route);
+        await db.SaveChangesAsync();
+
+        var operation = new ProductionWorkOrderOperation
+        {
+            WorkOrderId = order.Uid,
+            RouteStepId = route.Uid,
+            ProcessSequence = 1,
+            IsFinalOperation = true,
+            OperationCode = "ASSEMBLE",
+            WorkCentreCode = "WC2",
+            ProcessType = "MANUAL",
+            PlannedOutputQty = 10,
+            PlannedOutputUom = "EA"
+        };
+        db.ProductionWorkOrderOperations.Add(operation);
+        await db.SaveChangesAsync();
+
+        db.ProductionBalLots.Add(new()
+        {
+            CompanyCode = f.Company,
+            BranchCode = "HQ",
+            Kind = "WIP",
+            ItemCode = "FG2",
+            Uom = "EA",
+            Qty = 10,
+            BaseQty = 10,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1,
+            WorkOrderId = order.Uid,
+            WorkOrderNo = order.WorkOrderNo,
+            ProducingRouteStepId = route.Uid,
+            WorkOrderOperationId = operation.Uid,
+            OutputType = "FINISHED_GOODS",
+            BalanceStage = "FG_STAGING",
+            StockStatusCode = "AVAILABLE",
+            OriginType = "PRODUCED",
+            PhysicalLotNo = "PROD-2",
+            LotNo = "PROD-2",
+            WorkCentreCode = "WC2",
+            ProcessCode = "ASSEMBLE",
+            ProductionLocationId = location.Id
+        });
+        await db.SaveChangesAsync();
+        return order.Uid;
+    }
+
+    [Fact]
     public async Task Save_maps_product_codes_grouped_qty_and_non_lot_expiry()
     {
         var f = await CreateAsync(); if (f is null) return;

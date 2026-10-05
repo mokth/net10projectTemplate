@@ -55,8 +55,13 @@ public static class ProductionPoolValuationService
                 ? await db.IvTrxHistories.SingleOrDefaultAsync(x => x.Id == historyId, ct) : null;
             if (movement.MovementType == ProductionBalLotMovementTypes.Issue)
             {
-                status = history?.PriceEvidence is not null && history.UnitPrice.HasValue ? Verified : Unvalued;
-                basis = history?.PriceEvidence ?? "MISSING_INVENTORY_PRICE_EVIDENCE";
+                var verified = ProductionCostReadiness.HasVerifiedInventoryCost(
+                    history?.UnitPrice,
+                    history?.PriceEvidence);
+                status = verified ? Verified : Unvalued;
+                basis = verified
+                    ? history!.PriceEvidence!.Trim()
+                    : "MISSING_OR_INVALID_INVENTORY_PRICE_EVIDENCE";
             }
             if (direction > 0)
             {
