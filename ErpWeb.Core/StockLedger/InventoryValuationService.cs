@@ -231,12 +231,18 @@ public sealed class InventoryValuationService : IInventoryValuationService
             throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
                 $"Receipt valuation cannot be negative for item '{itemCode}'.");
 
-        var transactionUnit = detail?.UnitPrice ?? history.UnitPrice;
+        var transactionUnit = detail?.CostPrice
+                              ?? history.CostPrice
+                              ?? detail?.UnitPrice
+                              ?? history.UnitPrice;
+        var transactionQty = history.ToPurQty is > 0m
+            ? history.ToPurQty.Value
+            : quantity;
         decimal? transactionAmount = transactionUnit is null
             ? null
-            : RoundMoney(quantity * transactionUnit.Value);
-        decimal? exchangeRate = transactionUnit is > 0m
-            ? RoundRate(unitCost / transactionUnit.Value)
+            : RoundMoney(transactionQty * transactionUnit.Value);
+        decimal? exchangeRate = transactionAmount is > 0m
+            ? RoundRate(amount / transactionAmount.Value)
             : null;
 
         var fact = NewFact(
@@ -441,11 +447,11 @@ public sealed class InventoryValuationService : IInventoryValuationService
             StockPostingId = context.Posting.Id,
             PostingLineNo = line,
             SplitOrdinal = splitOrdinal,
-            SourceLineId = $"{documentType}:{documentId}:{history.TrxLineNo}:{splitOrdinal}",
+            SourceLineId = $"{documentType}:{documentId}:{ResolveSourceDocumentLine(history)}:{line}:{splitOrdinal}",
             SourceDocumentType = documentType,
             SourceDocumentId = documentId,
             SourceDocumentNo = documentNo,
-            SourceDocumentLine = history.TrxLineNo.ToString(CultureInfo.InvariantCulture),
+            SourceDocumentLine = ResolveSourceDocumentLine(history),
             EffectiveAt = context.Posting.EffectiveAt,
             BusinessDate = context.Posting.BusinessDate,
             PeriodKey = context.Posting.PeriodKey,
@@ -595,6 +601,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 ? context.Posting.SourceDocumentId
                 : context.Posting.SourceDocumentNo);
     }
+
+    private static string ResolveSourceDocumentLine(IvTrxHistory history) =>
+        string.Equals(history.TrxType, IvTrxTypes.SalesOut, StringComparison.OrdinalIgnoreCase)
+        && history.SoLineNo is short sourceLine
+            ? sourceLine.ToString(CultureInfo.InvariantCulture)
+            : history.TrxLineNo.ToString(CultureInfo.InvariantCulture);
 
     private static string MovementCode(IvTrxHistory history, int direction) => history.TrxType switch
     {

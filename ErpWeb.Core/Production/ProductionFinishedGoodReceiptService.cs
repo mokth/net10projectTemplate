@@ -55,15 +55,83 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 join w in db.ProductionWorkOrders on r.WorkOrderId equals w.Uid
                 where r.CompanyCode == scope.CompanyCode && r.BranchCode == scope.BranchCode
                 select new { r, w.WorkOrderNo };
-            if (!string.IsNullOrWhiteSpace(query.SearchText)) rows = rows.Where(x => x.WorkOrderNo.Contains(query.SearchText) || (x.r.Batch.RefNo != null && x.r.Batch.RefNo.Contains(query.SearchText)));
+            var term = query.SearchText?.Trim();
+            if (!string.IsNullOrWhiteSpace(term))
+            {
+                if (int.TryParse(term, out var batchNo))
+                    rows = rows.Where(x => x.r.Batch.BatchNo == batchNo || x.WorkOrderNo.Contains(term)
+                        || (x.r.Batch.RefNo != null && x.r.Batch.RefNo.Contains(term)));
+                else
+                    rows = rows.Where(x => x.WorkOrderNo.Contains(term)
+                        || (x.r.Batch.RefNo != null && x.r.Batch.RefNo.Contains(term)));
+            }
+            if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
+            {
+                var wo = query.WorkOrderNo.Trim();
+                rows = rows.Where(x => x.WorkOrderNo.Contains(wo));
+            }
             if (!string.IsNullOrWhiteSpace(query.Status)) rows = rows.Where(x => x.r.Batch.BatchStatus == query.Status);
             if (query.WorkOrderId.HasValue) rows = rows.Where(x => x.r.WorkOrderId == query.WorkOrderId);
             var count = await rows.CountAsync(ct);
-            var result = await rows.OrderByDescending(x => x.r.BatchId).Skip(Math.Max(0, query.Skip)).Take(Math.Clamp(query.Take, 1, 100))
-                .Select(x => new FinishedGoodReceiptSummary(x.r.BatchId, x.r.Batch.BatchNo, x.WorkOrderNo, x.r.Batch.BatchStatus, x.r.Batch.TrxDtTime, x.r.RowVersion)).ToListAsync(ct);
-            return IvMasterOperationResult<FinishedGoodReceiptPage>.Ok(new(result, count));
+            var take = Math.Clamp(query.Take <= 0 ? 30 : query.Take, 1, 100);
+            var page = await rows.OrderByDescending(x => x.r.BatchId).Skip(Math.Max(0, query.Skip)).Take(take)
+                .Select(x => new { x.r.BatchId, x.r.Batch.BatchNo, x.WorkOrderNo, x.r.Batch.BatchStatus, x.r.Batch.TrxDtTime, x.r.RowVersion })
+                .ToListAsync(ct);
+            var ids = page.Select(x => x.BatchId).ToArray();
+            var details = ids.Length == 0
+                ? []
+                : await (from s in db.ProductionFinishedGoodSourceRows.AsNoTracking()
+                    join d in db.IvTrxBatchDetails.AsNoTracking() on s.DetailId equals d.Id
+                    where ids.Contains(s.BatchId)
+                    select new { s.BatchId, d.ICode, d.ToLotNo, d.ToStdQty, d.ToStdUom, d.ToWarehouse }).ToListAsync(ct);
+            var byBatch = details.ToLookup(x => x.BatchId);
+            var result = page.Select(x =>
+            {
+                var lines = byBatch[x.BatchId].ToList();
+                return new FinishedGoodReceiptSummary(x.BatchId, x.BatchNo, x.WorkOrderNo,
+                    SummarizeCodes(lines.Select(l => l.ICode)),
+                    SummarizeLots(lines.Select(l => l.ToLotNo)),
+                    SummarizeQty(lines.Select(l => (l.ToStdQty, l.ToStdUom))),
+                    SummarizeWarehouse(lines.Select(l => l.ToWarehouse)),
+                    x.BatchStatus, x.TrxDtTime, x.RowVersion);
+            }).ToList();
+            return IvMasterOperationResult<FinishedGoodReceiptPage>.Ok(new(result, count, options.Value.PostingEnabled));
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptPage>(e.Message, e.Code); }
+    }
+
+    private static string SummarizeCodes(IEnumerable<string?> values)
+    {
+        var distinct = values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        if (distinct.Count == 0) return "—";
+        return distinct.Count == 1 ? distinct[0] : $"{distinct[0]} +{distinct.Count - 1}";
+    }
+
+    private static string SummarizeLots(IEnumerable<string?> values)
+    {
+        var distinct = values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        if (distinct.Count == 0) return "—";
+        return distinct.Count == 1 ? distinct[0] : $"{distinct[0]} +{distinct.Count - 1}";
+    }
+
+    private static string SummarizeWarehouse(IEnumerable<string?> values)
+    {
+        var distinct = values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (distinct.Count == 0) return "—";
+        return distinct.Count == 1 ? distinct[0] : "Multiple";
+    }
+
+    private static string SummarizeQty(IEnumerable<(decimal? Qty, string? Uom)> lines)
+    {
+        var uoms = lines.Select(x => x.Uom?.Trim()).Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (uoms.Count == 0) return "—";
+        if (uoms.Count > 1) return "Multiple UOM";
+        var total = IvQty.Round(lines.Sum(x => x.Qty ?? 0));
+        return $"{total:n4} {uoms[0]}";
     }
 
     private static IQueryable<ProductionBalLot> EligibleSources(AppDbContext db, InventoryTenantScope scope) =>
@@ -76,7 +144,34 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             && !db.ProductionWorkOrderRouteSteps.Any(r => r.WorkOrderId == x.WorkOrderId && r.StageSequence > x.ProducingRouteStep!.StageSequence)
             && db.IvStockMasters.Any(m => m.CompanyCode == scope.CompanyCode && m.ICode == x.ItemCode && m.IsActive && m.StockControl));
 
-    public async Task<IvMasterOperationResult<FinishedGoodSourcePage>> SearchSourcesAsync(FinishedGoodReceiptQuery query, CancellationToken ct = default)
+    public async Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var scope = await ScopeAsync(PermissionCodes.Access, ct);
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var lots = await EligibleSources(db, scope).AsNoTracking()
+                .Select(x => new { x.WorkOrderNo, ProductCode = x.WorkOrder!.ProductCode, x.WorkOrder.ProductDescription, x.WorkCentreCode, x.ProcessCode, x.ItemCode })
+                .ToListAsync(ct);
+            static IReadOnlyList<ProductionOutputChoice> DistinctChoices(IEnumerable<(string Code, string Label)> rows) =>
+                rows.Where(x => !string.IsNullOrWhiteSpace(x.Code))
+                    .DistinctBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+                    .Select(x => new ProductionOutputChoice(x.Code, x.Label))
+                    .ToList();
+            return IvMasterOperationResult<FinishedGoodSourceFilterOptions>.Ok(new()
+            {
+                WorkOrders = DistinctChoices(lots.Select(x => (x.WorkOrderNo,
+                    string.IsNullOrWhiteSpace(x.ProductCode) ? x.WorkOrderNo : $"{x.WorkOrderNo} — {x.ProductCode}"))),
+                WorkCentres = DistinctChoices(lots.Select(x => (x.WorkCentreCode ?? "", x.WorkCentreCode ?? ""))),
+                Processes = DistinctChoices(lots.Select(x => (x.ProcessCode ?? "", x.ProcessCode ?? ""))),
+                Items = DistinctChoices(lots.Select(x => (x.ItemCode, x.ItemCode))),
+            });
+        }
+        catch (FgException e) { return Fail<FinishedGoodSourceFilterOptions>(e.Message, e.Code); }
+    }
+
+    public async Task<IvMasterOperationResult<FinishedGoodSourcePage>> SearchSourcesAsync(FinishedGoodSourceQuery query, CancellationToken ct = default)
     {
         try
         {
@@ -85,15 +180,51 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             await using var db = await factory.CreateDbContextAsync(ct);
             var rows = EligibleSources(db, scope).AsNoTracking();
             if (query.WorkOrderId.HasValue) rows = rows.Where(x => x.WorkOrderId == query.WorkOrderId);
-            if (!string.IsNullOrWhiteSpace(query.SearchText)) rows = rows.Where(x => x.WorkOrderNo.Contains(query.SearchText) || x.ItemCode.Contains(query.SearchText) || x.LotNo.Contains(query.SearchText));
+            if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
+            {
+                var wo = query.WorkOrderNo.Trim();
+                rows = rows.Where(x => x.WorkOrderNo == wo);
+            }
+            if (!string.IsNullOrWhiteSpace(query.WorkCentreCode))
+            {
+                var wc = query.WorkCentreCode.Trim();
+                rows = rows.Where(x => x.WorkCentreCode == wc);
+            }
+            if (!string.IsNullOrWhiteSpace(query.ProcessCode))
+            {
+                var process = query.ProcessCode.Trim();
+                rows = rows.Where(x => x.ProcessCode == process);
+            }
+            if (!string.IsNullOrWhiteSpace(query.ItemCode))
+            {
+                var item = query.ItemCode.Trim();
+                rows = rows.Where(x => x.ItemCode == item);
+            }
+            if (!string.IsNullOrWhiteSpace(query.SearchText))
+            {
+                var text = query.SearchText.Trim();
+                rows = rows.Where(x => x.WorkOrderNo.Contains(text) || x.ItemCode.Contains(text)
+                    || x.LotNo.Contains(text) || (x.PhysicalLotNo != null && x.PhysicalLotNo.Contains(text)));
+            }
             var count = await rows.CountAsync(ct);
-            var lots = await rows.OrderBy(x => x.WorkOrderNo).ThenBy(x => x.Uid).Skip(Math.Max(0, query.Skip)).Take(Math.Clamp(query.Take, 1, 100)).ToListAsync(ct);
+            var take = Math.Clamp(query.Take <= 0 ? 20 : query.Take, 1, 100);
+            var lots = await rows.OrderBy(x => x.WorkOrderNo).ThenBy(x => x.WorkCentreCode).ThenBy(x => x.ProcessCode)
+                .ThenBy(x => x.ItemCode).ThenBy(x => x.Uid)
+                .Skip(Math.Max(0, query.Skip)).Take(take).ToListAsync(ct);
+            var itemCodes = lots.Select(x => x.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var lotControl = itemCodes.Length == 0
+                ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+                : await db.IvStockMasters.AsNoTracking()
+                    .Where(m => m.CompanyCode == scope.CompanyCode && itemCodes.Contains(m.ICode))
+                    .ToDictionaryAsync(m => m.ICode, m => m.LotControl, StringComparer.OrdinalIgnoreCase, ct);
             var result = new List<FinishedGoodSourceRow>();
             foreach (var lot in lots)
             {
                 var error = await SourceReadinessAsync(db, lot, ct);
+                lotControl.TryGetValue(lot.ItemCode, out var controlled);
                 result.Add(new(lot.Uid, lot.WorkOrderId, lot.WorkOrderNo, lot.ItemCode, lot.PhysicalLotNo ?? lot.LotNo,
-                    lot.Uom, lot.Qty, lot.WorkCentreCode, lot.ProcessCode, costs && error is null ? lot.TotalCost : null, error ?? "Ready"));
+                    lot.Uom, lot.Qty, lot.WorkCentreCode, lot.ProcessCode, controlled,
+                    costs && error is null ? lot.TotalCost : null, error ?? "Ready"));
             }
             return IvMasterOperationResult<FinishedGoodSourcePage>.Ok(new(result, count));
         }
@@ -140,11 +271,13 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             decimal? value = null;
             if (costs && r.PostingId is not null) value = await db.ProductionFinishedGoodFactRows.Where(x => x.SourceId == s.Id && x.ReversesFactId == null).Select(x => (decimal?)x.TotalValue).SingleOrDefaultAsync(ct);
             else if (costs && error is null && lot.BaseQty > 0) value = IvQty.Round(lot.TotalCost * s.BaseQty / lot.BaseQty);
+            var item = await db.IvStockMasters.AsNoTracking()
+                .SingleAsync(x => x.CompanyCode == r.CompanyCode && x.ICode == lot.ItemCode, ct);
             result.Lines.Add(new() { SourceId = s.Id, ProductionBalLotId = lot.Uid, ItemCode = lot.ItemCode,
                 SourceLot = lot.PhysicalLotNo ?? lot.LotNo, WorkCentre = lot.WorkCentreCode, Process = lot.ProcessCode,
                 AvailableQty = lot.Qty, Quantity = s.RequestedQty, SourceUom = s.SourceUom, DestinationQty = s.Detail.ToStdQty ?? 0,
                 DestinationUom = s.DestinationUom, Warehouse = s.Detail.ToWarehouse ?? "", Location = s.Detail.ToLocation ?? "",
-                LotNo = s.Detail.ToLotNo ?? "", ExpiryDate = s.Detail.ExpiryDate, TotalValue = value });
+                LotNo = s.Detail.ToLotNo ?? "", ExpiryDate = s.Detail.ExpiryDate, LotControl = item.LotControl, TotalValue = value });
         }
         return result;
     }
@@ -190,6 +323,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             r.WorkOrderId = order.Uid; r.Batch.TrxDtTime = date; r.Batch.RefNo = request.RefNo?.Trim(); r.Batch.Remarks = request.Remarks?.Trim();
             r.Batch.ModifiedDate = clock.Now; r.Batch.ModifiedBy = User(scope);
             short lineNo = 0;
+            var requestedBySource = new Dictionary<long, decimal>();
             foreach (var input in request.Lines)
             {
                 var source = await EligibleSources(db, scope).SingleOrDefaultAsync(x => x.Uid == input.ProductionBalLotId && x.WorkOrderId == order.Uid, ct)
@@ -197,15 +331,20 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 var item = await db.IvStockMasters.SingleAsync(x => x.CompanyCode == scope.CompanyCode && x.ICode == source.ItemCode, ct);
                 var factor = await DestinationFactorAsync(db, scope.CompanyCode, item, source.BaseUom, ct);
                 var quantity = FinishedGoodReceiptMath.Convert(input.Quantity, source.ConversionFactorToBase, factor);
+                requestedBySource[source.Uid] = requestedBySource.GetValueOrDefault(source.Uid) + quantity.BaseQty;
+                if (requestedBySource[source.Uid] > source.BaseQty)
+                    throw new FgException($"Requested receipt quantity exceeds the current available production balance for source {source.Uid}.");
                 var lotNo = item.LotControl ? (input.LotNo ?? source.PhysicalLotNo ?? source.LotNo).Trim() : "";
                 if (item.LotControl && string.IsNullOrWhiteSpace(lotNo)) throw new FgException("A destination lot is required.");
                 if (lotNo.Length > 50) throw new FgException("Lot number is limited to 50 characters.");
                 await ValidateDestinationAsync(db, scope, input.Warehouse.Trim(), input.Location.Trim(), ct);
-                if (input.ExpiryDate?.Date < date.Date) throw new FgException("Expiry cannot precede the receipt date.");
+                var expiryDate = item.LotControl ? input.ExpiryDate?.Date : null;
+                if (expiryDate < date.Date) throw new FgException("Expiry cannot precede the receipt date.");
                 var detail = new IvTrxBatchDetail { Batch = r.Batch, CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
-                    BatchNo = r.Batch.BatchNo, DocumentRevision = r.DocumentRevision, TrxLineNo = ++lineNo, TrxType = "FG", ICode = item.ICode, IDesc = item.IDesc,
+                    BatchNo = r.Batch.BatchNo, DocumentRevision = r.DocumentRevision, TrxLineNo = ++lineNo, TrxType = "FG",
+                    ProdCode = order.ProductCode, ProdDesc = order.ProductDescription, ICode = item.ICode, IDesc = item.IDesc,
                     ToWarehouse = input.Warehouse.Trim(), ToLocation = input.Location.Trim(), ToLotNo = lotNo, ToStdQty = quantity.DestinationQty,
-                    ToStdUom = item.StdUom, IStatus = "ACTIVE", ExpiryDate = input.ExpiryDate?.Date };
+                    ToStdUom = item.StdUom, IStatus = "ACTIVE", ExpiryDate = expiryDate };
                 r.Sources.Add(new() { Detail = detail, ProductionBalLotId = source.Uid, RequestedQty = input.Quantity,
                     SourceUom = source.Uom, DestinationUom = item.StdUom!, BaseUom = source.BaseUom, SourceFactor = source.ConversionFactorToBase,
                     DestinationFactor = factor, BaseQty = quantity.BaseQty });
@@ -232,7 +371,9 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     {
         if (!await db.IvWarehouses.AnyAsync(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.WarehouseCode == warehouse && x.IsActive, ct))
             throw new FgException("Select an active warehouse in the current branch.");
-        if (location.Length > 0 && !await db.IvLocations.AnyAsync(x => x.CompanyCode == scope.CompanyCode && x.WarehouseCode == warehouse && x.LocCode == location && x.IsActive, ct))
+        if (location.Length > 0 && !await db.IvLocations.AnyAsync(x =>
+            x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+            && x.WarehouseCode == warehouse && x.LocCode == location && x.IsActive, ct))
             throw new FgException("Select an active location in the destination warehouse.");
     }
 

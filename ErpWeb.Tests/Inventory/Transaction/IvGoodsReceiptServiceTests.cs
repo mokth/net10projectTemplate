@@ -127,6 +127,11 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         Assert.Equal(0m, detail.RecvQty);
         Assert.Equal(10m, detail.BalanceQty);
         Assert.Equal(PoOrderStatuses.New, (await db.PoOrders.SingleAsync(x => x.PoNo == po.PoNo)).Status);
+        var receiptLine = await db.IvTrxBatchDetails.SingleAsync(x => x.BatchNo == save.BatchNo);
+        Assert.Equal("MYR", receiptLine.Currency);
+        Assert.Equal(25m, receiptLine.CostPrice);
+        Assert.Equal(25m, receiptLine.BaseUnitPrices);
+        Assert.StartsWith("PO_PROVISIONAL|", receiptLine.PriceEvidence);
     }
 
     [Fact]

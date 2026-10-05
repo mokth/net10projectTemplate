@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -174,6 +175,147 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         Assert.Equal(6m, (await db.StockCostStates.SingleAsync()).OnHandBaseQty);
     }
 
+    [Fact]
+    public async Task As_of_value_ignores_mutable_current_cost_fields()
+    {
+        await PostReceiptAsync(10m, 2m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostIssueAsync(4m, new DateTime(2026, 10, 2, 8, 0, 0));
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.StockCostStates.SingleAsync()).InventoryValue = 999m;
+            (await db.StockCostStates.SingleAsync()).AverageUnitCost = 166.5m;
+            (await db.IvStockMasters.SingleAsync()).PurchasePrice = 777m;
+            (await db.IvBalLocs.OrderBy(x => x.Id).FirstAsync()).UnitPrice = 555m;
+            await db.SaveChangesAsync();
+        }
+
+        var rows = await new StockValuationQueryService(_factory, new Tenant())
+            .GetAsOfAsync(new DateTime(2026, 10, 2));
+        var row = Assert.Single(rows);
+        Assert.Equal(6m, row.BaseQty);
+        Assert.Equal(12m, row.InventoryValue);
+        Assert.Equal(2m, row.AverageUnitCost);
+    }
+
+    [Fact]
+    public async Task Financial_snapshot_uses_sealed_facts_and_reconciles_cost_state()
+    {
+        await PostReceiptAsync(10m, 3m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostIssueAsync(4m, new DateTime(2026, 10, 2, 8, 0, 0));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var error = await StockValuationSnapshotBuilder.AppendAsync(
+            db, "DEMO", "HQ", new DateTime(2026, 10, 1), new DateTime(2026, 10, 31),
+            "tester", CancellationToken.None);
+        Assert.Null(error);
+        await db.SaveChangesAsync();
+
+        var header = await db.StockValuationPeriodSnapshotHdrs.Include(x => x.Lines).SingleAsync();
+        var line = Assert.Single(header.Lines);
+        Assert.Equal(10m, line.InQty);
+        Assert.Equal(30m, line.InValue);
+        Assert.Equal(4m, line.OutQty);
+        Assert.Equal(12m, line.OutValue);
+        Assert.Equal(6m, line.ClosingQty);
+        Assert.Equal(18m, line.ClosingValue);
+    }
+
+    [Fact]
+    public async Task Mixed_invoice_resolves_linked_do_and_direct_invoice_cogs_without_duplication()
+    {
+        await PostReceiptAsync(10m, 5m, new DateTime(2026, 10, 1, 8, 0, 0));
+        var balanceId = (await BalanceIdsAsync())[0];
+
+        await ExecuteAsync(new DateTime(2026, 10, 2, 8, 0, 0), "DO", (context, writer) =>
+        {
+            var history = History(IvTrxTypes.SalesOut);
+            history.FromBalLocId = balanceId;
+            history.FrWarehouse = "MAIN";
+            history.FrLocation = "A";
+            history.FrStdQty = 2m;
+            history.FrStdUom = "EA";
+            history.DoNo = "DO-1";
+            history.SoLineNo = 1;
+            context.Db.IvTrxHistories.Add(history);
+            writer.StampGeneration(context, [history], 1);
+            return Task.CompletedTask;
+        });
+        await ExecuteAsync(new DateTime(2026, 10, 3, 8, 0, 0), "INV", (context, writer) =>
+        {
+            var history = History(IvTrxTypes.SalesOut);
+            history.FromBalLocId = balanceId;
+            history.FrWarehouse = "MAIN";
+            history.FrLocation = "A";
+            history.FrStdQty = 3m;
+            history.FrStdUom = "EA";
+            history.InvNo = "INV-1";
+            history.SoLineNo = 2;
+            context.Db.IvTrxHistories.Add(history);
+            writer.StampGeneration(context, [history], 1);
+            return Task.CompletedTask;
+        });
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var invoice = new SaInvoice
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-1", DoNo = "INV-1",
+                CustCode = "CUST-1", InvDate = new DateTime(2026, 10, 3), Status = "POSTED"
+            };
+            invoice.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-1", Line = 1,
+                ICode = "ITEM-1", Qty = 2m, StdQty = 2m, StdUom = "EA", StockControl = true,
+                LinkDo = true, DoNo = "DO-1", DoLine = 1, SoNo = string.Empty
+            });
+            invoice.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-1", Line = 2,
+                ICode = "ITEM-1", Qty = 3m, StdQty = 3m, StdUom = "EA", StockControl = true,
+                LinkDo = false, DoNo = string.Empty, SoNo = string.Empty
+            });
+            db.SaInvoices.Add(invoice);
+            await db.SaveChangesAsync();
+        }
+
+        var cogs = await new StockValuationQueryService(_factory, new Tenant())
+            .GetInvoiceCogsAsync("INV-1");
+        Assert.True(cogs.IsFullyResolved);
+        Assert.Equal(25m, cogs.TotalCogs);
+        Assert.Equal(10m, Assert.Single(cogs.Lines, x => x.LinkDo).Cogs);
+        Assert.Equal(15m, Assert.Single(cogs.Lines, x => !x.LinkDo).Cogs);
+    }
+
+    [Fact]
+    public async Task Backdated_movement_is_rejected_when_the_pool_has_later_valuation()
+    {
+        await PostReceiptAsync(5m, 2m, new DateTime(2026, 10, 2, 8, 0, 0));
+        var balanceId = (await BalanceIdsAsync())[0];
+
+        var result = await ExecuteResultAsync(
+            new DateTime(2026, 10, 1, 8, 0, 0), "MR_BACKDATED", (context, writer) =>
+            {
+                var history = History(IvTrxTypes.MiscellaneousReceipt);
+                history.ToBalLocId = balanceId;
+                history.ToWarehouse = "MAIN";
+                history.ToLocation = "A";
+                history.ToStdQty = 1m;
+                history.ToStdUom = "EA";
+                history.UnitPrice = 2m;
+                history.PriceEvidence = "TEST_APPROVED";
+                context.Db.IvTrxHistories.Add(history);
+                writer.StampGeneration(context, [history], 1);
+                return Task.CompletedTask;
+            });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(StockLedgerErrorCodes.BackdatedStockEvent, result.Error?.Code);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.StockValuationFacts.ToListAsync());
+        Assert.Equal(5m, (await db.StockCostStates.SingleAsync()).OnHandBaseQty);
+    }
+
     private async Task<long> PostReceiptAsync(decimal qty, decimal price, DateTime effectiveAt)
     {
         var balanceId = (await BalanceIdsAsync())[0];
@@ -216,6 +358,17 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         Func<StockPostingContext, IvInventoryHistoryWriter, Task> handler,
         long? reversesPostingId = null)
     {
+        var result = await ExecuteResultAsync(effectiveAt, documentType, handler, reversesPostingId);
+        Assert.True(result.Succeeded, result.Error?.Message);
+        return result.StockPostingId!.Value;
+    }
+
+    private async Task<StockPostingExecutionResult<int>> ExecuteResultAsync(
+        DateTime effectiveAt,
+        string documentType,
+        Func<StockPostingContext, IvInventoryHistoryWriter, Task> handler,
+        long? reversesPostingId = null)
+    {
         var command = new StockPostingCommand
         {
             RequestId = Guid.NewGuid(),
@@ -239,8 +392,7 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             await handler(context, new IvInventoryHistoryWriter());
             return 0;
         });
-        Assert.True(result.Succeeded, result.Error?.Message);
-        return result.StockPostingId!.Value;
+        return result;
     }
 
     private async Task<int[]> BalanceIdsAsync()

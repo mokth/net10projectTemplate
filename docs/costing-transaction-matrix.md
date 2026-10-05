@@ -12,7 +12,7 @@ database transaction before the posting is sealed.
 | Route | Service / entry point | Physical leg and dimensions | Current source / rollback seam | V1 valuation and close rule |
 |---|---|---|---|---|
 | Misc receipt (`MR`) | `IvMiscReceiptService.PostAsync` -> `IvInventoryPostingService.PostAsync` | IN to item/warehouse/location/lot/status | `IvTrxBatch` line; append-only V2 reversal when enabled | Approved explicit base price; `MANUAL_APPROVED`. Missing cost blocks posting/close. |
-| Goods receipt (`GR`) | `IvGoodsReceiptService.PostAsync` | IN; PO/line identities are copied to history | GR batch/detail; V2 exact reversal | Receipt commercial/base price; `RECEIPT_ACTUAL`. PI variance is a later adjustment and never rewrites this fact. |
+| Goods receipt (`GR`) | `IvGoodsReceiptService.PostAsync` | IN; PO/line identities are copied to history | GR batch/detail freezes net PO unit cost, purchase/base-UOM conversion, currency, effective exchange rate, and `PriceEvidence`; V2 exact reversal | Frozen base-unit receipt cost; `RECEIPT_ACTUAL`. Missing foreign rate blocks save. PI variance is a later adjustment and never rewrites this fact. |
 | Non-stock goods receipt (`NG`) | `IvGoodsReceiptService.PostAsync` | No controlled-stock balance leg | Operational history only | Not financially relevant to inventory valuation. |
 | Misc issue (`MI`) | `IvMiscIssueService.PostAsync` | OUT from item/warehouse/location/lot/status | Source `IvBalLocId`; V2 exact reversal | Current pool average; final depletion consumes exact remaining value. |
 | Scrap (`SC`) | `IvScrapService.PostAsync` | OUT | Same issue core | Current pool average; classified `SCRAP_OUT`. |

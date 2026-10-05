@@ -83,7 +83,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var pool = new ProductionBalLot { CompanyCode = company, BranchCode = branch, Kind = "WIP", ItemCode = "FG", Uom = "EA", BaseUom = "EA",
             ConversionFactorToBase = 1, WorkOrderId = order.Uid, WorkOrderNo = order.WorkOrderNo, ProducingRouteStepId = route.Uid,
             WorkOrderOperationId = operation.Uid, OutputType = "FINISHED_GOODS", BalanceStage = "FG_STAGING", StockStatusCode = "AVAILABLE",
-            OriginType = "PRODUCED", PhysicalLotNo = "PROD-1", LotNo = "PROD-1", ProductionLocationId = location.Id };
+            OriginType = "PRODUCED", PhysicalLotNo = "PROD-1", LotNo = "PROD-1", WorkCentreCode = "WC", ProcessCode = "PACK",
+            ProductionLocationId = location.Id };
         db.ProductionBalLots.Add(pool); await db.SaveChangesAsync();
         db.StockLedgerEpochs.Add(new() { CompanyCode = company, BranchCode = branch, Version = 2, Status = "ACTIVE",
             EffectiveFrom = BusinessDate.AddDays(-1), MigrationBatchId = Guid.NewGuid(), ReconciliationManifestHash = new string('A', 64) });
@@ -251,6 +252,220 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var result = await post; Assert.False(result.Succeeded); Assert.Contains("closed", result.Message!, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Source_filter_options_and_exact_search_use_eligible_sources_only()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var options = await f.Service.GetSourceFilterOptionsAsync();
+        Assert.True(options.Succeeded, options.Message);
+        Assert.Contains(options.Data!.WorkOrders, x => x.Code == "WO-FG-HQ");
+        Assert.Contains(options.Data.WorkCentres, x => x.Code == "WC");
+        Assert.Contains(options.Data.Processes, x => x.Code == "PACK");
+        Assert.Contains(options.Data.Items, x => x.Code == "FG");
+        Assert.Equal(options.Data.WorkOrders.Count, options.Data.WorkOrders.DistinctBy(x => x.Code, StringComparer.OrdinalIgnoreCase).Count());
+
+        var byPhysical = await f.Service.SearchSourcesAsync(new() { SearchText = "PROD-1" });
+        Assert.True(byPhysical.Succeeded, byPhysical.Message);
+        Assert.Contains(byPhysical.Data!.Rows, x => x.Id == f.PoolId && !x.LotControl);
+
+        var exact = await f.Service.SearchSourcesAsync(new() { WorkOrderNo = "WO-FG-HQ", WorkCentreCode = "WC", ProcessCode = "PACK", ItemCode = "FG" });
+        Assert.Contains(exact.Data!.Rows, x => x.Id == f.PoolId);
+        var miss = await f.Service.SearchSourcesAsync(new() { WorkOrderNo = "WO-FG-HQ", ItemCode = "OTHER" });
+        Assert.Empty(miss.Data!.Rows);
+
+        var paged = await f.Service.SearchSourcesAsync(new() { Take = 1 });
+        Assert.True(paged.Succeeded, paged.Message);
+        Assert.Single(paged.Data!.Rows);
+        Assert.True(paged.Data.TotalCount >= 1);
+        var clamped = await f.Service.SearchSourcesAsync(new() { Take = 0 });
+        Assert.True(clamped.Data!.Rows.Count <= 20);
+
+        await using var db = await f.Factory.CreateDbContextAsync();
+        var cancelled = await db.ProductionWorkOrders.SingleAsync(x => x.Uid == f.OrderId);
+        cancelled.Status = ProductionWorkOrderStatuses.Cancelled;
+        await db.SaveChangesAsync();
+        var after = await f.Service.GetSourceFilterOptionsAsync();
+        Assert.DoesNotContain(after.Data!.WorkOrders, x => x.Code == "WO-FG-HQ");
+    }
+
+    [Fact]
+    public async Task Save_maps_product_codes_grouped_qty_and_non_lot_expiry()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var ok = f.Draft(6);
+        ok.Lines =
+        [
+            new() { ProductionBalLotId = f.PoolId, Quantity = 4, Warehouse = "WH" },
+            new() { ProductionBalLotId = f.PoolId, Quantity = 2, Warehouse = "WH" }
+        ];
+        var saved = await f.Service.SaveAsync(ok);
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.False(saved.Data!.Lines[0].LotControl);
+
+        await using (var db = await f.Factory.CreateDbContextAsync())
+        {
+            var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == saved.Data.Id).ToListAsync();
+            Assert.All(details, x =>
+            {
+                Assert.Equal("FG", x.ProdCode);
+                Assert.Equal("", x.ToLotNo);
+                Assert.Null(x.ExpiryDate);
+            });
+        }
+
+        var over = f.Draft(1);
+        over.Lines =
+        [
+            new() { ProductionBalLotId = f.PoolId, Quantity = 7, Warehouse = "WH", LotNo = "PROD-1", ExpiryDate = BusinessDate.AddYears(1) },
+            new() { ProductionBalLotId = f.PoolId, Quantity = 6, Warehouse = "WH", LotNo = "PROD-1", ExpiryDate = BusinessDate.AddYears(1) }
+        ];
+        Assert.False((await f.Service.SaveAsync(over)).Succeeded);
+
+        var ignored = f.Draft(2);
+        ignored.Lines = [new() { ProductionBalLotId = f.PoolId, Quantity = 2, Warehouse = "WH", LotNo = "PROD-1", ExpiryDate = BusinessDate.AddYears(1) }];
+        var cleared = await f.Service.SaveAsync(ignored);
+        Assert.True(cleared.Succeeded, cleared.Message);
+        await using var verify = await f.Factory.CreateDbContextAsync();
+        var detail = await verify.IvTrxBatchDetails.SingleAsync(x => x.BatchId == cleared.Data!.Id);
+        Assert.Equal("", detail.ToLotNo);
+        Assert.Null(detail.ExpiryDate);
+    }
+
+    [Fact]
+    public async Task Lot_controlled_source_defaults_and_keeps_destination_lot()
+    {
+        var f = await CreateAsync(true); if (f is null) return;
+        var sources = await f.Service.SearchSourcesAsync(new());
+        Assert.Contains(sources.Data!.Rows, x => x.Id == f.PoolId && x.LotControl);
+        var saved = await f.Service.SaveAsync(f.Draft(4));
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.True(saved.Data!.Lines[0].LotControl);
+        Assert.Equal("PROD-1", saved.Data.Lines[0].LotNo);
+        await using var db = await f.Factory.CreateDbContextAsync();
+        Assert.Equal("PROD-1", (await db.IvTrxBatchDetails.SingleAsync(x => x.BatchId == saved.Data.Id)).ToLotNo);
+    }
+
+    [Fact]
+    public async Task List_search_summary_and_posting_flag_are_document_owned()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var first = f.Draft(4);
+        first.RefNo = "REF-A";
+        first.Lines =
+        [
+            new() { ProductionBalLotId = f.PoolId, Quantity = 2, Warehouse = "WH" },
+            new() { ProductionBalLotId = f.PoolId, Quantity = 2, Warehouse = "WH2" }
+        ];
+        await using (var setup = await f.Factory.CreateDbContextAsync())
+        {
+            setup.IvWarehouses.Add(new() { CompanyCode = f.Company, BranchCode = "HQ", WarehouseCode = "WH2" });
+            await setup.SaveChangesAsync();
+        }
+        var saved = await f.Service.SaveAsync(first);
+        Assert.True(saved.Succeeded, saved.Message);
+
+        var byBatch = await f.Service.SearchAsync(new() { SearchText = saved.Data!.BatchNo.ToString() });
+        Assert.Contains(byBatch.Data!.Rows, x => x.Id == saved.Data.Id);
+        var byWo = await f.Service.SearchAsync(new() { WorkOrderNo = "WO-FG-HQ", Status = "NEW" });
+        Assert.Contains(byWo.Data!.Rows, x => x.Id == saved.Data.Id);
+        var row = byWo.Data!.Rows.Single(x => x.Id == saved.Data.Id);
+        Assert.Equal("FG", row.ItemSummary);
+        Assert.Equal("—", row.LotSummary);
+        Assert.Equal("4.0000 EA", row.QtySummary);
+        Assert.Equal("Multiple", row.WarehouseSummary);
+        Assert.True(byWo.Data.PostingEnabled);
+
+        await using (var db = await f.Factory.CreateDbContextAsync())
+        {
+            var pool = await db.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId);
+            pool.Qty = 1; pool.BaseQty = 1;
+            await db.SaveChangesAsync();
+        }
+        var after = await f.Service.SearchAsync(new() { SearchText = "REF-A" });
+        Assert.Equal("4.0000 EA", after.Data!.Rows.Single(x => x.Id == saved.Data.Id).QtySummary);
+
+        var disabled = f.WithPostingEnabled(false);
+        var loaded = await disabled.GetAsync(saved.Data.Id);
+        Assert.False(loaded.Data!.PostingEnabled);
+        Assert.Contains(loaded.Data.ReadinessErrors, x => x.Contains("disabled", StringComparison.OrdinalIgnoreCase));
+        Assert.False((await disabled.PostAsync(new(saved.Data.Id, saved.Data.RowVersion, Guid.NewGuid()))).Succeeded);
+    }
+
+    [Fact]
+    public async Task Destination_location_is_branch_scoped()
+    {
+        var a = await CreateAsync(); if (a is null) return;
+        var b = await CreateAsync(existingCompany: a.Company, branch: "B2");
+        Assert.NotNull(b);
+        await using (var db = await a.Factory.CreateDbContextAsync())
+        {
+            db.IvWarehouses.Add(new() { CompanyCode = a.Company, BranchCode = "HQ", WarehouseCode = "WH2" });
+            db.IvLocations.Add(new() { CompanyCode = a.Company, BranchCode = "HQ", WarehouseCode = "WH", LocCode = "BIN" });
+            db.IvLocations.Add(new() { CompanyCode = a.Company, BranchCode = "HQ", WarehouseCode = "WH2", LocCode = "OTHERWH" });
+            db.IvLocations.Add(new() { CompanyCode = a.Company, BranchCode = "B2", WarehouseCode = "WH", LocCode = "BIN" });
+            db.IvLocations.Add(new() { CompanyCode = a.Company, BranchCode = "B2", WarehouseCode = "WH", LocCode = "B2ONLY" });
+            await db.SaveChangesAsync();
+        }
+        var home = a.Draft(2); home.Lines[0].Location = "BIN";
+        Assert.True((await a.Service.SaveAsync(home)).Succeeded);
+        var blank = a.Draft(1); blank.Lines[0].Location = "";
+        Assert.True((await a.Service.SaveAsync(blank)).Succeeded);
+        var cross = a.Draft(1); cross.Lines[0].Location = "B2ONLY";
+        Assert.False((await a.Service.SaveAsync(cross)).Succeeded);
+        var unknown = a.Draft(1); unknown.Lines[0].Warehouse = "NOPE";
+        Assert.False((await a.Service.SaveAsync(unknown)).Succeeded);
+        var wrongWh = a.Draft(1); wrongWh.Lines[0].Location = "OTHERWH";
+        Assert.False((await a.Service.SaveAsync(wrongWh)).Succeeded);
+    }
+
+    [Fact]
+    public async Task Inactive_saved_destination_is_rejected_until_replaced()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        await using (var db = await f.Factory.CreateDbContextAsync())
+        {
+            db.IvLocations.Add(new() { CompanyCode = f.Company, BranchCode = "HQ", WarehouseCode = "WH", LocCode = "BIN01" });
+            db.IvLocations.Add(new() { CompanyCode = f.Company, BranchCode = "HQ", WarehouseCode = "WH", LocCode = "BIN02" });
+            await db.SaveChangesAsync();
+        }
+        var first = f.Draft(2); first.Lines[0].Location = "BIN01";
+        var saved = await f.Service.SaveAsync(first);
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.Equal("BIN01", saved.Data!.Lines[0].Location);
+
+        await using (var db = await f.Factory.CreateDbContextAsync())
+        {
+            var bin = await db.IvLocations.SingleAsync(x => x.CompanyCode == f.Company && x.LocCode == "BIN01");
+            bin.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = await f.Service.GetAsync(saved.Data.Id);
+        Assert.Equal("BIN01", loaded.Data!.Lines[0].Location);
+        var unchanged = new FinishedGoodReceiptSaveRequest
+        {
+            Id = loaded.Data.Id,
+            ExpectedVersion = loaded.Data.RowVersion,
+            WorkOrderId = loaded.Data.WorkOrderId,
+            EffectiveDate = loaded.Data.EffectiveDate,
+            Lines = [new() { ProductionBalLotId = f.PoolId, Quantity = 2, Warehouse = "WH", Location = "BIN01" }]
+        };
+        Assert.False((await f.Service.SaveAsync(unchanged)).Succeeded);
+
+        unchanged.Lines[0].Location = "BIN02";
+        var replaced = await f.Service.SaveAsync(unchanged);
+        Assert.True(replaced.Succeeded, replaced.Message);
+        Assert.Equal("BIN02", replaced.Data!.Lines[0].Location);
+    }
+
+    [Fact]
+    public async Task Separate_drafts_do_not_reserve_the_same_source()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        Assert.True((await f.Service.SaveAsync(f.Draft(6))).Succeeded);
+        Assert.True((await f.Service.SaveAsync(f.Draft(6))).Succeeded);
+    }
+
     private sealed class Fixture
     {
         public IDbContextFactory<AppDbContext> Factory { get; }
@@ -276,6 +491,20 @@ public sealed class FinishedGoodReceiptSqlServerTests
             _coordinator = new(factory, tenant, new BranchStockTransactionLock(), new StockPeriodGuard(), new NoActiveStockFreezeGuard());
             Service = new(factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
                 new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(), Options.Create(new FinishedGoodReceiptOptions { PostingEnabled = true }));
+        }
+        public ProductionFinishedGoodReceiptService WithPostingEnabled(bool enabled)
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext(company: Company, branch: _branch);
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns((string _, string permission, CancellationToken _) => Task.FromResult(AllowAccess && (permission != PermissionCodes.ViewCost || CanViewCost)));
+            var numbers = new Mock<IRunningNumberService>(); var next = 100;
+            numbers.Setup(x => x.GetNextAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => Interlocked.Increment(ref next));
+            var clock = new Mock<ICurrentDateService>(); clock.SetupGet(x => x.Now).Returns(BusinessDate);
+            return new(Factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
+                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(),
+                Options.Create(new FinishedGoodReceiptOptions { PostingEnabled = enabled }));
         }
         public FinishedGoodReceiptSaveRequest Draft(decimal qty) => new() { WorkOrderId = OrderId, EffectiveDate = BusinessDate,
             Lines = [new() { ProductionBalLotId = PoolId, Quantity = qty, Warehouse = "WH" }] };

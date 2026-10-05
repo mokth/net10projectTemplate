@@ -533,7 +533,14 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             CreatedBy = userId
         };
 
-        AddDetails(batch, validated.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo, trxType);
+        var (costEvidence, costError) = await ResolveReceiptCostEvidenceAsync(
+            db, context.CompanyCode!, trxDate, validated.Lines!, cancellationToken);
+        if (costError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(costError);
+        }
+
+        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo, trxType);
         await _transactions.InsertAsync(db, batch, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
@@ -613,7 +620,14 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         db.IvTrxBatchDetails.RemoveRange(existingDetails);
         batch.Details.Clear();
-        AddDetails(batch, validated.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, trxType);
+        var (costEvidence, costError) = await ResolveReceiptCostEvidenceAsync(
+            db, context.CompanyCode!, trxDate, validated.Lines!, cancellationToken);
+        if (costError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(costError);
+        }
+
+        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, trxType);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1070,6 +1084,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
     private static void AddDetails(
         IvTrxBatch batch,
         IReadOnlyList<ValidatedLine> validated,
+        IReadOnlyDictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence> costEvidence,
         string companyCode,
         string branchCode,
         string? locationCode,
@@ -1080,6 +1095,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         foreach (var row in validated)
         {
             var poLine = row.PoLine;
+            var evidence = costEvidence[(row.Po.PoNo, row.Po.PoRelNo, row.PoLine.Line)];
             batch.Details.Add(new IvTrxBatchDetail
             {
                 CompanyCode = companyCode,
@@ -1104,6 +1120,10 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 IClassCode = poLine.ICode,
                 ExpiryDate = row.ExpiryDate,
                 UnitPrice = row.PoLine.PoUnitPrice,
+                CostPrice = evidence.NetPurchaseUnitCost,
+                BaseUnitPrices = evidence.BaseStockUnitCost,
+                Currency = evidence.Currency,
+                PriceEvidence = evidence.Description,
                 Remarks = row.Remarks,
                 PoNo = row.Po.PoNo,
                 PoRelNo = row.Po.PoRelNo,
@@ -1112,6 +1132,71 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             });
             trxLineNo++;
         }
+    }
+
+    private static async Task<(
+        Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>? Evidence,
+        string? Error)> ResolveReceiptCostEvidenceAsync(
+        AppDbContext db,
+        string companyCode,
+        DateTime transactionDate,
+        IReadOnlyCollection<ValidatedLine> lines,
+        CancellationToken cancellationToken)
+    {
+        var homeCurrency = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode)
+            .Select(x => x.CurrencyCode)
+            .FirstOrDefaultAsync(cancellationToken);
+        homeCurrency = string.IsNullOrWhiteSpace(homeCurrency) ? "MYR" : homeCurrency.Trim();
+
+        var currencies = lines
+            .Select(x => string.IsNullOrWhiteSpace(x.PoLine.CurCode) ? x.Po.CurCode : x.PoLine.CurCode)
+            .Select(x => string.IsNullOrWhiteSpace(x) ? homeCurrency : x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var rates = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+        {
+            [homeCurrency] = 1m
+        };
+        var date = transactionDate.Date;
+        foreach (var currency in currencies.Where(x => !x.Equals(homeCurrency, StringComparison.OrdinalIgnoreCase)))
+        {
+            var rate = await db.SaCurrRates.AsNoTracking()
+                .Where(x => x.CurrCode == currency && x.Status
+                            && x.StartDate <= date && x.EndDate >= date)
+                .OrderByDescending(x => x.StartDate)
+                .Select(x => (double?)x.HomeCurPerUnit)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (rate is null or <= 0d)
+                return (null, $"No approved {currency}/{homeCurrency} exchange rate covers {date:yyyy-MM-dd}; receipt cost cannot be frozen.");
+            rates[currency] = (decimal)rate.Value;
+        }
+
+        var result = new Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>();
+        foreach (var row in lines)
+        {
+            if (row.ToRecvQty <= 0m || row.ToStdQty <= 0m || row.PoLine.PoPurQty <= 0m)
+                return (null, $"PO {row.Po.PoNo}/{row.Po.PoRelNo} line {row.PoLine.Line} has invalid purchase/base quantity for receipt costing.");
+
+            var currency = string.IsNullOrWhiteSpace(row.PoLine.CurCode)
+                ? row.Po.CurCode
+                : row.PoLine.CurCode;
+            currency = string.IsNullOrWhiteSpace(currency) ? homeCurrency : currency.Trim();
+            var rate = rates[currency];
+            var netPurchaseUnitCost = decimal.Round(
+                row.PoLine.NetAmount / row.PoLine.PoPurQty, 6, MidpointRounding.AwayFromZero);
+            var baseStockUnitCost = decimal.Round(
+                netPurchaseUnitCost * row.ToRecvQty * rate / row.ToStdQty,
+                6,
+                MidpointRounding.AwayFromZero);
+            result[(row.Po.PoNo, row.Po.PoRelNo, row.PoLine.Line)] = new ReceiptCostEvidence(
+                currency,
+                netPurchaseUnitCost,
+                baseStockUnitCost,
+                $"PO_PROVISIONAL|PO={row.Po.PoNo}/{row.Po.PoRelNo}/{row.PoLine.Line}|CUR={currency}|RATE={rate:0.########}");
+        }
+
+        return (result, null);
     }
 
     private async Task<(string? Error, string? TrxType)> ResolvePostingTrxTypeAsync(
@@ -1218,6 +1303,12 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         bool LotControl,
         string? Remarks,
         string TrxType);
+
+    private sealed record ReceiptCostEvidence(
+        string Currency,
+        decimal NetPurchaseUnitCost,
+        decimal BaseStockUnitCost,
+        string Description);
 
     private readonly record struct UserContext(
         string? CompanyCode,

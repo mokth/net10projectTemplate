@@ -5,7 +5,8 @@ namespace ErpWeb.Core.Production;
 public interface IProductionFinishedGoodReceiptService
 {
     Task<IvMasterOperationResult<FinishedGoodReceiptPage>> SearchAsync(FinishedGoodReceiptQuery query, CancellationToken ct = default);
-    Task<IvMasterOperationResult<FinishedGoodSourcePage>> SearchSourcesAsync(FinishedGoodReceiptQuery query, CancellationToken ct = default);
+    Task<IvMasterOperationResult<FinishedGoodSourcePage>> SearchSourcesAsync(FinishedGoodSourceQuery query, CancellationToken ct = default);
+    Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> GetAsync(int id, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveAsync(FinishedGoodReceiptSaveRequest request, CancellationToken ct = default);
     Task<IvMasterOperationResult<bool>> DeleteAsync(int id, byte[] expectedVersion, CancellationToken ct = default);
@@ -22,16 +23,59 @@ public sealed class FinishedGoodReceiptOptions
 public sealed class FinishedGoodReceiptQuery
 {
     public string? SearchText { get; set; }
+    public string? WorkOrderNo { get; set; }
     public string? Status { get; set; }
     public long? WorkOrderId { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 30;
 }
-public sealed record FinishedGoodReceiptPage(IReadOnlyList<FinishedGoodReceiptSummary> Rows, int TotalCount);
+
+public sealed class FinishedGoodSourceQuery
+{
+    public string? SearchText { get; set; }
+    public long? WorkOrderId { get; set; }
+    public string? WorkOrderNo { get; set; }
+    public string? WorkCentreCode { get; set; }
+    public string? ProcessCode { get; set; }
+    public string? ItemCode { get; set; }
+    public int Skip { get; set; }
+    public int Take { get; set; } = 20;
+}
+
+public sealed class FinishedGoodSourceFilterOptions
+{
+    public IReadOnlyList<ProductionOutputChoice> WorkOrders { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> WorkCentres { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Processes { get; init; } = [];
+    public IReadOnlyList<ProductionOutputChoice> Items { get; init; } = [];
+}
+
+public sealed record FinishedGoodReceiptPage(IReadOnlyList<FinishedGoodReceiptSummary> Rows, int TotalCount, bool PostingEnabled);
 public sealed record FinishedGoodSourcePage(IReadOnlyList<FinishedGoodSourceRow> Rows, int TotalCount);
-public sealed record FinishedGoodReceiptSummary(int Id, int BatchNo, string WorkOrderNo, string Status, DateTime EffectiveDate, byte[] RowVersion);
-public sealed record FinishedGoodSourceRow(long Id, long WorkOrderId, string WorkOrderNo, string ItemCode, string LotNo,
-    string Uom, decimal AvailableQty, string? WorkCentre, string? Process, decimal? EstimatedValue, string Readiness);
+public sealed record FinishedGoodReceiptSummary(
+    int Id,
+    int BatchNo,
+    string WorkOrderNo,
+    string ItemSummary,
+    string LotSummary,
+    string QtySummary,
+    string WarehouseSummary,
+    string Status,
+    DateTime EffectiveDate,
+    byte[] RowVersion);
+public sealed record FinishedGoodSourceRow(
+    long Id,
+    long WorkOrderId,
+    string WorkOrderNo,
+    string ItemCode,
+    string LotNo,
+    string Uom,
+    decimal AvailableQty,
+    string? WorkCentre,
+    string? Process,
+    bool LotControl,
+    decimal? EstimatedValue,
+    string Readiness);
 
 public sealed class FinishedGoodReceiptDocument
 {
@@ -70,6 +114,7 @@ public sealed class FinishedGoodReceiptLine
     public string Location { get; set; } = "";
     public string LotNo { get; set; } = "";
     public DateTime? ExpiryDate { get; set; }
+    public bool LotControl { get; set; }
     public decimal? TotalValue { get; set; }
 }
 public sealed class FinishedGoodReceiptSaveRequest

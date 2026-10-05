@@ -6,6 +6,16 @@
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 
+/* Cost evidence/status is part of the valuation contract, not an FG-only dependency. */
+IF COL_LENGTH(N'dbo.IvTrxBatchDetail', N'PriceEvidence') IS NULL
+    ALTER TABLE dbo.IvTrxBatchDetail ADD PriceEvidence nvarchar(200) NULL;
+IF COL_LENGTH(N'dbo.IvTrxHistory', N'PriceEvidence') IS NULL
+    ALTER TABLE dbo.IvTrxHistory ADD PriceEvidence nvarchar(200) NULL;
+IF COL_LENGTH(N'dbo.IvTrxHistory', N'ExactTransferredValue') IS NULL
+    ALTER TABLE dbo.IvTrxHistory ADD ExactTransferredValue decimal(18,4) NULL;
+IF COL_LENGTH(N'dbo.IvTrxHistory', N'ValuationStatus') IS NULL
+    ALTER TABLE dbo.IvTrxHistory ADD ValuationStatus nvarchar(20) NULL;
+
 IF OBJECT_ID(N'dbo.StockValuationFact', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.StockValuationFact
