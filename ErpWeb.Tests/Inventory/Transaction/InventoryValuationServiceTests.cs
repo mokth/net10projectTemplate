@@ -320,9 +320,45 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
 
         Assert.False(result.Succeeded);
         Assert.Equal(StockLedgerErrorCodes.BackdatedStockEvent, result.Error?.Code);
+        Assert.Contains("Cannot post for item", result.Error?.Message);
+        Assert.Contains("later cost movement", result.Error?.Message);
+        Assert.Contains("Costing Center", result.Error?.Message);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.StockValuationFacts.ToListAsync());
         Assert.Equal(5m, (await db.StockCostStates.SingleAsync()).OnHandBaseQty);
+    }
+
+    [Fact]
+    public void Backdated_message_names_blocking_document_for_users()
+    {
+        var message = InventoryValuationService.FormatBackdatedPostingMessage(
+            "RM003",
+            new DateTime(2026, 10, 6, 12, 38, 53),
+            IvTrxTypes.GoodsReceive,
+            "42",
+            "100");
+        Assert.Contains("RM003", message);
+        Assert.Contains("Goods Receipt 42", message);
+        Assert.Contains("2026-10-06 12:38", message);
+        Assert.Contains("Roll back", message);
+        Assert.Contains("Costing Center", message);
+    }
+
+    [Fact]
+    public void Backdated_message_lists_multiple_blockers_newest_guidance()
+    {
+        var message = InventoryValuationService.FormatBackdatedPostingMessage(
+            new DateTime(2026, 10, 1),
+            [
+                new InventoryValuationService.BackdatedBlocker(
+                    "RM003", new DateTime(2026, 10, 3, 8, 0, 0), "GR", "10", "1", 1),
+                new InventoryValuationService.BackdatedBlocker(
+                    "RM003", new DateTime(2026, 10, 5, 9, 0, 0), "MR", "20", "2", 2)
+            ]);
+        Assert.Contains("Goods Receipt 10", message);
+        Assert.Contains("Misc Receipt 20", message);
+        Assert.Contains("newest-first", message);
+        Assert.Contains("Later movements", message, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<long> PostReceiptAsync(decimal qty, decimal price, DateTime effectiveAt)

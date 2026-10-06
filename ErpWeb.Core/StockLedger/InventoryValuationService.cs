@@ -983,17 +983,135 @@ public sealed class InventoryValuationService : IInventoryValuationService
         IReadOnlyCollection<string> itemCodes,
         CancellationToken cancellationToken)
     {
-        var later = await context.Db.StockValuationFacts.AsNoTracking()
+        var sourceDocumentId = (context.Posting.SourceDocumentId ?? string.Empty).Trim();
+        var laterRows = await context.Db.StockValuationFacts.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode
                         && itemCodes.Contains(x.ItemCode)
-                        && x.EffectiveAt > context.Posting.EffectiveAt)
-            .Select(x => new { x.ItemCode, x.EffectiveAt })
+                        && x.EffectiveAt > context.Posting.EffectiveAt
+                        && x.StockPosting!.SealedAtUtc != null
+                        // Re-posting the same physical document must ignore its own prior sealed facts
+                        // (post → rollback → post again, including orphan wall-clock EffectiveAt rows).
+                        && (sourceDocumentId.Length == 0 || x.SourceDocumentId != sourceDocumentId))
+            .Select(x => new
+            {
+                x.ItemCode,
+                x.EffectiveAt,
+                x.SourceDocumentType,
+                x.SourceDocumentNo,
+                x.SourceDocumentId,
+                x.StockPostingId
+            })
             .OrderBy(x => x.EffectiveAt)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (later is not null)
-            throw LedgerError(StockLedgerErrorCodes.BackdatedStockEvent,
-                $"Item '{later.ItemCode}' already has a later valued movement at {later.EffectiveAt:O}; rollback and repost the later movement first.");
+            .ThenBy(x => x.StockPostingId)
+            .Take(20)
+            .ToListAsync(cancellationToken);
+        if (laterRows.Count == 0)
+            return;
+
+        var blockers = laterRows
+            .GroupBy(x => new
+            {
+                x.ItemCode,
+                Type = (x.SourceDocumentType ?? string.Empty).Trim(),
+                No = (x.SourceDocumentNo ?? string.Empty).Trim(),
+                Id = (x.SourceDocumentId ?? string.Empty).Trim()
+            })
+            .Select(g => new BackdatedBlocker(
+                g.Key.ItemCode,
+                g.Min(x => x.EffectiveAt),
+                g.Key.Type,
+                g.Key.No,
+                g.Key.Id,
+                g.OrderBy(x => x.EffectiveAt).Select(x => x.StockPostingId).First()))
+            .OrderBy(x => x.EffectiveAt)
+            .Take(5)
+            .ToArray();
+
+        throw LedgerError(StockLedgerErrorCodes.BackdatedStockEvent,
+            FormatBackdatedPostingMessage(context.Posting.EffectiveAt, blockers));
+    }
+
+    internal readonly record struct BackdatedBlocker(
+        string ItemCode,
+        DateTime EffectiveAt,
+        string SourceDocumentType,
+        string SourceDocumentNo,
+        string SourceDocumentId,
+        long StockPostingId);
+
+    internal static string FormatBackdatedPostingMessage(
+        DateTime attemptedEffectiveAt,
+        IReadOnlyList<BackdatedBlocker> blockers)
+    {
+        if (blockers.Count == 0)
+            return "Cannot post: a later cost movement already exists. Open Costing Center for the item.";
+
+        var item = blockers[0].ItemCode;
+        var asOf = attemptedEffectiveAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        var lines = blockers.Select(b =>
+        {
+            var label = FormatBlockingDocumentLabel(b.SourceDocumentType, b.SourceDocumentNo, b.SourceDocumentId);
+            var when = b.EffectiveAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            return $"{label} on {when}";
+        }).ToArray();
+
+        var list = string.Join("; ", lines);
+        var first = FormatBlockingDocumentLabel(
+            blockers[0].SourceDocumentType, blockers[0].SourceDocumentNo, blockers[0].SourceDocumentId);
+        return
+            $"Cannot post for item {item} on {asOf}: later cost movement(s) already exist ({list}). " +
+            $"Roll back those documents newest-first (start with {first}), post this document, then re-post them in date order. " +
+            "Open Costing Center → enter the item → set From to this date → Later movements to roll back → Preview rollback on each later row.";
+    }
+
+    /// <summary>Legacy single-blocker formatter kept for unit tests and callers.</summary>
+    internal static string FormatBackdatedPostingMessage(
+        string itemCode,
+        DateTime laterEffectiveAt,
+        string? sourceDocumentType,
+        string? sourceDocumentNo,
+        string? sourceDocumentId) =>
+        FormatBackdatedPostingMessage(
+            laterEffectiveAt.Date,
+            [
+                new BackdatedBlocker(
+                    itemCode,
+                    laterEffectiveAt,
+                    sourceDocumentType ?? string.Empty,
+                    sourceDocumentNo ?? string.Empty,
+                    sourceDocumentId ?? string.Empty,
+                    0)
+            ]);
+
+    internal static string FormatBlockingDocumentLabel(
+        string? sourceDocumentType,
+        string? sourceDocumentNo,
+        string? sourceDocumentId)
+    {
+        var type = (sourceDocumentType ?? string.Empty).Trim();
+        var number = !string.IsNullOrWhiteSpace(sourceDocumentNo)
+            ? sourceDocumentNo.Trim()
+            : (sourceDocumentId ?? string.Empty).Trim();
+        var label = type.ToUpperInvariant() switch
+        {
+            "MR" => "Misc Receipt",
+            "MI" => "Misc Issue",
+            "SC" => "Scrap",
+            "VR" => "Vendor Return",
+            "TR" => "Stock Transfer",
+            "ADJ" => "Stock Adjustment",
+            "CR" => "Customer Return",
+            "GR" or "NG" => "Goods Receipt",
+            "IP" => "Material Issue",
+            "FG" => "Finished Good Receipt",
+            "FG_RECEIPT" => "Finished Good Receipt",
+            "PRODUCTION_OUTPUT" or "DAILY_PRODUCTION" => "Daily Production",
+            "MATERIAL_ISSUE" => "Material Issue",
+            _ when type.Length > 0 => type,
+            _ => "document"
+        };
+        return number.Length > 0 ? $"{label} {number}" : label;
     }
 
     private static async Task<Dictionary<(int BatchNo, short LineNo), DetailEvidence>> LoadDetailEvidenceAsync(

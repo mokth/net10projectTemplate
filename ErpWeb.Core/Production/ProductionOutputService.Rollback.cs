@@ -125,7 +125,7 @@ public sealed partial class ProductionOutputService
                 .Select(x => x.StockPostingId)
                 .FirstOrDefaultAsync(cancellationToken);
             var command = BuildOutputPostingCommand(
-                output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId);
+                output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId, rollbackLink.Uid);
             var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
             if (ledger.Error is not null)
                 return Fail(ledger.Error.Message);

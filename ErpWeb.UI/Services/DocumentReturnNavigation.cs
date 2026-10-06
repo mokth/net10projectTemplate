@@ -4,8 +4,8 @@ namespace ErpWeb.UI.Services;
 
 /// <summary>
 /// Safe return-path handling for document pages opened from an Inquiry grid
-/// (Purchase Inquiry, Sales Inquiry). Only same-app paths under a supported inquiry group are
-/// accepted — never open redirects.
+/// (Purchase Inquiry, Sales Inquiry) or the Costing Diagnostic &amp; Repair Center.
+/// Only same-app paths under a supported inquiry group are accepted — never open redirects.
 /// </summary>
 public static class DocumentReturnNavigation
 {
@@ -19,7 +19,8 @@ public static class DocumentReturnNavigation
     private static readonly string[] AllowedInquiryPrefixes =
     [
         "/purchase/inquiry/",
-        "/sales/inquiry/"
+        "/sales/inquiry/",
+        "/inventory/costing-center"
     ];
 
     /// <summary>Appends a returnUrl query parameter (replaces an existing one).</summary>

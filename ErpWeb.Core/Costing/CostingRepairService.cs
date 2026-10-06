@@ -13,20 +13,32 @@ public sealed class CostingRepairService : ICostingRepairService
     private readonly IAccessRightService _access;
     private readonly ICostingRepairPlanner _planner;
     private readonly IEnumerable<ICostingRepairAdapter> _adapters;
+    private readonly CostingStateRepairService? _stateRepair;
 
     public CostingRepairService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
         ICostingRepairPlanner planner,
-        IEnumerable<ICostingRepairAdapter> adapters)
+        IEnumerable<ICostingRepairAdapter> adapters,
+        CostingStateRepairService? stateRepair = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _planner = planner;
         _adapters = adapters;
+        _stateRepair = stateRepair;
     }
+
+    public Task<CostingRepairExecutionResult> ExecuteStateRebuildAsync(
+        string itemCode,
+        string costMethod,
+        string previewHash,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        (_stateRepair ?? throw new InvalidOperationException("Cost-state repair execution is not registered."))
+            .ExecuteAsync(itemCode, costMethod, previewHash, reason, cancellationToken);
 
     public async Task<CostingRepairExecutionResult> ExecuteReverseAsync(
         long stockPostingId,
@@ -83,8 +95,8 @@ public sealed class CostingRepairService : ICostingRepairService
         try
         {
             result = await adapter.ReverseAsync(
-                new CostingRepairNode(stockPostingId, step.PhysicalSourceDocumentType, step.PhysicalSourceDocumentId),
-                new CostingRepairOwner(step.OwnerType, step.OwnerDocumentNo, step.PhysicalSourceDocumentType, step.PhysicalSourceDocumentId, stockPostingId),
+                new CostingRepairNode(stockPostingId, step.PhysicalSourceDocumentType, step.PhysicalSourceDocumentId, step.PhysicalSourceDocumentNo),
+                new CostingRepairOwner(step.OwnerType, step.OwnerDocumentNo, step.PhysicalSourceDocumentType, step.PhysicalSourceDocumentId, step.PhysicalSourceDocumentNo, stockPostingId),
                 new CostingRepairExecutionContext(requestId, step.StableStepId, "POSTED", reason.Trim()),
                 cancellationToken);
         }

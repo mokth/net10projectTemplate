@@ -24,6 +24,7 @@ public sealed record CostingRepairOwner(
     string OwnerDocumentNo,
     string PhysicalSourceDocumentType,
     string PhysicalSourceDocumentId,
+    string PhysicalSourceDocumentNo,
     long StockPostingId);
 
 public sealed record CostingRepairOwnershipResult(
@@ -37,6 +38,7 @@ public sealed record CostingRepairEvidence(
     long StockPostingId,
     string PhysicalSourceDocumentType,
     string PhysicalSourceDocumentId,
+    string PhysicalSourceDocumentNo,
     string? DoNo,
     string? InvNo,
     bool ForceClosed,
@@ -44,12 +46,15 @@ public sealed record CostingRepairEvidence(
     string? SalesCreditNoteNo,
     bool PurchaseCreditNoteProven,
     string? PurchaseCreditNoteNo,
-    bool ProductionLinkProven);
+    bool ProductionLinkProven,
+    string? ProductionDocumentType = null,
+    string? ProductionDocumentNo = null);
 
 public sealed record CostingRepairNode(
     long StockPostingId,
     string PhysicalSourceDocumentType,
-    string PhysicalSourceDocumentId);
+    string PhysicalSourceDocumentId,
+    string PhysicalSourceDocumentNo);
 
 public interface ICostingRepairOwnershipResolver
 {
@@ -108,6 +113,7 @@ public sealed record CostingRepairStep(
     string StableStepId,
     string PhysicalSourceDocumentType,
     string PhysicalSourceDocumentId,
+    string PhysicalSourceDocumentNo,
     string OwnerType,
     string OwnerDocumentNo,
     string AdapterName,
@@ -127,15 +133,38 @@ public sealed record CostingRepairPlan(
     IReadOnlyList<CostingRepairPoolImpact> PoolImpacts,
     string PreviewHash);
 
+public enum CostingRepairTargetKind
+{
+    Posting,
+    CostState,
+    DiagnosticOnly
+}
+
+public sealed record CostingRepairTarget(
+    CostingRepairTargetKind Kind,
+    long? StockPostingId,
+    string? ItemCode,
+    string? CostMethod,
+    string? FindingCode);
+
 public interface ICostingRepairPlanner
 {
     Task<CostingRepairPlan> PlanAsync(long stockPostingId, CancellationToken cancellationToken = default);
+
+    Task<CostingRepairPlan> PlanAsync(CostingRepairTarget target, CancellationToken cancellationToken = default);
 }
 
 public interface ICostingRepairService
 {
     Task<CostingRepairExecutionResult> ExecuteReverseAsync(
         long stockPostingId,
+        string previewHash,
+        string reason,
+        CancellationToken cancellationToken = default);
+
+    Task<CostingRepairExecutionResult> ExecuteStateRebuildAsync(
+        string itemCode,
+        string costMethod,
         string previewHash,
         string reason,
         CancellationToken cancellationToken = default);

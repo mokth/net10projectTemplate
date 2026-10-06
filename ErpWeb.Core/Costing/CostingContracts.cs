@@ -22,6 +22,35 @@ public static class CostingFindingCodes
     public const string SalesCogsUnresolved = "CD-022";
     public const string EpochCoverage = "CD-027";
     public const string SalesCogsLineageIncomplete = "CD-039";
+    public const string CostStateMissing = "CD-040";
+}
+
+public static class CostingRepairActions
+{
+    public const string ReviewSourcePosting = "REVIEW_SOURCE_POSTING";
+    public const string ReconcileUnsealedPosting = "RECONCILE_UNSEALED_POSTING";
+    public const string TraceBrokenReversal = "TRACE_BROKEN_REVERSAL";
+    public const string RebuildCostState = "REBUILD_COST_STATE";
+    public const string TraceSourceDocument = "TRACE_SOURCE_DOCUMENT";
+}
+
+public static class CostingDocumentTypes
+{
+    public const string GoodsReceipt = "GR";
+    public const string MiscReceipt = "MR";
+    public const string MiscIssue = "MI";
+    public const string Scrap = "SC";
+    public const string VendorReturn = "VR";
+    public const string Transfer = "TR";
+    public const string Adjustment = "ADJ";
+    public const string CustomerReturn = "CR";
+    public const string SalesInvoice = "SA_INVOICE";
+    public const string SalesDeliveryOrder = "SA_DO";
+    public const string SalesCreditNote = "SA_CDN";
+    public const string PurchaseCreditNote = "PO_CDN";
+    public const string MaterialIssue = "IP";
+    public const string FinishedGoodReceipt = "FG_RECEIPT";
+    public const string DailyProduction = "PRODUCTION_OUTPUT";
 }
 
 public static class CostingEpochCoverage
@@ -51,14 +80,20 @@ public sealed record CostingFinding(
     decimal? ActualQty,
     decimal? ExpectedValue,
     decimal? ActualValue,
-    string RecommendedAction);
+    string RecommendedAction,
+    string? CostMethod = null,
+    CostingRepairTargetKind RepairTargetKind = CostingRepairTargetKind.DiagnosticOnly,
+    string? RepairAction = null);
 
 public sealed record CostingHealthQuery(
     string? ItemCode = null,
     string? WarehouseCode = null,
     DateTime? From = null,
     DateTime? To = null,
-    string? FindingCode = null);
+    string? FindingCode = null,
+    string? SourceDocumentNo = null,
+    string? SourceDocumentType = null,
+    CostingFindingSeverity? Severity = null);
 
 public sealed class CostingHealthPage
 {
@@ -81,6 +116,7 @@ public sealed record CostingTraceAnchor(
     decimal OpeningAverage);
 
 public sealed record CostingTraceLine(
+    long StockPostingId,
     long PostingSequence,
     int PostingLineNo,
     int SplitOrdinal,
@@ -144,4 +180,32 @@ public interface ICostingDiagnosticService
 public interface ICostingTraceService
 {
     Task<CostingTracePage> GetItemTimelineAsync(CostingTraceQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists sealed cost postings for an item that are later than <paramref name="asOf"/>,
+    /// newest first (rollback order for a backdated post).
+    /// </summary>
+    Task<CostingBackdateImpactPage> GetBackdateImpactAsync(
+        string itemCode,
+        DateTime asOf,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed record CostingBackdateBlocker(
+    long StockPostingId,
+    DateTime EffectiveAt,
+    string SourceDocumentType,
+    string SourceDocumentNo,
+    string DocumentLabel,
+    string PostingRole,
+    bool AlreadyReversed);
+
+public sealed class CostingBackdateImpactPage
+{
+    public bool Denied { get; init; }
+    public string? Error { get; init; }
+    public string Guidance { get; init; } = string.Empty;
+    public DateTime AsOf { get; init; }
+    public string ItemCode { get; init; } = string.Empty;
+    public IReadOnlyList<CostingBackdateBlocker> Blockers { get; init; } = [];
 }

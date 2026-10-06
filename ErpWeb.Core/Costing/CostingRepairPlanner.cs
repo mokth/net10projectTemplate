@@ -14,19 +14,34 @@ public sealed class CostingRepairPlanner : ICostingRepairPlanner
     private readonly IAccessRightService _access;
     private readonly ICostingRepairOwnershipResolver _ownership;
     private readonly IEnumerable<ICostingRepairAdapter> _adapters;
+    private readonly CostingStateRepairPlanner? _statePlanner;
 
     public CostingRepairPlanner(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService access,
         ICostingRepairOwnershipResolver ownership,
-        IEnumerable<ICostingRepairAdapter> adapters)
+        IEnumerable<ICostingRepairAdapter> adapters,
+        CostingStateRepairPlanner? statePlanner = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _ownership = ownership;
         _adapters = adapters;
+        _statePlanner = statePlanner;
+    }
+
+    public Task<CostingRepairPlan> PlanAsync(CostingRepairTarget target, CancellationToken cancellationToken = default)
+    {
+        if (target.Kind == CostingRepairTargetKind.CostState)
+            return (_statePlanner ?? throw new InvalidOperationException("Cost-state repair planning is not registered."))
+                .PlanAsync(target.ItemCode ?? string.Empty, target.CostMethod ?? string.Empty, target.FindingCode, cancellationToken);
+        if (target.Kind == CostingRepairTargetKind.Posting && target.StockPostingId is long postingId)
+            return PlanAsync(postingId, cancellationToken);
+        return Task.FromResult(Blocked(target.Kind == CostingRepairTargetKind.DiagnosticOnly
+            ? "This finding is diagnostic only. Open the source document and reconcile it. The Costing Center will not roll it back."
+            : "A stock posting is required for this repair."));
     }
 
     public async Task<CostingRepairPlan> PlanAsync(long stockPostingId, CancellationToken cancellationToken = default)
@@ -44,8 +59,19 @@ public sealed class CostingRepairPlanner : ICostingRepairPlanner
                 && x.BranchCode == scope.BranchCode, cancellationToken);
         if (posting is null)
             return Blocked("The stock posting was not found in this branch.");
+        if (posting.SealedAtUtc is null)
+            return Blocked("Unsealed postings require ledger reconciliation, not document rollback.");
+        if (!string.Equals(posting.PostingRole, "PRIMARY", StringComparison.OrdinalIgnoreCase))
+            return Blocked("Only a PRIMARY posting can be reversed from the Costing Repair Center.");
+        var alreadyReversed = await db.StockPostings.AsNoTracking().AnyAsync(x =>
+            x.CompanyCode == scope.CompanyCode
+            && x.BranchCode == scope.BranchCode
+            && x.ReversesPostingId == posting.Id
+            && x.SealedAtUtc != null, cancellationToken);
+        if (alreadyReversed)
+            return Blocked("This posting already has a sealed reversal.");
 
-        var node = new CostingRepairNode(posting.Id, posting.SourceDocumentType, posting.SourceDocumentId);
+        var node = new CostingRepairNode(posting.Id, posting.SourceDocumentType, posting.SourceDocumentId, posting.SourceDocumentNo);
         var ownership = await _ownership.ResolveAsync(node, cancellationToken);
         if (!ownership.IsProven || ownership.Owner is null)
             return Blocked(ownership.BlockingReason ?? "The repair owner cannot be proven.");
@@ -74,6 +100,7 @@ public sealed class CostingRepairPlanner : ICostingRepairPlanner
             $"step-{posting.Id}",
             ownership.Owner.PhysicalSourceDocumentType,
             ownership.Owner.PhysicalSourceDocumentId,
+            ownership.Owner.PhysicalSourceDocumentNo,
             ownership.Owner.OwnerType,
             ownership.Owner.OwnerDocumentNo,
             adapter.GetType().Name,

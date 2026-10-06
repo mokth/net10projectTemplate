@@ -43,12 +43,13 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
         var coverage = await DescribeEpochAsync(db, company, branch, findings, cancellationToken);
         var rebuild = coverage == CostingEpochCoverage.V2;
 
-        await AddUnsealedPostingsAsync(db, company, branch, query, findings, cancellationToken);
-        await AddFactsWithoutSealedPostingAsync(db, company, branch, query, findings, cancellationToken);
-        await AddBrokenReversalsAsync(db, company, branch, query, findings, cancellationToken);
-        await AddHistoryWithoutFactsAsync(db, company, branch, query, findings, cancellationToken);
+        var postingIds = await MatchingPostingIdsAsync(db, company, branch, query, cancellationToken);
+        await AddUnsealedPostingsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
+        await AddFactsWithoutSealedPostingAsync(db, company, branch, query, postingIds, findings, cancellationToken);
+        await AddBrokenReversalsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
+        await AddHistoryWithoutFactsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
         if (rebuild)
-            await AddCostStateFindingsAsync(db, company, branch, query, findings, showMoney, cancellationToken);
+            await AddCostStateFindingsAsync(db, company, branch, query, postingIds, findings, showMoney, cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(query.FindingCode))
         {
@@ -56,6 +57,9 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 .Where(x => string.Equals(x.Code, query.FindingCode.Trim(), StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
+
+        if (query.Severity is CostingFindingSeverity severity)
+            findings = findings.Where(x => x.Severity == severity).ToList();
 
         return new CostingHealthPage
         {
@@ -162,7 +166,10 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                     actualQty,
                     null,
                     showMoney ? cogs : null,
-                    "Trace the delivery order or direct invoice stock issue. Do not treat an item-only match as proven COGS."));
+                    "Trace the delivery order or direct invoice stock issue. Do not treat an item-only match as proven COGS.",
+                    null,
+                    CostingRepairTargetKind.DiagnosticOnly,
+                    CostingRepairActions.TraceSourceDocument));
             }
         }
 
@@ -224,14 +231,18 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
         new(CostingFindingCodes.EpochCoverage, severity, severity == CostingFindingSeverity.Critical,
             null, null, null, null, null, null, null, null, null,
             summary, explanation, null, null, null, null,
-            "Resolve ledger-epoch coverage before trusting a branch total or running a repair.");
+            "Resolve ledger-epoch coverage before trusting a branch total or running a repair.",
+            null,
+            CostingRepairTargetKind.DiagnosticOnly,
+            CostingRepairActions.TraceSourceDocument);
 
     private static async Task AddUnsealedPostingsAsync(
-        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,
         List<CostingFinding> findings, CancellationToken cancellationToken)
     {
         var rows = await db.StockPostings.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.SealedAtUtc == null)
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.SealedAtUtc == null
+                && (postingIds == null || postingIds.Contains(x.Id)))
             .OrderBy(x => x.PostingSequence)
             .Take(50)
             .Select(x => new { x.Id, x.SourceDocumentType, x.SourceDocumentNo, x.EffectiveAt })
@@ -245,17 +256,19 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 "A stock posting was started but not sealed.",
                 "Costing may be incomplete. Do not manually change the stock rows; run posting reconciliation.",
                 null, null, null, null,
-                "Finish or reverse the unfinished posting through its module. Do not edit the ledger rows."));
+                "Finish or reverse the unfinished posting through its module. Do not edit the ledger rows.",
+                null, CostingRepairTargetKind.DiagnosticOnly, CostingRepairActions.ReconcileUnsealedPosting));
         }
     }
 
     private static async Task AddFactsWithoutSealedPostingAsync(
-        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,
         List<CostingFinding> findings, CancellationToken cancellationToken)
     {
         var rows = await db.StockValuationFacts.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                 && (query.ItemCode == null || x.ItemCode == query.ItemCode)
+                && (postingIds == null || postingIds.Contains(x.StockPostingId))
                 && x.StockPosting!.SealedAtUtc == null)
             .OrderBy(x => x.Id)
             .Take(50)
@@ -270,18 +283,20 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 "A valuation fact is not attached to a sealed posting.",
                 "Monetary evidence is only trustworthy after the owning stock posting is sealed.",
                 null, null, null, null,
-                "Trace the posting and complete it through the module that started it."));
+                "Trace the posting and complete it through the module that started it.",
+                null, CostingRepairTargetKind.DiagnosticOnly, CostingRepairActions.ReconcileUnsealedPosting));
         }
     }
 
     private static async Task AddBrokenReversalsAsync(
-        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,
         List<CostingFinding> findings, CancellationToken cancellationToken)
     {
         var reversals = await db.StockValuationFacts.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                 && x.ReversesValuationFactId != null
-                && (query.ItemCode == null || x.ItemCode == query.ItemCode))
+                && (query.ItemCode == null || x.ItemCode == query.ItemCode)
+                && (postingIds == null || postingIds.Contains(x.StockPostingId)))
             .Select(x => new { x.Id, x.ItemCode, x.ReversesValuationFactId, x.SourceDocumentNo, x.StockPostingId })
             .Take(100)
             .ToListAsync(cancellationToken);
@@ -307,12 +322,13 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 "A valuation reversal does not point at a sealed original fact in this branch.",
                 "Append-only reversal lineage is broken, so the cost state cannot be trusted.",
                 null, null, null, null,
-                "Do not edit the facts. Trace the original posting and repair it through a registered adapter."));
+                "Do not edit the facts. Trace the original posting and repair it through a registered adapter.",
+                null, CostingRepairTargetKind.DiagnosticOnly, CostingRepairActions.TraceBrokenReversal));
         }
     }
 
     private static async Task AddHistoryWithoutFactsAsync(
-        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,
         List<CostingFinding> findings, CancellationToken cancellationToken)
     {
         var financial = new[]
@@ -326,6 +342,7 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                 && x.SealedAtUtc != null
                 && financial.Contains(x.SourceDocumentType)
+                && (postingIds == null || postingIds.Contains(x.Id))
                 && !db.StockValuationFacts.Any(f => f.StockPostingId == x.Id))
             .OrderBy(x => x.PostingSequence)
             .Take(50)
@@ -340,14 +357,37 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 "A sealed financial posting has no valuation fact.",
                 "Quantity may have moved without an authoritative cost. Do not invent a cost in the inquiry.",
                 null, null, null, null,
-                "Open the source document and repair it through its module once quantity lineage is proven."));
+                "Open the source document and repair it through its module once quantity lineage is proven.",
+                null, CostingRepairTargetKind.Posting, CostingRepairActions.ReviewSourcePosting));
         }
     }
 
     private static async Task AddCostStateFindingsAsync(
-        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,
         List<CostingFinding> findings, bool showMoney, CancellationToken cancellationToken)
     {
+        var documentConstrained = postingIds is not null && (
+            !string.IsNullOrWhiteSpace(query.SourceDocumentNo)
+            || !string.IsNullOrWhiteSpace(query.SourceDocumentType)
+            || !string.IsNullOrWhiteSpace(query.WarehouseCode)
+            || query.From is not null
+            || query.To is not null);
+        HashSet<string>? allowedItems = null;
+        if (documentConstrained)
+        {
+            var fromFacts = await db.StockValuationFacts.AsNoTracking()
+                .Where(x => postingIds!.Contains(x.StockPostingId))
+                .Select(x => x.ItemCode)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            var fromHistory = await db.IvTrxHistories.AsNoTracking()
+                .Where(x => x.StockPostingId != null && postingIds!.Contains(x.StockPostingId.Value))
+                .Select(x => x.ICode)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            allowedItems = fromFacts.Concat(fromHistory).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
         var states = await db.StockCostStates.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                 && (query.ItemCode == null || x.ItemCode == query.ItemCode))
@@ -359,34 +399,59 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 && (query.ItemCode == null || x.ItemCode == query.ItemCode)
                 && !db.StockValuationFacts.Any(r => r.ReversesValuationFactId == x.Id)
                 && x.ReversesValuationFactId == null)
-            .Select(x => new { x.ItemCode, x.CostMethod, x.BaseUom, x.Direction, x.BaseQty, x.CostAmount })
+            .Select(x => new { x.ItemCode, x.CostMethod, x.Direction, x.BaseQty, x.CostAmount })
             .ToListAsync(cancellationToken);
-        var grouped = facts.GroupBy(x => (Item: x.ItemCode, Method: x.CostMethod));
-        foreach (var state in states)
+        var grouped = facts.GroupBy(x => (Item: x.ItemCode, Method: x.CostMethod)).ToList();
+        var keys = states.Select(x => (Item: x.ItemCode, Method: x.CostMethod))
+            .Concat(grouped.Select(x => x.Key))
+            .Distinct()
+            .ToArray();
+        foreach (var key in keys)
         {
+            if (!string.IsNullOrWhiteSpace(query.ItemCode)
+                && !string.Equals(key.Item, query.ItemCode.Trim(), StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (allowedItems is not null && !allowedItems.Contains(key.Item))
+                continue;
+
+            var state = states.FirstOrDefault(x =>
+                string.Equals(x.ItemCode, key.Item, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.CostMethod, key.Method, StringComparison.OrdinalIgnoreCase));
+            var rows = grouped.FirstOrDefault(x =>
+                string.Equals(x.Key.Item, key.Item, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.Key.Method, key.Method, StringComparison.OrdinalIgnoreCase));
+            var qty = StockLedgerPrecision.Quantity(rows?.Sum(x => x.BaseQty * x.Direction) ?? 0m);
+            var value = StockLedgerPrecision.Money(rows?.Sum(x => x.CostAmount * x.Direction) ?? 0m);
+            if (state is null)
+            {
+                if (qty != 0m || value != 0m)
+                {
+                    findings.Add(StateFinding(CostingFindingCodes.CostStateMissing, key.Item, key.Method,
+                        "Sealed valuation evidence has no derived cost state.",
+                        "The branch and item pool was rebuilt from sealed, non-reversed facts.",
+                        qty, null, showMoney ? value : null, null));
+                }
+                continue;
+            }
+
             if (state.OnHandBaseQty == 0m && state.InventoryValue != 0m)
             {
-                findings.Add(StateFinding(CostingFindingCodes.ZeroQuantityResidue, state.ItemCode,
+                findings.Add(StateFinding(CostingFindingCodes.ZeroQuantityResidue, state.ItemCode, state.CostMethod,
                     "Zero quantity still carries inventory value.",
                     "A cost pool with no quantity must not keep a residual value.",
                     0m, state.OnHandBaseQty, 0m, showMoney ? state.InventoryValue : null));
             }
 
-            var rows = grouped.FirstOrDefault(x =>
-                string.Equals(x.Key.Item, state.ItemCode, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(x.Key.Method, state.CostMethod, StringComparison.OrdinalIgnoreCase));
-            var qty = StockLedgerPrecision.Quantity(rows?.Sum(x => x.BaseQty * x.Direction) ?? 0m);
-            var value = StockLedgerPrecision.Money(rows?.Sum(x => x.CostAmount * x.Direction) ?? 0m);
             if (qty != state.OnHandBaseQty)
             {
-                findings.Add(StateFinding(CostingFindingCodes.CostStateQuantityMismatch, state.ItemCode,
+                findings.Add(StateFinding(CostingFindingCodes.CostStateQuantityMismatch, state.ItemCode, state.CostMethod,
                     "Cost-state quantity does not match sealed valuation facts.",
                     "The branch and item pool was rebuilt from sealed, non-reversed facts.",
                     qty, state.OnHandBaseQty, null, null));
             }
             if (value != state.InventoryValue)
             {
-                findings.Add(StateFinding(CostingFindingCodes.CostStateValueMismatch, state.ItemCode,
+                findings.Add(StateFinding(CostingFindingCodes.CostStateValueMismatch, state.ItemCode, state.CostMethod,
                     "Cost-state value does not match sealed valuation facts.",
                     "The comparison uses the same 6-decimal money rounding as the valuation engine.",
                     null, null, showMoney ? value : null, showMoney ? state.InventoryValue : null));
@@ -396,7 +461,7 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
             var actualAverage = qty == 0m ? state.InventoryValue == 0m ? 0m : state.AverageUnitCost : state.AverageUnitCost;
             if (expectedAverage != StockLedgerPrecision.Money(actualAverage))
             {
-                findings.Add(StateFinding(CostingFindingCodes.CostStateAverageMismatch, state.ItemCode,
+                findings.Add(StateFinding(CostingFindingCodes.CostStateAverageMismatch, state.ItemCode, state.CostMethod,
                     "Cost-state average does not match value divided by quantity.",
                     qty == 0m
                         ? "A zero-quantity pool must reconcile average and value to zero."
@@ -406,12 +471,86 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
         }
     }
 
+    private static async Task<HashSet<long>?> MatchingPostingIdsAsync(
+        AppDbContext db, string company, string branch, CostingHealthQuery query, CancellationToken cancellationToken)
+    {
+        var constrained = !string.IsNullOrWhiteSpace(query.ItemCode)
+            || !string.IsNullOrWhiteSpace(query.WarehouseCode)
+            || !string.IsNullOrWhiteSpace(query.SourceDocumentNo)
+            || !string.IsNullOrWhiteSpace(query.SourceDocumentType)
+            || query.From is not null
+            || query.To is not null;
+        if (!constrained)
+            return null;
+
+        var rows = db.StockPostings.AsNoTracking().Where(x => x.CompanyCode == company && x.BranchCode == branch);
+        if (query.From is DateTime from)
+            rows = rows.Where(x => x.EffectiveAt >= from);
+        if (query.To is DateTime to)
+            rows = rows.Where(x => x.EffectiveAt <= to);
+        if (!string.IsNullOrWhiteSpace(query.ItemCode))
+        {
+            var item = query.ItemCode.Trim();
+            rows = rows.Where(x =>
+                db.StockValuationFacts.Any(f => f.StockPostingId == x.Id && f.ItemCode == item)
+                || db.IvTrxHistories.Any(h => h.StockPostingId == x.Id && h.ICode == item));
+        }
+        if (!string.IsNullOrWhiteSpace(query.WarehouseCode))
+        {
+            var warehouse = query.WarehouseCode.Trim();
+            rows = rows.Where(x =>
+                db.StockValuationFacts.Any(f => f.StockPostingId == x.Id && f.WarehouseCode == warehouse)
+                || db.IvTrxHistories.Any(h => h.StockPostingId == x.Id && (h.FrWarehouse == warehouse || h.ToWarehouse == warehouse)));
+        }
+        if (!string.IsNullOrWhiteSpace(query.SourceDocumentNo))
+        {
+            var documentNo = query.SourceDocumentNo.Trim();
+            rows = rows.Where(x => x.SourceDocumentNo == documentNo
+                || db.IvTrxBatches.Any(b => b.CompanyCode == company && b.BranchCode == branch
+                    && b.RefNo == documentNo && b.TrxType == x.SourceDocumentType
+                    && x.SourceDocumentNo == b.BatchNo.ToString())
+                || db.IvTrxHistories.Any(h => h.StockPostingId == x.Id && (h.InvNo == documentNo || h.DoNo == documentNo)));
+        }
+        if (!string.IsNullOrWhiteSpace(query.SourceDocumentType))
+            rows = ApplyDocumentType(db, company, branch, rows, query.SourceDocumentType.Trim());
+
+        return (await rows.Select(x => x.Id).ToListAsync(cancellationToken)).ToHashSet();
+    }
+
+    private static IQueryable<StockPosting> ApplyDocumentType(
+        AppDbContext db, string company, string branch, IQueryable<StockPosting> rows, string documentType)
+    {
+        if (string.Equals(documentType, CostingDocumentTypes.SalesInvoice, StringComparison.OrdinalIgnoreCase))
+        {
+            return rows.Where(x => x.SourceDocumentType == IvTrxTypes.SalesOut
+                && db.IvTrxHistories.Any(h => h.StockPostingId == x.Id
+                    && h.InvNo != null && h.InvNo != ""
+                    && (h.DoNo == null || h.DoNo == "")));
+        }
+        if (string.Equals(documentType, CostingDocumentTypes.SalesDeliveryOrder, StringComparison.OrdinalIgnoreCase))
+        {
+            return rows.Where(x => x.SourceDocumentType == IvTrxTypes.SalesOut
+                && db.IvTrxHistories.Any(h => h.StockPostingId == x.Id && h.DoNo != null && h.DoNo != ""));
+        }
+        if (string.Equals(documentType, CostingDocumentTypes.GoodsReceipt, StringComparison.OrdinalIgnoreCase))
+            return rows.Where(x => x.SourceDocumentType == IvTrxTypes.GoodsReceive || x.SourceDocumentType == IvTrxTypes.NonStockGoodsReceive);
+        if (string.Equals(documentType, CostingDocumentTypes.PurchaseCreditNote, StringComparison.OrdinalIgnoreCase))
+        {
+            return rows.Where(x => db.PoCdns.Any(p => p.CompanyCode == company && p.BranchCode == branch
+                && p.ReturnStock && p.VrBatchNo != null && p.VrBatchNo.ToString() == x.SourceDocumentNo));
+        }
+        if (string.Equals(documentType, CostingDocumentTypes.SalesCreditNote, StringComparison.OrdinalIgnoreCase))
+            return rows.Where(x => x.SourceDocumentType == IvTrxTypes.CustomerReturn);
+        return rows.Where(x => x.SourceDocumentType == documentType);
+    }
+
     private static CostingFinding StateFinding(
-        string code, string item, string summary, string explanation,
+        string code, string item, string costMethod, string summary, string explanation,
         decimal? expectedQty, decimal? actualQty, decimal? expectedValue, decimal? actualValue) =>
         new(code, CostingFindingSeverity.Critical, true, item, null, null, null, null,
             null, null, null, null, summary, explanation, expectedQty, actualQty, expectedValue, actualValue,
-            "Do not edit the cost state from this screen. Preview a repair only after quantity lineage is clean.");
+            "Rebuild the derived item cost state from sealed valuation evidence. Do not type a replacement cost.",
+            costMethod, CostingRepairTargetKind.CostState, CostingRepairActions.RebuildCostState);
 
     private static CostingFinding HideMoney(CostingFinding finding) => finding with
     {

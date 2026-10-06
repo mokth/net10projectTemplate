@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.JSInterop;
@@ -403,7 +404,8 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         if (Id <= 0)
             return;
         _navigating = true;
-        Navigation.NavigateTo($"/planning/finished-good-receipts/{Id}/edit");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(
+            Navigation.Uri, $"/planning/finished-good-receipts/{Id}/edit"));
     }
 
     protected async Task PostAsync()
@@ -504,7 +506,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         await SearchSourcesAsync();
     }
 
-    protected void BackToList() => Navigation.NavigateTo("/planning/finished-good-receipts");
+    protected void BackToList() => DocumentReturnNavigation.NavigateBack(Navigation, "/planning/finished-good-receipts");
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 

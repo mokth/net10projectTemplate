@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Inventory.Transactions;
@@ -407,6 +408,7 @@ public partial class IvGoodsReceipt : PageBase
                 Uom = row.PurchaseUom ?? string.Empty,
                 StdUom = row.StdUom,
                 PackSz = row.PackSz,
+                UnitPrice = row.UnitPrice,
                 ToWarehouse = warehouse,
                 ToLocation = location,
                 ToLotNo = lotNo,
@@ -707,13 +709,13 @@ public partial class IvGoodsReceipt : PageBase
             return Task.CompletedTask;
         }
 
-        Navigation.NavigateTo("/inventory/goods-receipts");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/goods-receipts");
         return Task.CompletedTask;
     }
 
     protected Task OnCloseAsync()
     {
-        Navigation.NavigateTo("/inventory/goods-receipts");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/goods-receipts");
         return Task.CompletedTask;
     }
 
@@ -724,7 +726,7 @@ public partial class IvGoodsReceipt : PageBase
             return;
         }
 
-        Navigation.NavigateTo($"/inventory/goods-receipts/edit/{BatchNo.Value}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/inventory/goods-receipts/edit/{BatchNo.Value}"));
     }
 
     protected void OnKeepEditing() => ConfirmDiscardVisible = false;
@@ -733,7 +735,7 @@ public partial class IvGoodsReceipt : PageBase
     {
         ConfirmDiscardVisible = false;
         _isDirty = false;
-        Navigation.NavigateTo("/inventory/goods-receipts");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/goods-receipts");
     }
 
     protected void DismissStatus() => StatusMessage = null;
@@ -998,6 +1000,7 @@ public sealed class IvGoodsReceiptPoPickerRow
     public string? PurchaseUom { get; init; }
     public string? StdUom { get; init; }
     public decimal PackSz { get; init; }
+    public decimal UnitPrice { get; init; }
     public string? ToWarehouse { get; init; }
     public string? DefWarehouse { get; init; }
     public string? DefLocation { get; init; }
@@ -1020,6 +1023,7 @@ public sealed class IvGoodsReceiptPoPickerRow
             PurchaseUom = row.PurchaseUom,
             StdUom = row.StdUom,
             PackSz = row.PackSz,
+            UnitPrice = row.UnitPrice,
             ToWarehouse = row.ToWarehouse,
             DefWarehouse = row.DefWarehouse,
             DefLocation = row.DefLocation,

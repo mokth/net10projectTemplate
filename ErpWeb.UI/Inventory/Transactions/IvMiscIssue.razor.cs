@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -468,13 +469,13 @@ public partial class IvMiscIssue : PageBase
             return Task.CompletedTask;
         }
 
-        Navigation.NavigateTo("/inventory/misc-issue");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-issue");
         return Task.CompletedTask;
     }
 
     protected Task OnCloseAsync()
     {
-        Navigation.NavigateTo("/inventory/misc-issue");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-issue");
         return Task.CompletedTask;
     }
 
@@ -485,7 +486,7 @@ public partial class IvMiscIssue : PageBase
             return;
         }
 
-        Navigation.NavigateTo($"/inventory/misc-issue/edit/{BatchNo.Value}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/inventory/misc-issue/edit/{BatchNo.Value}"));
     }
 
     protected void OnKeepEditing() => ConfirmDiscardVisible = false;
@@ -494,7 +495,7 @@ public partial class IvMiscIssue : PageBase
     {
         ConfirmDiscardVisible = false;
         _isDirty = false;
-        Navigation.NavigateTo("/inventory/misc-issue");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-issue");
     }
 
     protected void DismissStatus() => StatusMessage = null;

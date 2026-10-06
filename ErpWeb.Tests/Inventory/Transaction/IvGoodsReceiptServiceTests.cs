@@ -3,11 +3,13 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
@@ -192,6 +194,31 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         Assert.Equal(10m, detail.BalanceQty);
         Assert.Equal(PoOrderStatuses.New, (await db.PoOrders.SingleAsync(x => x.PoNo == po.PoNo)).Status);
         Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync(x => x.BatchNo == save.BatchNo)).BatchStatus);
+    }
+
+    [Fact]
+    public async Task Ledger_post_rollback_repost_updates_status_and_RecvQty()
+    {
+        await EnsureActiveStockLedgerAsync();
+        var po = await CreatePoAsync(qty: 10m, unitPrice: 3.50m);
+        var sut = CreateGrSut(withLedger: true);
+        var save = await sut.SaveNewAsync(GrRequest(po, recvQty: 4m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        Assert.True((await sut.PostAsync([save.BatchNo])).Succeeded, "initial post");
+        Assert.True((await sut.RollbackAsync([save.BatchNo])).Succeeded, "rollback");
+
+        var repost = await sut.PostAsync([save.BatchNo]);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        Assert.Equal(1, repost.SucceededCount);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == save.BatchNo);
+        Assert.Equal(IvBatchStatuses.Posted, batch.BatchStatus);
+        var detail = await db.PoOrderDetails.SingleAsync(x => x.PoNo == po.PoNo);
+        Assert.Equal(4m, detail.RecvQty);
+        Assert.Equal(6m, detail.BalanceQty);
+        Assert.True(await db.IvTrxBatchDetails.AnyAsync(x => x.BatchId == batch.Id && x.DocumentRevision > 0));
     }
 
     [Fact]
@@ -700,6 +727,17 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         Assert.Equal("BIN1", row.DefLocation);
     }
 
+    [Fact]
+    public async Task SearchPoLines_includes_po_unit_price()
+    {
+        var po = await CreatePoAsync(qty: 2m, unitPrice: 3.50m);
+        var sut = CreateGrSut();
+        var rows = await sut.SearchPoLinesAsync(IvTrxTypes.GoodsReceive, po.PoNo);
+        Assert.True(rows.Succeeded, rows.ErrorMessage);
+        var row = Assert.Single(rows.PoLines);
+        Assert.Equal(3.50m, row.UnitPrice);
+    }
+
     private async Task EnsureLotItemAsync(string iCode)
     {
         await using var db = await _factory.CreateDbContextAsync();
@@ -747,7 +785,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     private async Task<(string PoNo, short PoRelNo, short PoLineNo)> CreatePoAsync(
         decimal qty,
         string? warehouse = "MAIN",
-        string iCode = "A100")
+        string iCode = "A100",
+        decimal unitPrice = 0m)
     {
         var poSut = CreatePoSut();
         var save = await poSut.SaveNewAsync(new PoOrderSaveRequest
@@ -763,6 +802,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     ICode = iCode,
                     PoPurQty = qty,
                     PoQty = qty,
+                    PoUnitPrice = unitPrice,
                     PurchaseUom = "EA",
                     StdUom = "EA",
                     PackSz = 1m,
@@ -824,11 +864,25 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             NullLogger<PoOrderService>.Instance);
     }
 
-    private IvGoodsReceiptService CreateGrSut()
+    private IvGoodsReceiptService CreateGrSut(bool withLedger = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
         var access = GrAccess();
         var postingRepo = new IvStockPostingRepository();
+        IStockPostingCoordinator? coordinator = null;
+        IIvInventoryHistoryWriter? historyWriter = null;
+        if (withLedger)
+        {
+            historyWriter = new IvInventoryHistoryWriter();
+            coordinator = new StockPostingCoordinator(
+                _factory,
+                tenant,
+                new BranchStockTransactionLock(),
+                new StockPeriodGuard(),
+                new NoActiveStockFreezeGuard(),
+                new InventoryValuationService());
+        }
+
         var posting = new IvInventoryPostingService(
             _factory,
             tenant,
@@ -836,7 +890,9 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            historyWriter,
+            coordinator);
 
         return new IvGoodsReceiptService(
             _factory,
@@ -850,6 +906,48 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             postingRepo,
             posting,
             NullLogger<IvGoodsReceiptService>.Instance);
+    }
+
+    private async Task EnsureActiveStockLedgerAsync()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        if (!await db.StockLedgerEpochs.AnyAsync(x =>
+                x.CompanyCode == "DEMO"
+                && x.BranchCode == "HQ"
+                && x.Status == StockLedgerEpochStatuses.Active))
+        {
+            db.StockLedgerEpochs.Add(new StockLedgerEpoch
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                EffectiveFrom = new DateTime(2026, 1, 1),
+                Version = 2,
+                Status = StockLedgerEpochStatuses.Active,
+                MigrationBatchId = Guid.NewGuid(),
+                ReconciliationManifestHash = new string('A', 64)
+            });
+        }
+
+        if (!await db.StockCostPolicyRevisions.AnyAsync(x =>
+                x.CompanyCode == "DEMO"
+                && x.BranchCode == "HQ"
+                && x.Status == StockCostPolicyStatuses.Active))
+        {
+            db.StockCostPolicyRevisions.Add(new StockCostPolicyRevision
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                CostMethod = StockCostMethods.MovingAverage,
+                EffectiveFrom = new DateTime(2026, 1, 1),
+                Status = StockCostPolicyStatuses.Active,
+                ApprovedBy = "TEST",
+                ApprovedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = "TEST"
+            });
+        }
+
+        await db.SaveChangesAsync();
     }
 
     private static Mock<IAccessRightService> GrAccess()

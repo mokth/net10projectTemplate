@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Planning.WorkOrders;
@@ -551,8 +552,9 @@ public partial class PrMaterialIssueEntry : PageBase
         }
         finally { IsSubmitting = false; }
     }
-    protected void BackToList() => Navigation.NavigateTo("/planning/material-issues");
-    protected void OpenEdit() => Navigation.NavigateTo($"/planning/material-issues/edit/{BatchNo!.Value}");
+    protected void BackToList() => DocumentReturnNavigation.NavigateBack(Navigation, "/planning/material-issues");
+    protected void OpenEdit() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/planning/material-issues/edit/{BatchNo!.Value}"));
     protected bool CanOpenEditFromView => IsViewMode
         && Document is not null
         && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)

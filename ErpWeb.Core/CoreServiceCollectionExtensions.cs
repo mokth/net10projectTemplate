@@ -99,6 +99,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ICostingDiagnosticService, CostingDiagnosticService>();
         services.AddScoped<ICostingTraceService, CostingTraceService>();
         services.AddScoped<ICostingRepairOwnershipResolver, CostingRepairOwnershipResolver>();
+        services.AddScoped<CostingStateRepairPlanner>();
+        services.AddScoped<CostingStateRepairService>();
         services.AddScoped<ICostingRepairPlanner, CostingRepairPlanner>();
         services.AddScoped<ICostingRepairService, CostingRepairService>();
         services.AddScoped<ICostingRepairAdapter, InventoryCostingRepairAdapter>();

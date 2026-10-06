@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 
@@ -477,13 +478,13 @@ public partial class IvVendorReturn : PageBase
             return Task.CompletedTask;
         }
 
-        Navigation.NavigateTo("/inventory/vendor-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/vendor-return");
         return Task.CompletedTask;
     }
 
     protected Task OnCloseAsync()
     {
-        Navigation.NavigateTo("/inventory/vendor-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/vendor-return");
         return Task.CompletedTask;
     }
 
@@ -494,7 +495,7 @@ public partial class IvVendorReturn : PageBase
             return;
         }
 
-        Navigation.NavigateTo($"/inventory/vendor-return/edit/{BatchNo.Value}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/inventory/vendor-return/edit/{BatchNo.Value}"));
     }
 
     protected void OnKeepEditing() => ConfirmDiscardVisible = false;
@@ -503,7 +504,7 @@ public partial class IvVendorReturn : PageBase
     {
         ConfirmDiscardVisible = false;
         _isDirty = false;
-        Navigation.NavigateTo("/inventory/vendor-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/vendor-return");
     }
 
     protected void DismissStatus() => StatusMessage = null;

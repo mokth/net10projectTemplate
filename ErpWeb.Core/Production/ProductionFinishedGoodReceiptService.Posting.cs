@@ -87,6 +87,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo, CreatedDate = date, CreatedBy = User(scope),
                 Status = ProductionPostingLinkStatuses.Pending };
             db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct);
+            context.Posting.ProductionPostingLinkId = link.Uid;
             await stock.LockStockMastersAsync(db, scope.CompanyCode, pools.Values.Select(x => x.ItemCode).Distinct().Order(StringComparer.Ordinal), ct);
             if (reversal) await ReverseLegsAsync(context, r, pools, link, scope, ct);
             else await PostLegsAsync(context, r, pools, link, scope, ct);

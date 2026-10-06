@@ -307,6 +307,7 @@ public sealed partial class ProductionMaterialIssueService
             link.PostingOperationId = posted.OperationId?.ToString("N"); link.Status = ProductionPostingLinkStatuses.Succeeded;
             link.ResultCode = "OK"; link.ResultMessage = $"Posted IP batch {batchNo}."; link.CompletedDate = now;
             await db.SaveChangesAsync(ct);
+            ledgerContext.Posting.ProductionPostingLinkId = link.Uid;
             await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, ct);
             ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(ct);

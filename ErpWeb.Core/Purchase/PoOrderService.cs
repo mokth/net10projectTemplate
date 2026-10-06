@@ -1469,9 +1469,17 @@ public sealed class PoOrderService : IPoOrderService
 				}
 			}
 			bool sameICode = existing != null && string.Equals(existing.ICode?.Trim(), iCode, StringComparison.OrdinalIgnoreCase);
-			decimal num = ((!sameICode) ? (await ResolveUnitPriceAsync(db, companyCode, branchCode, iCode, request.VendCode, purchaseUom, resolved, cancellationToken)) : existing.PoUnitPrice);
-			decimal unitPrice = num;
+			// Trust the keyed PO unit price from the client. Only fall back to vendor/master
+			// resolution for a new line (or item change) when the request still has price 0 —
+			// that keeps API callers that omit price working, without wiping a typed price on save.
+			decimal unitPrice = src.PoUnitPrice != 0m || sameICode
+				? src.PoUnitPrice
+				: await ResolveUnitPriceAsync(db, companyCode, branchCode, iCode, request.VendCode, purchaseUom, resolved, cancellationToken);
 			unitPrice = PoOrderCalc.RoundPrice(unitPrice, _options.POPriceDecimal);
+			if (unitPrice < 0m)
+			{
+				errors[prefix + ".PoUnitPrice"] = "Unit price cannot be negative.";
+			}
 			decimal packSz = ((src.PackSz != 0m) ? src.PackSz : resolved.PackSz);
 			decimal stdQty = PoOrderCalc.ComputeStdQty(purchaseQty, packSz);
 			decimal amount = PoOrderCalc.ComputeAmount(purchaseQty, unitPrice);

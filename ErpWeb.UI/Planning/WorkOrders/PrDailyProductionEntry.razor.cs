@@ -4,6 +4,7 @@ using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Planning.WorkOrders;
@@ -550,8 +551,9 @@ public partial class PrDailyProductionEntry : PageBase
         await SearchEligibleAsync();
     }
 
-    protected void BackToList() => Navigation.NavigateTo("/planning/daily-production");
-    protected void OpenEdit() => Navigation.NavigateTo($"/planning/daily-production/edit/{CurrentOutputId}");
+    protected void BackToList() => DocumentReturnNavigation.NavigateBack(Navigation, "/planning/daily-production");
+    protected void OpenEdit() => Navigation.NavigateTo(
+        DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/planning/daily-production/edit/{CurrentOutputId}"));
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 

@@ -215,22 +215,31 @@ public class PoOrderServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Update_same_ICode_keeps_DB_UnitPrice_when_client_injects_999999()
+    public async Task Save_and_update_persist_the_keyed_unit_price()
     {
         var sut = CreateSut();
-        var save = await sut.SaveNewAsync(Request(Line("A100", qty: 2m, price: 999999m)));
+        var save = await sut.SaveNewAsync(Request(Line("A100", qty: 2m, price: 3.50m)));
         Assert.True(save.Succeeded, save.ErrorMessage);
         var line = save.Document!.Lines[0];
-        Assert.Equal(25m, line.PoUnitPrice);
+        Assert.Equal(3.50m, line.PoUnitPrice);
 
         var updated = await sut.UpdateAsync(
             save.PoNo!,
             Request(
-                Line("A100", qty: 5m, price: 999999m, line: line.Line),
+                Line("A100", qty: 5m, price: 4.25m, line: line.Line),
                 rowVersion: save.Document.RowVersion));
         Assert.True(updated.Succeeded, updated.ErrorMessage);
-        Assert.Equal(25m, updated.Document!.Lines[0].PoUnitPrice);
+        Assert.Equal(4.25m, updated.Document!.Lines[0].PoUnitPrice);
         Assert.Equal(5m, updated.Document.Lines[0].PoPurQty);
+    }
+
+    [Fact]
+    public async Task SaveNew_fills_master_price_when_request_price_is_zero()
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(Line("A100", qty: 2m, price: 0m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.Equal(25m, save.Document!.Lines[0].PoUnitPrice);
     }
 
     [Fact]

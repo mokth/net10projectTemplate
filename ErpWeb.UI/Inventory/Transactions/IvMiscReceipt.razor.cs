@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Inventory.Transactions;
@@ -539,13 +540,13 @@ public partial class IvMiscReceipt : PageBase
             return Task.CompletedTask;
         }
 
-        Navigation.NavigateTo("/inventory/misc-receipt");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-receipt");
         return Task.CompletedTask;
     }
 
     protected Task OnCloseAsync()
     {
-        Navigation.NavigateTo("/inventory/misc-receipt");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-receipt");
         return Task.CompletedTask;
     }
 
@@ -556,7 +557,7 @@ public partial class IvMiscReceipt : PageBase
             return;
         }
 
-        Navigation.NavigateTo($"/inventory/misc-receipt/edit/{BatchNo.Value}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/inventory/misc-receipt/edit/{BatchNo.Value}"));
     }
 
     protected void OnKeepEditing() => ConfirmDiscardVisible = false;
@@ -565,7 +566,7 @@ public partial class IvMiscReceipt : PageBase
     {
         ConfirmDiscardVisible = false;
         _isDirty = false;
-        Navigation.NavigateTo("/inventory/misc-receipt");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/misc-receipt");
     }
 
     protected void DismissStatus() => StatusMessage = null;

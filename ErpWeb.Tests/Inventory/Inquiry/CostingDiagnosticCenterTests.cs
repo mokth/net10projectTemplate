@@ -85,13 +85,13 @@ public sealed class CostingRepairOwnershipRulesTests
         string? salesCreditNoteNo = null,
         string? purchaseCreditNoteNo = null,
         bool productionLink = false) =>
-        new("DEMO", "HQ", 1, physical, "10", doNo, invNo, forceClosed,
+        new("DEMO", "HQ", 1, physical, "10", "10", doNo, invNo, forceClosed,
             salesCreditNoteNo is not null, salesCreditNoteNo,
             purchaseCreditNoteNo is not null, purchaseCreditNoteNo, productionLink);
 }
 
 [Trait(TestCategories.Name, TestCategories.Inventory)]
-public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
+public sealed partial class CostingDiagnosticCenterTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection = new("DataSource=:memory:");
     private IDbContextFactory<AppDbContext> _factory = null!;
@@ -320,6 +320,14 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
                 DocDate = new DateTime(2026, 10, 2), Status = "POSTED", Type = "PCN",
                 VendorCode = "VEND-1", ReturnStock = true, VrBatchNo = 26, RowVersion = [1]
             });
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            db.ProductionPostingLinks.Add(new ErpWeb.Model.Entities.Production.ProductionPostingLink
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CommandType = "MATERIAL_ISSUE_POST",
+                PostingRequestId = "req-30", WorkOrderId = 1, ProductionDocumentType = "MATERIAL_ISSUE",
+                ProductionDocumentNo = "MI-30", InventoryBatchNo = 30, Status = "Succeeded",
+                CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+            });
             await db.SaveChangesAsync();
         }
 
@@ -364,7 +372,19 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
     [Fact]
     public async Task Production_preview_adapter_does_not_offer_execution()
     {
-        var postingId = await AddPostingAsync("IP", "41", isSealed: true, productionLink: true);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            db.ProductionPostingLinks.Add(new ErpWeb.Model.Entities.Production.ProductionPostingLink
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CommandType = "MATERIAL_ISSUE_POST",
+                PostingRequestId = "req-41", WorkOrderId = 1, ProductionDocumentType = "MATERIAL_ISSUE",
+                ProductionDocumentNo = "41", InventoryBatchNo = 41, Status = "Succeeded",
+                CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+            });
+            await db.SaveChangesAsync();
+        }
+        var postingId = await AddPostingAsync("IP", "90041", isSealed: true, sourceDocumentNo: "41", sequence: 41);
         var planner = new CostingRepairPlanner(
             _factory, new Tenant(), new Access(viewCost: true),
             new CostingRepairOwnershipResolver(_factory, new Tenant()),
@@ -375,25 +395,27 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
     }
 
     private static Task<CostingRepairOwnershipResult> Resolve(ICostingRepairOwnershipResolver resolver, long postingId) =>
-        resolver.ResolveAsync(new CostingRepairNode(postingId, "ignored", "ignored"));
+        resolver.ResolveAsync(new CostingRepairNode(postingId, "ignored", "ignored", "ignored"));
 
     private async Task<long> AddPostingAsync(
-        string type, string id, bool isSealed, long? epochId = null, DateTime? effective = null, bool productionLink = false)
+        string type, string id, bool isSealed, long? epochId = null, DateTime? effective = null, bool productionLink = false,
+        string? sourceDocumentNo = null, string? postingRole = null, long? reversesPostingId = null, long? sequence = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         var when = effective ?? new DateTime(2026, 10, 2);
         var posting = new StockPosting
         {
             CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epochId ?? _epochId,
-            PostingSequence = long.Parse(id), RequestId = Guid.NewGuid(),
+            PostingSequence = sequence ?? long.Parse(id), RequestId = Guid.NewGuid(),
             CommandType = type, RequestFingerprint = new string('C', 64),
-            SourceModule = "INVENTORY", SourceDocumentType = type, SourceDocumentId = id, SourceDocumentNo = id,
-            DocumentRevision = 1, PostingRole = "PRIMARY",
+            SourceModule = "INVENTORY", SourceDocumentType = type, SourceDocumentId = id, SourceDocumentNo = sourceDocumentNo ?? id,
+            DocumentRevision = 1, PostingRole = postingRole ?? "PRIMARY",
             SourceSnapshotJson = "{}", SourceSnapshotHash = new string('D', 64),
             EffectiveAt = when, BusinessDate = when.Date, PeriodKey = "2026-10",
             PostedAtUtc = DateTime.UtcNow, PostedBy = "tester",
             SealedAtUtc = isSealed ? DateTime.UtcNow : null,
-            ProductionPostingLinkId = productionLink ? 9001 : null
+            ProductionPostingLinkId = productionLink ? 9001 : null,
+            ReversesPostingId = reversesPostingId
         };
         db.StockPostings.Add(posting);
         await db.SaveChangesAsync();
@@ -404,7 +426,8 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
         long postingId, int direction, decimal qty, decimal value,
         string? company = null, long? reverses = null, long? epochId = null,
         string? documentType = null, string? documentNo = null, string? line = null,
-        string? warehouse = null, DateTime? effective = null, int split = 0)
+        string? warehouse = null, DateTime? effective = null, int split = 0, string? costMethod = null,
+        int postingLineNo = 1, string item = "ITEM-1")
     {
         await using var db = await _factory.CreateDbContextAsync();
         var posting = await db.StockPostings.SingleAsync(x => x.Id == postingId);
@@ -412,14 +435,14 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
         var fact = new StockValuationFact
         {
             CompanyCode = company ?? "DEMO", BranchCode = "HQ", LedgerEpochId = epochId ?? posting.LedgerEpochId,
-            StockPostingId = postingId, PostingLineNo = 1, SplitOrdinal = split,
+            StockPostingId = postingId, PostingLineNo = postingLineNo, SplitOrdinal = split,
             SourceLineId = line ?? "1", SourceDocumentType = documentType ?? posting.SourceDocumentType,
             SourceDocumentId = documentNo ?? posting.SourceDocumentId,
             SourceDocumentNo = documentNo ?? posting.SourceDocumentNo, SourceDocumentLine = line,
             EffectiveAt = when, BusinessDate = when.Date, PeriodKey = "2026-10",
-            ItemCode = "ITEM-1", WarehouseCode = warehouse, BaseUom = "EA",
+            ItemCode = item, WarehouseCode = warehouse, BaseUom = "EA",
             MovementCode = posting.SourceDocumentType, Direction = direction, BaseQty = qty,
-            CostMethod = StockCostMethods.MovingAverage, UnitCost = qty == 0m ? 0m : value / qty,
+            CostMethod = costMethod ?? StockCostMethods.MovingAverage, UnitCost = qty == 0m ? 0m : value / qty,
             CostAmount = value, BaseCostAmount = value,
             ValuationSource = StockValuationSources.MovingAverage, ValuationStatus = StockValuationStatuses.Valued,
             ReversesValuationFactId = reverses, CreatedAtUtc = DateTime.UtcNow, CreatedBy = "tester"
@@ -429,13 +452,13 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
         return fact.Id;
     }
 
-    private async Task AddStateAsync(decimal qty, decimal value, decimal average, string item = "ITEM-1")
+    private async Task AddStateAsync(decimal qty, decimal value, decimal average, string item = "ITEM-1", string? costMethod = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         db.StockCostStates.Add(new StockCostState
         {
             CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = item,
-            CostMethod = StockCostMethods.MovingAverage,
+            CostMethod = costMethod ?? StockCostMethods.MovingAverage,
             OnHandBaseQty = qty, InventoryValue = value, AverageUnitCost = average, CurrentUnitCost = average,
             RowVersion = [1]
         });
@@ -482,7 +505,7 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
             Task.FromResult(new CostingRepairStepResult(false, false, "not used", null));
     }
 
-    private sealed class Access(bool viewCost, bool viewPrice = false) : IAccessRightService
+    private sealed class Access(bool viewCost, bool viewPrice = false, bool repairCost = true, bool rollback = true) : IAccessRightService
     {
         public Task<bool> CanAccessAsync(string menuCode, CancellationToken cancellationToken = default) =>
             Task.FromResult(true);
@@ -493,6 +516,10 @@ public sealed class CostingDiagnosticCenterTests : IAsyncLifetime
                 return Task.FromResult(viewCost);
             if (permissionCode == PermissionCodes.ViewPrice)
                 return Task.FromResult(viewPrice);
+            if (permissionCode == PermissionCodes.RepairCost)
+                return Task.FromResult(repairCost);
+            if (permissionCode == PermissionCodes.Rollback)
+                return Task.FromResult(rollback);
             return Task.FromResult(true);
         }
 

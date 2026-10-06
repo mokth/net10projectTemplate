@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,7 +38,9 @@ public sealed class CostingRepairOwnershipResolver : ICostingRepairOwnershipReso
             return new CostingRepairOwnershipResult(false, "The stock posting was not found in this branch.", null);
 
         var physical = posting.SourceDocumentType.Trim();
-        var batchNo = int.TryParse(posting.SourceDocumentId, out var parsed) ? parsed : (int?)null;
+        var batchNo = int.TryParse(posting.SourceDocumentNo, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsedNo)
+            ? parsedNo
+            : (int?)null;
         var batch = batchNo is null
             ? null
             : await db.IvTrxBatches.AsNoTracking().FirstOrDefaultAsync(x =>
@@ -63,6 +66,7 @@ public sealed class CostingRepairOwnershipResolver : ICostingRepairOwnershipReso
 
         var salesCn = await FindSalesCreditNoteAsync(db, scope.CompanyCode, scope.BranchCode!, physical, batch, cancellationToken);
         var purchaseCn = await FindPurchaseCreditNoteAsync(db, scope.CompanyCode, scope.BranchCode!, physical, batchNo, cancellationToken);
+        var link = await ResolveProductionLinkAsync(db, posting, scope.CompanyCode, scope.BranchCode!, cancellationToken);
 
         return CostingRepairOwnershipRules.Resolve(new CostingRepairEvidence(
             scope.CompanyCode,
@@ -70,6 +74,7 @@ public sealed class CostingRepairOwnershipResolver : ICostingRepairOwnershipReso
             posting.Id,
             physical,
             posting.SourceDocumentId,
+            posting.SourceDocumentNo,
             doNo,
             invNo,
             batch?.ForceCloseDate is not null,
@@ -77,7 +82,89 @@ public sealed class CostingRepairOwnershipResolver : ICostingRepairOwnershipReso
             salesCn,
             purchaseCn is not null,
             purchaseCn,
-            posting.ProductionPostingLinkId is not null));
+            link is not null,
+            link?.ProductionDocumentType,
+            link?.ProductionDocumentNo));
+    }
+
+    internal static async Task<ProductionPostingLink?> ResolveProductionLinkAsync(
+        AppDbContext db,
+        StockPosting posting,
+        string company,
+        string branch,
+        CancellationToken cancellationToken)
+    {
+        if (posting.ProductionPostingLinkId is long linkId)
+        {
+            var linked = await db.ProductionPostingLinks.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Uid == linkId
+                    && x.CompanyCode == company
+                    && x.BranchCode == branch, cancellationToken);
+            if (linked is not null)
+                return linked;
+        }
+
+        return await ResolveLegacyProductionLinkAsync(db, posting, company, branch, cancellationToken);
+    }
+
+    private static async Task<ProductionPostingLink?> ResolveLegacyProductionLinkAsync(
+        AppDbContext db,
+        StockPosting posting,
+        string company,
+        string branch,
+        CancellationToken cancellationToken)
+    {
+        var physical = posting.SourceDocumentType.Trim();
+        if (string.Equals(physical, ProductionDocumentTypes.FinishedGoodReceipt, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!int.TryParse(posting.SourceDocumentId, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var batchId))
+                return null;
+            var receiptBatchNo = await db.ProductionFinishedGoodReceiptRows.AsNoTracking()
+                .Where(x => x.BatchId == batchId && x.CompanyCode == company && x.BranchCode == branch)
+                .Select(x => (int?)x.Batch.BatchNo)
+                .FirstOrDefaultAsync(cancellationToken);
+            var documentNo = posting.SourceDocumentNo.Trim();
+            return await db.ProductionPostingLinks.AsNoTracking()
+                .Where(x => x.CompanyCode == company
+                    && x.BranchCode == branch
+                    && x.ProductionDocumentType == ProductionDocumentTypes.FinishedGoodReceipt
+                    && (x.ProductionDocumentNo == documentNo
+                        || (receiptBatchNo != null && x.InventoryBatchNo == receiptBatchNo)))
+                .OrderByDescending(x => x.Uid)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (string.Equals(physical, ProductionDocumentTypes.ProductionOutput, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!long.TryParse(posting.SourceDocumentId, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var outputId))
+                return null;
+            var requestId = await db.ProductionOutputs.AsNoTracking()
+                .Where(x => x.Uid == outputId && x.CompanyCode == company && x.BranchCode == branch)
+                .Select(x => x.PostingRequestId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(requestId))
+                return null;
+            return await db.ProductionPostingLinks.AsNoTracking()
+                .Where(x => x.CompanyCode == company
+                    && x.BranchCode == branch
+                    && x.PostingRequestId == requestId)
+                .OrderByDescending(x => x.Uid)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (string.Equals(physical, IvTrxTypes.IssueToProduction, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!int.TryParse(posting.SourceDocumentNo, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var inventoryBatchNo))
+                return null;
+            return await db.ProductionPostingLinks.AsNoTracking()
+                .Where(x => x.CompanyCode == company
+                    && x.BranchCode == branch
+                    && x.InventoryBatchNo == inventoryBatchNo)
+                .OrderByDescending(x => x.Uid)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        return null;
     }
 
     private static async Task<string?> FindSalesCreditNoteAsync(

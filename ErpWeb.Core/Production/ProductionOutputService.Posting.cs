@@ -66,7 +66,7 @@ public sealed partial class ProductionOutputService
                 return Fail(sequence.BlockingReason!);
 
             var command = BuildOutputPostingCommand(
-                output, reversal: false, output.ProductionDate, null, null);
+                output, reversal: false, output.ProductionDate, null, null, link.Uid);
             var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
             if (ledger.Error is not null) return Fail(ledger.Error.Message);
             if (ledger.WasReplay)
@@ -543,12 +543,13 @@ public sealed partial class ProductionOutputService
         }
     }
 
-    private static StockPostingCommand BuildOutputPostingCommand(
+    internal static StockPostingCommand BuildOutputPostingCommand(
         ProductionOutput output,
         bool reversal,
         DateTime effectiveAt,
         string? reversalRequestId,
-        long? reversesPostingId)
+        long? reversesPostingId,
+        long? productionPostingLinkId = null)
     {
         var requestId = Guid.ParseExact(
             reversal ? reversalRequestId! : output.PostingRequestId, "N");
@@ -574,6 +575,7 @@ public sealed partial class ProductionOutputService
             EffectiveAt = effectiveAt,
             Evidence = evidence,
             ReversesPostingId = reversesPostingId,
+            ProductionPostingLinkId = productionPostingLinkId,
         };
     }
 

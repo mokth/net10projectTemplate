@@ -258,6 +258,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 PurchaseUom = x.d.PurchaseUom,
                 StdUom = x.d.StdUom,
                 PackSz = x.d.PackSz,
+                UnitPrice = x.d.PoUnitPrice,
                 ToWarehouse = x.d.ToWarehouse,
                 IsIndirect = indirect
             })
@@ -310,6 +311,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     PurchaseUom = x.PurchaseUom,
                     StdUom = x.StdUom,
                     PackSz = x.PackSz,
+                    UnitPrice = x.UnitPrice,
                     ToWarehouse = x.ToWarehouse,
                     DefWarehouse = x.DefWarehouse,
                     DefLocation = x.DefLocation,
@@ -346,6 +348,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     PurchaseUom = x.PurchaseUom,
                     StdUom = x.StdUom,
                     PackSz = x.PackSz,
+                    UnitPrice = x.UnitPrice,
                     ToWarehouse = x.ToWarehouse,
                     DefWarehouse = master?.DefWarehouse,
                     DefLocation = master?.DefLocation,

@@ -47,4 +47,15 @@ public class DocumentReturnNavigationTests
         Assert.False(DocumentReturnNavigation.HasSafeInquiryReturn(
             "https://host/purchase/orders/view/PO1"));
     }
+
+    [Fact]
+    public void WithReturnUrl_AllowsCostingCenter()
+    {
+        var url = DocumentReturnNavigation.WithReturnUrl(
+            "/inventory/goods-receipts/view/80021",
+            "/inventory/costing-center");
+        Assert.Contains("returnUrl=", url, StringComparison.Ordinal);
+        Assert.True(DocumentReturnNavigation.TryGetSafeInquiryReturn("https://x" + url, out var ret));
+        Assert.Equal("/inventory/costing-center", ret);
+    }
 }

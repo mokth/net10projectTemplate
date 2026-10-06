@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.StockLedger;
@@ -59,6 +60,7 @@ public sealed class CostingTraceService : ICostingTraceService
             .ThenBy(x => x.PostingLineNo)
             .ThenBy(x => x.SplitOrdinal)
             .Select(x => new FactRow(
+                x.StockPostingId,
                 x.StockPosting!.PostingSequence,
                 x.PostingLineNo,
                 x.SplitOrdinal,
@@ -102,6 +104,7 @@ public sealed class CostingTraceService : ICostingTraceService
                 continue;
 
             lines.Add(new CostingTraceLine(
+                fact.StockPostingId,
                 fact.PostingSequence,
                 fact.PostingLineNo,
                 fact.SplitOrdinal,
@@ -136,6 +139,95 @@ public sealed class CostingTraceService : ICostingTraceService
         };
     }
 
+    public async Task<CostingBackdateImpactPage> GetBackdateImpactAsync(
+        string itemCode,
+        DateTime asOf,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await _access.CanAsync(MenuCodes.InventoryCostingCenter, PermissionCodes.Access, cancellationToken))
+            return new CostingBackdateImpactPage { Denied = true, Error = "Not authorized." };
+        var scope = _tenant.TryBranchScope();
+        if (scope?.BranchCode is null)
+            return new CostingBackdateImpactPage { Error = "A trusted company and branch are required." };
+        if (string.IsNullOrWhiteSpace(itemCode))
+            return new CostingBackdateImpactPage { Error = "Item is required." };
+
+        var item = itemCode.Trim();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var coverage = await DescribeEpochAsync(db, scope.CompanyCode, scope.BranchCode, cancellationToken);
+        if (coverage != CostingEpochCoverage.V2)
+        {
+            return new CostingBackdateImpactPage
+            {
+                ItemCode = item,
+                AsOf = asOf,
+                Error = coverage == CostingEpochCoverage.NoActiveEpoch
+                    ? "No active ledger epoch."
+                    : "Epoch coverage is unresolved; backdate impact stays blocked."
+            };
+        }
+
+        var rows = await (
+            from f in db.StockValuationFacts.AsNoTracking()
+            join p in db.StockPostings.AsNoTracking() on f.StockPostingId equals p.Id
+            where f.CompanyCode == scope.CompanyCode
+                  && f.BranchCode == scope.BranchCode
+                  && f.ItemCode == item
+                  && f.EffectiveAt > asOf
+                  && p.SealedAtUtc != null
+                  && p.PostingRole == "PRIMARY"
+            group new { f, p } by new { p.Id, p.EffectiveAt, p.SourceDocumentType, p.SourceDocumentNo, p.PostingRole } into g
+            select new
+            {
+                g.Key.Id,
+                g.Key.EffectiveAt,
+                g.Key.SourceDocumentType,
+                g.Key.SourceDocumentNo,
+                g.Key.PostingRole
+            })
+            .OrderByDescending(x => x.EffectiveAt)
+            .ThenByDescending(x => x.Id)
+            .Take(50)
+            .ToListAsync(cancellationToken);
+
+        var postingIds = rows.Select(x => x.Id).ToArray();
+        var reversed = postingIds.Length == 0
+            ? new HashSet<long>()
+            : (await db.StockPostings.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.ReversesPostingId != null
+                    && postingIds.Contains(x.ReversesPostingId.Value)
+                    && x.SealedAtUtc != null)
+                .Select(x => x.ReversesPostingId!.Value)
+                .ToListAsync(cancellationToken))
+                .ToHashSet();
+
+        var blockers = rows.Select(x => new CostingBackdateBlocker(
+            x.Id,
+            x.EffectiveAt,
+            x.SourceDocumentType,
+            x.SourceDocumentNo,
+            InventoryValuationService.FormatBlockingDocumentLabel(
+                x.SourceDocumentType, x.SourceDocumentNo, null),
+            x.PostingRole,
+            reversed.Contains(x.Id))).ToArray();
+
+        var actionable = blockers.Count(x => !x.AlreadyReversed);
+        var asOfText = asOf.ToString("yyyy-MM-dd HH:mm");
+        var guidance = actionable == 0
+            ? $"No open later PRIMARY cost postings for {item} after {asOfText}. You can post a document dated on/before this time for this item."
+            : $"To post {item} on/before {asOfText}, roll back these {actionable} later document(s) newest-first (Preview rollback on each), then post, then re-post them in date order.";
+
+        return new CostingBackdateImpactPage
+        {
+            ItemCode = item,
+            AsOf = asOf,
+            Guidance = guidance,
+            Blockers = blockers
+        };
+    }
+
     private static async Task<string> DescribeEpochAsync(
         AppDbContext db, string company, string branch, CancellationToken cancellationToken)
     {
@@ -164,6 +256,7 @@ public sealed class CostingTraceService : ICostingTraceService
     }
 
     private sealed record FactRow(
+        long StockPostingId,
         long PostingSequence,
         int PostingLineNo,
         int SplitOrdinal,

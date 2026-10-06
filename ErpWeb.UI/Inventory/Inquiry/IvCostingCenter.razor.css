@@ -11,6 +11,10 @@
     align-items: end;
 }
 
+.iv-costing-row--filters {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+
 .iv-costing-row--actions {
     display: flex;
     flex-wrap: wrap;

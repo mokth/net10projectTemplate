@@ -145,6 +145,7 @@ public sealed class IvGoodsReceiptPoLineLookupRow
     public string? PurchaseUom { get; init; }
     public string? StdUom { get; init; }
     public decimal PackSz { get; init; }
+    public decimal UnitPrice { get; init; }
     public string? ToWarehouse { get; init; }
     public string? DefWarehouse { get; init; }
     public string? DefLocation { get; init; }

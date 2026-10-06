@@ -1,5 +1,6 @@
 @page "/inventory/costing-center"
 @inherits PageBase
+@using ErpWeb.Core.Costing
 @using ErpWeb.Core.Menus
 
 <PageTitle>Costing Diagnostic &amp; Repair Center</PageTitle>
@@ -13,6 +14,12 @@
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
             </div>
         }
+        @if (!string.IsNullOrWhiteSpace(RepairOutcome))
+        {
+            <div class="iv-toast" role="status">
+                <span>@RepairOutcome</span>
+            </div>
+        }
 
         <header class="iv-hero">
             <div class="iv-hero__mark" aria-hidden="true">
@@ -22,8 +29,8 @@
                 <p class="iv-eyebrow">Inventory</p>
                 <h1 class="iv-title">Costing Diagnostic &amp; Repair Center</h1>
                 <p class="iv-subtitle">
-                    Explains sealed valuation facts for the current branch. This screen does not edit a cost.
-                    Moving average is the branch and item pool, not a warehouse average.
+                    Search by item or document. This screen explains sealed valuation evidence and can roll back a source document or rebuild a derived cost state. It does not accept a typed cost.
+                    To backdate a post: set Item + From (target date) → Later movements to roll back → Preview rollback newest-first → post your earlier document → re-post later docs in date order.
                 </p>
                 <div class="iv-chips">
                     <span class="iv-chip">@EpochCaption</span>
@@ -34,57 +41,61 @@
 
         <section class="iv-card">
             <div class="iv-costing-panel">
-                <div class="iv-costing-row">
+                <div class="iv-costing-row iv-costing-row--filters">
                     <div class="iv-costing-field">
                         <label class="iv-field-label">Item</label>
-                        <IvStockMasterPicker ICode="@ItemCode"
-                                             ICodeChanged="@OnItemCodeChangedAsync" />
+                        <IvStockMasterPicker ICode="@ItemCode" ICodeChanged="@OnItemCodeChangedAsync" />
                     </div>
                     <div class="iv-costing-field">
-                        <label class="iv-field-label">Warehouse (optional)</label>
-                        <IvCodeComboBox Data="@Warehouses"
-                                        @bind-Value="@WarehouseCode"
-                                        IsLoading="@WarehousesLoading"
-                                        NullText="All warehouses" />
+                        <label class="iv-field-label">Document No.</label>
+                        <DxTextBox @bind-Text="@DocumentNo" NullText="GRN, DO, invoice, CN" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Document Type</label>
+                        <DxComboBox Data="@DocumentTypes" TextFieldName="@nameof(DocumentTypeOption.Label)" ValueFieldName="@nameof(DocumentTypeOption.Value)" @bind-Value="@DocumentType" NullText="All" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Warehouse</label>
+                        <IvCodeComboBox Data="@Warehouses" @bind-Value="@WarehouseCode" IsLoading="@WarehousesLoading" NullText="All warehouses" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">From</label>
+                        <DxDateEdit @bind-Date="@DateFrom" NullText="dd/mm/yyyy" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">To</label>
+                        <DxDateEdit @bind-Date="@DateTo" NullText="dd/mm/yyyy" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Problem</label>
+                        <DxComboBox Data="@FindingCodes" @bind-Value="@FindingCode" NullText="All" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Severity</label>
+                        <DxComboBox Data="@Severities" @bind-Value="@SeverityText" NullText="All" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                     </div>
                 </div>
 
                 <div class="iv-costing-row iv-costing-row--actions">
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="@(HealthRunning ? "Checking…" : "Check health")"
-                              Enabled="@(!HealthRunning)"
-                              Click="@RunHealthAsync" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="@(TraceRunning ? "Tracing…" : "Item trace")"
-                              Enabled="@(!TraceRunning)"
-                              Click="@RunTraceAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(HealthRunning ? "Checking…" : "Check health")" Enabled="@(!HealthRunning)" Click="@RunHealthAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="@(TraceRunning ? "Tracing…" : "Item cost timeline")" Enabled="@(!TraceRunning)" Click="@RunTraceAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="@(BackdateRunning ? "Loading…" : "Later movements to roll back")" Enabled="@(!BackdateRunning)" Click="@RunBackdateImpactAsync" />
                 </div>
 
-                <p class="iv-subtitle iv-costing-hint">
-                    Warehouse only narrows the list of movements. It does not change the item average cost.
-                    Prefer <strong>Preview</strong> on a health finding — you do not need to type a posting id.
-                </p>
-
                 <div class="iv-costing-advanced">
-                    <button type="button"
-                            class="iv-costing-advanced__toggle"
-                            @onclick="ToggleAdvanced">
-                        @(ShowAdvanced ? "Hide advanced" : "Show advanced")
+                    <button type="button" class="iv-costing-advanced__toggle" @onclick="ToggleAdvanced">
+                        @(ShowAdvanced ? "Hide technical / support tools" : "Technical / Support Tools")
                     </button>
                     @if (ShowAdvanced)
                     {
                         <div class="iv-costing-row">
                             <div class="iv-costing-field">
                                 <label class="iv-field-label">Posting id (manual)</label>
-                                <DxTextBox @bind-Text="@PostingIdText"
-                                           NullText="Only if you already have a posting id"
-                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                <DxTextBox @bind-Text="@PostingIdText" NullText="Support use only" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </div>
                             <div class="iv-costing-field iv-costing-field--button">
                                 <span class="iv-field-label" aria-hidden="true">&nbsp;</span>
-                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                          Text="Preview repair"
-                                          Click="@RunPreviewAsync" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Preview repair" Click="@RunPreviewAsync" />
                             </div>
                         </div>
                     }
@@ -92,31 +103,78 @@
             </div>
         </section>
 
+        @if (BackdateRan)
+        {
+            <section class="iv-card">
+                <h2 class="iv-title">Backdate impact</h2>
+                <p class="iv-subtitle">@BackdateGuidance</p>
+                @if (BackdateBlockers.Count == 0)
+                {
+                    <p class="iv-subtitle">No later PRIMARY sealed cost postings after the From date for this item.</p>
+                }
+                else
+                {
+                    <p class="iv-subtitle">Roll back newest-first, then post your earlier document, then re-post these in date order.</p>
+                    <div class="iv-costing-table-wrap">
+                        <table class="iv-costing-grid">
+                            <thead>
+                                <tr>
+                                    <th>Order</th>
+                                    <th>Document</th>
+                                    <th>Effective</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{
+                                    var step = 1;
+                                }
+                                @foreach (var row in BackdateBlockers)
+                                {
+                                    <tr>
+                                        <td>@(row.AlreadyReversed ? "—" : step++)</td>
+                                        <td>@row.DocumentLabel</td>
+                                        <td>@row.EffectiveAt.ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td>@(row.AlreadyReversed ? "Already reversed" : "Needs rollback")</td>
+                                        <td class="iv-costing-findings__action">
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Open" Click="@(() => OpenPostingAsync(row.StockPostingId))" />
+                                            @if (!row.AlreadyReversed)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Preview rollback" Click="@(() => PreviewPostingAsync(row.StockPostingId))" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+
         @if (HealthRan)
         {
             <section class="iv-card">
                 <h2 class="iv-title">Health</h2>
                 @if (Findings.Count == 0)
                 {
-                    <p class="iv-subtitle">
-                        No findings for the current filter — costing looks healthy.
-                    </p>
+                    <p class="iv-subtitle">No findings for the current filter — costing looks healthy.</p>
                 }
                 else
                 {
-                    <p class="iv-subtitle">
-                        Use <strong>Preview</strong> on a row that has a posting id. That opens the repair preview for that movement.
-                    </p>
+                    <p class="iv-subtitle">@Findings.Count costing issue@(Findings.Count == 1 ? "" : "s") found.</p>
                     <div class="iv-costing-table-wrap">
                         <table class="iv-costing-grid iv-costing-findings">
                             <thead>
                                 <tr>
-                                    <th>Code</th>
                                     <th>Severity</th>
+                                    <th>Code</th>
                                     <th>Item</th>
                                     <th>Document</th>
-                                    <th>Posting id</th>
+                                    <th>Date</th>
                                     <th>Problem</th>
+                                    <th>Recommended action</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -124,33 +182,40 @@
                                 @foreach (var finding in Findings)
                                 {
                                     <tr>
-                                        <td>@finding.Code</td>
                                         <td>@finding.Severity</td>
+                                        <td>@finding.Code</td>
                                         <td>@(finding.ItemCode ?? "—")</td>
-                                        <td>
-                                            @if (!string.IsNullOrWhiteSpace(finding.SourceDocumentType)
-                                                || !string.IsNullOrWhiteSpace(finding.SourceDocumentNo))
-                                            {
-                                                <span>@finding.SourceDocumentType @finding.SourceDocumentNo</span>
-                                            }
-                                            else
-                                            {
-                                                <span>—</span>
-                                            }
-                                        </td>
-                                        <td>
-                                            @(finding.StockPostingId?.ToString() ?? "—")
-                                        </td>
+                                        <td>@(string.IsNullOrWhiteSpace(finding.SourceDocumentNo) ? "—" : $"{finding.SourceDocumentType} {finding.SourceDocumentNo}")</td>
+                                        <td>@(finding.EffectiveAt?.ToString("dd/MM/yyyy") ?? "—")</td>
                                         <td>
                                             <strong>@finding.Summary</strong>
                                             <div>@finding.Explanation</div>
-                                        </td>
-                                        <td class="iv-costing-findings__action">
-                                            @if (finding.StockPostingId is long postingId)
+                                            @if (MonetaryVisible && (finding.ExpectedValue is not null || finding.ActualValue is not null))
                                             {
-                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                                          Text="Preview"
-                                                          Click="@(() => RunPreviewForFindingAsync(postingId))" />
+                                                <div>Expected @finding.ExpectedValue?.ToString("N2") · Current @finding.ActualValue?.ToString("N2")</div>
+                                            }
+                                        </td>
+                                        <td>@finding.RecommendedAction</td>
+                                        <td class="iv-costing-findings__action">
+                                            @if (finding.RepairTargetKind == CostingRepairTargetKind.Posting && finding.StockPostingId is not null)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Preview rollback" Click="@(() => PreviewFindingAsync(finding))" />
+                                            }
+                                            else if (finding.RepairTargetKind == CostingRepairTargetKind.CostState)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Preview rebuild" Click="@(() => PreviewFindingAsync(finding))" />
+                                            }
+                                            else
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Explain" Click="@(() => PreviewFindingAsync(finding))" />
+                                            }
+                                            @if (finding.StockPostingId is long openId)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Open document" Click="@(() => OpenPostingAsync(openId))" />
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(finding.ItemCode))
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cost timeline" Click="@(() => { ItemCode = finding.ItemCode; return RunTraceAsync(); })" />
                                             }
                                         </td>
                                     </tr>
@@ -166,20 +231,63 @@
         {
             <section class="iv-card" id="costing-repair-preview">
                 <h2 class="iv-title">Repair preview</h2>
-                <p class="iv-subtitle">
-                    Posting id @PreviewPostingId.
-                    @Preview.BlockingReason
-                </p>
-                @if (Preview.Steps.Count > 0)
+                @if (Preview.CanRepair && PreviewKind == CostingRepairTargetKind.Posting)
                 {
-                    var step = Preview.Steps[0];
-                    <p>
-                        Physical source @step.PhysicalSourceDocumentType @step.PhysicalSourceDocumentId.
-                        Owner @step.OwnerType @step.OwnerDocumentNo.
-                        Adapter @step.AdapterName.
-                        @(Preview.CanRepair ? "Reversal can be prepared." : "Execution stays blocked.")
-                    </p>
+                    <p><strong>Problem.</strong> The source document produced a costing posting that cannot currently be trusted.</p>
+                    <p><strong>Source document.</strong> @PreviewDocumentLabel()</p>
+                    <p><strong>Repair strategy.</strong> Rollback source posting for correction.</p>
+                    <p>The next step rolls the owning document back so it can be corrected and posted again. No valuation fact is edited. The unchanged document is not reposted.</p>
                 }
+                else if (Preview.CanRepair && PreviewKind == CostingRepairTargetKind.CostState)
+                {
+                    <p><strong>Problem.</strong> The derived cost state does not match sealed valuation evidence.</p>
+                    <p><strong>Affected item.</strong> @PreviewItemCode · @PreviewCostMethod</p>
+                    @if (Preview.PoolImpacts.Count > 0)
+                    {
+                        var impact = Preview.PoolImpacts[0];
+                        <p>Expected quantity @impact.AfterQty.ToString("N6"), value @(MonetaryVisible ? impact.ExpectedValue.ToString("N6") : "hidden"). Current quantity @impact.BeforeQty.ToString("N6"), value @(MonetaryVisible ? impact.BeforeValue.ToString("N6") : "hidden").</p>
+                    }
+                    <p><strong>Repair strategy.</strong> Rebuild the derived item cost state. Sealed postings and valuation facts stay unchanged.</p>
+                }
+                else
+                {
+                    <p>@Preview.BlockingReason</p>
+                    <p>Automated repair stays blocked. Open the source document when a route is known.</p>
+                }
+
+                <div class="iv-costing-field">
+                    <label class="iv-field-label">Reason</label>
+                    <DxTextBox @bind-Text="@RepairReason" NullText="Why this repair is required" />
+                </div>
+                <div class="iv-costing-row iv-costing-row--actions">
+                    @if (Preview.CanRepair && PreviewKind == CostingRepairTargetKind.Posting)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Rollback for correction" Enabled="@(!RepairRunning)" Click="@AskRollback" />
+                    }
+                    else if (Preview.CanRepair && PreviewKind == CostingRepairTargetKind.CostState)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Rebuild cost state" Enabled="@(!RepairRunning)" Click="@AskRebuild" />
+                    }
+                    @if (PreviewPostingId is long previewPosting)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Open document" Click="@(() => OpenPostingAsync(previewPosting))" />
+                    }
+                </div>
+
+                <div class="iv-costing-advanced">
+                    <button type="button" class="iv-costing-advanced__toggle" @onclick="TogglePreviewTechnical">
+                        @(ShowPreviewTechnical ? "Hide technical details" : "Technical details")
+                    </button>
+                    @if (ShowPreviewTechnical)
+                    {
+                        <p>Posting id @(PreviewPostingId?.ToString() ?? "—"). Preview hash @Preview.PreviewHash. Strategy @Preview.Strategy.</p>
+                        @if (Preview.Steps.Count > 0)
+                        {
+                            var step = Preview.Steps[0];
+                            <p>Physical source @step.PhysicalSourceDocumentType @step.PhysicalSourceDocumentId / @step.PhysicalSourceDocumentNo. Owner @step.OwnerType @step.OwnerDocumentNo. Adapter @step.AdapterName.</p>
+                        }
+                    }
+                </div>
             </section>
         }
 
@@ -213,6 +321,7 @@
                                         <th class="iv-costing-grid__num">Value after</th>
                                         <th class="iv-costing-grid__num">Average after</th>
                                     }
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -228,7 +337,18 @@
                                             <td class="iv-costing-grid__num">@line.InventoryValueAfter?.ToString("N6")</td>
                                             <td class="iv-costing-grid__num">@line.AverageAfter?.ToString("N6")</td>
                                         }
+                                        <td class="iv-costing-findings__action">
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Open" Click="@(() => OpenPostingAsync(line.StockPostingId))" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Preview" Click="@(() => PreviewTraceAsync(line))" />
+                                            <button type="button" class="iv-costing-advanced__toggle" @onclick="() => TechnicalTracePostingId = TechnicalTracePostingId == line.StockPostingId ? null : line.StockPostingId">Technical</button>
+                                        </td>
                                     </tr>
+                                    @if (TechnicalTracePostingId == line.StockPostingId)
+                                    {
+                                        <tr>
+                                            <td colspan="@(MonetaryVisible ? 7 : 5)">Stock posting id @line.StockPostingId · sequence @line.PostingSequence · line @line.PostingLineNo · split @line.SplitOrdinal</td>
+                                        </tr>
+                                    }
                                 }
                             </tbody>
                         </table>
@@ -236,5 +356,22 @@
                 }
             </section>
         }
+
+        <DxPopup @bind-Visible="@ConfirmVisible" HeaderText="Confirm repair" Width="480px" CloseOnOutsideClick="false">
+            <BodyContentTemplate>
+                <p>@(PreviewKind == CostingRepairTargetKind.CostState
+                    ? "Rebuild the derived cost state from sealed evidence. Sealed postings and facts are not edited."
+                    : "Roll the owning document back for correction. It will not be reposted automatically.")</p>
+                <p>Reason: @RepairReason</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(PreviewKind == CostingRepairTargetKind.CostState ? "Rebuild cost state" : "Rollback for correction")" Enabled="@(!RepairRunning)" Click="@ConfirmRepairAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelConfirm" />
+            </FooterContentTemplate>
+        </DxPopup>
     </div>
 </MenuAuthorize>
+
+@code {
+    private static readonly string[] Severities = ["Info", "Warning", "Error", "Critical"];
+}

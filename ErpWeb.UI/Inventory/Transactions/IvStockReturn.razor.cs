@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Inventory.Transactions;
@@ -486,13 +487,13 @@ public partial class IvStockReturn : PageBase
             return Task.CompletedTask;
         }
 
-        Navigation.NavigateTo("/inventory/stock-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/stock-return");
         return Task.CompletedTask;
     }
 
     protected Task OnCloseAsync()
     {
-        Navigation.NavigateTo("/inventory/stock-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/stock-return");
         return Task.CompletedTask;
     }
 
@@ -503,7 +504,7 @@ public partial class IvStockReturn : PageBase
             return;
         }
 
-        Navigation.NavigateTo($"/inventory/stock-return/edit/{BatchNo.Value}");
+        Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/inventory/stock-return/edit/{BatchNo.Value}"));
     }
 
     protected void OnKeepEditing() => ConfirmDiscardVisible = false;
@@ -512,7 +513,7 @@ public partial class IvStockReturn : PageBase
     {
         ConfirmDiscardVisible = false;
         _isDirty = false;
-        Navigation.NavigateTo("/inventory/stock-return");
+        DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/stock-return");
     }
 
     protected void DismissStatus() => StatusMessage = null;

@@ -50,14 +50,14 @@ public sealed class InventoryCostingRepairAdapter : ICostingRepairAdapter
         var gate = await RequirePostedBatchAsync(owner, cancellationToken);
         if (gate is not null)
             return gate;
-        var batchNo = int.Parse(owner.PhysicalSourceDocumentId, System.Globalization.CultureInfo.InvariantCulture);
+        var batchNo = int.Parse(owner.PhysicalSourceDocumentNo, System.Globalization.CultureInfo.InvariantCulture);
         var result = await _posting.RollbackAsync(owner.PhysicalSourceDocumentType, [batchNo], cancellationToken);
         return new CostingRepairStepResult(result.Succeeded, false, result.ErrorMessage, null);
     }
 
     private async Task<CostingRepairStepResult> PostBatchAsync(CostingRepairOwner owner, CancellationToken cancellationToken)
     {
-        if (!int.TryParse(owner.PhysicalSourceDocumentId, out var batchNo))
+        if (!int.TryParse(owner.PhysicalSourceDocumentNo, out var batchNo))
             return new CostingRepairStepResult(false, false, "The inventory batch number is not numeric.", null);
         var result = await _posting.PostAsync(owner.PhysicalSourceDocumentType, [batchNo], cancellationToken);
         return new CostingRepairStepResult(result.Succeeded, false, result.ErrorMessage, null);
@@ -66,7 +66,7 @@ public sealed class InventoryCostingRepairAdapter : ICostingRepairAdapter
     private async Task<CostingRepairStepResult?> RequirePostedBatchAsync(CostingRepairOwner owner, CancellationToken cancellationToken)
     {
         var scope = _tenant.TryBranchScope();
-        if (scope?.BranchCode is null || !int.TryParse(owner.PhysicalSourceDocumentId, out var batchNo))
+        if (scope?.BranchCode is null || !int.TryParse(owner.PhysicalSourceDocumentNo, out var batchNo))
             return new CostingRepairStepResult(false, true, "The inventory batch could not be reloaded.", null);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var status = await db.IvTrxBatches.AsNoTracking()
@@ -278,7 +278,7 @@ public sealed class PurchaseGoodsReceiptRepairAdapter : ICostingRepairAdapter
     public async Task<CostingRepairStepResult> ReverseAsync(
         CostingRepairNode node, CostingRepairOwner owner, CostingRepairExecutionContext context, CancellationToken cancellationToken)
     {
-        if (!int.TryParse(owner.PhysicalSourceDocumentId, out var batchNo))
+        if (!int.TryParse(owner.PhysicalSourceDocumentNo, out var batchNo))
             return new CostingRepairStepResult(false, false, "The goods-receipt batch number is not numeric.", null);
         if (string.Equals(owner.PhysicalSourceDocumentType, IvTrxTypes.GoodsReceive, StringComparison.OrdinalIgnoreCase))
         {
@@ -293,7 +293,7 @@ public sealed class PurchaseGoodsReceiptRepairAdapter : ICostingRepairAdapter
     public async Task<CostingRepairStepResult> RepostAsync(
         CostingRepairNode node, CostingRepairOwner owner, CostingRepairExecutionContext context, CancellationToken cancellationToken)
     {
-        if (!int.TryParse(owner.PhysicalSourceDocumentId, out var batchNo))
+        if (!int.TryParse(owner.PhysicalSourceDocumentNo, out var batchNo))
             return new CostingRepairStepResult(false, false, "The goods-receipt batch number is not numeric.", null);
         var result = await _posting.PostAsync(owner.PhysicalSourceDocumentType, [batchNo], cancellationToken);
         return new CostingRepairStepResult(result.Succeeded, false, result.ErrorMessage, null);

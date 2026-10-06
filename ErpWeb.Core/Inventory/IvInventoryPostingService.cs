@@ -74,14 +74,67 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (_coordinator is null)
             return (null, null);
 
-        var effectiveAt = await StockBusinessTime.NowAsync(db, companyCode, cancellationToken);
+        var batchDate = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.BatchNo == batchNo)
+            .Select(x => (DateTime?)x.TrxDtTime)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (batchDate is null)
+            return (null, IvInventoryPostingBatchResult.Fail(batchNo, "Batch was not found."));
+
+        // Ledger effective time must match the inventory document date so V2 history
+        // does not create later-day chronology that blocks re-post after rollback.
+        var effectiveAt = batchDate.Value;
         var begin = await BeginPostingInTransactionAsync(
             db, companyCode, branchCode, batchNo, reversal, effectiveAt, cancellationToken);
         if (begin.Error is not null)
             return (null, IvInventoryPostingBatchResult.Fail(batchNo, begin.Error.Message));
-        if (begin.WasReplay)
+        if (!begin.WasReplay)
+            return (begin.Context, null);
+
+        var batchStatus = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.BatchNo == batchNo)
+            .Select(x => x.BatchStatus)
+            .FirstOrDefaultAsync(cancellationToken);
+        var expectedStatus = reversal ? IvBatchStatuses.New : IvBatchStatuses.Posted;
+        if (string.Equals(batchStatus, expectedStatus, StringComparison.OrdinalIgnoreCase))
             return (null, IvInventoryPostingBatchResult.Ok(batchNo, Guid.Empty));
-        return (begin.Context, null);
+
+        // Post-after-rollback (or orphaned sealed PRIMARY while batch is still NEW):
+        // advance DocumentRevision so a new PRIMARY RequestId can be issued, then retry once.
+        if (!reversal
+            && string.Equals(batchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+        {
+            var batch = await _posting.LockBatchForUpdateAsync(
+                db, companyCode, branchCode, batchNo, cancellationToken);
+            if (batch is not null)
+            {
+                var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+                AdvanceBatchDocumentRevision(details);
+                await db.SaveChangesAsync(cancellationToken);
+                begin = await BeginPostingInTransactionAsync(
+                    db, companyCode, branchCode, batchNo, reversal, effectiveAt, cancellationToken);
+                if (begin.Error is not null)
+                    return (null, IvInventoryPostingBatchResult.Fail(batchNo, begin.Error.Message));
+                if (!begin.WasReplay && begin.Context is not null)
+                    return (begin.Context, null);
+            }
+        }
+
+        return (null, IvInventoryPostingBatchResult.Fail(
+            batchNo,
+            reversal
+                ? "A sealed V2 rollback posting already exists for this batch, but the document is not NEW. Rollback was not repeated. Run posting reconciliation."
+                : "A sealed V2 posting already exists for this batch, but the document is not POSTED. Posting was not repeated. Run posting reconciliation."));
+    }
+
+    private static void AdvanceBatchDocumentRevision(IReadOnlyList<IvTrxBatchDetail> details)
+    {
+        if (details.Count == 0)
+            return;
+
+        var next = details.Max(x => x.DocumentRevision) + 1;
+        foreach (var detail in details)
+            detail.DocumentRevision = next;
     }
 
     private async Task CompleteStandaloneLedgerAsync(
@@ -237,6 +290,10 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             catch (DbUpdateException ex) when (IsUniqueViolation(ex))
             {
                 results.Add(IvInventoryPostingBatchResult.Fail(batchNo, "Posting conflict (duplicate history or balance)."));
+            }
+            catch (StockLedgerException ex)
+            {
+                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Error.Message));
             }
             catch (Exception ex)
             {
@@ -752,8 +809,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 throw new InvalidOperationException("The V2 inventory history writer is unavailable.");
             _historyWriter.AppendReversal(
                 postingContext, history, postingContext.Posting.DocumentRevision);
-            foreach (var bal in locked.Values)
-                bal.TransDate = postingContext.Posting.EffectiveAt;
         }
 
         foreach (var detail in details)
@@ -761,6 +816,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             detail.ToBalLocId = null;
             detail.ToLotId = null;
         }
+
+        AdvanceBatchDocumentRevision(details);
 
         var opId = Guid.NewGuid();
         batch.BatchStatus = IvBatchStatuses.New;
@@ -1014,6 +1071,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         ApplyHistoryRollback(db, history, postingContext);
+        var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        AdvanceBatchDocumentRevision(details);
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         var opId = Guid.NewGuid();
@@ -1467,6 +1526,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         ApplyHistoryRollback(db, history, ledger.Context);
+
+        AdvanceBatchDocumentRevision(details);
 
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
@@ -2243,6 +2304,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             // Keep FromBalLocId and Fr* for possible re-post.
         }
 
+        AdvanceBatchDocumentRevision(details);
+
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         var opId = Guid.NewGuid();
@@ -2887,6 +2950,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             detail.ToLotId = null;
             detail.FromLotId = null;
         }
+
+        AdvanceBatchDocumentRevision(details);
 
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);

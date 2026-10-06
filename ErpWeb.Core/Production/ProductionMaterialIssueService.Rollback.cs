@@ -327,6 +327,7 @@ public sealed partial class ProductionMaterialIssueService
             {
                 var balanceReversals = await db.ProductionBalLotMovements.Where(x => x.StockPostingId == ledger.Context.Posting.Id).ToListAsync(cancellationToken);
                 await ProductionPoolValuationService.RecordAsync(ledger.Context, balanceReversals, cancellationToken);
+                ledger.Context.Posting.ProductionPostingLinkId = rollbackLink.Uid;
                 await _inventoryPosting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
             }
             await tx.CommitAsync(cancellationToken);
