@@ -1,0 +1,151 @@
+.iv-costing-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.iv-costing-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 16px;
+    align-items: end;
+}
+
+.iv-costing-row--actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.iv-costing-field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.iv-costing-field--button {
+    justify-self: start;
+    width: max-content;
+}
+
+.iv-field-label {
+    display: block;
+    height: 1.1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 0.2rem;
+    line-height: 1.1rem;
+    white-space: nowrap;
+}
+
+.iv-costing-hint {
+    margin: 0;
+}
+
+.iv-costing-advanced {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.iv-costing-advanced__toggle {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #2563eb;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.iv-costing-advanced__toggle:hover {
+    text-decoration: underline;
+}
+
+.iv-costing-table-wrap {
+    overflow-x: auto;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 6px;
+}
+
+.iv-costing-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.iv-costing-grid th,
+.iv-costing-grid td {
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.iv-costing-grid thead th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #475569;
+    background: rgba(15, 23, 42, 0.04);
+    white-space: nowrap;
+}
+
+.iv-costing-grid tbody tr:nth-child(even) {
+    background: rgba(15, 23, 42, 0.02);
+}
+
+.iv-costing-grid__num {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.iv-costing-findings__action {
+    white-space: nowrap;
+    width: 1%;
+}
+
+.iv-costing-field ::deep .iv-stock-picker {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+}
+
+.iv-costing-field ::deep .iv-stock-picker > .dxbl-text-edit,
+.iv-costing-field ::deep .iv-stock-picker > .dxbl-edit {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.iv-costing-field ::deep .iv-stock-picker .dxbl-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.iv-costing-field ::deep .iv-code-combo,
+.iv-costing-field ::deep .dxbl-text-edit,
+.iv-costing-field ::deep .dxbl-edit {
+    width: 100%;
+}
+
+@media (max-width: 720px) {
+    .iv-costing-row {
+        grid-template-columns: 1fr;
+    }
+
+    .iv-costing-field--button {
+        width: 100%;
+    }
+}

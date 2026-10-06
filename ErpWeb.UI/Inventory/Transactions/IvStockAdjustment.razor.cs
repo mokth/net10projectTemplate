@@ -2,6 +2,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -95,6 +96,12 @@ public partial class IvStockAdjustment : PageBase
     protected string LineCountLabel => Lines.Count == 1 ? "1 line" : $"{Lines.Count} lines";
 
     protected IReadOnlyList<string> ReasonOptions { get; } = IvAdjustmentReasons.All;
+    protected IReadOnlyList<string> CostEvidenceTypes { get; } =
+    [
+        InventoryCostEvidenceTypes.ManualApproved,
+        InventoryCostEvidenceTypes.ZeroCostApproved,
+        InventoryCostEvidenceTypes.OpeningApproved
+    ];
 
     protected decimal PopupMaxDecreaseQty
     {
@@ -209,6 +216,8 @@ public partial class IvStockAdjustment : PageBase
             IClassCode = x.IClassCode ?? string.Empty,
             IStatus = x.IStatus,
             UnitPrice = x.UnitPrice,
+            CostEvidenceType = x.CostEvidenceType,
+            CostOverrideReason = x.CostOverrideReason,
             ExpiryDate = x.ExpiryDate,
             Reason = x.Reason,
             Remarks = x.Remarks,
@@ -265,6 +274,8 @@ public partial class IvStockAdjustment : PageBase
             ExpiryDate = line.ExpiryDate,
             LotControl = line.LotControl,
             UnitPrice = line.UnitPrice,
+            CostEvidenceType = line.CostEvidenceType,
+            CostOverrideReason = line.CostOverrideReason,
             Reason = line.Reason,
             Remarks = line.Remarks
         };
@@ -355,6 +366,8 @@ public partial class IvStockAdjustment : PageBase
         }
 
         Popup.Reason = null;
+        Popup.CostEvidenceType = null;
+        Popup.CostOverrideReason = null;
         Popup.Remarks = null;
         return Task.CompletedTask;
     }
@@ -453,6 +466,8 @@ public partial class IvStockAdjustment : PageBase
                     IClassCode = x.IClassCode,
                     IStatus = x.IStatus,
                     UnitPrice = x.UnitPrice,
+                    CostEvidenceType = x.CostEvidenceType,
+                    CostOverrideReason = x.CostOverrideReason,
                     ExpiryDate = x.ExpiryDate,
                     Reason = x.Reason,
                     Remarks = x.Remarks
@@ -599,6 +614,18 @@ public partial class IvStockAdjustment : PageBase
             return "Unit price cannot be negative.";
         }
 
+        if (Popup.AdjustQty <= 0m && !string.IsNullOrWhiteSpace(Popup.CostEvidenceType))
+        {
+            return "Cost evidence applies only to positive adjustments; negative adjustments use authoritative current cost.";
+        }
+
+        if (Popup.AdjustQty > 0m
+            && string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(Popup.CostOverrideReason))
+        {
+            return "A cost approval reason is required for zero-cost adjustments.";
+        }
+
         return null;
     }
 
@@ -616,6 +643,12 @@ public partial class IvStockAdjustment : PageBase
         line.Uom = Popup.Uom.Trim();
         line.IStatus = Popup.IStatus.Trim().ToUpperInvariant();
         line.UnitPrice = Popup.UnitPrice;
+        line.CostEvidenceType = string.IsNullOrWhiteSpace(Popup.CostEvidenceType)
+            ? null
+            : Popup.CostEvidenceType.Trim().ToUpperInvariant();
+        line.CostOverrideReason = string.IsNullOrWhiteSpace(Popup.CostOverrideReason)
+            ? null
+            : Popup.CostOverrideReason.Trim();
         line.ExpiryDate = Popup.ExpiryDate;
         line.Reason = string.IsNullOrWhiteSpace(Popup.Reason) ? null : Popup.Reason.Trim();
         line.Remarks = string.IsNullOrWhiteSpace(Popup.Remarks) ? null : Popup.Remarks.Trim();
@@ -635,6 +668,8 @@ public partial class IvStockAdjustment : PageBase
         Popup.IStatus = string.Empty;
         Popup.ExpiryDate = null;
         Popup.Reason = null;
+        Popup.CostEvidenceType = null;
+        Popup.CostOverrideReason = null;
         Popup.Remarks = null;
     }
 
@@ -677,6 +712,8 @@ public sealed class IvStockAdjustmentLineVm
     public string Uom { get; set; } = string.Empty;
     public string IStatus { get; set; } = IvItemStatuses.Active;
     public decimal UnitPrice { get; set; }
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }
@@ -703,6 +740,8 @@ public sealed class IvStockAdjustmentPopupVm
     public DateTime? ExpiryDate { get; set; }
     public bool LotControl { get; set; }
     public decimal UnitPrice { get; set; }
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }
 }

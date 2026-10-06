@@ -6,10 +6,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace ErpWeb.Inventory;
 
 /// <summary>
-/// xlsx export for **Est. Inventory Value**. The endpoint checks EXPORT itself and then delegates to
+/// xlsx export for **Inventory Valuation**. The endpoint checks EXPORT itself and then delegates to
 /// <see cref="IIvStockSummaryService.ExportRowsAsync"/> under the VALUE menu code, so the export inherits
-/// the same grouped composition as the screen but its own ACCESS / <c>VIEW_PRICE</c> grant. Company and
-/// branch are NEVER accepted from the query string (D19).
+/// the same authoritative ledger composition as the screen but its own ACCESS / <c>VIEW_PRICE</c> grant.
+/// Company and branch are NEVER accepted from the query string (D19).
 ///
 /// <para>
 /// The value columns are omitted **entirely** when the caller may not see price, and the quantity column
@@ -130,10 +130,12 @@ public static class IvStockValueExportEndpoints
         }
 
         headers.Add("Piles");
+        headers.Add("Cost method");
+        headers.Add("Valuation status");
 
         if (includeValue)
         {
-            headers.Add("Est. value");
+            headers.Add("Inventory value");
         }
 
         return IvInquiryExportWorkbook.Build(
@@ -167,9 +169,12 @@ public static class IvStockValueExportEndpoints
 
                 cells.Add(IvInquiryExportWorkbook.CellInt(row.PileCount));
 
+                cells.Add(IvInquiryExportWorkbook.CellText(row.CostMethod));
+                cells.Add(IvInquiryExportWorkbook.CellText(row.ValuationStatus));
+
                 if (includeValue)
                 {
-                    cells.Add(IvInquiryExportWorkbook.CellNumber(row.EstValue));
+                    cells.Add(IvInquiryExportWorkbook.CellNumber(row.InventoryValue));
                 }
 
                 return cells;

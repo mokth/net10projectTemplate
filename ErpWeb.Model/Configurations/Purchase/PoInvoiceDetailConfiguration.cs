@@ -42,5 +42,6 @@ public class PoInvoiceDetailConfiguration : IEntityTypeConfiguration<PoInvoiceDe
         builder.Property(e => e.PoNo).HasColumnName("PONo").HasMaxLength(30);
         builder.Property(e => e.PoRelNo).HasColumnName("PORelNo");
         builder.Property(e => e.PoLineNo).HasColumnName("POLineNo");
+        builder.Property(e => e.ReferencedInvoiceLineNo).HasColumnName("ReferencedInvoiceLineNo");
     }
 }

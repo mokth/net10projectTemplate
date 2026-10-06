@@ -65,6 +65,8 @@
             Icon="fa-solid fa-stethoscope" />
       <Menu Code="INV_PERIOD_CLOSE_INQ" Name="Period Close Balances" Route="/inventory/period-close-inquiry" SortOrder="10"
             Icon="fa-solid fa-lock-open" />
+      <Menu Code="INV_COSTING_CENTER" Name="Costing Diagnostic &amp; Repair Center" Route="/inventory/costing-center" SortOrder="11"
+            Icon="fa-solid fa-stethoscope" />
     </Menu>
   </Menu>
 

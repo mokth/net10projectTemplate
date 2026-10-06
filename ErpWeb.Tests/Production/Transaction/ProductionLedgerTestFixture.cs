@@ -46,6 +46,18 @@ internal static class ProductionLedgerTestFixture
             ActivatedAtUtc = DateTime.UtcNow,
             ActivatedBy = "TEST",
         });
+        db.StockCostPolicyRevisions.Add(new StockCostPolicyRevision
+        {
+            CompanyCode = company,
+            BranchCode = branch,
+            CostMethod = StockCostMethods.MovingAverage,
+            EffectiveFrom = (effectiveFrom ?? new DateTime(2026, 9, 1)).Date,
+            Status = StockCostPolicyStatuses.Active,
+            ApprovedBy = "TEST",
+            ApprovedAtUtc = DateTime.UtcNow,
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedBy = "TEST"
+        });
         await db.SaveChangesAsync();
     }
 

@@ -1741,6 +1741,14 @@ public sealed class SaCdnService : ISaCdnService
 
             var now = DateTime.UtcNow;
             var uid = Truncate(context.UserId!, 10);
+            cdn.CostingRevision = checked(cdn.CostingRevision + 1);
+            if (crBatch is not null)
+            {
+                var crDetails = await _postingRepo.LoadDetailsForBatchAsync(
+                    db, crBatch.Id, cancellationToken);
+                foreach (var detail in crDetails)
+                    detail.DocumentRevision = cdn.CostingRevision;
+            }
             cdn.Status = SaCdnStatuses.New;
             cdn.RollbackDate = now;
             cdn.RollbackBy = uid;
@@ -2275,6 +2283,7 @@ public sealed class SaCdnService : ISaCdnService
                 CompanyCode = companyCode,
                 BranchCode = branchCode,
                 BatchNo = batchNo,
+                DocumentRevision = cdn.CostingRevision,
                 TrxLineNo = trxLine,
                 TrxType = IvTrxTypes.CustomerReturn,
                 ICode = d.ICode,
@@ -2290,6 +2299,11 @@ public sealed class SaCdnService : ISaCdnService
                 ExpiryDate = d.ExpiryDate,
                 UnitPrice = d.CostPrice > 0m ? d.CostPrice : 0m,
                 InvNo = cdn.InvNo,
+                // The CR batch line is the immutable source line identity used by the
+                // valuation owner resolver. It is intentionally the original CDN/invoice
+                // line, not the compacted stock-only batch line number.
+                SoLineNo = d.Line,
+                DoNo = cdn.DoNo,
                 LocationCode = cdn.LocationCode
             });
             trxLine++;

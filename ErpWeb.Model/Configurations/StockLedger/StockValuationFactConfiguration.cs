@@ -110,11 +110,46 @@ public sealed class StockCostStateConfiguration : IEntityTypeConfiguration<Stock
         builder.Property(x => x.CostMethod).HasMaxLength(30).IsRequired();
         builder.Property(x => x.OnHandBaseQty).HasPrecision(19, 6);
         builder.Property(x => x.InventoryValue).HasPrecision(19, 6);
+        builder.Property(x => x.CurrentUnitCost).HasPrecision(19, 6);
         builder.Property(x => x.AverageUnitCost).HasPrecision(19, 6);
         builder.Property(x => x.RowVersion).IsRowVersion();
         builder.HasOne(x => x.LastValuationFact).WithMany()
             .HasForeignKey(x => x.LastValuationFactId).OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ItemCode, x.CostMethod })
             .IsUnique().HasDatabaseName("UQ_StockCostState_Pool");
+    }
+}
+
+public sealed class StockCostPolicyRevisionConfiguration : IEntityTypeConfiguration<StockCostPolicyRevision>
+{
+    public void Configure(EntityTypeBuilder<StockCostPolicyRevision> builder)
+    {
+        builder.ToTable("StockCostPolicyRevision", table =>
+        {
+            table.HasCheckConstraint("CK_StockCostPolicyRevision_Method",
+                "[CostMethod] IN ('MOVING_AVERAGE','FIFO','STANDARD')");
+            table.HasCheckConstraint("CK_StockCostPolicyRevision_Status",
+                "[Status] IN ('ACTIVE','SUPERSEDED')");
+            table.HasCheckConstraint("CK_StockCostPolicyRevision_Range",
+                "[EffectiveTo] IS NULL OR [EffectiveTo] > [EffectiveFrom]");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedOnAdd();
+        builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.CostMethod).HasMaxLength(30).IsRequired();
+        builder.Property(x => x.EffectiveFrom).HasColumnType("date");
+        builder.Property(x => x.EffectiveTo).HasColumnType("date");
+        builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.Reason).HasMaxLength(250);
+        builder.Property(x => x.ApprovedBy).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.ApprovedAtUtc).HasColumnType("datetime2(7)");
+        builder.Property(x => x.CreatedAtUtc).HasColumnType("datetime2(7)");
+        builder.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.RowVersion).IsRowVersion();
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.EffectiveFrom })
+            .HasDatabaseName("IX_StockCostPolicyRevision_EffectiveFrom");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.Status })
+            .HasDatabaseName("IX_StockCostPolicyRevision_Status");
     }
 }

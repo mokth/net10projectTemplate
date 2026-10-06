@@ -3,6 +3,12 @@ namespace ErpWeb.Model.Entities.Inventory;
 public class IvTrxBatchDetail
 {
     public string? PriceEvidence { get; set; }
+    /// <summary>Structured approval state for manually-originated cost evidence.</summary>
+    public string? CostEvidenceType { get; set; }
+    /// <summary>Required when a zero-cost or manual override is approved.</summary>
+    public string? CostOverrideReason { get; set; }
+    public string? CostApprovedBy { get; set; }
+    public DateTime? CostApprovedAtUtc { get; set; }
     public int Id { get; set; }
     public int BatchId { get; set; }
     public int? FromBalLocId { get; set; }

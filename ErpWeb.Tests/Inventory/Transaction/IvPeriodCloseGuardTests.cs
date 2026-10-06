@@ -126,6 +126,7 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]
@@ -236,6 +237,7 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]
@@ -300,6 +302,7 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]

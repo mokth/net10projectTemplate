@@ -1,0 +1,108 @@
+/* Shared production picker / allocation lists: bordered grid that stays inside its host. */
+
+.pr-popup-grid-dialog {
+    max-width: min(96vw, 1200px);
+}
+
+.pr-popup-grid-shell {
+    max-height: min(70vh, 560px);
+    overflow: auto;
+    border: 1px solid var(--iv-line, var(--line, #d7dde5));
+    border-radius: 8px;
+    background: var(--iv-surface, var(--surface, #fff));
+    min-width: 0;
+}
+
+.pr-popup-grid {
+    width: 100%;
+    margin: 0;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--iv-surface, var(--surface, #fff));
+}
+
+.pr-popup-grid--wide {
+    min-width: 1080px;
+}
+
+.pr-popup-grid th,
+.pr-popup-grid td {
+    border-right: 1px solid var(--iv-line, var(--line, #d7dde5));
+    border-bottom: 1px solid var(--iv-line, var(--line, #d7dde5));
+    padding: 7px 8px;
+    font-size: 0.82rem;
+    vertical-align: middle;
+    color: var(--iv-ink, var(--text, #1c2430));
+}
+
+.pr-popup-grid th:first-child,
+.pr-popup-grid td:first-child {
+    border-left: 0;
+}
+
+.pr-popup-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--iv-soft, color-mix(in srgb, var(--iv-muted, #667085) 8%, var(--iv-surface, #fff)));
+    white-space: nowrap;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--iv-muted, var(--muted, #667085));
+    font-weight: 600;
+    border-bottom-width: 1px;
+}
+
+.pr-popup-grid tbody tr:nth-child(even) {
+    background: color-mix(in srgb, var(--iv-muted, var(--muted, #667085)) 5%, var(--iv-surface, var(--surface, #fff)));
+}
+
+.pr-popup-grid tbody tr.is-selected {
+    background: color-mix(in srgb, var(--accent, #2f6fed) 12%, var(--iv-surface, var(--surface, #fff)));
+}
+
+.pr-popup-grid__num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.pr-popup-grid__num--emphasis {
+    font-weight: 700;
+}
+
+.pr-popup-grid__action {
+    width: 112px;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.pr-popup-grid__allocate {
+    width: 118px;
+}
+
+.pr-popup-grid__allocate .form-control {
+    min-width: 88px;
+    max-width: 110px;
+    margin-left: auto;
+}
+
+.pr-popup-grid__primary {
+    display: block;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.pr-popup-grid__secondary {
+    display: block;
+    margin-top: 2px;
+    color: var(--iv-muted, var(--muted, #667085));
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+}
+
+.pr-popup-grid__warn {
+    color: var(--iv-hold, #b54708);
+    font-size: 0.78rem;
+}

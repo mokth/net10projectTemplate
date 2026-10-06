@@ -1,4 +1,6 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,6 +8,8 @@ namespace ErpWeb.Core.StockLedger;
 
 public static class StockValuationSnapshotBuilder
 {
+    private static readonly StockValuationMovementClassifier MovementClassifier = new();
+
     public static async Task<string?> AppendAsync(
         AppDbContext db,
         string company,
@@ -43,6 +47,7 @@ public static class StockValuationSnapshotBuilder
                         && x.StockPosting.SealedAtUtc != null)
             .Select(x => new
             {
+                x.Id, x.StockPostingId, x.InventoryHistoryId,
                 x.ItemCode, x.BaseUom, x.CostMethod, x.EffectiveAt,
                 x.Direction, x.BaseQty, x.CostAmount, x.MovementCode
             })
@@ -71,7 +76,7 @@ public static class StockValuationSnapshotBuilder
         {
             var opening = group.Where(x => x.EffectiveAt < periodFrom).ToArray();
             var period = group.Where(x => x.EffectiveAt >= periodFrom).ToArray();
-            var adjustments = period.Where(x => x.MovementCode.StartsWith("ADJUST_", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var adjustments = period.Where(x => MovementClassifier.IsValueOnlyAdjustment(x.MovementCode)).ToArray();
             var normal = period.Except(adjustments).ToArray();
             var line = new StockValuationPeriodSnapshotLine
             {
@@ -111,6 +116,108 @@ public static class StockValuationSnapshotBuilder
                 if (state is null || state.OnHandBaseQty != line.ClosingQty || state.InventoryValue != line.ClosingValue)
                     return $"Cannot close: current cost state does not reconcile for item '{line.ItemCode}'.";
             }
+
+            var fifoStates = states
+                .Where(x => x.CostMethod == StockCostMethods.Fifo)
+                .ToArray();
+            if (fifoStates.Length > 0)
+            {
+                var fifoItemCodes = fifoStates.Select(x => x.ItemCode).ToArray();
+                var fifoLayers = await db.StockFifoLayers.AsNoTracking()
+                    .Where(x => x.CompanyCode == company
+                                && x.BranchCode == branch
+                                && fifoItemCodes.Contains(x.ItemCode)
+                                && x.Status == StockFifoLayerStatuses.Open)
+                    .ToListAsync(cancellationToken);
+                foreach (var state in fifoStates)
+                {
+                    var qty = decimal.Round(
+                        fifoLayers.Where(x => x.ItemCode == state.ItemCode).Sum(x => x.RemainingQty),
+                        6, MidpointRounding.AwayFromZero);
+                    var value = decimal.Round(
+                        fifoLayers.Where(x => x.ItemCode == state.ItemCode).Sum(x => x.RemainingValue),
+                        6, MidpointRounding.AwayFromZero);
+                    if (qty != state.OnHandBaseQty)
+                        return $"Cannot close: FIFO_LAYER_QTY_MISMATCH for item '{state.ItemCode}'.";
+                    if (value != state.InventoryValue)
+                        return $"Cannot close: FIFO_LAYER_VALUE_MISMATCH for item '{state.ItemCode}'.";
+                }
+
+                var fifoIssueFacts = facts
+                    .Where(x => x.CostMethod == StockCostMethods.Fifo
+                                && x.Direction < 0
+                                && x.BaseQty > 0m
+                                && !string.Equals(x.MovementCode, "COST_METHOD_CUTOVER_OUT", StringComparison.OrdinalIgnoreCase))
+                    .Select(x => x.Id)
+                    .ToArray();
+                if (fifoIssueFacts.Length > 0)
+                {
+                    var activeIssueFacts = await db.StockValuationFacts.AsNoTracking()
+                        .Where(x => fifoIssueFacts.Contains(x.Id)
+                                    && !db.StockValuationFacts.Any(reversal =>
+                                        reversal.ReversesValuationFactId == x.Id))
+                        .Select(x => new { x.Id, x.BaseQty, x.CostAmount })
+                        .ToListAsync(cancellationToken);
+                    var consumptionTotals = await db.StockFifoLayerConsumptions.AsNoTracking()
+                        .Where(x => fifoIssueFacts.Contains(x.IssueValuationFactId)
+                                    && x.ReversesConsumptionId == null)
+                        .GroupBy(x => x.IssueValuationFactId)
+                        .Select(x => new
+                        {
+                            IssueFactId = x.Key,
+                            Qty = x.Sum(y => y.ConsumedQty),
+                            Value = x.Sum(y => y.ConsumedValue)
+                        })
+                        .ToDictionaryAsync(x => x.IssueFactId, cancellationToken);
+                    foreach (var issue in activeIssueFacts)
+                    {
+                        if (!consumptionTotals.TryGetValue(issue.Id, out var total)
+                            || decimal.Round(total.Qty, 6, MidpointRounding.AwayFromZero)
+                                != decimal.Round(issue.BaseQty, 6, MidpointRounding.AwayFromZero)
+                            || decimal.Round(total.Value, 6, MidpointRounding.AwayFromZero)
+                                != decimal.Round(issue.CostAmount, 6, MidpointRounding.AwayFromZero))
+                            return $"Cannot close: FIFO_CONSUMPTION_MISMATCH for valuation fact {issue.Id}.";
+                    }
+                }
+            }
+        }
+
+        var standardVarianceRows = await db.ProductionStandardCostVariances.AsNoTracking()
+            .Where(x => x.CompanyCode == company
+                        && x.BranchCode == branch
+                        && x.EffectiveAt < exclusiveEnd)
+            .ToListAsync(cancellationToken);
+        foreach (var variance in standardVarianceRows)
+        {
+            if (decimal.Round(variance.ActualProductionValue, 6, MidpointRounding.AwayFromZero)
+                != decimal.Round(variance.StandardInventoryValue + variance.VarianceAmount,
+                    6, MidpointRounding.AwayFromZero))
+                return $"Cannot close: PRODUCTION_STANDARD_VARIANCE_MISMATCH for item '{variance.ItemCode}'.";
+        }
+
+        var standardFgFactIds = facts
+            .Where(x => x.CostMethod == StockCostMethods.Standard
+                        && x.Direction > 0
+                        && string.Equals(x.MovementCode, "FINISHED_GOOD_IN", StringComparison.OrdinalIgnoreCase)
+                        && x.InventoryHistoryId is not null)
+            .Select(x => x.Id)
+            .ToArray();
+        if (standardFgFactIds.Length > 0)
+        {
+            var requiredStandardFgFacts = await db.StockValuationFacts.AsNoTracking()
+                .Where(x => standardFgFactIds.Contains(x.Id)
+                            && db.IvTrxHistories.Any(h => h.Id == x.InventoryHistoryId
+                                && h.TrxType == IvTrxTypes.FinishedGoods
+                                && h.ExactTransferredValue != null))
+                .Select(x => x.Id)
+                .ToArrayAsync(cancellationToken);
+            var varianceFactIds = await db.ProductionStandardCostVariances.AsNoTracking()
+                .Where(x => requiredStandardFgFacts.Contains(x.InventoryValuationFactId))
+                .Select(x => x.InventoryValuationFactId)
+                .Distinct()
+                .ToArrayAsync(cancellationToken);
+            if (requiredStandardFgFacts.Any(x => !varianceFactIds.Contains(x)))
+                return "Cannot close: a STANDARD finished-good receipt has no ProductionStandardCostVariance evidence.";
         }
 
         var quantitySnapshot = db.ChangeTracker.Entries<StockPeriodSnapshotHdr>()

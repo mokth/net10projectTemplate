@@ -1,0 +1,240 @@
+@page "/inventory/costing-center"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+
+<PageTitle>Costing Diagnostic &amp; Repair Center</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryCostingCenter">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-stethoscope"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory</p>
+                <h1 class="iv-title">Costing Diagnostic &amp; Repair Center</h1>
+                <p class="iv-subtitle">
+                    Explains sealed valuation facts for the current branch. This screen does not edit a cost.
+                    Moving average is the branch and item pool, not a warehouse average.
+                </p>
+                <div class="iv-chips">
+                    <span class="iv-chip">@EpochCaption</span>
+                    <span class="iv-chip">@(MonetaryVisible ? "Cost visible" : "Cost hidden")</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <div class="iv-costing-panel">
+                <div class="iv-costing-row">
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Item</label>
+                        <IvStockMasterPicker ICode="@ItemCode"
+                                             ICodeChanged="@OnItemCodeChangedAsync" />
+                    </div>
+                    <div class="iv-costing-field">
+                        <label class="iv-field-label">Warehouse (optional)</label>
+                        <IvCodeComboBox Data="@Warehouses"
+                                        @bind-Value="@WarehouseCode"
+                                        IsLoading="@WarehousesLoading"
+                                        NullText="All warehouses" />
+                    </div>
+                </div>
+
+                <div class="iv-costing-row iv-costing-row--actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@(HealthRunning ? "Checking…" : "Check health")"
+                              Enabled="@(!HealthRunning)"
+                              Click="@RunHealthAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(TraceRunning ? "Tracing…" : "Item trace")"
+                              Enabled="@(!TraceRunning)"
+                              Click="@RunTraceAsync" />
+                </div>
+
+                <p class="iv-subtitle iv-costing-hint">
+                    Warehouse only narrows the list of movements. It does not change the item average cost.
+                    Prefer <strong>Preview</strong> on a health finding — you do not need to type a posting id.
+                </p>
+
+                <div class="iv-costing-advanced">
+                    <button type="button"
+                            class="iv-costing-advanced__toggle"
+                            @onclick="ToggleAdvanced">
+                        @(ShowAdvanced ? "Hide advanced" : "Show advanced")
+                    </button>
+                    @if (ShowAdvanced)
+                    {
+                        <div class="iv-costing-row">
+                            <div class="iv-costing-field">
+                                <label class="iv-field-label">Posting id (manual)</label>
+                                <DxTextBox @bind-Text="@PostingIdText"
+                                           NullText="Only if you already have a posting id"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </div>
+                            <div class="iv-costing-field iv-costing-field--button">
+                                <span class="iv-field-label" aria-hidden="true">&nbsp;</span>
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Preview repair"
+                                          Click="@RunPreviewAsync" />
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @if (HealthRan)
+        {
+            <section class="iv-card">
+                <h2 class="iv-title">Health</h2>
+                @if (Findings.Count == 0)
+                {
+                    <p class="iv-subtitle">
+                        No findings for the current filter — costing looks healthy.
+                    </p>
+                }
+                else
+                {
+                    <p class="iv-subtitle">
+                        Use <strong>Preview</strong> on a row that has a posting id. That opens the repair preview for that movement.
+                    </p>
+                    <div class="iv-costing-table-wrap">
+                        <table class="iv-costing-grid iv-costing-findings">
+                            <thead>
+                                <tr>
+                                    <th>Code</th>
+                                    <th>Severity</th>
+                                    <th>Item</th>
+                                    <th>Document</th>
+                                    <th>Posting id</th>
+                                    <th>Problem</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var finding in Findings)
+                                {
+                                    <tr>
+                                        <td>@finding.Code</td>
+                                        <td>@finding.Severity</td>
+                                        <td>@(finding.ItemCode ?? "—")</td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(finding.SourceDocumentType)
+                                                || !string.IsNullOrWhiteSpace(finding.SourceDocumentNo))
+                                            {
+                                                <span>@finding.SourceDocumentType @finding.SourceDocumentNo</span>
+                                            }
+                                            else
+                                            {
+                                                <span>—</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @(finding.StockPostingId?.ToString() ?? "—")
+                                        </td>
+                                        <td>
+                                            <strong>@finding.Summary</strong>
+                                            <div>@finding.Explanation</div>
+                                        </td>
+                                        <td class="iv-costing-findings__action">
+                                            @if (finding.StockPostingId is long postingId)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                          Text="Preview"
+                                                          Click="@(() => RunPreviewForFindingAsync(postingId))" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+
+        @if (Preview is not null)
+        {
+            <section class="iv-card" id="costing-repair-preview">
+                <h2 class="iv-title">Repair preview</h2>
+                <p class="iv-subtitle">
+                    Posting id @PreviewPostingId.
+                    @Preview.BlockingReason
+                </p>
+                @if (Preview.Steps.Count > 0)
+                {
+                    var step = Preview.Steps[0];
+                    <p>
+                        Physical source @step.PhysicalSourceDocumentType @step.PhysicalSourceDocumentId.
+                        Owner @step.OwnerType @step.OwnerDocumentNo.
+                        Adapter @step.AdapterName.
+                        @(Preview.CanRepair ? "Reversal can be prepared." : "Execution stays blocked.")
+                    </p>
+                }
+            </section>
+        }
+
+        @if (TraceLines.Count > 0 || TraceRan)
+        {
+            <section class="iv-card">
+                <h2 class="iv-title">Item cost</h2>
+                <p class="iv-subtitle">
+                    Opening quantity @OpeningQty.ToString("N6")
+                    @if (MonetaryVisible)
+                    {
+                        <span> · opening value @OpeningValue.ToString("N6") · opening average @OpeningAverage.ToString("N6")</span>
+                    }
+                </p>
+                @if (TraceLines.Count == 0)
+                {
+                    <p class="iv-subtitle">No sealed cost movements for this item in the current branch epoch.</p>
+                }
+                else
+                {
+                    <div class="iv-costing-table-wrap">
+                        <table class="iv-costing-grid">
+                            <thead>
+                                <tr>
+                                    <th>Sequence</th>
+                                    <th>Document</th>
+                                    <th>Warehouse</th>
+                                    <th class="iv-costing-grid__num">Qty after</th>
+                                    @if (MonetaryVisible)
+                                    {
+                                        <th class="iv-costing-grid__num">Value after</th>
+                                        <th class="iv-costing-grid__num">Average after</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var line in TraceLines)
+                                {
+                                    <tr>
+                                        <td>@line.PostingSequence</td>
+                                        <td>@line.SourceDocumentType @line.SourceDocumentNo</td>
+                                        <td>@line.WarehouseCode</td>
+                                        <td class="iv-costing-grid__num">@line.QuantityAfter.ToString("N6")</td>
+                                        @if (MonetaryVisible)
+                                        {
+                                            <td class="iv-costing-grid__num">@line.InventoryValueAfter?.ToString("N6")</td>
+                                            <td class="iv-costing-grid__num">@line.AverageAfter?.ToString("N6")</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+</MenuAuthorize>

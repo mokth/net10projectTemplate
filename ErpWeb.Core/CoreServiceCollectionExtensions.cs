@@ -1,4 +1,5 @@
 using ErpWeb.Core.Admin;
+using ErpWeb.Core.Costing;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
@@ -83,7 +84,33 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IInventoryTenantContext, InventoryTenantContext>();
         services.AddScoped<IStockPostingCoordinator, StockPostingCoordinator>();
         services.AddScoped<IInventoryValuationService, InventoryValuationService>();
+        services.AddScoped<IStockCostMethodResolver, StockCostMethodResolver>();
+        services.AddScoped<IItemStandardCostResolver, ItemStandardCostResolver>();
+        services.AddScoped<ICompanyCurrencyRateResolver, CompanyCurrencyRateResolver>();
+        services.AddScoped<IStockValueAdjustmentWriter, StockValueAdjustmentWriter>();
+        services.AddScoped<IStandardCostRevaluationService, StandardCostRevaluationService>();
+        services.AddScoped<IStockCostMethodCutoverService, StockCostMethodCutoverService>();
+        services.AddScoped<IPurchaseCostPostingCommandFactory, PurchaseCostPostingCommandFactory>();
+        services.AddScoped<IPurchaseCostAdjustmentPostingService, PurchaseCostAdjustmentPostingService>();
+        services.AddScoped<IPurchaseReceiptCostSettlementService, PurchaseReceiptCostSettlementService>();
+        services.AddScoped<IPurchaseCdnCostAdjustmentService, PurchaseCdnCostAdjustmentService>();
+        services.AddScoped<IPurchaseCostInquiryService, PurchaseCostInquiryService>();
         services.AddScoped<IStockValuationQueryService, StockValuationQueryService>();
+        services.AddScoped<ICostingDiagnosticService, CostingDiagnosticService>();
+        services.AddScoped<ICostingTraceService, CostingTraceService>();
+        services.AddScoped<ICostingRepairOwnershipResolver, CostingRepairOwnershipResolver>();
+        services.AddScoped<ICostingRepairPlanner, CostingRepairPlanner>();
+        services.AddScoped<ICostingRepairService, CostingRepairService>();
+        services.AddScoped<ICostingRepairAdapter, InventoryCostingRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, SalesInvoiceCostingRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, SalesDeliveryOrderCostingRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, SalesCreditNoteCostingRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, PurchaseGoodsReceiptRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, PurchaseCdnStockRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, ProductionMaterialIssueRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, ProductionOutputRepairAdapter>();
+        services.AddScoped<ICostingRepairAdapter, ProductionFinishedGoodReceiptRepairAdapter>();
+        services.AddScoped<IStockValuationReportService, StockValuationReportService>();
         services.AddScoped<IBranchStockTransactionLock, BranchStockTransactionLock>();
         services.AddScoped<IStockPeriodGuard, StockPeriodGuard>();
         services.AddScoped<IStockFreezeGuard, NoActiveStockFreezeGuard>();
@@ -276,6 +303,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaSoService>(sp => sp.GetRequiredService<SaSoService>());
         services.AddScoped<ISaQtService, SaQtService>();
         services.AddScoped<ISaCdnService, SaCdnService>();
+        services.AddScoped<ISalesGrossProfitInquiryService, SalesGrossProfitInquiryService>();
         services.AddScoped<ISaDocApplication, SaDocApplicationService>();
 
         services.AddScoped<ISaSalesAnalysisService, SaSalesAnalysisService>();

@@ -140,16 +140,17 @@ public sealed class StockValuationQueryService : IStockValuationQueryService
             var ownerType = line.LinkDo ? "SA_DO" : "SA_INVOICE";
             var ownerNo = line.LinkDo ? line.DoNo.Trim() : no;
             var ownerLine = line.LinkDo ? line.DoLine?.ToString() : line.Line.ToString();
-            var matches = facts.Where(x =>
-                    string.Equals(x.SourceDocumentType, ownerType, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.SourceDocumentNo, ownerNo, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.ItemCode, line.ICode, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            var exact = matches.Where(x =>
-                ownerLine is not null
-                && string.Equals(x.SourceDocumentLine, ownerLine, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (exact.Length > 0)
-                matches = exact;
+            // A sales line is resolved only by its exact valuation owner and source line.
+            // Same-document/item facts are deliberately not a fallback: under split costing they
+            // may belong to another line, and aggregating them would manufacture COGS.
+            var matches = ownerLine is null
+                ? []
+                : facts.Where(x =>
+                        string.Equals(x.SourceDocumentType, ownerType, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.SourceDocumentNo, ownerNo, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.SourceDocumentLine, ownerLine, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.ItemCode, line.ICode, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
 
             result.Add(new SalesInvoiceCogsLine(
                 line.Line,

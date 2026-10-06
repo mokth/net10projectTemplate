@@ -2,6 +2,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
@@ -24,6 +25,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
     private readonly IIvStockPostingRepository _postingRepo;
     private readonly IIvInventoryPostingService _posting;
     private readonly ILogger<IvGoodsReceiptService> _logger;
+    private readonly ICompanyCurrencyRateResolver _currencyRates;
 
     public IvGoodsReceiptService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -36,7 +38,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         IIvStockTransactionRepository transactions,
         IIvStockPostingRepository postingRepo,
         IIvInventoryPostingService posting,
-        ILogger<IvGoodsReceiptService> logger)
+        ILogger<IvGoodsReceiptService> logger,
+        ICompanyCurrencyRateResolver? currencyRates = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -49,6 +52,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         _postingRepo = postingRepo;
         _posting = posting;
         _logger = logger;
+        _currencyRates = currencyRates ?? new CompanyCurrencyRateResolver();
     }
 
     public async Task<IvGoodsReceiptOperationResult> PeekNextBatchNoAsync(CancellationToken cancellationToken = default)
@@ -1134,7 +1138,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         }
     }
 
-    private static async Task<(
+    private async Task<(
         Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>? Evidence,
         string? Error)> ResolveReceiptCostEvidenceAsync(
         AppDbContext db,
@@ -1143,33 +1147,27 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         IReadOnlyCollection<ValidatedLine> lines,
         CancellationToken cancellationToken)
     {
-        var homeCurrency = await db.Companies.AsNoTracking()
+        var configuredHomeCurrency = await db.Companies.AsNoTracking()
             .Where(x => x.CompanyCode == companyCode)
             .Select(x => x.CurrencyCode)
             .FirstOrDefaultAsync(cancellationToken);
-        homeCurrency = string.IsNullOrWhiteSpace(homeCurrency) ? "MYR" : homeCurrency.Trim();
+        var homeCurrency = (configuredHomeCurrency ?? string.Empty).Trim();
+        if (homeCurrency.Length == 0)
+            return (null, $"Company {companyCode} has no configured base currency; receipt cost cannot be frozen.");
 
         var currencies = lines
             .Select(x => string.IsNullOrWhiteSpace(x.PoLine.CurCode) ? x.Po.CurCode : x.PoLine.CurCode)
             .Select(x => string.IsNullOrWhiteSpace(x) ? homeCurrency : x!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var rates = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+        var rates = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var currency in currencies)
         {
-            [homeCurrency] = 1m
-        };
-        var date = transactionDate.Date;
-        foreach (var currency in currencies.Where(x => !x.Equals(homeCurrency, StringComparison.OrdinalIgnoreCase)))
-        {
-            var rate = await db.SaCurrRates.AsNoTracking()
-                .Where(x => x.CurrCode == currency && x.Status
-                            && x.StartDate <= date && x.EndDate >= date)
-                .OrderByDescending(x => x.StartDate)
-                .Select(x => (double?)x.HomeCurPerUnit)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (rate is null or <= 0d)
-                return (null, $"No approved {currency}/{homeCurrency} exchange rate covers {date:yyyy-MM-dd}; receipt cost cannot be frozen.");
-            rates[currency] = (decimal)rate.Value;
+            var resolved = await _currencyRates.ResolveAsync(
+                db, companyCode, currency, transactionDate, cancellationToken);
+            if (!resolved.Succeeded)
+                return (null, $"{resolved.Error} Receipt cost cannot be frozen.");
+            rates[currency] = resolved.Rate;
         }
 
         var result = new Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>();

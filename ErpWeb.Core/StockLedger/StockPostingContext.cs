@@ -23,6 +23,7 @@ public sealed class StockPostingContext
     public string CompanyCode => Posting.CompanyCode;
     public string BranchCode => Posting.BranchCode;
     public string UserId { get; }
+    public string CostMethod { get; internal set; } = StockCostMethods.MovingAverage;
 
     public void EnsureUnsealed()
     {

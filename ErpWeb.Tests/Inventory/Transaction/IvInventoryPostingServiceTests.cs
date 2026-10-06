@@ -414,6 +414,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             IClassCode = "RAW",
             IStatus = "ACTIVE",
             UnitPrice = 1m,
+            PriceConfirmed = true,
             Reason = "ADJ"
         };
 

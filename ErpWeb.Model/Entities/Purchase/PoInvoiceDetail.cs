@@ -37,5 +37,11 @@ public class PoInvoiceDetail
     public short? PoRelNo { get; set; }
     public short? PoLineNo { get; set; }
 
+    /// <summary>
+    /// Exact source line for <c>PoInvoice.Type = CN</c>. A CN must reverse a specific posted INV
+    /// settlement line; PO identity alone is ambiguous when a PO line was invoiced repeatedly.
+    /// </summary>
+    public short? ReferencedInvoiceLineNo { get; set; }
+
     public PoInvoice Invoice { get; set; } = null!;
 }

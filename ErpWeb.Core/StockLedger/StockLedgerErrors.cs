@@ -20,6 +20,9 @@ public static class StockLedgerErrorCodes
     public const string HistoryBeforeCutover = "HISTORY_BEFORE_CUTOVER";
     public const string ValuationRequired = "VALUATION_REQUIRED";
     public const string CountSnapshotChanged = "COUNT_SNAPSHOT_CHANGED";
+    public const string CostPolicyMissing = "COST_POLICY_MISSING";
+    public const string CostPolicyInvalid = "COST_POLICY_INVALID";
+    public const string CostMethodNotImplemented = "COST_METHOD_NOT_IMPLEMENTED";
 }
 
 public sealed record StockLedgerError(string Code, string Message, bool Retryable = false);

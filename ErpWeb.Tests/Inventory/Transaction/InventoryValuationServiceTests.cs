@@ -40,6 +40,15 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             Version = 2, Status = StockLedgerEpochStatuses.Active,
             MigrationBatchId = Guid.NewGuid(), ReconciliationManifestHash = new string('A', 64)
         });
+        db.StockCostPolicyRevisions.Add(new StockCostPolicyRevision
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            CostMethod = StockCostMethods.MovingAverage,
+            EffectiveFrom = new DateTime(2026, 10, 1),
+            Status = StockCostPolicyStatuses.Active,
+            ApprovedBy = "TEST", ApprovedAtUtc = DateTime.UtcNow,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+        });
         await db.SaveChangesAsync();
         db.IvBalLocs.AddRange(
             Balance("MAIN", "A"),

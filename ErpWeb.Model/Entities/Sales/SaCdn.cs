@@ -59,6 +59,8 @@ public class SaCdn
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }
     public string? RollbackBy { get; set; }
+    /// <summary>Append-only financial costing revision for post/rollback/repost identity.</summary>
+    public int CostingRevision { get; set; }
 
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }

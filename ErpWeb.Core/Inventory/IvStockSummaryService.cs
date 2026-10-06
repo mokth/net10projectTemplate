@@ -1,4 +1,5 @@
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 
 namespace ErpWeb.Core.Inventory;
@@ -10,11 +11,10 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
     /// Menus this service is allowed to serve. A page cannot borrow another screen's rights.
     ///
     /// <para>
-    /// <b>Est. Inventory Value reuses this service on purpose.</b> "How much stock is there, by group"
-    /// and "what is it worth, by group" are the same composition with a different emphasis — shipping a
-    /// second grouped query would let the two drift. The value screen passes its OWN menu code, so its
-    /// <c>ACCESS</c> and <c>VIEW_PRICE</c> are checked against <c>INV_STOCK_VALUE</c>, not against the
-    /// summary screen's grant (D11 Option B).
+    /// The authoritative Inventory Value screen reuses this service as its access and grouping façade.
+    /// It passes its OWN menu code and delegates the value path to the sealed-ledger report service, so
+    /// its <c>ACCESS</c> and <c>VIEW_PRICE</c> are checked against <c>INV_STOCK_VALUE</c>, not against the
+    /// operational summary screen's grant.
     /// </para>
     /// </summary>
     private static readonly HashSet<string> KnownMenus = new(StringComparer.OrdinalIgnoreCase)
@@ -32,15 +32,18 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
     private readonly IIvStockInquiryRepository _inquiry;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
+    private readonly IStockValuationReportService? _valuationReports;
 
     public IvStockSummaryService(
         IIvStockInquiryRepository inquiry,
         IInventoryTenantContext tenant,
-        IAccessRightService accessRights)
+        IAccessRightService accessRights,
+        IStockValuationReportService? valuationReports = null)
     {
         _inquiry = inquiry;
         _tenant = tenant;
         _accessRights = accessRights;
+        _valuationReports = valuationReports;
     }
 
     public async Task<IvMasterOperationResult<IvStockSummaryPage>> SearchAsync(
@@ -56,6 +59,19 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
 
         var prepared = Prepare(query);
         var canViewValue = await CanViewValueAsync(context.MenuCode!, cancellationToken);
+
+        if (IsAuthoritativeValueMenu(context.MenuCode) && _valuationReports is not null)
+        {
+            var report = await _valuationReports.SearchAsync(
+                context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
+            var authoritativeRows = report.Rows.Select(x => MapAuthoritativeRow(x, canViewValue)).ToList();
+            Decorate(authoritativeRows, prepared.GroupBy, canViewValue);
+            return IvMasterOperationResult<IvStockSummaryPage>.Ok(new IvStockSummaryPage
+            {
+                Rows = authoritativeRows,
+                TotalCount = report.TotalCount
+            });
+        }
 
         var (rows, total) = await _inquiry.SearchStockSummaryAsync(
             context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
@@ -82,6 +98,21 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
 
         var prepared = Prepare(query);
         var canViewValue = await CanViewValueAsync(context.MenuCode!, cancellationToken);
+
+        if (IsAuthoritativeValueMenu(context.MenuCode) && _valuationReports is not null)
+        {
+            var report = await _valuationReports.SummariseAsync(
+                context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
+            return IvMasterOperationResult<IvStockSummarySummary>.Ok(new IvStockSummarySummary
+            {
+                GroupCount = report.GroupCount,
+                ItemCount = report.ItemCount,
+                PileCount = report.PileCount,
+                ZeroQtyPileCount = report.ZeroQtyPileCount,
+                TotalQty = report.TotalQty,
+                TotalValue = canViewValue ? IvQty.Round(report.TotalValue) : null
+            });
+        }
 
         var summary = await _inquiry.SummariseStockSummaryAsync(
             context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
@@ -111,6 +142,19 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
         var prepared = Prepare(query);
         var canViewValue = await CanViewValueAsync(context.MenuCode!, cancellationToken);
 
+        if (IsAuthoritativeValueMenu(context.MenuCode) && _valuationReports is not null)
+        {
+            var report = await _valuationReports.SearchAsync(
+                context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
+            var authoritativeRows = report.Rows.Select(x => MapAuthoritativeRow(x, canViewValue)).ToList();
+            Decorate(authoritativeRows, prepared.GroupBy, canViewValue);
+            return IvMasterOperationResult<IvStockSummaryPage>.Ok(new IvStockSummaryPage
+            {
+                Rows = authoritativeRows,
+                TotalCount = report.TotalCount
+            });
+        }
+
         var total = await _inquiry.CountStockSummaryAsync(
             context.CompanyCode!, context.BranchCode!, prepared, cancellationToken);
         var rows = await _inquiry.ListStockSummaryForExportAsync(
@@ -134,7 +178,7 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
     }
 
     /// <summary>
-    /// Fills the two service-owned columns: the UOM display (D16) and the rounded/masked estimate.
+    /// Fills the service-owned UOM display and the rounded/masked compatibility value column.
     /// Rounding happens HERE, once, so the grid, the summary and the export can never show a value the
     /// other two disagree with.
     /// </summary>
@@ -166,6 +210,33 @@ public sealed class IvStockSummaryService : IIvStockSummaryService
             row.EstValue = canViewValue ? IvQty.Round(row.EstValue ?? 0m) : null;
         }
     }
+
+    private static IvStockSummaryRow MapAuthoritativeRow(
+        StockValuationReportRow row,
+        bool canViewValue) =>
+        new()
+        {
+            ICode = row.ICode,
+            IDesc = row.IDesc,
+            IClassCode = row.IClassCode,
+            IClassDesc = row.IClassDesc,
+            StdUom = row.StdUom,
+            WhCode = row.WhCode,
+            WhDesc = row.WhDesc,
+            TotalQty = row.TotalQty,
+            ItemCount = row.ItemCount,
+            PileCount = row.PileCount,
+            ZeroQtyPileCount = row.ZeroQtyPileCount,
+            InventoryValue = canViewValue ? IvQty.Round(row.InventoryValue) : null,
+            EstValue = canViewValue ? IvQty.Round(row.InventoryValue) : null,
+            UnitCost = canViewValue ? IvQty.Round(row.UnitCost) : null,
+            CostMethod = row.CostMethod,
+            ValuationStatus = row.ValuationStatus,
+            IsAllocatedWarehouseValue = row.IsAllocatedWarehouseValue
+        };
+
+    private static bool IsAuthoritativeValueMenu(string? menuCode) =>
+        string.Equals(menuCode, MenuCodes.InventoryStockValue, StringComparison.OrdinalIgnoreCase);
 
     private Task<bool> CanViewValueAsync(string menuCode, CancellationToken cancellationToken) =>
         _accessRights.CanAsync(menuCode, PermissionCodes.ViewPrice, cancellationToken);

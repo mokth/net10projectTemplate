@@ -8,6 +8,11 @@ public class IvTrxHistory
     public decimal? EvidenceBaseQty { get; set; }
     public string? EvidenceBaseUom { get; set; }
     public string? PriceEvidence { get; set; }
+    /// <summary>Immutable structured approval state carried from the posted batch detail.</summary>
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
+    public string? CostApprovedBy { get; set; }
+    public DateTime? CostApprovedAtUtc { get; set; }
     public int Id { get; set; }
     public int? FromBalLocId { get; set; }
     public int? ToBalLocId { get; set; }

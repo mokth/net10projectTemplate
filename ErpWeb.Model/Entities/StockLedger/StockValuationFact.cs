@@ -89,6 +89,12 @@ public sealed class StockCostState
     public string CostMethod { get; set; } = StockCostMethods.MovingAverage;
     public decimal OnHandBaseQty { get; set; }
     public decimal InventoryValue { get; set; }
+    /// <summary>
+    /// Current informational unit cost for the active financial method. This is deliberately
+    /// separate from <see cref="AverageUnitCost"/> so FIFO and STANDARD can expose their own
+    /// current cost semantics without changing the legacy WAC column.
+    /// </summary>
+    public decimal CurrentUnitCost { get; set; }
     public decimal AverageUnitCost { get; set; }
     public long? LastValuationFactId { get; set; }
     public StockValuationFact? LastValuationFact { get; set; }
@@ -99,6 +105,15 @@ public sealed class StockCostState
 public static class StockCostMethods
 {
     public const string MovingAverage = "MOVING_AVERAGE";
+    public const string Fifo = "FIFO";
+    public const string Standard = "STANDARD";
+
+    public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        MovingAverage,
+        Fifo,
+        Standard
+    };
 }
 
 public static class StockValuationStatuses
@@ -120,4 +135,8 @@ public static class StockValuationSources
     public const string ManualApproved = "MANUAL_APPROVED";
     public const string OpeningApproved = "OPENING_APPROVED";
     public const string BackfillVerified = "BACKFILL_VERIFIED";
+    public const string Fifo = "FIFO";
+    public const string Standard = "STANDARD";
+    public const string StandardRevaluation = "STANDARD_REVALUATION";
+    public const string ReturnStandardVariance = "RETURN_STANDARD_VARIANCE";
 }

@@ -46,11 +46,20 @@ public static class PermissionCodes
     /// </summary>
     public const string PriceOverride = "PRICE_OVERRIDE";
 
+    /// <summary>Explicit authority for an auditable branch costing-method cutover.</summary>
+    public const string CostingMethodChange = "COSTING_METHOD_CHANGE";
+
+    /// <summary>
+    /// Authority to execute a costing repair from the Costing Diagnostic &amp; Repair Center.
+    /// It does not replace the source document's own POST or ROLLBACK permission.
+    /// </summary>
+    public const string RepairCost = "REPAIR_COST";
+
     /// <summary>All known permission codes (ADMIN UI / GetPermissionsAsync).</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Access, Add, Edit, Delete, Print, Post, Rollback, Approve, Reject, Cancel,
         Void, Reverse, Export, Import, Email, Submit, Close, Reopen, ViewCost, ViewProfit,
-        ViewPrice, PriceOverride
+        ViewPrice, PriceOverride, CostingMethodChange, RepairCost
     };
 }

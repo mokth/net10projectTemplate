@@ -5,7 +5,7 @@
 @using ErpWeb.Model.Repositories.Inventory
 @using ErpWeb.UI.Components.Common.DataGrid
 
-<PageTitle>Est. Inventory Value</PageTitle>
+<PageTitle>Inventory Valuation</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.InventoryStockValue">
     <div class="iv-page">
@@ -30,10 +30,10 @@
             </div>
             <div class="iv-hero__copy">
                 <p class="iv-eyebrow">Inventory</p>
-                <h1 class="iv-title">Est. Inventory Value</h1>
+                <h1 class="iv-title">Inventory Valuation</h1>
                 <p class="iv-subtitle">
-                    The on-hand estimate by <strong>@GroupByCaption</strong>, using the price each pile was
-                    received at. <strong>This is an estimate, not a GL valuation.</strong>
+                    Authoritative sealed-ledger inventory value by <strong>@GroupByCaption</strong>.
+                    Warehouse rows are allocated drill-downs of the branch/item financial pool.
                 </p>
                 <div class="iv-chips">
                     <span class="iv-chip">@GroupByCaption</span>
@@ -46,12 +46,12 @@
                     }
                     @if (CanViewValue)
                     {
-                        <span class="iv-chip">Est. value: @(SummaryTotalValue?.ToString("N4") ?? "0.0000")</span>
+                        <span class="iv-chip">Inventory value: @(SummaryTotalValue?.ToString("N4") ?? "0.0000")</span>
                     }
                 </div>
             </div>
             <div class="iv-hero__kpi">
-                <span>Est. value</span>
+                <span>Inventory value</span>
                 <strong>@(CanViewValue ? SummaryTotalValue?.ToString("N2") ?? "0.00" : "—")</strong>
             </div>
         </header>
@@ -70,10 +70,9 @@
         else
         {
             <p class="iv-subtitle">
-                <strong>Estimate — not a GL valuation.</strong> Each pile keeps the price it was received at;
-                there is no costing method, no cost layer and no revaluation, so this figure cannot tie to a
-                general-ledger balance. The unit price is the pile's own price when it has one, otherwise the
-                item's purchase price.
+                <strong>Authoritative ledger value.</strong> The report uses sealed valuation facts and the
+                latest applicable closed-period snapshot. A warehouse value is an allocated drill-down when
+                the financial pool is branch/item scoped.
             </p>
         }
 

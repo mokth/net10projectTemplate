@@ -47,6 +47,7 @@ public class SaCdnConfiguration : IEntityTypeConfiguration<SaCdn>
         builder.Property(e => e.RefNo).HasMaxLength(50);
         builder.Property(e => e.ExternalDocNo).HasMaxLength(50);
         builder.Property(e => e.ReturnStock).IsRequired();
+        builder.Property(e => e.CostingRevision).HasDefaultValue(0);
         builder.Property(e => e.IrnmCancelOn).HasColumnName("IRNMCancelOn").HasColumnType("datetime2");
         builder.Property(e => e.IrbmSubmitId).HasColumnName("IRBMSubmitID").HasMaxLength(50);
         builder.Property(e => e.IrbmUuid).HasColumnName("IRBMUUID").HasMaxLength(50);
@@ -83,5 +84,9 @@ public class SaCdnConfiguration : IEntityTypeConfiguration<SaCdn>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.InvNo })
             .HasDatabaseName("IX_SaCDN_Company_Branch_InvNo");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.DocNo, e.CostingRevision })
+            .IsUnique()
+            .HasDatabaseName("UX_SaCDN_CostingRevision");
     }
 }

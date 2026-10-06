@@ -236,6 +236,7 @@ public sealed class PoInvoiceLineDto
     public string? PoNo { get; init; }
     public short? PoRelNo { get; init; }
     public short? PoLineNo { get; init; }
+    public short? ReferencedInvoiceLineNo { get; init; }
 }
 
 public sealed class PoInvoiceDocument
@@ -333,6 +334,7 @@ public sealed class PoInvoiceLineRequest
     public string? PoNo { get; set; }
     public short? PoRelNo { get; set; }
     public short? PoLineNo { get; set; }
+    public short? ReferencedInvoiceLineNo { get; set; }
 }
 
 public sealed class PoInvoiceInvoicePickerRow

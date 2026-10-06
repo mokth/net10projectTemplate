@@ -47,6 +47,7 @@ public class PoInvoiceConfiguration : IEntityTypeConfiguration<PoInvoice>
         builder.Property(e => e.RefNo).HasMaxLength(50);
         builder.Property(e => e.ExternalDocNo).HasMaxLength(50);
         builder.Property(e => e.PriceTolerance).HasPrecision(18, 4);
+        builder.Property(e => e.CostingRevision).HasDefaultValue(0);
         builder.Property(e => e.PostedDate).HasColumnType("datetime2");
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackDate).HasColumnType("datetime2");
@@ -74,5 +75,9 @@ public class PoInvoiceConfiguration : IEntityTypeConfiguration<PoInvoice>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.InvNo })
             .HasDatabaseName("IX_POInvoice_Company_Branch_InvNo");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.DocNo, e.CostingRevision })
+            .IsUnique()
+            .HasDatabaseName("UX_POInvoice_CostingRevision");
     }
 }

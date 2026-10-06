@@ -66,6 +66,12 @@ public sealed class IvStockSummaryQuery
     /// <summary>One of <see cref="IvStockSummaryGroupBys"/>; unknown falls back to ITEM.</summary>
     public string GroupBy { get; set; } = IvStockSummaryGroupBys.Default;
 
+    /// <summary>Optional as-of date used by the authoritative valuation screen.</summary>
+    public DateTime? AsOfDate { get; set; }
+
+    /// <summary>Optional financial method filter used by the authoritative valuation screen.</summary>
+    public string? CostMethod { get; set; }
+
     public string? ICode { get; set; }
     public string? WhCode { get; set; }
 
@@ -138,6 +144,21 @@ public sealed class IvStockSummaryRow
     /// the caller may not see price. An estimate, not a general-ledger valuation (D5/D13).
     /// </summary>
     public decimal? EstValue { get; set; }
+
+    /// <summary>Authoritative value from the sealed stock-valuation ledger.</summary>
+    public decimal? InventoryValue { get; set; }
+
+    /// <summary>Informational unit cost derived from the authoritative row value and quantity.</summary>
+    public decimal? UnitCost { get; set; }
+
+    /// <summary>The financial method that produced the authoritative value.</summary>
+    public string? CostMethod { get; set; }
+
+    /// <summary>RESOLVED, QTY_MISMATCH, UNRESOLVED, or another explicit report status.</summary>
+    public string? ValuationStatus { get; set; }
+
+    /// <summary>True when a warehouse row is an allocation of a branch/item financial pool.</summary>
+    public bool IsAllocatedWarehouseValue { get; set; }
 }
 
 /// <summary>

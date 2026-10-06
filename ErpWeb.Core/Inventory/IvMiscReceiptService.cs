@@ -257,6 +257,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                     IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
                     PriceConfirmed = d.PriceEvidence != null,
                     UnitPrice = d.UnitPrice ?? 0m,
+                    CostEvidenceType = d.CostEvidenceType,
+                    CostOverrideReason = d.CostOverrideReason,
                     ExpiryDate = d.ExpiryDate,
                     Reason = d.Reason,
                     Remarks = d.Remarks,
@@ -375,7 +377,9 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             context.BranchCode!,
             context.LocationCode,
             batchNo,
-            doResult.DoNo);
+            doResult.DoNo,
+            userId,
+            now);
 
         await _transactions.InsertAsync(db, batch, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
@@ -493,7 +497,9 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             context.BranchCode!,
             context.LocationCode,
             batch.BatchNo,
-            doResult.DoNo);
+            doResult.DoNo,
+            userId,
+            now);
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
@@ -694,7 +700,9 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string branchCode,
         string? locationCode,
         int batchNo,
-        string? supplierDoNo)
+        string? supplierDoNo,
+        string approvedBy,
+        DateTime approvedAtUtc)
     {
         short trxLineNo = 1;
         foreach (var row in validated)
@@ -721,7 +729,17 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 IStatus = row.IStatus,
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
-                PriceEvidence = row.PriceConfirmed ? "EXPLICIT_COMPANY_BASE_PRICE" : null,
+                PriceEvidence = row.CostEvidenceType switch
+                {
+                    InventoryCostEvidenceTypes.ZeroCostApproved => InventoryCostEvidenceTypes.ZeroCostApproved,
+                    InventoryCostEvidenceTypes.OpeningApproved => InventoryCostEvidenceTypes.OpeningApproved,
+                    InventoryCostEvidenceTypes.ManualApproved => "EXPLICIT_COMPANY_BASE_PRICE",
+                    _ => null
+                },
+                CostEvidenceType = row.CostEvidenceType,
+                CostOverrideReason = row.CostOverrideReason,
+                CostApprovedBy = row.CostEvidenceType is null ? null : approvedBy,
+                CostApprovedAtUtc = row.CostEvidenceType is null ? null : approvedAtUtc,
                 UnitPrice = IvQty.Round(row.UnitPrice * row.EnteredQty / row.StdQty),
                 Reason = row.Reason,
                 Remarks = row.Remarks,
@@ -851,6 +869,34 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             return ($"Line {lineNo}: unit price cannot be negative.", null);
         }
 
+        var costEvidenceType = InventoryCostEvidenceTypes.Normalize(line.CostEvidenceType);
+        if (!string.IsNullOrWhiteSpace(line.CostEvidenceType) && costEvidenceType is null)
+        {
+            return ($"Line {lineNo}: cost evidence type must be MANUAL_APPROVED, ZERO_COST_APPROVED, or OPENING_APPROVED.", null);
+        }
+
+        if (item.StockControl && costEvidenceType is null && line.PriceConfirmed)
+        {
+            costEvidenceType = line.UnitPrice == 0m
+                ? InventoryCostEvidenceTypes.ZeroCostApproved
+                : InventoryCostEvidenceTypes.ManualApproved;
+        }
+
+        if (item.StockControl && costEvidenceType is null)
+        {
+            return ($"Line {lineNo}: company-base cost must be explicitly confirmed before a stock receipt can be saved.", null);
+        }
+
+        if (costEvidenceType == InventoryCostEvidenceTypes.ZeroCostApproved && line.UnitPrice != 0m)
+        {
+            return ($"Line {lineNo}: ZERO_COST_APPROVED requires a zero unit cost.", null);
+        }
+
+        if (costEvidenceType == InventoryCostEvidenceTypes.ManualApproved && line.UnitPrice <= 0m)
+        {
+            return ($"Line {lineNo}: MANUAL_APPROVED requires a positive unit cost; use ZERO_COST_APPROVED for zero cost.", null);
+        }
+
         var reason = (line.Reason ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(reason))
         {
@@ -860,6 +906,13 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         if (reason.Length > 50)
         {
             return ($"Line {lineNo}: reason must be at most 50 characters.", null);
+        }
+
+        var costOverrideReason = TruncateOptional(line.CostOverrideReason ?? reason, 250);
+        if (costEvidenceType is InventoryCostEvidenceTypes.ZeroCostApproved or InventoryCostEvidenceTypes.OpeningApproved
+            && string.IsNullOrWhiteSpace(costOverrideReason))
+        {
+            return ($"Line {lineNo}: a reason is required for {costEvidenceType}.", null);
         }
 
         var remarks = string.IsNullOrWhiteSpace(line.Remarks)
@@ -942,7 +995,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             iClassCode,
             expiry,
             line.UnitPrice,
-            line.PriceConfirmed,
+            costEvidenceType,
+            costOverrideReason,
             reason,
             remarks));
     }
@@ -1012,7 +1066,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         string IClassCode,
         DateTime? ExpiryDate,
         decimal UnitPrice,
-        bool PriceConfirmed,
+        string? CostEvidenceType,
+        string? CostOverrideReason,
         string Reason,
         string? Remarks);
 

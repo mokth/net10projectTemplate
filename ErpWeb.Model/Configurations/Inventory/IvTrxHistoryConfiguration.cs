@@ -19,6 +19,9 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
         builder.Property(x => x.EvidenceBaseUom).HasMaxLength(10);
         builder.Property(x => x.ValuationStatus).HasMaxLength(20);
         builder.Property(x => x.PriceEvidence).HasMaxLength(200);
+        builder.Property(x => x.CostEvidenceType).HasMaxLength(30);
+        builder.Property(x => x.CostOverrideReason).HasMaxLength(250);
+        builder.Property(x => x.CostApprovedBy).HasMaxLength(100);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

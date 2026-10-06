@@ -146,6 +146,8 @@ public sealed class IvMiscReceiptLineDto
     public string IStatus { get; init; } = IvItemStatuses.Active;
     public bool PriceConfirmed { get; init; }
     public decimal UnitPrice { get; init; }
+    public string? CostEvidenceType { get; init; }
+    public string? CostOverrideReason { get; init; }
     public DateTime? ExpiryDate { get; init; }
     public string? Reason { get; init; }
     public string? Remarks { get; init; }
@@ -175,6 +177,9 @@ public sealed class IvMiscReceiptLineRequest
     public string IStatus { get; set; } = IvItemStatuses.Active;
     public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
+    /// <summary>MANUAL_APPROVED, ZERO_COST_APPROVED, or OPENING_APPROVED.</summary>
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }

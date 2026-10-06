@@ -39,6 +39,7 @@ public class PoCdn
 
     public string? Currency { get; set; }
     public decimal CurrRate { get; set; } = 1m;
+    public int CostingRevision { get; set; }
     public string? TaxGrCode { get; set; }
     public string? Remarks { get; set; }
 

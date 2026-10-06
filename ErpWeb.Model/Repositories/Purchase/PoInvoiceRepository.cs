@@ -48,7 +48,8 @@ public interface IPoInvoiceRepository
         short poRelNo,
         short poLineNo,
         string? excludeDocNo,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        short? referencedInvoiceLineNo = null);
 
     Task<bool> HasPostedCnReferencingInvAsync(
         AppDbContext db,
@@ -220,7 +221,8 @@ WHERE CompanyCode = {company}
         short poRelNo,
         short poLineNo,
         string? excludeDocNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        short? referencedInvoiceLineNo = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         var company = (companyCode ?? string.Empty).Trim();
@@ -236,6 +238,8 @@ WHERE CompanyCode = {company}
                 && d.PoNo == po
                 && d.PoRelNo == poRelNo
                 && d.PoLineNo == poLineNo
+                && (referencedInvoiceLineNo == null
+                    || d.ReferencedInvoiceLineNo == referencedInvoiceLineNo.Value)
                 && d.Invoice.Type == "CN"
                 && d.Invoice.Status == "POSTED"
                 && d.Invoice.InvNo == inv);

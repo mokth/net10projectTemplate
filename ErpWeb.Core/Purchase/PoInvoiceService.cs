@@ -3,9 +3,11 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +28,12 @@ public sealed class PoInvoiceService : IPoInvoiceService
     private readonly IPoCdnRepository _cdns;
     private readonly PoOrderOptions _options;
     private readonly ILogger<PoInvoiceService> _logger;
+    private readonly ICompanyCurrencyRateResolver _currencyRates;
+    private readonly IStockPostingCoordinator? _stockCoordinator;
+    private readonly IPurchaseCostPostingCommandFactory? _costPostingCommands;
+    private readonly IPurchaseCostAdjustmentPostingService? _costAdjustments;
+    private readonly IPurchaseReceiptCostSettlementService? _receiptSettlements;
+    private readonly IStockCostMethodResolver _costMethods;
 
     public PoInvoiceService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -37,7 +45,13 @@ public sealed class PoInvoiceService : IPoInvoiceService
         IPoOrderRepository orders,
         IPoCdnRepository cdns,
         IOptions<PoOrderOptions> options,
-        ILogger<PoInvoiceService> logger)
+        ILogger<PoInvoiceService> logger,
+        ICompanyCurrencyRateResolver? currencyRates = null,
+        IStockPostingCoordinator? stockCoordinator = null,
+        IPurchaseCostPostingCommandFactory? costPostingCommands = null,
+        IPurchaseCostAdjustmentPostingService? costAdjustments = null,
+        IPurchaseReceiptCostSettlementService? receiptSettlements = null,
+        IStockCostMethodResolver? costMethods = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -49,6 +63,12 @@ public sealed class PoInvoiceService : IPoInvoiceService
         _cdns = cdns;
         _options = options.Value;
         _logger = logger;
+        _currencyRates = currencyRates ?? new CompanyCurrencyRateResolver();
+        _stockCoordinator = stockCoordinator;
+        _costPostingCommands = costPostingCommands;
+        _costAdjustments = costAdjustments;
+        _receiptSettlements = receiptSettlements;
+        _costMethods = costMethods ?? new StockCostMethodResolver();
     }
 
     public async Task<PoInvoiceOperationResult> GetLookupsAsync(CancellationToken cancellationToken = default)
@@ -157,14 +177,24 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
 
         var currency = string.IsNullOrWhiteSpace(vendor.Currency) ? "MYR" : vendor.Currency.Trim();
-        var rate = await ResolveCurrRateAsync(db, scope.CompanyCode, currency, docDate == default ? _dates.Today : docDate, cancellationToken);
+        var resolvedRate = await ResolveCurrRateAsync(
+            db, scope.CompanyCode, currency, docDate == default ? _dates.Today : docDate, cancellationToken);
+        if (!resolvedRate.Succeeded)
+        {
+            return PoInvoiceOperationResult.FailValidation(
+                resolvedRate.Error ?? "Currency rate could not be resolved.",
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Currency"] = resolvedRate.Error ?? "Currency rate could not be resolved."
+                });
+        }
 
         return PoInvoiceOperationResult.OkVendorDefaults(new PoInvoiceVendorDefaults
         {
             VendorCode = vendor.SuppCode,
             VendorName = vendor.SuppName ?? string.Empty,
             Currency = currency,
-            CurrRate = rate,
+            CurrRate = resolvedRate.Rate,
             PayCode = vendor.PayCode,
             TaxGrCode = vendor.TaxGrCode,
             InvAddress1 = vendor.Address1,
@@ -858,7 +888,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 OneTime = x.OneTime,
                 PoNo = x.PoNo,
                 PoRelNo = x.PoRelNo,
-                PoLineNo = x.PoLineNo
+                PoLineNo = x.PoLineNo,
+                ReferencedInvoiceLineNo = x.Line
             }).ToList()
         };
 
@@ -916,6 +947,14 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, applyError);
             }
 
+            var costingError = await PostInvoiceCostingAsync(
+                db, write, invoice, cancellationToken);
+            if (costingError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(docNo, costingError);
+            }
+
             var now = DateTime.UtcNow;
             var uid = Truncate(write.UserId, 20);
             invoice.Status = PoInvoiceStatuses.Posted;
@@ -944,6 +983,117 @@ public sealed class PoInvoiceService : IPoInvoiceService
             _logger.LogError(ex, "PO invoice post failed for {DocNo}", docNo);
             await tx.RollbackAsync(cancellationToken);
             return PoInvoicePostingItemResult.Failed(docNo, "Unable to post the document.");
+        }
+    }
+
+    private async Task<string?> PostInvoiceCostingAsync(
+        AppDbContext db,
+        InventoryTenantScope write,
+        PoInvoice invoice,
+        CancellationToken cancellationToken)
+    {
+        // The legacy test harness and pre-cutover branches do not have a V2 coordinator. In
+        // that mode the existing commercial posting remains the source of truth. Once V2 is
+        // active, both purchase INV and the older quantity-correction CN must pass through the
+        // immutable settlement pipeline before they can be marked POSTED.
+        var isInvoice = string.Equals(invoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase);
+        var isCreditNote = string.Equals(invoice.Type, PoInvoiceTypes.CreditNote, StringComparison.OrdinalIgnoreCase);
+        if ((!isInvoice && !isCreditNote)
+            || _stockCoordinator is null
+            || _costPostingCommands is null
+            || _costAdjustments is null
+            || _receiptSettlements is null)
+        {
+            return null;
+        }
+
+        PoInvoice? referencedInvoice = null;
+        if (isCreditNote)
+        {
+            referencedInvoice = await _invoices.GetWithDetailsAsync(
+                db,
+                write.CompanyCode,
+                write.BranchCode,
+                invoice.InvNo ?? string.Empty,
+                cancellationToken);
+            if (referencedInvoice is null
+                || !string.Equals(referencedInvoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(referencedInvoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Posted purchase invoice {invoice.InvNo} was not found for credit-note costing.";
+            }
+        }
+
+        var snapshot = new
+        {
+            invoice.DocNo,
+            invoice.Type,
+            invoice.DocDate,
+            invoice.Currency,
+            invoice.CurrRate,
+            invoice.CostingRevision,
+            Lines = invoice.Details.OrderBy(x => x.Line).Select(x => new
+            {
+                x.Line,
+                x.ICode,
+                x.StdQty,
+                x.NetAmount,
+                x.PoNo,
+                x.PoRelNo,
+                x.PoLineNo,
+                x.ReferencedInvoiceLineNo
+            }).ToArray()
+        };
+        var command = _costPostingCommands.Create(new PurchaseCostPostingRequest(
+            SourceDocumentType: isCreditNote ? "PO_INVOICE_CN" : "PO_INVOICE",
+            SourceDocumentId: invoice.DocNo,
+            SourceDocumentNo: invoice.DocNo,
+            CostingRevision: invoice.CostingRevision,
+            PostingRole: "PRIMARY",
+            EffectiveAt: invoice.DocDate,
+            SourceSnapshot: snapshot));
+
+        var begin = await _stockCoordinator.BeginInTransactionAsync(
+            db, command, cancellationToken);
+        if (begin.Error is not null)
+            return begin.Error.Message;
+        if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
+            return null;
+
+        try
+        {
+            var costingEffectiveAt = referencedInvoice?.DocDate ?? invoice.DocDate;
+            begin.Context.CostMethod = await _costMethods.ResolveAsync(
+                db, write.CompanyCode, write.BranchCode!, costingEffectiveAt, cancellationToken);
+            var settlement = isCreditNote
+                ? await _receiptSettlements.ReverseCreditNoteAsync(
+                    db,
+                    invoice,
+                    referencedInvoice!,
+                    begin.Context.CostMethod,
+                    begin.Context.Posting.Id,
+                    write.UserId,
+                    cancellationToken)
+                : await _receiptSettlements.AllocateInvoiceAsync(
+                    db,
+                    invoice,
+                    begin.Context.CostMethod,
+                    begin.Context.Posting.Id,
+                    write.UserId,
+                    cancellationToken);
+            if (!settlement.Succeeded)
+                return settlement.Error ?? (isCreditNote
+                    ? "Purchase credit-note settlement reversal failed."
+                    : "Purchase receipt settlement failed.");
+
+            await _costAdjustments.AppendInTransactionAsync(
+                begin.Context, settlement.Adjustments, cancellationToken);
+            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            return null;
+        }
+        catch (StockLedgerException ex)
+        {
+            return ex.Error.Message;
         }
     }
 
@@ -1022,9 +1172,18 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, applyError);
             }
 
+            var costingError = await RollbackInvoiceCostingAsync(
+                db, write, invoice, cancellationToken);
+            if (costingError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(docNo, costingError);
+            }
+
             var now = DateTime.UtcNow;
             var uid = Truncate(write.UserId, 20);
             invoice.Status = PoInvoiceStatuses.New;
+            invoice.CostingRevision = checked(invoice.CostingRevision + 1);
             invoice.RollbackDate = now;
             invoice.RollbackBy = uid;
             invoice.ModifiedDate = now;
@@ -1050,6 +1209,142 @@ public sealed class PoInvoiceService : IPoInvoiceService
             _logger.LogError(ex, "PO invoice rollback failed for {DocNo}", docNo);
             await tx.RollbackAsync(cancellationToken);
             return PoInvoicePostingItemResult.Failed(docNo, "Unable to rollback the document.");
+        }
+    }
+
+    private async Task<string?> RollbackInvoiceCostingAsync(
+        AppDbContext db,
+        InventoryTenantScope write,
+        PoInvoice invoice,
+        CancellationToken cancellationToken)
+    {
+        var isInvoice = string.Equals(invoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase);
+        var isCreditNote = string.Equals(invoice.Type, PoInvoiceTypes.CreditNote, StringComparison.OrdinalIgnoreCase);
+        if ((!isInvoice && !isCreditNote)
+            || _stockCoordinator is null
+            || _costPostingCommands is null
+            || _costAdjustments is null
+            || _receiptSettlements is null)
+        {
+            return null;
+        }
+
+        // The coordinator is registered on all branches, but the V2 ledger is only
+        // authoritative after its epoch is activated. Preserve the legacy rollback
+        // path before that cutover instead of requiring a V2 posting that cannot exist.
+        var ledgerActive = await db.StockLedgerEpochs.AsNoTracking()
+            .AnyAsync(x => x.CompanyCode == write.CompanyCode
+                           && x.BranchCode == write.BranchCode
+                           && x.Status == StockLedgerEpochStatuses.Active,
+                cancellationToken);
+        if (!ledgerActive)
+            return null;
+
+        var sourceDocumentType = isCreditNote ? "PO_INVOICE_CN" : "PO_INVOICE";
+        var original = await db.StockPostings.AsNoTracking()
+            .Where(x => x.CompanyCode == write.CompanyCode
+                        && x.BranchCode == write.BranchCode
+                        && x.SourceModule == "PROCUREMENT"
+                        && x.SourceDocumentType == sourceDocumentType
+                        && x.SourceDocumentId == invoice.DocNo
+                        && x.DocumentRevision == invoice.CostingRevision
+                        && x.PostingRole == "PRIMARY"
+                        && x.SealedAtUtc != null)
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (original is null)
+            return $"No sealed costing posting was found for {invoice.Type} {invoice.DocNo} revision {invoice.CostingRevision}.";
+
+        PoInvoice? referencedInvoice = null;
+        if (isCreditNote)
+        {
+            referencedInvoice = await _invoices.GetWithDetailsAsync(
+                db,
+                write.CompanyCode,
+                write.BranchCode,
+                invoice.InvNo ?? string.Empty,
+                cancellationToken);
+            if (referencedInvoice is null
+                || !string.Equals(referencedInvoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(referencedInvoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Posted purchase invoice {invoice.InvNo} was not found for credit-note rollback.";
+            }
+        }
+
+        var snapshot = new
+        {
+            invoice.DocNo,
+            invoice.Type,
+            invoice.DocDate,
+            invoice.Currency,
+            invoice.CurrRate,
+            invoice.CostingRevision,
+            Lines = invoice.Details.OrderBy(x => x.Line).Select(x => new
+            {
+                x.Line,
+                x.ICode,
+                x.StdQty,
+                x.NetAmount,
+                x.PoNo,
+                x.PoRelNo,
+                x.PoLineNo,
+                x.ReferencedInvoiceLineNo
+            }).ToArray()
+        };
+        var command = _costPostingCommands.Create(new PurchaseCostPostingRequest(
+            SourceDocumentType: sourceDocumentType,
+            SourceDocumentId: invoice.DocNo,
+            SourceDocumentNo: invoice.DocNo,
+            CostingRevision: invoice.CostingRevision,
+            PostingRole: "REVERSAL",
+            EffectiveAt: original.EffectiveAt,
+            SourceSnapshot: snapshot,
+            ReasonCode: isCreditNote ? "PO_INVOICE_CN_ROLLBACK" : "PO_INVOICE_ROLLBACK",
+            ReasonText: isCreditNote
+                ? "Reverse purchase credit-note costing posting."
+                : "Reverse purchase invoice costing posting.",
+            ReversesPostingId: original.Id));
+
+        var begin = await _stockCoordinator.BeginInTransactionAsync(
+            db, command, cancellationToken);
+        if (begin.Error is not null)
+            return begin.Error.Message;
+        if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
+            return null;
+
+        try
+        {
+            var costingEffectiveAt = referencedInvoice?.DocDate ?? original.EffectiveAt;
+            begin.Context.CostMethod = await _costMethods.ResolveAsync(
+                db, write.CompanyCode, write.BranchCode!, costingEffectiveAt, cancellationToken);
+            var reversal = isCreditNote
+                ? await _receiptSettlements.RollbackCreditNoteAsync(
+                    db,
+                    invoice,
+                    original.Id,
+                    begin.Context.Posting.Id,
+                    write.UserId,
+                    cancellationToken)
+                : await _receiptSettlements.ReverseInvoiceAsync(
+                    db,
+                    invoice,
+                    begin.Context.Posting.Id,
+                    write.UserId,
+                    cancellationToken);
+            if (!reversal.Succeeded)
+                return reversal.Error ?? (isCreditNote
+                    ? "Purchase credit-note costing rollback failed."
+                    : "Purchase invoice costing reversal failed.");
+
+            await _costAdjustments.AppendInTransactionAsync(
+                begin.Context, reversal.Adjustments, cancellationToken);
+            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            return null;
+        }
+        catch (StockLedgerException ex)
+        {
+            return ex.Error.Message;
         }
     }
 
@@ -1229,13 +1524,25 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return $"Line {detail.Line}: credit quantity exceeds invoiced quantity ({poLine.InvoicedQty:n4}).";
             }
 
+            if (detail.ReferencedInvoiceLineNo is null)
+            {
+                return $"Line {detail.Line}: exact referenced invoice line is required for a credit note.";
+            }
+
             var invLine = referencedInv!.Details.FirstOrDefault(x =>
-                string.Equals(x.PoNo, detail.PoNo, StringComparison.OrdinalIgnoreCase)
-                && x.PoRelNo == detail.PoRelNo
-                && x.PoLineNo == detail.PoLineNo);
+                x.Line == detail.ReferencedInvoiceLineNo.Value);
             if (invLine is null)
             {
-                return $"Line {detail.Line}: referenced invoice has no matching PO line.";
+                return $"Line {detail.Line}: referenced invoice line {detail.ReferencedInvoiceLineNo} was not found.";
+            }
+
+            if (!string.Equals(invLine.ICode, detail.ICode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(invLine.PoNo, detail.PoNo, StringComparison.OrdinalIgnoreCase)
+                || invLine.PoRelNo != detail.PoRelNo
+                || invLine.PoLineNo != detail.PoLineNo
+                || !string.Equals(invLine.SellingUom, detail.SellingUom, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Line {detail.Line}: item, PO link, and UOM must match referenced invoice line {detail.ReferencedInvoiceLineNo}.";
             }
 
             var cnPosted = await _invoices.SumPostedCnQtyOnInvLineAsync(
@@ -1247,7 +1554,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 detail.PoRelNo!.Value,
                 detail.PoLineNo!.Value,
                 excludeDocNo: invoice.DocNo,
-                cancellationToken);
+                cancellationToken: cancellationToken,
+                referencedInvoiceLineNo: detail.ReferencedInvoiceLineNo);
             var remainingOnInv = PoInvoiceCalc.RemainingOnInvLine(invLine.Qty, cnPosted);
             if (qty > remainingOnInv)
             {
@@ -1406,9 +1714,15 @@ public sealed class PoInvoiceService : IPoInvoiceService
             ? (vendor!.Currency ?? "MYR")
             : request.Currency.Trim();
         var docDate = request.DocDate == default ? _dates.Today.Date : request.DocDate.Date;
-        var currRate = request.CurrRate > 0m
-            ? request.CurrRate
-            : await ResolveCurrRateAsync(db, companyCode, currency, docDate, cancellationToken);
+        var resolvedRate = await ResolveCurrRateAsync(
+            db, companyCode, currency, docDate, cancellationToken);
+        var currRate = resolvedRate.Succeeded
+            ? resolvedRate.Rate
+            : 0m;
+        if (!resolvedRate.Succeeded)
+        {
+            errors["Currency"] = resolvedRate.Error ?? "Currency rate could not be resolved.";
+        }
 
         var prepared = new List<PoInvoiceDetail>();
         bool? documentInclusive = null;
@@ -1505,23 +1819,41 @@ public sealed class PoInvoiceService : IPoInvoiceService
             }
             else if (referencedInv is not null)
             {
-                var invLine = referencedInv.Details.FirstOrDefault(x =>
-                    string.Equals(x.PoNo, poNo, StringComparison.OrdinalIgnoreCase)
-                    && x.PoRelNo == src.PoRelNo
-                    && x.PoLineNo == src.PoLineNo);
-                if (invLine is null)
+                if (src.ReferencedInvoiceLineNo is null)
                 {
-                    errors[$"{prefix}.PoLineNo"] = "Referenced invoice has no matching PO line.";
+                    errors[$"{prefix}.ReferencedInvoiceLineNo"] =
+                        "A credit-note line must identify the exact referenced invoice line.";
                 }
                 else
                 {
+                    var invLine = referencedInv.Details.FirstOrDefault(x =>
+                        x.Line == src.ReferencedInvoiceLineNo.Value);
+                    if (invLine is null)
+                    {
+                        errors[$"{prefix}.ReferencedInvoiceLineNo"] =
+                            "The referenced invoice line was not found.";
+                    }
+                    else if (!string.Equals(invLine.ICode, iCode, StringComparison.OrdinalIgnoreCase)
+                             || !string.Equals(invLine.PoNo, poNo, StringComparison.OrdinalIgnoreCase)
+                             || invLine.PoRelNo != src.PoRelNo
+                             || invLine.PoLineNo != src.PoLineNo
+                             || !string.Equals(invLine.SellingUom, uom, StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors[$"{prefix}.ReferencedInvoiceLineNo"] =
+                            "Credit-note item, PO link, and UOM must match the referenced invoice line.";
+                    }
+
                     var cnPosted = await _invoices.SumPostedCnQtyOnInvLineAsync(
                         db, companyCode, branchCode, referencedInv.DocNo,
-                        poNo, src.PoRelNo.Value, src.PoLineNo.Value, excludeDocNo, cancellationToken);
-                    var remainingOnInv = PoInvoiceCalc.RemainingOnInvLine(invLine.Qty, cnPosted);
-                    if (qty > remainingOnInv)
+                        poNo, src.PoRelNo.Value, src.PoLineNo.Value, excludeDocNo,
+                        cancellationToken, src.ReferencedInvoiceLineNo);
+                    if (invLine is not null)
                     {
-                        errors[$"{prefix}.Qty"] = $"Quantity exceeds remaining on invoice ({remainingOnInv:n4}).";
+                        var remainingOnInv = PoInvoiceCalc.RemainingOnInvLine(invLine.Qty, cnPosted);
+                        if (qty > remainingOnInv)
+                        {
+                            errors[$"{prefix}.Qty"] = $"Quantity exceeds remaining on invoice ({remainingOnInv:n4}).";
+                        }
                     }
                 }
             }
@@ -1600,7 +1932,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 OneTime = src.OneTime ?? poLine.OneTime,
                 PoNo = poNo,
                 PoRelNo = src.PoRelNo,
-                PoLineNo = src.PoLineNo
+                PoLineNo = src.PoLineNo,
+                ReferencedInvoiceLineNo = src.ReferencedInvoiceLineNo
             });
         }
 
@@ -1652,7 +1985,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         invoice.VendorName = TruncateOptional(prepared.VendorName, 200);
         invoice.InvNo = TruncateOptional(request.InvNo, 30);
         invoice.Currency = TruncateOptional(prepared.Currency, 20);
-        invoice.CurrRate = prepared.CurrRate <= 0m ? 1m : prepared.CurrRate;
+        invoice.CurrRate = prepared.CurrRate;
         invoice.PayCode = TruncateOptional(request.PayCode, 20);
         invoice.TaxGrCode = TruncateOptional(request.TaxGrCode, 20);
         invoice.LocationCode = TruncateOptional(request.LocationCode, 10);
@@ -1760,33 +2093,19 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 OneTime = x.OneTime,
                 PoNo = x.PoNo,
                 PoRelNo = x.PoRelNo,
-                PoLineNo = x.PoLineNo
+                PoLineNo = x.PoLineNo,
+                ReferencedInvoiceLineNo = x.ReferencedInvoiceLineNo
             }).ToList()
         };
     }
 
-    private async Task<decimal> ResolveCurrRateAsync(
+    private Task<CurrencyRateResult> ResolveCurrRateAsync(
         AppDbContext db,
         string companyCode,
         string currency,
         DateTime docDate,
-        CancellationToken cancellationToken)
-    {
-        _ = companyCode;
-        var code = (currency ?? string.Empty).Trim();
-        if (code.Length == 0 || code.Equals("MYR", StringComparison.OrdinalIgnoreCase))
-        {
-            return 1m;
-        }
-
-        var date = docDate.Date;
-        var rate = await db.SaCurrRates.AsNoTracking()
-            .Where(x => x.CurrCode == code && x.Status && x.StartDate <= date && x.EndDate >= date)
-            .OrderByDescending(x => x.StartDate)
-            .Select(x => (double?)x.HomeCurPerUnit)
-            .FirstOrDefaultAsync(cancellationToken);
-        return rate is null or <= 0d ? 1m : (decimal)rate.Value;
-    }
+        CancellationToken cancellationToken) =>
+        _currencyRates.ResolveAsync(db, companyCode, currency, docDate, cancellationToken);
 
     private Task<bool> CanAsync(string permission, CancellationToken cancellationToken) =>
         _accessRights.CanAsync(MenuCodes.PurchaseInvoice, permission, cancellationToken);

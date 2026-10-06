@@ -346,6 +346,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
+                    PriceConfirmed = true,
                     ExpiryDate = FixedToday.AddDays(30),
                     Reason = "FOUND"
                 }
@@ -541,6 +542,7 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
                     UnitPrice = 1m,
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]

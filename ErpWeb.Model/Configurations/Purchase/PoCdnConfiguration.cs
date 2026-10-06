@@ -35,6 +35,7 @@ public class PoCdnConfiguration : IEntityTypeConfiguration<PoCdn>
 
         builder.Property(e => e.Currency).HasMaxLength(20);
         builder.Property(e => e.CurrRate).HasPrecision(18, 6);
+        builder.Property(e => e.CostingRevision).HasDefaultValue(0);
         builder.Property(e => e.TaxGrCode).HasMaxLength(20);
         builder.Property(e => e.Remarks).HasMaxLength(500);
 
@@ -89,6 +90,10 @@ public class PoCdnConfiguration : IEntityTypeConfiguration<PoCdn>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.InvNo })
             .HasDatabaseName("IX_PoCdn_Company_Branch_InvNo");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.DocNo, e.CostingRevision })
+            .IsUnique()
+            .HasDatabaseName("UX_PoCdn_CostingRevision");
 
         // Supplier-document duplicate control (C2/C29). Type and BranchCode both participate:
         // the supplier keeps separate CN/DN sequences and numbering is treated as branch-local.

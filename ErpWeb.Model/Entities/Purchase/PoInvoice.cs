@@ -40,6 +40,12 @@ public class PoInvoice
     public string? ExternalDocNo { get; set; }
     public decimal? PriceTolerance { get; set; }
 
+    /// <summary>
+    /// Financial stock-cost posting generation. Incremented after a successful rollback so the
+    /// next primary posting cannot collide with the immutable StockPosting identity.
+    /// </summary>
+    public int CostingRevision { get; set; }
+
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }

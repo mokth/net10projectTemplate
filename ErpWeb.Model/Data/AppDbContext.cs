@@ -30,9 +30,14 @@ public class AppDbContext : DbContext
         ChangeTracker.DetectChanges();
         foreach (var entry in ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
         {
-            if (entry.State != EntityState.Added && entry.Entity is StockValuationFact
-                or StockValuationPeriodSnapshotHdr or StockValuationPeriodSnapshotLine)
-                throw new InvalidOperationException("Valuation facts and financial snapshots are immutable; append a linked reversal or a new snapshot revision.");
+            if (entry.State != EntityState.Added
+                && (entry.Entity is StockValuationFact
+                    or StockValuationPeriodSnapshotHdr or StockValuationPeriodSnapshotLine
+                    or PurchaseReceiptCostSettlement or PurchaseCostAdjustment
+                    or SalesReturnCostAllocation or SalesReturnStandardCostVariance
+                    or StockFifoLayerConsumption
+                    or ProductionStandardCostVariance))
+                throw new InvalidOperationException("Valuation facts, financial snapshots, and costing evidence are immutable; append a linked reversal or a new revision.");
             if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
                 or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
                 throw new InvalidOperationException("Posted evidence and FG lot origin are immutable; append a linked reversal instead.");
@@ -55,6 +60,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionPoolValuation> ProductionPoolValuationRows => Set<ProductionPoolValuation>();
     public DbSet<ProductionValuationEvidence> ProductionValuationEvidenceRows => Set<ProductionValuationEvidence>();
     public DbSet<ProductionPoolDependency> ProductionPoolDependencyRows => Set<ProductionPoolDependency>();
+    public DbSet<ProductionStandardCostVariance> ProductionStandardCostVariances => Set<ProductionStandardCostVariance>();
 
     public DbSet<UserLogin> UserLogins => Set<UserLogin>();
     public DbSet<Menu> Menus => Set<Menu>();
@@ -98,8 +104,16 @@ public class AppDbContext : DbContext
     public DbSet<StockPeriodSnapshotLine> StockPeriodSnapshotLines => Set<StockPeriodSnapshotLine>();
     public DbSet<StockValuationFact> StockValuationFacts => Set<StockValuationFact>();
     public DbSet<StockCostState> StockCostStates => Set<StockCostState>();
+    public DbSet<StockCostPolicyRevision> StockCostPolicyRevisions => Set<StockCostPolicyRevision>();
+    public DbSet<ItemStandardCostRevision> ItemStandardCostRevisions => Set<ItemStandardCostRevision>();
+    public DbSet<StockFifoLayer> StockFifoLayers => Set<StockFifoLayer>();
+    public DbSet<StockFifoLayerConsumption> StockFifoLayerConsumptions => Set<StockFifoLayerConsumption>();
+    public DbSet<PurchaseReceiptCostSettlement> PurchaseReceiptCostSettlements => Set<PurchaseReceiptCostSettlement>();
+    public DbSet<PurchaseCostAdjustment> PurchaseCostAdjustments => Set<PurchaseCostAdjustment>();
     public DbSet<StockValuationPeriodSnapshotHdr> StockValuationPeriodSnapshotHdrs => Set<StockValuationPeriodSnapshotHdr>();
     public DbSet<StockValuationPeriodSnapshotLine> StockValuationPeriodSnapshotLines => Set<StockValuationPeriodSnapshotLine>();
+    public DbSet<ErpWeb.Model.Entities.Costing.CostingRepairCase> CostingRepairCases => Set<ErpWeb.Model.Entities.Costing.CostingRepairCase>();
+    public DbSet<ErpWeb.Model.Entities.Costing.CostingRepairAuditEvent> CostingRepairAuditEvents => Set<ErpWeb.Model.Entities.Costing.CostingRepairAuditEvent>();
 
     public DbSet<SaCust> SaCusts => Set<SaCust>();
     public DbSet<SaCustAdd> SaCustAdds => Set<SaCustAdd>();
@@ -117,6 +131,8 @@ public class AppDbContext : DbContext
     public DbSet<SaInvoiceDetail> SaInvoiceDetails => Set<SaInvoiceDetail>();
     public DbSet<SaCdn> SaCdns => Set<SaCdn>();
     public DbSet<SaCdnDetail> SaCdnDetails => Set<SaCdnDetail>();
+    public DbSet<SalesReturnCostAllocation> SalesReturnCostAllocations => Set<SalesReturnCostAllocation>();
+    public DbSet<SalesReturnStandardCostVariance> SalesReturnStandardCostVariances => Set<SalesReturnStandardCostVariance>();
     public DbSet<SaDo> SaDos => Set<SaDo>();
     public DbSet<SaDoDetail> SaDoDetails => Set<SaDoDetail>();
     public DbSet<SaSo> SaSos => Set<SaSo>();

@@ -2,6 +2,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 
@@ -46,6 +47,12 @@ public partial class IvMiscReceipt : PageBase
     protected IReadOnlyList<IvCodeLookupRow> Uoms { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Statuses { get; set; } = [];
     protected IReadOnlyList<IvMiscReceiptVendorLookupRow> Vendors { get; set; } = [];
+    protected IReadOnlyList<string> CostEvidenceTypes { get; } =
+    [
+        InventoryCostEvidenceTypes.ManualApproved,
+        InventoryCostEvidenceTypes.ZeroCostApproved,
+        InventoryCostEvidenceTypes.OpeningApproved
+    ];
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -174,6 +181,8 @@ public partial class IvMiscReceipt : PageBase
             IStatus = x.IStatus,
             PriceConfirmed = x.PriceConfirmed,
             UnitPrice = x.UnitPrice,
+            CostEvidenceType = x.CostEvidenceType,
+            CostOverrideReason = x.CostOverrideReason,
             ExpiryDate = x.ExpiryDate,
             Reason = x.Reason,
             Remarks = x.Remarks,
@@ -267,6 +276,8 @@ public partial class IvMiscReceipt : PageBase
             ToLocation = line.ToLocation,
             PriceConfirmed = line.PriceConfirmed,
             UnitPrice = line.UnitPrice,
+            CostEvidenceType = line.CostEvidenceType,
+            CostOverrideReason = line.CostOverrideReason,
             IClassCode = line.IClassCode,
             IStatus = line.IStatus,
             Reason = line.Reason,
@@ -313,6 +324,8 @@ public partial class IvMiscReceipt : PageBase
         Popup.LotControl = item.LotControl;
         Popup.UnitPrice = item.PurchasePrice ?? 0m;
         Popup.PriceConfirmed = false;
+        Popup.CostEvidenceType = null;
+        Popup.CostOverrideReason = null;
         _pendingDefLocation = item.DefLocation;
 
         if (!string.IsNullOrWhiteSpace(item.DefWarehouse) &&
@@ -490,7 +503,9 @@ public partial class IvMiscReceipt : PageBase
                     IClassCode = x.IClassCode,
                     IStatus = x.IStatus,
                     PriceConfirmed = x.PriceConfirmed,
-            UnitPrice = x.UnitPrice,
+                    UnitPrice = x.UnitPrice,
+                    CostEvidenceType = x.CostEvidenceType,
+                    CostOverrideReason = x.CostOverrideReason,
                     ExpiryDate = x.ExpiryDate,
                     Reason = x.Reason,
                     Remarks = x.Remarks
@@ -629,6 +644,19 @@ public partial class IvMiscReceipt : PageBase
             return "Unit price cannot be negative.";
         }
 
+        if (!string.IsNullOrWhiteSpace(Popup.CostEvidenceType)
+            && Popup.UnitPrice == 0m
+            && !string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Zero-cost receipts require ZERO_COST_APPROVED evidence.";
+        }
+
+        if (string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(Popup.CostOverrideReason))
+        {
+            return "A cost approval reason is required for zero-cost receipts.";
+        }
+
         if (string.IsNullOrWhiteSpace(Popup.Reason))
         {
             return "Reason is required.";
@@ -691,6 +719,12 @@ public partial class IvMiscReceipt : PageBase
         line.IStatus = Popup.IStatus.Trim().ToUpperInvariant();
         line.UnitPrice = Popup.UnitPrice;
         line.PriceConfirmed = Popup.PriceConfirmed;
+        line.CostEvidenceType = string.IsNullOrWhiteSpace(Popup.CostEvidenceType)
+            ? null
+            : Popup.CostEvidenceType.Trim().ToUpperInvariant();
+        line.CostOverrideReason = string.IsNullOrWhiteSpace(Popup.CostOverrideReason)
+            ? null
+            : Popup.CostOverrideReason.Trim();
         line.ExpiryDate = Popup.LotControl ? Popup.ExpiryDate : null;
         line.Reason = string.IsNullOrWhiteSpace(Popup.Reason) ? null : Popup.Reason.Trim();
         line.Remarks = string.IsNullOrWhiteSpace(Popup.Remarks) ? null : Popup.Remarks.Trim();
@@ -747,6 +781,8 @@ public sealed class IvMiscReceiptLineVm
     public string IStatus { get; set; } = IvItemStatuses.Active;
     public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }
@@ -765,6 +801,8 @@ public sealed class IvMiscReceiptPopupVm
     public string ToLocation { get; set; } = string.Empty;
     public bool PriceConfirmed { get; set; }
     public decimal UnitPrice { get; set; }
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public string IClassCode { get; set; } = string.Empty;
     public string IStatus { get; set; } = IvItemStatuses.Active;
     public string? Reason { get; set; }

@@ -1,7 +1,10 @@
 using System.Globalization;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,10 +24,48 @@ public interface IInventoryValuationService
 public sealed class InventoryValuationService : IInventoryValuationService
 {
     private const int MoneyScale = 6;
+    private const decimal Epsilon = 0.0000005m;
+    private readonly IStockCostMethodResolver _costMethodResolver;
+    private readonly IItemStandardCostResolver _standardCostResolver;
+    private readonly InventoryCostingStrategyResolver _strategyResolver;
+
+    public InventoryValuationService(
+        IStockCostMethodResolver? costMethodResolver = null,
+        IItemStandardCostResolver? standardCostResolver = null)
+    {
+        _costMethodResolver = costMethodResolver ?? new StockCostMethodResolver();
+        _standardCostResolver = standardCostResolver ?? new ItemStandardCostResolver();
+        _strategyResolver = new InventoryCostingStrategyResolver(
+        [
+            new MovingAverageCostingStrategy(ValueMovingAveragePendingAsync),
+            new FifoCostingStrategy(ValueFifoPendingAsync),
+            new StandardCostingStrategy(ValueStandardPendingAsync)
+        ]);
+    }
 
     public async Task<IReadOnlyList<StockValuationFact>> ValuePendingAsync(
         StockPostingContext context,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.EnsureUnsealed();
+
+        var method = await _costMethodResolver.ResolveAsync(
+            context.Db,
+            context.CompanyCode,
+            context.BranchCode,
+            context.Posting.EffectiveAt,
+            cancellationToken);
+        context.CostMethod = method;
+
+        return await _strategyResolver.Resolve(method)
+            .ValuePendingAsync(context, [], cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<StockValuationFact>> ValueMovingAveragePendingAsync(
+        StockPostingContext context,
+        IReadOnlyList<IvTrxHistory> _,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         context.EnsureUnsealed();
@@ -64,7 +105,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
             : (await db.StockCostStates.Where(x =>
                     x.CompanyCode == context.CompanyCode
                     && x.BranchCode == context.BranchCode
-                    && x.CostMethod == StockCostMethods.MovingAverage
+                    && x.CostMethod == context.CostMethod
                     && itemCodes.Contains(x.ItemCode))
                 .ToListAsync(cancellationToken))
                 .ToDictionary(x => x.ItemCode, StringComparer.OrdinalIgnoreCase);
@@ -123,6 +164,816 @@ public sealed class InventoryValuationService : IInventoryValuationService
         return result;
     }
 
+    private async Task<IReadOnlyList<StockValuationFact>> ValueStandardPendingAsync(
+        StockPostingContext context,
+        IReadOnlyList<IvTrxHistory> _,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.EnsureUnsealed();
+
+        var db = context.Db;
+        var trackedHistories = db.ChangeTracker.Entries<IvTrxHistory>()
+            .Where(x => x.State == EntityState.Added
+                        && x.Entity.StockPostingId == context.Posting.Id
+                        && x.Entity.LedgerVersion == 2)
+            .Select(x => x.Entity)
+            .ToList();
+        var persistedHistories = await db.IvTrxHistories
+            .Where(x => x.StockPostingId == context.Posting.Id
+                        && x.LedgerVersion == 2
+                        && !db.StockValuationFacts.Any(f => f.InventoryHistoryId == x.Id))
+            .ToListAsync(cancellationToken);
+        foreach (var persisted in persistedHistories)
+        {
+            if (!trackedHistories.Any(x => x.Id > 0 && x.Id == persisted.Id))
+                trackedHistories.Add(persisted);
+        }
+
+        var histories = trackedHistories
+            .OrderBy(x => x.PostingLineNo)
+            .ThenBy(x => x.TrxLineNo)
+            .ToArray();
+        if (histories.Length == 0)
+            return [];
+
+        var itemCodes = histories
+            .Where(IsFinanciallyRelevant)
+            .Select(x => x.ICode.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var states = itemCodes.Length == 0
+            ? new Dictionary<string, StockCostState>(StringComparer.OrdinalIgnoreCase)
+            : (await db.StockCostStates.Where(x =>
+                    x.CompanyCode == context.CompanyCode
+                    && x.BranchCode == context.BranchCode
+                    && x.CostMethod == context.CostMethod
+                    && itemCodes.Contains(x.ItemCode))
+                .ToListAsync(cancellationToken))
+                .ToDictionary(x => x.ItemCode, StringComparer.OrdinalIgnoreCase);
+
+        if (itemCodes.Length > 0)
+            await RejectBackdatedPoolsAsync(context, itemCodes, cancellationToken);
+
+        var detailEvidence = await LoadDetailEvidenceAsync(context, histories, cancellationToken);
+        var baseCurrency = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode)
+            .Select(x => x.CurrencyCode)
+            .FirstOrDefaultAsync(cancellationToken);
+        var standardCosts = new Dictionary<string, EffectiveStandardCost>(StringComparer.OrdinalIgnoreCase);
+
+        async Task<EffectiveStandardCost> StandardForAsync(string itemCode)
+        {
+            if (standardCosts.TryGetValue(itemCode, out var cached))
+                return cached;
+            var resolved = await _standardCostResolver.ResolveAsync(
+                db, context.CompanyCode, context.BranchCode, itemCode,
+                context.Posting.EffectiveAt, cancellationToken);
+            standardCosts[itemCode] = resolved;
+            return resolved;
+        }
+
+        var result = new List<StockValuationFact>();
+        foreach (var history in histories)
+        {
+            if (!IsFinanciallyRelevant(history))
+                continue;
+
+            if (string.Equals(history.EntryRole, "REVERSAL", StringComparison.OrdinalIgnoreCase))
+            {
+                await AppendExactReversalAsync(
+                    context, history, states, result, baseCurrency, cancellationToken);
+                await AppendProductionStandardVarianceReversalsAsync(
+                    context, history, result, cancellationToken);
+                await AppendStandardReturnVarianceReversalsAsync(
+                    context, history, result, cancellationToken);
+                history.ValuationStatus = StockValuationStatuses.Reversed;
+                continue;
+            }
+
+            var detail = detailEvidence.GetValueOrDefault((history.BatchNo, history.TrxLineNo));
+            var standard = await StandardForAsync(Required(history.ICode, "item code"));
+
+            if (history.FromBalLocId is not null && (history.FrStdQty ?? 0m) > 0m)
+            {
+                var issue = await AppendIssueAsync(
+                    context, history, detail, states, splitOrdinal: 0, result, baseCurrency,
+                    cancellationToken, standard.TotalStandardCost, StockValuationSources.Standard);
+                if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
+                {
+                    AppendReceipt(
+                        context, history, detail, states, splitOrdinal: 1,
+                        forcedAmount: issue.CostAmount,
+                        forcedUnitCost: issue.UnitCost,
+                        forcedSource: StockValuationSources.Standard,
+                        originalFactId: null,
+                        result, baseCurrency);
+                }
+            }
+            else if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
+            {
+                if (string.Equals(history.TrxType, IvTrxTypes.CustomerReturn, StringComparison.OrdinalIgnoreCase))
+                {
+                    await AppendStandardCustomerReturnAsync(
+                        context, history, detail, states, standard, result, baseCurrency, cancellationToken);
+                }
+                else
+                {
+                    var standardAmount = RoundMoney(
+                        Positive(history.ToStdQty, "receipt quantity") * standard.TotalStandardCost);
+                    var fact = AppendReceipt(
+                        context, history, detail, states, splitOrdinal: 0,
+                        forcedAmount: standardAmount,
+                        forcedUnitCost: standard.TotalStandardCost,
+                        forcedSource: StockValuationSources.Standard,
+                        originalFactId: null,
+                        result, baseCurrency);
+                    AppendProductionStandardVarianceIfNeeded(context, history, fact);
+                }
+            }
+
+            history.ValuationStatus = StockValuationStatuses.Valued;
+        }
+
+        await SynchronizeProductionMaterialCostAsync(db, result, cancellationToken);
+        db.StockValuationFacts.AddRange(result);
+        return result;
+    }
+
+    private static async Task AppendStandardCustomerReturnAsync(
+        StockPostingContext context,
+        IvTrxHistory history,
+        DetailEvidence? detail,
+        IDictionary<string, StockCostState> states,
+        EffectiveStandardCost standard,
+        ICollection<StockValuationFact> result,
+        string? baseCurrency,
+        CancellationToken cancellationToken)
+    {
+        var quantity = Positive(history.ToStdQty, "return quantity");
+        var original = await ResolveOriginalSaleCostAsync(
+            context, history, detail, quantity, cancellationToken);
+        var fact = AppendReceipt(
+            context, history, detail, states, splitOrdinal: 0,
+            forcedAmount: RoundMoney(quantity * standard.TotalStandardCost),
+            forcedUnitCost: standard.TotalStandardCost,
+            forcedSource: StockValuationSources.Standard,
+            originalFactId: null,
+            result, baseCurrency);
+
+        foreach (var allocation in original.Allocations)
+        {
+            context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
+            {
+                CompanyCode = context.CompanyCode,
+                BranchCode = context.BranchCode,
+                ReturnDocumentType = "SA_CDN",
+                ReturnDocumentNo = ResolveReturnDocumentNo(history, detail, context),
+                ReturnDocumentLine = history.TrxLineNo,
+                ReturnCostingRevision = context.Posting.DocumentRevision,
+                OriginalValuationFactId = allocation.OriginalFactId,
+                OriginalOwnerType = allocation.OwnerType,
+                OriginalOwnerDocumentNo = allocation.OwnerDocumentNo,
+                OriginalOwnerDocumentLine = allocation.OwnerDocumentLine,
+                ReturnedBaseQty = allocation.Quantity,
+                ReturnedCostAmount = allocation.CostAmount,
+                StockPostingId = context.Posting.Id,
+                ReturnValuationFact = fact,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = context.UserId
+            });
+        }
+
+        // Keep the exact original COGS allocation as report evidence and persist the difference
+        // outside Inventory value. The return receipt remains at the current effective Standard
+        // Cost; this row is the explicit management/GL bridge for the mismatch.
+        context.Db.SalesReturnStandardCostVariances.Add(new SalesReturnStandardCostVariance
+        {
+            CompanyCode = context.CompanyCode,
+            BranchCode = context.BranchCode,
+            StockPostingId = context.Posting.Id,
+            ReturnValuationFactId = fact.Id,
+            ReturnValuationFact = fact,
+            ReturnDocumentType = "SA_CDN",
+            ReturnDocumentNo = ResolveReturnDocumentNo(history, detail, context),
+            ReturnDocumentLine = history.TrxLineNo,
+            ReturnCostingRevision = context.Posting.DocumentRevision,
+            ItemCode = fact.ItemCode,
+            BaseQty = fact.BaseQty,
+            CurrentStandardReceiptValue = RoundMoney(fact.CostAmount),
+            OriginalCogsReversalValue = RoundMoney(original.TotalCost),
+            VarianceAmount = RoundMoney(fact.CostAmount - original.TotalCost),
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedBy = context.UserId
+        });
+    }
+
+    private static void AppendProductionStandardVarianceIfNeeded(
+        StockPostingContext context,
+        IvTrxHistory history,
+        StockValuationFact inventoryFact)
+    {
+        if (!string.Equals(history.TrxType, IvTrxTypes.FinishedGoods, StringComparison.OrdinalIgnoreCase)
+            || history.ExactTransferredValue is not decimal actual)
+            return;
+        if (actual < 0m)
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"Finished-good actual production value for item '{history.ICode}' cannot be negative.");
+
+        var actualValue = RoundMoney(Math.Abs(actual));
+        var standardValue = RoundMoney(inventoryFact.CostAmount);
+        context.Db.ProductionStandardCostVariances.Add(new ProductionStandardCostVariance
+        {
+            CompanyCode = context.CompanyCode,
+            BranchCode = context.BranchCode,
+            StockPostingId = context.Posting.Id,
+            ProductionPostingLinkId = context.Posting.ProductionPostingLinkId,
+            InventoryValuationFact = inventoryFact,
+            BaseQty = inventoryFact.BaseQty,
+            ActualProductionValue = actualValue,
+            StandardInventoryValue = standardValue,
+            VarianceAmount = RoundMoney(actualValue - standardValue),
+            ItemCode = inventoryFact.ItemCode,
+            EffectiveAt = inventoryFact.EffectiveAt,
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedBy = context.UserId
+        });
+    }
+
+    private static async Task AppendProductionStandardVarianceReversalsAsync(
+        StockPostingContext context,
+        IvTrxHistory reversalHistory,
+        IReadOnlyCollection<StockValuationFact> reversalFacts,
+        CancellationToken cancellationToken)
+    {
+        if (reversalHistory.ReversesHistoryId is not int historyId)
+            return;
+        var originalFacts = await context.Db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.InventoryHistoryId == historyId)
+            .Select(x => x.Id)
+            .ToArrayAsync(cancellationToken);
+        if (originalFacts.Length == 0)
+            return;
+        var originals = await context.Db.ProductionStandardCostVariances.AsNoTracking()
+            .Where(x => originalFacts.Contains(x.InventoryValuationFactId)
+                        && x.ReversesVarianceId == null)
+            .ToListAsync(cancellationToken);
+        foreach (var original in originals)
+        {
+            if (await context.Db.ProductionStandardCostVariances.AsNoTracking().AnyAsync(
+                    x => x.ReversesVarianceId == original.Id, cancellationToken))
+                throw LedgerError(StockLedgerErrorCodes.ReversalAlreadyExists,
+                    $"Production Standard variance {original.Id} already has a reversal.");
+            var reversedFact = reversalFacts.SingleOrDefault(
+                x => x.ReversesValuationFactId == original.InventoryValuationFactId);
+            if (reversedFact is null)
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"Standard variance {original.Id} has no exact Inventory fact reversal.");
+            context.Db.ProductionStandardCostVariances.Add(new ProductionStandardCostVariance
+            {
+                CompanyCode = context.CompanyCode,
+                BranchCode = context.BranchCode,
+                StockPostingId = context.Posting.Id,
+                ProductionPostingLinkId = context.Posting.ProductionPostingLinkId,
+                InventoryValuationFact = reversedFact,
+                BaseQty = original.BaseQty,
+                ActualProductionValue = -original.ActualProductionValue,
+                StandardInventoryValue = -original.StandardInventoryValue,
+                VarianceAmount = -original.VarianceAmount,
+                ItemCode = original.ItemCode,
+                EffectiveAt = context.Posting.EffectiveAt,
+                ReversesVarianceId = original.Id,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = context.UserId
+            });
+        }
+    }
+
+    private static async Task AppendStandardReturnVarianceReversalsAsync(
+        StockPostingContext context,
+        IvTrxHistory reversalHistory,
+        IReadOnlyCollection<StockValuationFact> reversalFacts,
+        CancellationToken cancellationToken)
+    {
+        if (reversalHistory.ReversesHistoryId is not int historyId)
+            return;
+
+        var originalFactIds = await context.Db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.InventoryHistoryId == historyId)
+            .Select(x => x.Id)
+            .ToArrayAsync(cancellationToken);
+        if (originalFactIds.Length == 0)
+            return;
+
+        var originals = await context.Db.SalesReturnStandardCostVariances.AsNoTracking()
+            .Where(x => originalFactIds.Contains(x.ReturnValuationFactId)
+                        && x.ReversesVarianceId == null)
+            .ToListAsync(cancellationToken);
+        foreach (var original in originals)
+        {
+            if (await context.Db.SalesReturnStandardCostVariances.AsNoTracking()
+                    .AnyAsync(x => x.ReversesVarianceId == original.Id, cancellationToken))
+                throw LedgerError(StockLedgerErrorCodes.ReversalAlreadyExists,
+                    $"Standard return variance {original.Id} already has a reversal.");
+
+            var reversedFact = reversalFacts.SingleOrDefault(
+                x => x.ReversesValuationFactId == original.ReturnValuationFactId);
+            if (reversedFact is null)
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"Standard return variance {original.Id} has no exact Inventory fact reversal.");
+
+            context.Db.SalesReturnStandardCostVariances.Add(new SalesReturnStandardCostVariance
+            {
+                CompanyCode = context.CompanyCode,
+                BranchCode = context.BranchCode,
+                StockPostingId = context.Posting.Id,
+                ReturnValuationFactId = reversedFact.Id,
+                ReturnValuationFact = reversedFact,
+                ReturnDocumentType = original.ReturnDocumentType,
+                ReturnDocumentNo = original.ReturnDocumentNo,
+                ReturnDocumentLine = original.ReturnDocumentLine,
+                ReturnCostingRevision = context.Posting.DocumentRevision,
+                ItemCode = original.ItemCode,
+                BaseQty = original.BaseQty,
+                CurrentStandardReceiptValue = -original.CurrentStandardReceiptValue,
+                OriginalCogsReversalValue = -original.OriginalCogsReversalValue,
+                VarianceAmount = -original.VarianceAmount,
+                ReversesVarianceId = original.Id,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = context.UserId
+            });
+        }
+    }
+
+    private async Task<IReadOnlyList<StockValuationFact>> ValueFifoPendingAsync(
+        StockPostingContext context,
+        IReadOnlyList<IvTrxHistory> _,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.EnsureUnsealed();
+
+        var db = context.Db;
+        var trackedHistories = db.ChangeTracker.Entries<IvTrxHistory>()
+            .Where(x => x.State == EntityState.Added
+                        && x.Entity.StockPostingId == context.Posting.Id
+                        && x.Entity.LedgerVersion == 2)
+            .Select(x => x.Entity)
+            .ToList();
+        var persistedHistories = await db.IvTrxHistories
+            .Where(x => x.StockPostingId == context.Posting.Id
+                        && x.LedgerVersion == 2
+                        && !db.StockValuationFacts.Any(f => f.InventoryHistoryId == x.Id))
+            .ToListAsync(cancellationToken);
+        foreach (var persisted in persistedHistories)
+        {
+            if (!trackedHistories.Any(x => x.Id > 0 && x.Id == persisted.Id))
+                trackedHistories.Add(persisted);
+        }
+
+        var histories = trackedHistories
+            .OrderBy(x => x.PostingLineNo)
+            .ThenBy(x => x.TrxLineNo)
+            .ToArray();
+        if (histories.Length == 0)
+            return [];
+
+        var itemCodes = histories
+            .Where(IsFinanciallyRelevant)
+            .Select(x => x.ICode.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var states = itemCodes.Length == 0
+            ? new Dictionary<string, StockCostState>(StringComparer.OrdinalIgnoreCase)
+            : (await db.StockCostStates.Where(x =>
+                    x.CompanyCode == context.CompanyCode
+                    && x.BranchCode == context.BranchCode
+                    && x.CostMethod == context.CostMethod
+                    && itemCodes.Contains(x.ItemCode))
+                .ToListAsync(cancellationToken))
+                .ToDictionary(x => x.ItemCode, StringComparer.OrdinalIgnoreCase);
+        if (itemCodes.Length > 0)
+            await RejectBackdatedPoolsAsync(context, itemCodes, cancellationToken);
+
+        var layers = await db.StockFifoLayers
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && itemCodes.Contains(x.ItemCode))
+            .OrderBy(x => x.ReceiptEffectiveAt)
+            .ThenBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var tracked in db.ChangeTracker.Entries<StockFifoLayer>()
+                     .Where(x => x.State == EntityState.Added
+                                 && x.Entity.CompanyCode == context.CompanyCode
+                                 && x.Entity.BranchCode == context.BranchCode
+                                 && itemCodes.Contains(x.Entity.ItemCode))
+                     .Select(x => x.Entity))
+        {
+            if (!layers.Contains(tracked))
+                layers.Add(tracked);
+        }
+
+        var layersByItem = layers
+            .GroupBy(x => x.ItemCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.OrderBy(y => y.ReceiptEffectiveAt).ThenBy(y => y.Id).ToList(),
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var itemCode in itemCodes)
+            layersByItem.TryAdd(itemCode, []);
+        var detailEvidence = await LoadDetailEvidenceAsync(context, histories, cancellationToken);
+        var baseCurrency = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode)
+            .Select(x => x.CurrencyCode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var result = new List<StockValuationFact>();
+        foreach (var history in histories)
+        {
+            if (!IsFinanciallyRelevant(history))
+                continue;
+
+            if (string.Equals(history.EntryRole, "REVERSAL", StringComparison.OrdinalIgnoreCase))
+            {
+                await AppendFifoExactReversalAsync(
+                    context, history, states, layersByItem, result, baseCurrency, cancellationToken);
+                history.ValuationStatus = StockValuationStatuses.Reversed;
+                continue;
+            }
+
+            var detail = detailEvidence.GetValueOrDefault((history.BatchNo, history.TrxLineNo));
+            if (history.FromBalLocId is not null && (history.FrStdQty ?? 0m) > 0m)
+            {
+                var issueFacts = await AppendFifoIssueAsync(
+                    context, history, states, layersByItem, result, baseCurrency, cancellationToken);
+                if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
+                {
+                    var quantity = Positive(history.ToStdQty, "transfer receipt quantity");
+                    var amount = RoundMoney(issueFacts.Sum(x => x.CostAmount));
+                    AppendReceipt(
+                        context, history, detail, states, splitOrdinal: 1,
+                        forcedAmount: amount,
+                        forcedUnitCost: quantity == 0m ? 0m : RoundMoney(amount / quantity),
+                        forcedSource: StockValuationSources.Fifo,
+                        originalFactId: null,
+                        result, baseCurrency);
+                    // Transfers are value-neutral in the branch/item financial pool. The receipt
+                    // fact restores quantity/value but deliberately does not create a new layer.
+                }
+            }
+            else if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
+            {
+                if (string.Equals(history.TrxType, IvTrxTypes.CustomerReturn, StringComparison.OrdinalIgnoreCase))
+                {
+                    await AppendFifoCustomerReturnAsync(
+                        context, history, detail, states, layersByItem, result, baseCurrency, cancellationToken);
+                }
+                else
+                {
+                    var quantity = Positive(history.ToStdQty, "receipt quantity");
+                    var unitCost = ResolveReceiptUnitCost(history, detail);
+                    var fact = AppendReceipt(
+                        context, history, detail, states, splitOrdinal: 0,
+                        forcedAmount: RoundMoney(quantity * unitCost),
+                        forcedUnitCost: unitCost,
+                        forcedSource: StockValuationSources.Fifo,
+                        originalFactId: null,
+                        result, baseCurrency);
+                    AddFifoLayer(context, layersByItem, fact);
+                }
+            }
+
+            history.ValuationStatus = StockValuationStatuses.Valued;
+        }
+
+        await SynchronizeProductionMaterialCostAsync(db, result, cancellationToken);
+        db.StockValuationFacts.AddRange(result);
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<StockValuationFact>> AppendFifoIssueAsync(
+        StockPostingContext context,
+        IvTrxHistory history,
+        IDictionary<string, StockCostState> states,
+        IReadOnlyDictionary<string, List<StockFifoLayer>> layersByItem,
+        ICollection<StockValuationFact> result,
+        string? baseCurrency,
+        CancellationToken cancellationToken)
+    {
+        var itemCode = Required(history.ICode, "item code");
+        var quantity = Positive(history.FrStdQty, "issue quantity");
+        if (!states.TryGetValue(itemCode, out var state))
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"Item '{itemCode}' has no approved FIFO opening or receipt layer.");
+        if (!layersByItem.TryGetValue(itemCode, out var layers))
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"Item '{itemCode}' has no FIFO layers to consume.");
+
+        EnsureFifoStateReconciles(itemCode, state, layers);
+        if (quantity > state.OnHandBaseQty + Epsilon)
+            throw LedgerError(StockLedgerErrorCodes.InsufficientBaseQty,
+                $"FIFO quantity for item '{itemCode}' is {state.OnHandBaseQty}, but {quantity} is required.");
+
+        var remaining = quantity;
+        var ordinal = 0;
+        var facts = new List<StockValuationFact>();
+        foreach (var layer in layers
+                     .Where(x => x.Status == StockFifoLayerStatuses.Open && x.RemainingQty > Epsilon)
+                     .OrderBy(x => x.ReceiptEffectiveAt)
+                     .ThenBy(x => x.OriginValuationFactId)
+                     .ThenBy(x => x.Id))
+        {
+            if (remaining <= Epsilon)
+                break;
+            var take = RoundQuantity(Math.Min(remaining, layer.RemainingQty));
+            if (take <= 0m)
+                continue;
+            var value = take >= layer.RemainingQty - Epsilon
+                ? layer.RemainingValue
+                : RoundMoney(layer.RemainingValue * take / layer.RemainingQty);
+            var unitCost = take == 0m ? 0m : RoundMoney(value / take);
+            var fact = NewFact(
+                context, history, ordinal, direction: -1, take, unitCost, value,
+                MovementCode(history, direction: -1), StockValuationSources.Fifo,
+                baseCurrency, null, null, null, null, null);
+            var consumption = new StockFifoLayerConsumption
+            {
+                CompanyCode = context.CompanyCode,
+                BranchCode = context.BranchCode,
+                IssueValuationFact = fact,
+                FifoLayer = layer,
+                ConsumedQty = take,
+                ConsumedValue = value,
+                SplitOrdinal = ordinal,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = context.UserId
+            };
+            context.Db.StockFifoLayerConsumptions.Add(consumption);
+            layer.RemainingQty = RoundQuantity(layer.RemainingQty - take);
+            layer.RemainingValue = RoundMoney(layer.RemainingValue - value);
+            layer.CurrentUnitCost = layer.RemainingQty <= Epsilon
+                ? 0m
+                : RoundMoney(layer.RemainingValue / layer.RemainingQty);
+            layer.Status = layer.RemainingQty <= Epsilon ? StockFifoLayerStatuses.Closed : StockFifoLayerStatuses.Open;
+            facts.Add(fact);
+            result.Add(fact);
+            remaining = RoundQuantity(remaining - take);
+            ordinal++;
+        }
+
+        if (remaining > Epsilon)
+            throw LedgerError(StockLedgerErrorCodes.InsufficientBaseQty,
+                $"FIFO layers for item '{itemCode}' cannot satisfy issue quantity {quantity}.");
+
+        var amount = RoundMoney(facts.Sum(x => x.CostAmount));
+        ApplyOutbound(state, quantity, amount, facts[^1], context.Posting.PostingSequence);
+        await Task.CompletedTask;
+        return facts;
+    }
+
+    private static async Task AppendFifoCustomerReturnAsync(
+        StockPostingContext context,
+        IvTrxHistory history,
+        DetailEvidence? detail,
+        IDictionary<string, StockCostState> states,
+        IReadOnlyDictionary<string, List<StockFifoLayer>> layersByItem,
+        ICollection<StockValuationFact> result,
+        string? baseCurrency,
+        CancellationToken cancellationToken)
+    {
+        var quantity = Positive(history.ToStdQty, "return quantity");
+        var original = await ResolveOriginalSaleCostAsync(
+            context, history, detail, quantity, cancellationToken);
+        var fact = AppendReceipt(
+            context, history, detail, states, 0,
+            original.TotalCost,
+            original.UnitCost,
+            StockValuationSources.OriginalSaleReturn,
+            null,
+            result, baseCurrency);
+        AddFifoLayer(context, layersByItem, fact);
+
+        foreach (var allocation in original.Allocations)
+        {
+            context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
+            {
+                CompanyCode = context.CompanyCode,
+                BranchCode = context.BranchCode,
+                ReturnDocumentType = "SA_CDN",
+                ReturnDocumentNo = ResolveReturnDocumentNo(history, detail, context),
+                ReturnDocumentLine = history.TrxLineNo,
+                ReturnCostingRevision = context.Posting.DocumentRevision,
+                OriginalValuationFactId = allocation.OriginalFactId,
+                OriginalOwnerType = allocation.OwnerType,
+                OriginalOwnerDocumentNo = allocation.OwnerDocumentNo,
+                OriginalOwnerDocumentLine = allocation.OwnerDocumentLine,
+                ReturnedBaseQty = allocation.Quantity,
+                ReturnedCostAmount = allocation.CostAmount,
+                StockPostingId = context.Posting.Id,
+                ReturnValuationFact = fact,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = context.UserId
+            });
+        }
+    }
+
+    private static async Task AppendFifoExactReversalAsync(
+        StockPostingContext context,
+        IvTrxHistory reversalHistory,
+        IDictionary<string, StockCostState> states,
+        IReadOnlyDictionary<string, List<StockFifoLayer>> layersByItem,
+        ICollection<StockValuationFact> result,
+        string? baseCurrency,
+        CancellationToken cancellationToken)
+    {
+        if (reversalHistory.ReversesHistoryId is not int historyId)
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                "A FIFO history reversal must identify the original history row.");
+
+        var originals = await context.Db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.InventoryHistoryId == historyId)
+            .OrderBy(x => x.SplitOrdinal)
+            .ToListAsync(cancellationToken);
+        if (originals.Count == 0)
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"History {historyId} has no authoritative FIFO valuation to reverse.");
+        var originalIds = originals.Select(x => x.Id).ToArray();
+        if (await context.Db.StockValuationFacts.AsNoTracking().AnyAsync(
+                x => x.ReversesValuationFactId != null
+                     && originalIds.Contains(x.ReversesValuationFactId.Value), cancellationToken))
+            throw LedgerError(StockLedgerErrorCodes.ReversalAlreadyExists,
+                $"History {historyId} already has a FIFO valuation reversal.");
+
+        var consumptions = await context.Db.StockFifoLayerConsumptions.AsNoTracking()
+            .Where(x => originalIds.Contains(x.IssueValuationFactId))
+            .OrderBy(x => x.IssueValuationFactId)
+            .ThenBy(x => x.SplitOrdinal)
+            .ToListAsync(cancellationToken);
+        var consumptionByFact = consumptions
+            .GroupBy(x => x.IssueValuationFactId)
+            .ToDictionary(x => x.Key, x => x.OrderBy(y => y.SplitOrdinal).ToArray());
+
+        foreach (var original in originals)
+        {
+            var itemCode = original.ItemCode;
+            if (!states.TryGetValue(itemCode, out var state))
+                state = GetOrCreateState(context, states, itemCode);
+            if (!layersByItem.TryGetValue(itemCode, out var layers))
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"Item '{itemCode}' has no FIFO layers for exact reversal.");
+
+            var reversalFact = NewFact(
+                context, reversalHistory, original.SplitOrdinal, -original.Direction,
+                original.BaseQty, original.UnitCost, original.CostAmount,
+                original.MovementCode + "_REVERSAL", StockValuationSources.OriginalReversal,
+                baseCurrency ?? original.BaseCurrency,
+                original.TransactionCurrency, original.TransactionCostAmount, original.ExchangeRate,
+                original.OriginalValuationFactId ?? original.Id, original.Id);
+
+            if (original.Direction < 0)
+            {
+                if (!consumptionByFact.TryGetValue(original.Id, out var originalConsumptions)
+                    || originalConsumptions.Length == 0)
+                    throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                        $"FIFO issue fact {original.Id} has no layer consumption evidence.");
+
+                foreach (var consumption in originalConsumptions)
+                {
+                    var layer = layers.SingleOrDefault(x => x.Id == consumption.FifoLayerId);
+                    if (layer is null)
+                        throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                            $"FIFO layer {consumption.FifoLayerId} was not found for issue fact {original.Id}.");
+                    layer.RemainingQty = RoundQuantity(layer.RemainingQty + consumption.ConsumedQty);
+                    layer.RemainingValue = RoundMoney(layer.RemainingValue + consumption.ConsumedValue);
+                    layer.CurrentUnitCost = layer.RemainingQty <= Epsilon
+                        ? 0m
+                        : RoundMoney(layer.RemainingValue / layer.RemainingQty);
+                    layer.Status = StockFifoLayerStatuses.Open;
+                    context.Db.StockFifoLayerConsumptions.Add(new StockFifoLayerConsumption
+                    {
+                        CompanyCode = context.CompanyCode,
+                        BranchCode = context.BranchCode,
+                        IssueValuationFact = reversalFact,
+                        FifoLayer = layer,
+                        ConsumedQty = consumption.ConsumedQty,
+                        ConsumedValue = consumption.ConsumedValue,
+                        SplitOrdinal = consumption.SplitOrdinal,
+                        ReversesConsumptionId = consumption.Id,
+                        CreatedAtUtc = DateTime.UtcNow,
+                        CreatedBy = context.UserId
+                    });
+                }
+                ApplyInbound(state, reversalFact.BaseQty, reversalFact.CostAmount,
+                    reversalFact, context.Posting.PostingSequence);
+            }
+            else
+            {
+                var layer = layers.SingleOrDefault(x => x.OriginValuationFactId == original.Id);
+                var isTransferReceipt = string.Equals(original.MovementCode, "TRANSFER_IN", StringComparison.OrdinalIgnoreCase);
+                if (layer is null && !isTransferReceipt)
+                    throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                        $"FIFO receipt fact {original.Id} has no originating layer.");
+                if (layer is not null)
+                {
+                    if (layer.RemainingQty + Epsilon < original.BaseQty
+                        || layer.RemainingValue + Epsilon < original.CostAmount)
+                        throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                            $"FIFO receipt fact {original.Id} has already been consumed; reverse later issues first.");
+                    layer.RemainingQty = RoundQuantity(layer.RemainingQty - original.BaseQty);
+                    layer.RemainingValue = RoundMoney(layer.RemainingValue - original.CostAmount);
+                    layer.CurrentUnitCost = layer.RemainingQty <= Epsilon
+                        ? 0m
+                        : RoundMoney(layer.RemainingValue / layer.RemainingQty);
+                    layer.Status = layer.RemainingQty <= Epsilon ? StockFifoLayerStatuses.Closed : StockFifoLayerStatuses.Open;
+                }
+                ApplyOutbound(state, reversalFact.BaseQty, reversalFact.CostAmount,
+                    reversalFact, context.Posting.PostingSequence);
+            }
+
+            result.Add(reversalFact);
+            var returnAllocations = await context.Db.SalesReturnCostAllocations.AsNoTracking()
+                .Where(x => x.ReturnValuationFactId == original.Id
+                            && x.CompanyCode == context.CompanyCode
+                            && x.BranchCode == context.BranchCode)
+                .ToListAsync(cancellationToken);
+            foreach (var allocation in returnAllocations)
+            {
+                context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
+                {
+                    CompanyCode = context.CompanyCode,
+                    BranchCode = context.BranchCode,
+                    ReturnDocumentType = allocation.ReturnDocumentType,
+                    ReturnDocumentNo = allocation.ReturnDocumentNo,
+                    ReturnDocumentLine = allocation.ReturnDocumentLine,
+                    ReturnCostingRevision = context.Posting.DocumentRevision,
+                    OriginalValuationFactId = allocation.OriginalValuationFactId,
+                    OriginalOwnerType = allocation.OriginalOwnerType,
+                    OriginalOwnerDocumentNo = allocation.OriginalOwnerDocumentNo,
+                    OriginalOwnerDocumentLine = allocation.OriginalOwnerDocumentLine,
+                    ReturnedBaseQty = allocation.ReturnedBaseQty,
+                    ReturnedCostAmount = allocation.ReturnedCostAmount,
+                    StockPostingId = context.Posting.Id,
+                    ReturnValuationFact = reversalFact,
+                    ReversesAllocationId = allocation.Id,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    CreatedBy = context.UserId
+                });
+            }
+        }
+    }
+
+    private static void AddFifoLayer(
+        StockPostingContext context,
+        IReadOnlyDictionary<string, List<StockFifoLayer>> layersByItem,
+        StockValuationFact receiptFact)
+    {
+        var layer = new StockFifoLayer
+        {
+            CompanyCode = context.CompanyCode,
+            BranchCode = context.BranchCode,
+            ItemCode = receiptFact.ItemCode,
+            BaseUom = receiptFact.BaseUom,
+            OriginValuationFact = receiptFact,
+            OriginStockPosting = context.Posting,
+            ReceiptEffectiveAt = receiptFact.EffectiveAt,
+            OriginalQty = receiptFact.BaseQty,
+            RemainingQty = receiptFact.BaseQty,
+            OriginalValue = receiptFact.CostAmount,
+            AccumulatedAdjustment = 0m,
+            RemainingValue = receiptFact.CostAmount,
+            CurrentUnitCost = receiptFact.UnitCost,
+            SourceDocumentType = receiptFact.SourceDocumentType,
+            SourceDocumentNo = receiptFact.SourceDocumentNo,
+            SourceDocumentLine = receiptFact.SourceDocumentLine,
+            WarehouseCode = receiptFact.WarehouseCode,
+            LotId = receiptFact.LotId,
+            LotNo = receiptFact.LotNo,
+            Status = StockFifoLayerStatuses.Open,
+        };
+        context.Db.StockFifoLayers.Add(layer);
+        if (!layersByItem.TryGetValue(receiptFact.ItemCode, out var layers))
+            throw LedgerError(StockLedgerErrorCodes.LedgerMismatch,
+                $"FIFO layer pool for item '{receiptFact.ItemCode}' was not initialized.");
+        layers.Add(layer);
+    }
+
+    private static void EnsureFifoStateReconciles(
+        string itemCode,
+        StockCostState state,
+        IReadOnlyCollection<StockFifoLayer> layers)
+    {
+        var qty = RoundQuantity(layers.Sum(x => x.RemainingQty));
+        var value = RoundMoney(layers.Sum(x => x.RemainingValue));
+        if (Math.Abs(qty - state.OnHandBaseQty) > Epsilon
+            || Math.Abs(value - state.InventoryValue) > Epsilon)
+            throw LedgerError(StockLedgerErrorCodes.LedgerMismatch,
+                $"FIFO layers for item '{itemCode}' do not reconcile to the current cost state.");
+    }
+
     private static bool IsFinanciallyRelevant(IvTrxHistory history) =>
         (history.FromBalLocId is not null && (history.FrStdQty ?? 0m) > 0m)
         || (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m);
@@ -162,7 +1013,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
             .Select(x => new DetailEvidence(
                 x.BatchNo, x.TrxLineNo, x.DocumentRevision,
                 x.Currency, x.UnitPrice, x.BaseUnitPrices, x.CostPrice, x.Cost,
-                x.PriceEvidence))
+                x.PriceEvidence, x.CostEvidenceType, x.CostOverrideReason,
+                x.InvNo, x.DoNo, x.SoLineNo))
             .ToListAsync(cancellationToken);
 
         return rows.GroupBy(x => (x.BatchNo, x.LineNo))
@@ -186,14 +1038,46 @@ public sealed class InventoryValuationService : IInventoryValuationService
 
         if (string.Equals(history.TrxType, IvTrxTypes.CustomerReturn, StringComparison.OrdinalIgnoreCase))
         {
-            var original = await ResolveOriginalSaleCostAsync(context, history, cancellationToken);
-            if (original is not null)
+            var original = await ResolveOriginalSaleCostAsync(
+                context, history, detail, quantity, cancellationToken);
+            forcedUnit = original.UnitCost;
+            forcedAmount = original.TotalCost;
+            source = StockValuationSources.OriginalSaleReturn;
+
+            var fact = AppendReceipt(
+                context, history, detail, states, 0, forcedAmount, forcedUnit, source,
+                originalFactId: null, result, baseCurrency);
+            foreach (var allocation in original.Allocations)
             {
-                forcedUnit = original.UnitCost;
-                forcedAmount = RoundMoney(quantity * original.UnitCost);
-                originalFactId = original.FactId;
-                source = StockValuationSources.OriginalSaleReturn;
+                context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
+                {
+                    CompanyCode = context.CompanyCode,
+                    BranchCode = context.BranchCode,
+                    ReturnDocumentType = "SA_CDN",
+                    ReturnDocumentNo = ResolveReturnDocumentNo(history, detail, context),
+                    ReturnDocumentLine = history.TrxLineNo,
+                    ReturnCostingRevision = context.Posting.DocumentRevision,
+                    OriginalValuationFactId = allocation.OriginalFactId,
+                    OriginalOwnerType = allocation.OwnerType,
+                    OriginalOwnerDocumentNo = allocation.OwnerDocumentNo,
+                    OriginalOwnerDocumentLine = allocation.OwnerDocumentLine,
+                    ReturnedBaseQty = allocation.Quantity,
+                    ReturnedCostAmount = allocation.CostAmount,
+                    StockPostingId = context.Posting.Id,
+                    ReturnValuationFact = fact,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    CreatedBy = context.UserId
+                });
             }
+
+            return;
+        }
+
+        if (string.Equals(history.TrxType, IvTrxTypes.MiscellaneousReceipt, StringComparison.OrdinalIgnoreCase)
+            && ResolveCostEvidenceType(history, detail) is null)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"Miscellaneous receipt for item '{history.ICode}' has no approved cost evidence.");
         }
 
         if (history.ExactTransferredValue is decimal exact)
@@ -208,7 +1092,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
             originalFactId, result, baseCurrency);
     }
 
-    private static void AppendReceipt(
+    private static StockValuationFact AppendReceipt(
         StockPostingContext context,
         IvTrxHistory history,
         DetailEvidence? detail,
@@ -225,9 +1109,28 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var itemCode = Required(history.ICode, "item code");
         var state = GetOrCreateState(context, states, itemCode);
 
-        var unitCost = forcedUnitCost ?? ResolveReceiptUnitCost(history, detail);
-        var amount = forcedAmount ?? RoundMoney(quantity * unitCost);
-        if (amount < 0m || unitCost < 0m)
+        var unitCost = forcedUnitCost;
+        var source = forcedSource;
+        if (unitCost is null
+            && string.Equals(history.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase)
+            && ResolveCostEvidenceType(history, detail) is null)
+        {
+            if (state.OnHandBaseQty <= 0m || state.InventoryValue < 0m)
+                throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                    $"Stock adjustment for item '{itemCode}' requires an approved opening/current cost before increasing stock.");
+
+            unitCost = state.CurrentUnitCost;
+            source = StockValuationSources.MovingAverage;
+        }
+
+        unitCost ??= ResolveReceiptUnitCost(history, detail);
+        var resolvedUnitCost = unitCost.Value;
+        var evidenceType = ResolveCostEvidenceType(history, detail);
+        if (evidenceType is not null)
+            ValidateApprovedCostEvidence(history, detail, evidenceType, resolvedUnitCost);
+
+        var amount = forcedAmount ?? RoundMoney(quantity * resolvedUnitCost);
+        if (amount < 0m || resolvedUnitCost < 0m)
             throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
                 $"Receipt valuation cannot be negative for item '{itemCode}'.");
 
@@ -246,11 +1149,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
             : null;
 
         var fact = NewFact(
-            context, history, splitOrdinal, direction: 1, quantity, unitCost, amount,
-            MovementCode(history, direction: 1), forcedSource, baseCurrency,
+            context, history, splitOrdinal, direction: 1, quantity, resolvedUnitCost, amount,
+            MovementCode(history, direction: 1), source, baseCurrency,
             detail?.Currency, transactionAmount, exchangeRate, originalFactId, null);
         ApplyInbound(state, quantity, amount, fact, context.Posting.PostingSequence);
         result.Add(fact);
+        return fact;
     }
 
     private static async Task<StockValuationFact> AppendIssueAsync(
@@ -261,26 +1165,30 @@ public sealed class InventoryValuationService : IInventoryValuationService
         int splitOrdinal,
         ICollection<StockValuationFact> result,
         string? baseCurrency,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        decimal? fixedUnitCost = null,
+        string? fixedValuationSource = null)
     {
         var quantity = Positive(history.FrStdQty, "issue quantity");
         var itemCode = Required(history.ICode, "item code");
         if (!states.TryGetValue(itemCode, out var state))
             throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
-                $"Item '{itemCode}' has no approved moving-average opening or receipt value.");
+                $"Item '{itemCode}' has no approved {context.CostMethod} opening or receipt value.");
         if (quantity > state.OnHandBaseQty)
             throw LedgerError(StockLedgerErrorCodes.InsufficientBaseQty,
                 $"Valuation quantity for item '{itemCode}' is {state.OnHandBaseQty}, but {quantity} is required.");
 
         var finalDepletion = quantity == state.OnHandBaseQty;
-        var amount = finalDepletion
-            ? state.InventoryValue
-            : RoundMoney(quantity * state.AverageUnitCost);
+        var amount = fixedUnitCost is decimal standardUnit
+            ? RoundMoney(quantity * standardUnit)
+            : finalDepletion
+                ? state.InventoryValue
+                : RoundMoney(quantity * state.AverageUnitCost);
         var unitCost = quantity == 0m ? 0m : RoundMoney(amount / quantity);
 
         var fact = NewFact(
             context, history, splitOrdinal, direction: -1, quantity, unitCost, amount,
-            MovementCode(history, direction: -1), StockValuationSources.MovingAverage,
+            MovementCode(history, direction: -1), fixedValuationSource ?? StockValuationSources.MovingAverage,
             baseCurrency, null, null, null, null, null);
         ApplyOutbound(state, quantity, amount, fact, context.Posting.PostingSequence);
         result.Add(fact);
@@ -346,6 +1254,39 @@ public sealed class InventoryValuationService : IInventoryValuationService
             else
                 ApplyOutbound(state, fact.BaseQty, fact.CostAmount, fact, context.Posting.PostingSequence);
             result.Add(fact);
+
+            // A customer-return valuation may be split across several original outbound
+            // facts. Preserve that exact evidence through rollback as immutable allocation
+            // reversal rows; otherwise a later audit could see the stock reversal without
+            // knowing which original sale slices it cancelled.
+            var returnAllocations = await context.Db.SalesReturnCostAllocations.AsNoTracking()
+                .Where(x => x.ReturnValuationFactId == original.Id
+                            && x.CompanyCode == context.CompanyCode
+                            && x.BranchCode == context.BranchCode)
+                .ToListAsync(cancellationToken);
+            foreach (var allocation in returnAllocations)
+            {
+                context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
+                {
+                    CompanyCode = context.CompanyCode,
+                    BranchCode = context.BranchCode,
+                    ReturnDocumentType = allocation.ReturnDocumentType,
+                    ReturnDocumentNo = allocation.ReturnDocumentNo,
+                    ReturnDocumentLine = allocation.ReturnDocumentLine,
+                    ReturnCostingRevision = context.Posting.DocumentRevision,
+                    OriginalValuationFactId = allocation.OriginalValuationFactId,
+                    OriginalOwnerType = allocation.OriginalOwnerType,
+                    OriginalOwnerDocumentNo = allocation.OriginalOwnerDocumentNo,
+                    OriginalOwnerDocumentLine = allocation.OriginalOwnerDocumentLine,
+                    ReturnedBaseQty = allocation.ReturnedBaseQty,
+                    ReturnedCostAmount = allocation.ReturnedCostAmount,
+                    StockPostingId = context.Posting.Id,
+                    ReturnValuationFact = fact,
+                    ReversesAllocationId = allocation.Id,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    CreatedBy = context.UserId
+                });
+            }
         }
     }
 
@@ -361,7 +1302,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
             CompanyCode = context.CompanyCode,
             BranchCode = context.BranchCode,
             ItemCode = itemCode,
-            CostMethod = StockCostMethods.MovingAverage
+            CostMethod = context.CostMethod
         };
         context.Db.StockCostStates.Add(state);
         states[itemCode] = state;
@@ -380,6 +1321,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
         state.AverageUnitCost = state.OnHandBaseQty == 0m
             ? 0m
             : RoundMoney(state.InventoryValue / state.OnHandBaseQty);
+        state.CurrentUnitCost = state.AverageUnitCost;
         state.LastValuationFact = fact;
         state.LastPostingSequence = postingSequence;
     }
@@ -408,6 +1350,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
         state.AverageUnitCost = state.OnHandBaseQty == 0m
             ? 0m
             : RoundMoney(state.InventoryValue / state.OnHandBaseQty);
+        state.CurrentUnitCost = state.AverageUnitCost;
         state.LastValuationFact = fact;
         state.LastPostingSequence = postingSequence;
     }
@@ -465,7 +1408,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
             MovementCode = movementCode,
             Direction = direction,
             BaseQty = RoundQuantity(quantity),
-            CostMethod = StockCostMethods.MovingAverage,
+            CostMethod = context.CostMethod,
             UnitCost = RoundMoney(unitCost),
             CostAmount = RoundMoney(amount),
             TransactionCurrency = NullIfBlank(transactionCurrency),
@@ -490,29 +1433,210 @@ public sealed class InventoryValuationService : IInventoryValuationService
         };
     }
 
-    private static async Task<OriginalSaleCost?> ResolveOriginalSaleCostAsync(
+    private static async Task<SaleReturnCostResolution> ResolveOriginalSaleCostAsync(
         StockPostingContext context,
         IvTrxHistory history,
+        DetailEvidence? detail,
+        decimal quantity,
         CancellationToken cancellationToken)
     {
-        var documentNo = NullIfBlank(history.InvNo) ?? NullIfBlank(history.DoNo);
-        if (documentNo is null)
-            return null;
+        var invoiceNo = NullIfBlank(detail?.InvNo) ?? NullIfBlank(history.InvNo);
+        var invoiceLine = detail?.SoLineNo ?? history.SoLineNo;
+        if (invoiceNo is null || invoiceLine is null)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                "Customer return is missing the exact referenced invoice line.");
+        }
+
+        var invoice = await context.Db.SaInvoiceDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.InvNo == invoiceNo
+                        && x.Line == invoiceLine.Value)
+            .Select(x => new
+            {
+                x.Line,
+                x.ICode,
+                x.LinkDo,
+                x.DoNo,
+                x.DoLine
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (invoice is null)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"Customer return references invoice {invoiceNo} line {invoiceLine}, but that exact line was not found.");
+        }
+
+        var itemCode = Required(history.ICode, "item code");
+        if (!string.Equals(invoice.ICode, itemCode, StringComparison.OrdinalIgnoreCase))
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"Customer return item '{itemCode}' does not match invoice {invoiceNo} line {invoiceLine}.");
+        }
+
+        var ownerType = invoice.LinkDo ? "SA_DO" : "SA_INVOICE";
+        var ownerNo = invoice.LinkDo ? NullIfBlank(invoice.DoNo) : invoiceNo;
+        var ownerLine = invoice.LinkDo
+            ? invoice.DoLine?.ToString(CultureInfo.InvariantCulture)
+            : invoice.Line.ToString(CultureInfo.InvariantCulture);
+        if (ownerNo is null || ownerLine is null)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"Customer return cannot resolve the exact {ownerType} owner for invoice {invoiceNo} line {invoiceLine}.");
+        }
 
         var rows = await context.Db.StockValuationFacts.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode
-                        && x.ItemCode == history.ICode
+                        && x.ItemCode == itemCode
                         && x.Direction == -1
-                        && x.SourceDocumentNo == documentNo
-                        && x.ValuationStatus == StockValuationStatuses.Valued)
-            .OrderBy(x => x.Id)
-            .Select(x => new { x.Id, x.BaseQty, x.CostAmount })
+                        && x.SourceDocumentType == ownerType
+                        && x.SourceDocumentNo == ownerNo
+                        && x.SourceDocumentLine == ownerLine
+                        && x.ValuationStatus == StockValuationStatuses.Valued
+                        && x.StockPosting!.SealedAtUtc != null
+                        && !context.Db.StockValuationFacts.Any(r => r.ReversesValuationFactId == x.Id))
+            .OrderBy(x => x.PostingLineNo)
+            .ThenBy(x => x.SplitOrdinal)
+            .ThenBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        var qty = rows.Sum(x => x.BaseQty);
-        if (qty <= 0m)
-            return null;
-        return new OriginalSaleCost(rows[0].Id, RoundMoney(rows.Sum(x => x.CostAmount) / qty));
+        if (rows.Count == 0)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"No active outbound valuation facts exist for {ownerType} {ownerNo} line {ownerLine}.");
+        }
+
+        var originalIds = rows.Select(x => x.Id).ToArray();
+        var priorAllocations = await context.Db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && originalIds.Contains(x.OriginalValuationFactId))
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var duplicateParents = priorAllocations
+            .Where(x => x.ReversesAllocationId is not null)
+            .GroupBy(x => x.ReversesAllocationId!.Value)
+            .FirstOrDefault(x => x.Count() > 1);
+        if (duplicateParents is not null)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"Sales-return allocation {duplicateParents.Key} has more than one reversal child.");
+        }
+
+        var children = priorAllocations
+            .Where(x => x.ReversesAllocationId is not null)
+            .ToDictionary(x => x.ReversesAllocationId!.Value);
+        var candidates = new List<ReturnCostCandidate>(rows.Count);
+        foreach (var row in rows)
+        {
+            var chains = priorAllocations
+                .Where(x => x.OriginalValuationFactId == row.Id && x.ReversesAllocationId is null)
+                .OrderBy(x => x.Id)
+                .Select(x => BuildAllocationChain(x, children))
+                .ToArray();
+            var returnedQty = chains.Sum(SignedAllocationQuantity);
+            var returnedValue = chains.Sum(SignedAllocationValue);
+            var remainingQty = RoundQuantity(row.BaseQty - returnedQty);
+            var remainingValue = RoundMoney(row.CostAmount - returnedValue);
+            if (remainingQty < -0.0000005m || remainingValue < -0.0000005m)
+            {
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"Sales-return allocations exceed outbound valuation fact {row.Id}.");
+            }
+            if (remainingQty > 0m)
+            {
+                candidates.Add(new ReturnCostCandidate(
+                    row.Id, row.BaseQty, row.CostAmount, remainingQty, Math.Max(remainingValue, 0m),
+                    ownerType, ownerNo, ownerLine));
+            }
+        }
+
+        var remaining = RoundQuantity(quantity);
+        if (remaining <= 0m)
+        {
+            throw LedgerError(StockLedgerErrorCodes.InvalidStockIdentity,
+                "Customer return quantity must be positive for valuation.");
+        }
+
+        var allocations = new List<ReturnCostAllocationSlice>();
+        foreach (var candidate in candidates)
+        {
+            if (remaining <= 0m)
+                break;
+            var slice = RoundQuantity(Math.Min(remaining, candidate.RemainingQty));
+            if (slice <= 0m)
+                continue;
+            var amount = slice >= candidate.RemainingQty - 0.0000005m
+                ? candidate.RemainingValue
+                : RoundMoney(candidate.RemainingValue * slice / candidate.RemainingQty);
+            allocations.Add(new ReturnCostAllocationSlice(
+                candidate.OriginalFactId,
+                candidate.OwnerType,
+                candidate.OwnerDocumentNo,
+                candidate.OwnerDocumentLine,
+                slice,
+                amount));
+            remaining = RoundQuantity(remaining - slice);
+        }
+        if (remaining > 0m)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"Customer return quantity {quantity:0.######} exceeds the active returnable quantity for {ownerType} {ownerNo} line {ownerLine}.");
+        }
+
+        var totalCost = RoundMoney(allocations.Sum(x => x.CostAmount));
+        return new SaleReturnCostResolution(
+            totalCost,
+            quantity == 0m ? 0m : RoundMoney(totalCost / quantity),
+            allocations);
+    }
+
+    private static string ResolveReturnDocumentNo(
+        IvTrxHistory history,
+        DetailEvidence? detail,
+        StockPostingContext context)
+    {
+        var reference = NullIfBlank(history.RefNo);
+        if (reference is not null && reference.StartsWith("CN/", StringComparison.OrdinalIgnoreCase))
+            return reference[3..];
+        return reference ?? context.Posting.SourceDocumentNo;
+    }
+
+    private static IReadOnlyList<SalesReturnCostAllocation> BuildAllocationChain(
+        SalesReturnCostAllocation root,
+        IReadOnlyDictionary<long, SalesReturnCostAllocation> children)
+    {
+        var chain = new List<SalesReturnCostAllocation> { root };
+        var seen = new HashSet<long> { root.Id };
+        var current = root;
+        while (children.TryGetValue(current.Id, out var child))
+        {
+            if (!seen.Add(child.Id))
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"Sales-return allocation chain beginning at {root.Id} contains a cycle.");
+            chain.Add(child);
+            current = child;
+        }
+        return chain;
+    }
+
+    private static decimal SignedAllocationQuantity(
+        IReadOnlyList<SalesReturnCostAllocation> chain)
+    {
+        decimal value = 0m;
+        for (var index = 0; index < chain.Count; index++)
+            value += (index % 2 == 0 ? 1m : -1m) * chain[index].ReturnedBaseQty;
+        return RoundQuantity(value);
+    }
+
+    private static decimal SignedAllocationValue(
+        IReadOnlyList<SalesReturnCostAllocation> chain)
+    {
+        decimal value = 0m;
+        for (var index = 0; index < chain.Count; index++)
+            value += (index % 2 == 0 ? 1m : -1m) * chain[index].ReturnedCostAmount;
+        return RoundMoney(value);
     }
 
     private static async Task SynchronizeProductionMaterialCostAsync(
@@ -576,6 +1700,52 @@ public sealed class InventoryValuationService : IInventoryValuationService
             throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
                 $"Receipt for item '{history.ICode}' has no approved base-currency cost evidence.");
         return RoundMoney(value.Value);
+    }
+
+    private static string? ResolveCostEvidenceType(IvTrxHistory history, DetailEvidence? detail)
+    {
+        var explicitType = InventoryCostEvidenceTypes.Normalize(
+            detail?.CostEvidenceType ?? history.CostEvidenceType);
+        if (explicitType is not null)
+            return explicitType;
+
+        // Preserve legacy approved rows created before the structured columns existed.
+        var legacy = detail?.PriceEvidence?.Trim().ToUpperInvariant()
+                     ?? history.PriceEvidence?.Trim().ToUpperInvariant();
+        return legacy switch
+        {
+            "EXPLICIT_COMPANY_BASE_PRICE" => InventoryCostEvidenceTypes.ManualApproved,
+            InventoryCostEvidenceTypes.ManualApproved => InventoryCostEvidenceTypes.ManualApproved,
+            InventoryCostEvidenceTypes.ZeroCostApproved => InventoryCostEvidenceTypes.ZeroCostApproved,
+            InventoryCostEvidenceTypes.OpeningApproved => InventoryCostEvidenceTypes.OpeningApproved,
+            _ => null
+        };
+    }
+
+    private static void ValidateApprovedCostEvidence(
+        IvTrxHistory history,
+        DetailEvidence? detail,
+        string evidenceType,
+        decimal unitCost)
+    {
+        if (evidenceType == InventoryCostEvidenceTypes.ManualApproved && unitCost <= 0m)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"MANUAL_APPROVED cost evidence for item '{history.ICode}' must be positive.");
+        }
+
+        if (evidenceType == InventoryCostEvidenceTypes.ZeroCostApproved && unitCost != 0m)
+        {
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"ZERO_COST_APPROVED cost evidence for item '{history.ICode}' must resolve to zero.");
+        }
+
+        if (evidenceType is InventoryCostEvidenceTypes.ZeroCostApproved or InventoryCostEvidenceTypes.OpeningApproved
+            && string.IsNullOrWhiteSpace(detail?.CostOverrideReason ?? history.CostOverrideReason))
+        {
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                $"{evidenceType} cost evidence for item '{history.ICode}' requires an approval reason.");
+        }
     }
 
     private static string ResolveReceiptSource(IvTrxHistory history) => history.TrxType switch
@@ -662,7 +1832,33 @@ public sealed class InventoryValuationService : IInventoryValuationService
         decimal? BaseUnitPrice,
         decimal? CostPrice,
         decimal? Cost,
-        string? PriceEvidence);
+        string? PriceEvidence,
+        string? CostEvidenceType,
+        string? CostOverrideReason,
+        string? InvNo,
+        string? DoNo,
+        short? SoLineNo);
 
-    private sealed record OriginalSaleCost(long FactId, decimal UnitCost);
+    private sealed record SaleReturnCostResolution(
+        decimal TotalCost,
+        decimal UnitCost,
+        IReadOnlyList<ReturnCostAllocationSlice> Allocations);
+
+    private sealed record ReturnCostAllocationSlice(
+        long OriginalFactId,
+        string OwnerType,
+        string OwnerDocumentNo,
+        string OwnerDocumentLine,
+        decimal Quantity,
+        decimal CostAmount);
+
+    private sealed record ReturnCostCandidate(
+        long OriginalFactId,
+        decimal OriginalQty,
+        decimal OriginalValue,
+        decimal RemainingQty,
+        decimal RemainingValue,
+        string OwnerType,
+        string OwnerDocumentNo,
+        string OwnerDocumentLine);
 }

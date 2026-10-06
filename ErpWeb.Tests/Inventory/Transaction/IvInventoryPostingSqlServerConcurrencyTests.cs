@@ -142,6 +142,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
                     UnitPrice = 1m,
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]
@@ -244,6 +245,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
                     UnitPrice = 1m,
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]
@@ -485,6 +487,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
                     UnitPrice = 1m,
+                    PriceConfirmed = true,
                     Reason = "ADJ"
                 }
             ]

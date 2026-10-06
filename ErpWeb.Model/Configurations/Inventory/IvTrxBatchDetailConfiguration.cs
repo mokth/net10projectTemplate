@@ -10,6 +10,9 @@ public class IvTrxBatchDetailConfiguration : IEntityTypeConfiguration<IvTrxBatch
     {
         builder.ToTable("IvTrxBatchDetail");
         builder.Property(x => x.PriceEvidence).HasMaxLength(200);
+        builder.Property(x => x.CostEvidenceType).HasMaxLength(30);
+        builder.Property(x => x.CostOverrideReason).HasMaxLength(250);
+        builder.Property(x => x.CostApprovedBy).HasMaxLength(100);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();

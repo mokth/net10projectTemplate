@@ -65,9 +65,9 @@ public static class MenuCodes
     public const string InventoryStockCountVar = "INV_STOCK_COUNT_VAR";
 
     /// <summary>
-    /// Est. Inventory Value by Item / Warehouse / Class (plan-inventoryInquirySuite Phase 3, D5/D11).
-    /// Deliberately NOT titled "Inventory Valuation": there is no costing method, no cost layer and no
-    /// revaluation, so the figure is an estimate and cannot tie to a general ledger.
+    /// Authoritative Inventory Value by Item / Warehouse / Class (ERP Costing Enhancement Plan §11.3).
+    /// The screen reads sealed valuation snapshots/facts; warehouse rows are explicitly labelled when
+    /// they are allocations of a branch/item financial pool.
     /// </summary>
     public const string InventoryStockValue = "INV_STOCK_VALUE";
 
@@ -78,6 +78,12 @@ public static class MenuCodes
     /// report.
     /// </summary>
     public const string InventoryReconciliation = "INV_RECONCILIATION";
+
+    /// <summary>
+    /// Costing Diagnostic &amp; Repair Center. Monetary values require <c>VIEW_COST</c>.
+    /// Repair execution requires <c>REPAIR_COST</c> plus the source document's own POST or ROLLBACK.
+    /// </summary>
+    public const string InventoryCostingCenter = "INV_COSTING_CENTER";
 
     /// <summary>
     /// Inventory period close (month end) — the action screen that closes / reopens a period

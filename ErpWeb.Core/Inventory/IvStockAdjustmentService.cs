@@ -218,6 +218,8 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
                     IClassCode = d.IClassCode,
                     IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
                     UnitPrice = d.UnitPrice ?? 0m,
+                    CostEvidenceType = d.CostEvidenceType,
+                    CostOverrideReason = d.CostOverrideReason,
                     ExpiryDate = d.ExpiryDate,
                     Reason = reason,
                     Remarks = remarks,
@@ -272,6 +274,11 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             return IvStockAdjustmentOperationResult.Fail(validatedResult.ErrorMessage);
         }
 
+        if (await EnsureCostOverridePermissionAsync(validatedResult.Lines!, cancellationToken) is string costPermissionError)
+        {
+            return IvStockAdjustmentOperationResult.Fail(costPermissionError);
+        }
+
         var batchNo = await _runningNumbers.GetNextAsync(
             db,
             context.CompanyCode!,
@@ -311,7 +318,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             CreatedBy = userId
         };
 
-        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo);
+        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo, userId, now);
 
         await _transactions.InsertAsync(db, batch, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
@@ -388,6 +395,11 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             return IvStockAdjustmentOperationResult.Fail(validatedResult.ErrorMessage);
         }
 
+        if (await EnsureCostOverridePermissionAsync(validatedResult.Lines!, cancellationToken) is string costPermissionError)
+        {
+            return IvStockAdjustmentOperationResult.Fail(costPermissionError);
+        }
+
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
         var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
@@ -407,7 +419,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
 
         db.IvTrxBatchDetails.RemoveRange(existingDetails);
         batch.Details.Clear();
-        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo);
+        AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, userId, now);
 
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
@@ -628,7 +640,9 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         string companyCode,
         string branchCode,
         string? locationCode,
-        int batchNo)
+        int batchNo,
+        string approvedBy,
+        DateTime approvedAtUtc)
     {
         short trxLineNo = 1;
         foreach (var row in validated)
@@ -647,7 +661,12 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
                 IStatus = row.IStatus,
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
+                PriceEvidence = row.AdjustQty > 0m ? row.CostEvidenceType : null,
                 UnitPrice = IvQty.Round(row.UnitPrice),
+                CostEvidenceType = row.AdjustQty > 0m ? row.CostEvidenceType : null,
+                CostOverrideReason = row.AdjustQty > 0m ? row.CostOverrideReason : null,
+                CostApprovedBy = row.AdjustQty > 0m && row.CostEvidenceType is not null ? approvedBy : null,
+                CostApprovedAtUtc = row.AdjustQty > 0m && row.CostEvidenceType is not null ? approvedAtUtc : null,
                 Remarks = row.Remarks,
                 LocationCode = NullIfWhiteSpace(locationCode)
             };
@@ -831,6 +850,33 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             return ($"Line {lineNo}: unit price cannot be negative.", null);
         }
 
+        var costEvidenceType = InventoryCostEvidenceTypes.Normalize(line.CostEvidenceType);
+        if (!string.IsNullOrWhiteSpace(line.CostEvidenceType) && costEvidenceType is null)
+        {
+            return ($"Line {lineNo}: cost evidence type must be MANUAL_APPROVED, ZERO_COST_APPROVED, or OPENING_APPROVED.", null);
+        }
+
+        if (adjustQty <= 0m)
+        {
+            // A negative adjustment is an issue and its entered price is never financial authority.
+            costEvidenceType = null;
+        }
+        else if (costEvidenceType == InventoryCostEvidenceTypes.ZeroCostApproved && line.UnitPrice != 0m)
+        {
+            return ($"Line {lineNo}: ZERO_COST_APPROVED requires a zero unit cost.", null);
+        }
+        else if (costEvidenceType == InventoryCostEvidenceTypes.ManualApproved && line.UnitPrice <= 0m)
+        {
+            return ($"Line {lineNo}: MANUAL_APPROVED requires a positive unit cost; use ZERO_COST_APPROVED for zero cost.", null);
+        }
+
+        if (adjustQty > 0m
+            && costEvidenceType is InventoryCostEvidenceTypes.ZeroCostApproved or InventoryCostEvidenceTypes.OpeningApproved
+            && string.IsNullOrWhiteSpace(line.CostOverrideReason))
+        {
+            return ($"Line {lineNo}: a cost approval reason is required for {costEvidenceType}.", null);
+        }
+
         var reasonError = IvStockAdjustmentLineInvariant.ValidateReasonCode(line.Reason, lineNo);
         if (reasonError is not null)
         {
@@ -846,7 +892,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
         var unitPrice = line.UnitPrice;
-        if (unitPrice == 0m)
+        if (unitPrice == 0m && costEvidenceType is null)
         {
             unitPrice = bal.UnitPrice ?? item.PurchasePrice ?? 0m;
         }
@@ -867,7 +913,27 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             iClassCode,
             expiry,
             unitPrice,
+            costEvidenceType,
+            TruncateOptional(line.CostOverrideReason, 250),
             remarks));
+    }
+
+    private async Task<string?> EnsureCostOverridePermissionAsync(
+        IReadOnlyCollection<ValidatedLine> lines,
+        CancellationToken cancellationToken)
+    {
+        if (!lines.Any(x => x.AdjustQty > 0m && x.CostEvidenceType is not null))
+            return null;
+
+        if (await _accessRights.CanAsync(
+                MenuCodes.InventoryStockAdjustment,
+                PermissionCodes.PriceOverride,
+                cancellationToken))
+        {
+            return null;
+        }
+
+        return "A manual positive adjustment cost requires the PRICE_OVERRIDE permission.";
     }
 
     private static string? NormalizeRefNo(string? refNo, int batchNo)
@@ -935,6 +1001,8 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         string IClassCode,
         DateTime? ExpiryDate,
         decimal UnitPrice,
+        string? CostEvidenceType,
+        string? CostOverrideReason,
         string? Remarks);
 
     private readonly record struct UserContext(

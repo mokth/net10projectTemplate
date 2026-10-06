@@ -103,6 +103,8 @@ public sealed class IvStockAdjustmentLineDto
     public string? IClassCode { get; init; }
     public string IStatus { get; init; } = IvItemStatuses.Active;
     public decimal UnitPrice { get; init; }
+    public string? CostEvidenceType { get; init; }
+    public string? CostOverrideReason { get; init; }
     public DateTime? ExpiryDate { get; init; }
     public string? Reason { get; init; }
     public string? Remarks { get; init; }
@@ -130,6 +132,9 @@ public sealed class IvStockAdjustmentLineRequest
     public string? IClassCode { get; set; }
     public string IStatus { get; set; } = IvItemStatuses.Active;
     public decimal UnitPrice { get; set; }
+    /// <summary>Required only for a positive manual-cost adjustment; negative adjustments use WAC/layers.</summary>
+    public string? CostEvidenceType { get; set; }
+    public string? CostOverrideReason { get; set; }
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }

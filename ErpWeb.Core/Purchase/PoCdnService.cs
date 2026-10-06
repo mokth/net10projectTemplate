@@ -3,6 +3,8 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
@@ -33,6 +35,12 @@ public sealed class PoCdnService : IPoCdnService
     private readonly IIvStockCommonRepository _common;
     private readonly IIvInventoryPostingService _posting;
     private readonly ILogger<PoCdnService> _logger;
+    private readonly ICompanyCurrencyRateResolver _currencyRates;
+    private readonly IStockPostingCoordinator? _stockCoordinator;
+    private readonly IPurchaseCostPostingCommandFactory? _costPostingCommands;
+    private readonly IPurchaseCostAdjustmentPostingService? _costAdjustments;
+    private readonly IPurchaseCdnCostAdjustmentService? _cdnCostAdjustments;
+    private readonly IStockCostMethodResolver _costMethods;
 
     /// <summary>Test-only: invoked after the VR stock-out succeeds, before the CN is marked POSTED.</summary>
     internal Action? TestHookAfterStockOut { get; set; }
@@ -53,7 +61,13 @@ public sealed class PoCdnService : IPoCdnService
         IIvStockMasterRepository stockMasters,
         IIvStockCommonRepository common,
         IIvInventoryPostingService posting,
-        ILogger<PoCdnService> logger)
+        ILogger<PoCdnService> logger,
+        ICompanyCurrencyRateResolver? currencyRates = null,
+        IStockPostingCoordinator? stockCoordinator = null,
+        IPurchaseCostPostingCommandFactory? costPostingCommands = null,
+        IPurchaseCostAdjustmentPostingService? costAdjustments = null,
+        IPurchaseCdnCostAdjustmentService? cdnCostAdjustments = null,
+        IStockCostMethodResolver? costMethods = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -68,6 +82,12 @@ public sealed class PoCdnService : IPoCdnService
         _common = common;
         _posting = posting;
         _logger = logger;
+        _currencyRates = currencyRates ?? new CompanyCurrencyRateResolver();
+        _stockCoordinator = stockCoordinator;
+        _costPostingCommands = costPostingCommands;
+        _costAdjustments = costAdjustments;
+        _cdnCostAdjustments = cdnCostAdjustments;
+        _costMethods = costMethods ?? new StockCostMethodResolver();
     }
 
     // ─────────────────────────── Context helpers ───────────────────────────
@@ -278,7 +298,8 @@ public sealed class PoCdnService : IPoCdnService
         }
 
         var currency = string.IsNullOrWhiteSpace(row.Currency) ? "MYR" : row.Currency!.Trim();
-        var (rateError, rate) = await ResolveCurrRateCoreAsync(db, currency, docDate, cancellationToken);
+        var (rateError, rate) = await ResolveCurrRateCoreAsync(
+            db, context.CompanyCode!, currency, docDate, cancellationToken);
 
         // C13/C15: save-time gate. Suspended vendors block new documents; inactive vendors too.
         var blocked = !row.IsActive
@@ -318,8 +339,12 @@ public sealed class PoCdnService : IPoCdnService
         DateTime docDate,
         CancellationToken cancellationToken = default)
     {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+            return PoCdnOperationResult.FailRate(context.Error);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var (error, rate) = await ResolveCurrRateCoreAsync(db, currency, docDate, cancellationToken);
+        var (error, rate) = await ResolveCurrRateCoreAsync(
+            db, context.CompanyCode!, currency, docDate, cancellationToken);
         return error is null
             ? PoCdnOperationResult.OkRate(rate, true)
             : PoCdnOperationResult.FailRate(error);
@@ -330,39 +355,18 @@ public sealed class PoCdnService : IPoCdnService
     /// SaCurrRate window covering <paramref name="docDate"/> and a rate other than 1. Deliberately
     /// not PoInvoiceService.ResolveCurrRateAsync, which silently returns 1m.
     /// </summary>
-    private static async Task<(string? Error, decimal Rate)> ResolveCurrRateCoreAsync(
+    private async Task<(string? Error, decimal Rate)> ResolveCurrRateCoreAsync(
         AppDbContext db,
+        string companyCode,
         string? currency,
         DateTime docDate,
         CancellationToken cancellationToken)
     {
-        var code = (currency ?? string.Empty).Trim();
-        if (code.Length == 0)
-        {
-            return ("Currency is required.", 0m);
-        }
-
-        var isHome = string.Equals(code, "MYR", StringComparison.OrdinalIgnoreCase);
-        var date = docDate.Date;
-
-        var rate = await db.SaCurrRates.AsNoTracking()
-            .Where(x => x.CurrCode == code && x.Status && x.StartDate <= date && x.EndDate >= date)
-            .OrderByDescending(x => x.StartDate)
-            .Select(x => (double?)x.HomeCurPerUnit)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (rate is null)
-        {
-            return isHome ? (null, 1m) : ($"No currency rate for {code} on {date:yyyy-MM-dd}.", 0m);
-        }
-
-        var value = Convert.ToDecimal(rate.Value);
-        if (!isHome && value == 1m)
-        {
-            return ("Non-home currency rate cannot be 1.", 0m);
-        }
-
-        return (null, value);
+        var result = await _currencyRates.ResolveAsync(
+            db, companyCode, currency ?? string.Empty, docDate, cancellationToken);
+        return result.Succeeded
+            ? (null, result.Rate)
+            : (result.Error, 0m);
     }
 
     // ─────────────────────────── Search / get ───────────────────────────
@@ -845,7 +849,7 @@ public sealed class PoCdnService : IPoCdnService
         header.VendorCode = Truncate(request.VendorCode, 60);
         header.VendorName = TruncateOptional(vendorName, 200);
         header.Currency = TruncateOptional(currency, 20);
-        header.CurrRate = currRate > 0m ? currRate : 1m;
+        header.CurrRate = currRate;
         header.PayCode = TruncateOptional(request.PayCode, 20);
         header.TaxGrCode = TruncateOptional(request.TaxGrCode, 20);
         header.ReasonCode = TruncateOptional(request.ReasonCode, 30);
@@ -1072,7 +1076,8 @@ public sealed class PoCdnService : IPoCdnService
                 : request.Currency!.Trim();
         }
 
-        var (rateError, currRate) = await ResolveCurrRateCoreAsync(db, currency, docDate, cancellationToken);
+        var (rateError, currRate) = await ResolveCurrRateCoreAsync(
+            db, company, currency, docDate, cancellationToken);
         if (rateError is not null && !errors.ContainsKey("Currency"))
         {
             // Do not clobber the C18 mismatch above — it is the more specific fault.
@@ -1949,30 +1954,34 @@ public sealed class PoCdnService : IPoCdnService
 
             // C3/C41: the header reservation is re-checked under the invoice lock.
             await db.Entry(cdn).Collection(x => x.Details).LoadAsync(cancellationToken);
-            if (string.Equals(cdn.Type, PoCdnTypes.CreditNote, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(cdn.InvNo))
+            PoInvoice? referencedInvoice = null;
+            StockPostingContext? vendorReturnLedgerContext = null;
+            if (!string.IsNullOrWhiteSpace(cdn.InvNo))
             {
-                var invoice = await _invoices.LockForUpdateAsync(
+                referencedInvoice = await _invoices.LockForUpdateAsync(
                     db, write.CompanyCode!, write.BranchCode!, cdn.InvNo!, cancellationToken);
-                if (invoice is null)
+                if (referencedInvoice is null)
                 {
                     await tx.RollbackAsync(cancellationToken);
                     return PoCdnPostingItemResult.Failed(no, $"Invoice {cdn.InvNo} was not found.");
                 }
 
-                var others = await _cdns.ListOtherCreditNotesAsync(
-                    db, write.CompanyCode!, write.BranchCode!, cdn.InvNo!, no, cancellationToken);
-                var eval = PoCdnCalc.EvaluateRemaining(
-                    invoice.TotAmnt,
-                    others.Select(x => x.TotAmnt).ToList(),
-                    cdn.TotAmnt,
-                    others.Where(x => x.IsDraft).Select(x => x.DocNo).ToList());
-                if (!eval.Ok)
+                if (string.Equals(cdn.Type, PoCdnTypes.CreditNote, StringComparison.OrdinalIgnoreCase))
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    return PoCdnPostingItemResult.Failed(
-                        no, PoCdnReasonCodes.RemainingExceeded,
-                        eval.Error ?? "Credit note total exceeds the invoice remaining.");
+                    var others = await _cdns.ListOtherCreditNotesAsync(
+                        db, write.CompanyCode!, write.BranchCode!, cdn.InvNo!, no, cancellationToken);
+                    var eval = PoCdnCalc.EvaluateRemaining(
+                        referencedInvoice.TotAmnt,
+                        others.Select(x => x.TotAmnt).ToList(),
+                        cdn.TotAmnt,
+                        others.Where(x => x.IsDraft).Select(x => x.DocNo).ToList());
+                    if (!eval.Ok)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return PoCdnPostingItemResult.Failed(
+                            no, PoCdnReasonCodes.RemainingExceeded,
+                            eval.Error ?? "Credit note total exceeds the invoice remaining.");
+                    }
                 }
             }
 
@@ -2031,7 +2040,7 @@ public sealed class PoCdnService : IPoCdnService
                     }
 
                     cdn.VrBatchNo = vrBatch.BatchNo;
-                    goto SetPosted;
+                    goto FinancialCosting;
                 }
                 else
                 {
@@ -2063,9 +2072,7 @@ public sealed class PoCdnService : IPoCdnService
                     return PoCdnPostingItemResult.Failed(
                         no, core.ErrorMessage ?? "Vendor return post failed.");
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
-
-                TestHookAfterStockOut?.Invoke();
+                vendorReturnLedgerContext = ledger.Context;
                 cdn.VrBatchNo = vrBatch.BatchNo;
             }
             else
@@ -2089,6 +2096,31 @@ public sealed class PoCdnService : IPoCdnService
                 }
 
                 cdn.VrBatchNo = null;
+            }
+
+        FinancialCosting:
+            string? costingError;
+            if (vendorReturnLedgerContext is not null)
+            {
+                costingError = await AppendCdnCostingAsync(
+                    db, write, cdn, referencedInvoice, vendorReturnLedgerContext, cancellationToken);
+            }
+            else
+            {
+                costingError = await PostCdnCostingAsync(
+                    db, write, cdn, referencedInvoice, cancellationToken);
+            }
+            if (costingError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoCdnPostingItemResult.Failed(no, costingError);
+            }
+
+            if (vendorReturnLedgerContext is not null)
+            {
+                await _posting.CompletePostingInTransactionAsync(
+                    vendorReturnLedgerContext, cancellationToken);
+                TestHookAfterStockOut?.Invoke();
             }
 
         SetPosted:
@@ -2115,6 +2147,212 @@ public sealed class PoCdnService : IPoCdnService
             return PoCdnPostingItemResult.Failed(no, "Unable to post the document.");
         }
     }
+
+    private async Task<string?> AppendCdnCostingAsync(
+        AppDbContext db,
+        UserContext write,
+        PoCdn cdn,
+        PoInvoice? referencedInvoice,
+        StockPostingContext context,
+        CancellationToken cancellationToken)
+    {
+        if (_cdnCostAdjustments is null || _costAdjustments is null)
+            return null;
+
+        try
+        {
+            context.CostMethod = await _costMethods.ResolveAsync(
+                db,
+                write.CompanyCode!,
+                write.BranchCode!,
+                referencedInvoice?.DocDate ?? cdn.DocDate,
+                cancellationToken);
+            var result = await _cdnCostAdjustments.BuildAsync(
+                db, cdn, referencedInvoice, context.CostMethod, cancellationToken);
+            if (!result.Succeeded)
+                return result.Error ?? "Purchase CN/DN costing failed.";
+
+            await _costAdjustments.AppendInTransactionAsync(
+                context, result.Adjustments, cancellationToken);
+            return null;
+        }
+        catch (StockLedgerException ex)
+        {
+            return ex.Error.Message;
+        }
+    }
+
+    private async Task<string?> PostCdnCostingAsync(
+        AppDbContext db,
+        UserContext write,
+        PoCdn cdn,
+        PoInvoice? referencedInvoice,
+        CancellationToken cancellationToken)
+    {
+        if (_stockCoordinator is null
+            || _costPostingCommands is null
+            || _costAdjustments is null
+            || _cdnCostAdjustments is null)
+        {
+            return null;
+        }
+
+        var snapshot = new
+        {
+            cdn.DocNo,
+            cdn.Type,
+            cdn.DocDate,
+            cdn.Currency,
+            cdn.CurrRate,
+            cdn.CostingRevision,
+            cdn.InvNo,
+            cdn.ReturnStock,
+            cdn.ReasonCode,
+            Lines = cdn.Details.OrderBy(x => x.Line).Select(x => new
+            {
+                x.Line,
+                x.InvLineNo,
+                x.ICode,
+                x.StdQty,
+                x.NetAmount,
+                x.PoNo,
+                x.PoRelNo,
+                x.PoLineNo,
+                x.IsStockReturn
+            }).ToArray(),
+            ReferencedInvoiceRevision = referencedInvoice?.CostingRevision
+        };
+        var command = _costPostingCommands.Create(new PurchaseCostPostingRequest(
+            SourceDocumentType: "PO_CDN",
+            SourceDocumentId: cdn.DocNo,
+            SourceDocumentNo: cdn.DocNo,
+            CostingRevision: cdn.CostingRevision,
+            PostingRole: "PRIMARY",
+            EffectiveAt: cdn.DocDate,
+            SourceSnapshot: snapshot));
+        var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+        if (begin.Error is not null)
+            return begin.Error.Message;
+        if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
+            return null;
+
+        var error = await AppendCdnCostingAsync(
+            db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
+        if (error is not null)
+            return error;
+
+        try
+        {
+            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            return null;
+        }
+        catch (StockLedgerException ex)
+        {
+            return ex.Error.Message;
+        }
+    }
+
+    private async Task<string?> RollbackCdnCostingAsync(
+        AppDbContext db,
+        UserContext write,
+        PoCdn cdn,
+        CancellationToken cancellationToken)
+    {
+        if (_stockCoordinator is null
+            || _costPostingCommands is null
+            || _costAdjustments is null
+            || _cdnCostAdjustments is null)
+        {
+            return null;
+        }
+
+        var original = await db.StockPostings.AsNoTracking()
+            .Where(x => x.CompanyCode == write.CompanyCode
+                        && x.BranchCode == write.BranchCode
+                        && x.SourceModule == "PROCUREMENT"
+                        && x.SourceDocumentType == "PO_CDN"
+                        && x.SourceDocumentId == cdn.DocNo
+                        && x.DocumentRevision == cdn.CostingRevision
+                        && x.PostingRole == "PRIMARY"
+                        && x.SealedAtUtc != null)
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (original is null)
+            return $"No sealed Purchase CN/DN costing posting was found for {cdn.DocNo} revision {cdn.CostingRevision}.";
+
+        var snapshot = new
+        {
+            cdn.DocNo,
+            cdn.Type,
+            cdn.DocDate,
+            cdn.Currency,
+            cdn.CurrRate,
+            cdn.CostingRevision,
+            cdn.InvNo,
+            cdn.ReturnStock,
+            cdn.ReasonCode,
+            Lines = cdn.Details.OrderBy(x => x.Line).Select(x => new
+            {
+                x.Line,
+                x.InvLineNo,
+                x.ICode,
+                x.StdQty,
+                x.NetAmount,
+                x.PoNo,
+                x.PoRelNo,
+                x.PoLineNo,
+                x.IsStockReturn
+            }).ToArray()
+        };
+        var command = _costPostingCommands.Create(new PurchaseCostPostingRequest(
+            SourceDocumentType: "PO_CDN",
+            SourceDocumentId: cdn.DocNo,
+            SourceDocumentNo: cdn.DocNo,
+            CostingRevision: cdn.CostingRevision,
+            PostingRole: "REVERSAL",
+            EffectiveAt: original.EffectiveAt,
+            SourceSnapshot: snapshot,
+            ReasonCode: "PO_CDN_ROLLBACK",
+            ReasonText: "Reverse Purchase CN/DN costing posting.",
+            ReversesPostingId: original.Id));
+        var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
+        if (begin.Error is not null)
+            return begin.Error.Message;
+        if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
+            return null;
+
+        try
+        {
+            begin.Context.CostMethod = await _costMethods.ResolveAsync(
+                db, write.CompanyCode!, write.BranchCode!, original.EffectiveAt, cancellationToken);
+            var reversal = await _cdnCostAdjustments.ReverseAsync(
+                db, cdn, original.Id, write.UserId!, cancellationToken);
+            if (!reversal.Succeeded)
+                return reversal.Error ?? "Purchase CN/DN costing rollback failed.";
+            await _costAdjustments.AppendInTransactionAsync(
+                begin.Context, reversal.Adjustments, cancellationToken);
+            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            return null;
+        }
+        catch (StockLedgerException ex)
+        {
+            return ex.Error.Message;
+        }
+    }
+
+    private async Task<long?> FindVendorReturnPostingIdAsync(
+        AppDbContext db,
+        UserContext write,
+        int batchNo,
+        CancellationToken cancellationToken) =>
+        await db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == write.CompanyCode
+                        && x.BranchCode == write.BranchCode
+                        && x.BatchNo == batchNo
+                        && x.StockPostingId != null)
+            .OrderBy(x => x.StockPostingId)
+            .Select(x => x.StockPostingId)
+            .FirstOrDefaultAsync(cancellationToken);
 
     public async Task<PoCdnOperationResult> RollbackAsync(
         IReadOnlyList<PoCdnKeyedRequest> items,
@@ -2185,6 +2423,7 @@ public sealed class PoCdnService : IPoCdnService
 
             var now = DateTime.UtcNow;
             var uid = Truncate(write.UserId, 20);
+            var costingHandled = false;
 
             // C7/C31: roll back only the VR batch owned by this CN, exactly once.
             var vrBatch = await PoCdnVrLock.LockByVrRefAsync(
@@ -2192,6 +2431,8 @@ public sealed class PoCdnService : IPoCdnService
             if (vrBatch is not null
                 && string.Equals(vrBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
+                var primaryVendorReturnPostingId = await FindVendorReturnPostingIdAsync(
+                    db, write, vrBatch.BatchNo, cancellationToken);
                 var effectiveAt = await ErpWeb.Core.StockLedger.StockBusinessTime.NowAsync(
                     db, write.CompanyCode!, cancellationToken);
                 var ledger = await _posting.BeginPostingInTransactionAsync(
@@ -2212,14 +2453,70 @@ public sealed class PoCdnService : IPoCdnService
                     return PoCdnPostingItemResult.Failed(
                         no, core.ErrorMessage ?? "Vendor return rollback failed.");
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+
+                if (ledger.Context is not null)
+                {
+                    if (_cdnCostAdjustments is not null && _costAdjustments is not null)
+                    {
+                        if (primaryVendorReturnPostingId is not long primaryId || primaryId <= 0)
+                        {
+                            await tx.RollbackAsync(cancellationToken);
+                            return PoCdnPostingItemResult.Failed(
+                                no,
+                                "The posted vendor-return ledger has no primary stock-posting identity for costing rollback.");
+                        }
+
+                        var reversal = await _cdnCostAdjustments.ReverseAsync(
+                            db, cdn, primaryId, write.UserId!, cancellationToken);
+                        if (!reversal.Succeeded)
+                        {
+                            await tx.RollbackAsync(cancellationToken);
+                            return PoCdnPostingItemResult.Failed(
+                                no, reversal.Error ?? "Purchase CN/DN costing rollback failed.");
+                        }
+
+                        ledger.Context.CostMethod = await _costMethods.ResolveAsync(
+                            db, write.CompanyCode!, write.BranchCode!, cdn.DocDate, cancellationToken);
+                        await _costAdjustments.AppendInTransactionAsync(
+                            ledger.Context, reversal.Adjustments, cancellationToken);
+                    }
+
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    costingHandled = true;
+                }
 
                 TestHookAfterStockRollback?.Invoke();
+            }
+
+            if (!cdn.ReturnStock)
+            {
+                var hasFinancialPosting = _stockCoordinator is not null
+                    && await db.StockPostings.AsNoTracking().AnyAsync(
+                        x => x.CompanyCode == write.CompanyCode
+                             && x.BranchCode == write.BranchCode
+                             && x.SourceModule == "PROCUREMENT"
+                             && x.SourceDocumentType == "PO_CDN"
+                             && x.SourceDocumentId == cdn.DocNo
+                             && x.DocumentRevision == cdn.CostingRevision
+                             && x.PostingRole == "PRIMARY"
+                             && x.SealedAtUtc != null,
+                        cancellationToken);
+                var costingError = await RollbackCdnCostingAsync(
+                    db, write, cdn, cancellationToken);
+                if (costingError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(no, costingError);
+                }
+
+                costingHandled |= hasFinancialPosting;
             }
 
             cdn.Status = PoCdnStatuses.New;
             cdn.PostedDate = null;
             cdn.PostedBy = null;
+            if (costingHandled)
+                cdn.CostingRevision = checked(cdn.CostingRevision + 1);
             cdn.RollbackDate = now;
             cdn.RollbackBy = uid;
             cdn.ModifiedDate = now;

@@ -493,7 +493,8 @@ public partial class PoInvoice : PageBase
             OneTime = x.OneTime,
             PoNo = x.PoNo,
             PoRelNo = x.PoRelNo,
-            PoLineNo = x.PoLineNo
+            PoLineNo = x.PoLineNo,
+            ReferencedInvoiceLineNo = x.ReferencedInvoiceLineNo
         }).ToList()
     };
 
@@ -531,6 +532,7 @@ public partial class PoInvoice : PageBase
         public string? PoNo { get; set; }
         public short? PoRelNo { get; set; }
         public short? PoLineNo { get; set; }
+        public short? ReferencedInvoiceLineNo { get; set; }
 
         public static LineEdit FromDto(PoInvoiceLineDto x) => new()
         {
@@ -554,7 +556,8 @@ public partial class PoInvoice : PageBase
             OneTime = x.OneTime,
             PoNo = x.PoNo,
             PoRelNo = x.PoRelNo,
-            PoLineNo = x.PoLineNo
+            PoLineNo = x.PoLineNo,
+            ReferencedInvoiceLineNo = x.ReferencedInvoiceLineNo
         };
     }
 }

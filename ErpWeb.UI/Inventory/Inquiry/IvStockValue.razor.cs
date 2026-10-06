@@ -11,14 +11,11 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace ErpWeb.UI.Inventory.Inquiry;
 
 /// <summary>
-/// <b>Est. Inventory Value</b> — the on-hand estimate grouped by Item, Warehouse or Class (Phase 3,
-/// item 15).
+/// <b>Inventory Value</b> — the authoritative sealed-ledger value grouped by Item, Warehouse or Class.
 ///
-/// <para>
-/// <b>The name is the disclaimer.</b> There is no costing method, no cost layer and no revaluation in
-/// this ERP, so the figure is an estimate from the price each pile was received at and it cannot tie to
-/// a general ledger. The page must never be titled "Inventory Valuation" (D5).
-/// </para>
+/// <para>The report uses the latest applicable valuation snapshot and replays sealed valuation facts
+/// through the requested as-of date. Warehouse rows are labelled as allocations when the financial
+/// ledger is only branch/item scoped.</para>
 ///
 /// <para>
 /// It is the Stock Summary composition with a value-first emphasis, so it reuses
@@ -93,7 +90,7 @@ public partial class IvStockValue : PageBase
 
     protected string GridKey => $"inv-stock-value-{AppliedGroupBy.ToLowerInvariant()}";
 
-    protected string GridTitle => $"Est. inventory value — {GroupCountLabel}";
+    protected string GridTitle => $"Inventory valuation — {GroupCountLabel}";
 
     protected bool GroupsByIdentifiableKey =>
         AppliedGroupBy is IvStockSummaryGroupBys.Warehouse or IvStockSummaryGroupBys.Class;
@@ -141,8 +138,10 @@ public partial class IvStockValue : PageBase
 
         columns.Add(new() { Caption = "Piles", FieldName = nameof(IvStockSummaryRow.PileCount), DataType = "int", Width = "80px", VisibleIndex = index++ });
 
-        // The one column this screen exists for — omitted, never blanked, when price is not visible.
-        columns.Add(new() { Caption = "Est. value", FieldName = nameof(IvStockSummaryRow.EstValue), DataType = "decimal", DisplayFormat = "n4", Width = "140px", Visible = CanViewValue, VisibleIndex = index });
+        columns.Add(new() { Caption = "Cost method", FieldName = nameof(IvStockSummaryRow.CostMethod), Width = "150px", VisibleIndex = index++ });
+        columns.Add(new() { Caption = "Valuation status", FieldName = nameof(IvStockSummaryRow.ValuationStatus), Width = "150px", VisibleIndex = index++ });
+        columns.Add(new() { Caption = "Unit cost", FieldName = nameof(IvStockSummaryRow.UnitCost), DataType = "decimal", DisplayFormat = "n4", Width = "120px", Visible = CanViewValue, VisibleIndex = index++ });
+        columns.Add(new() { Caption = "Inventory value", FieldName = nameof(IvStockSummaryRow.InventoryValue), DataType = "decimal", DisplayFormat = "n4", Width = "140px", Visible = CanViewValue, VisibleIndex = index });
 
         return columns;
     }
@@ -322,7 +321,7 @@ public partial class IvStockValue : PageBase
         {
             await InvokeAsync(() =>
             {
-                ErrorMessage = result.Message ?? "Unable to load the value estimate.";
+                ErrorMessage = result.Message ?? "Unable to load the authoritative inventory value.";
                 TotalCount = 0;
             });
             return ([], 0);

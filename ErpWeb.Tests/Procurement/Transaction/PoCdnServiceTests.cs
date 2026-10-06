@@ -4,6 +4,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
@@ -81,6 +82,10 @@ public class PoCdnServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await using var db = await _factory.CreateDbContextAsync();
+        db.Companies.Add(new Company
+        {
+            CompanyCode = "DEMO", CompanyName = "Demo Company", CurrencyCode = "MYR", IsActive = true
+        });
 
         db.IvWarehouses.Add(new IvWarehouse
         {

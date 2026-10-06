@@ -400,6 +400,21 @@
                                                 BindValueMode="BindValueMode.OnInput" />
                                 </Template>
                             </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Cost evidence" ColSpanMd="6">
+                                <Template>
+                                    <DxComboBox Data="@CostEvidenceTypes"
+                                                @bind-Value="@Popup.CostEvidenceType"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                NullText="Optional — positive override only" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Cost approval reason" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.CostOverrideReason"
+                                               maxlength="250"
+                                               NullText="Required for zero/opening evidence" />
+                                </Template>
+                            </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Line amount" ColSpanMd="12">
                                 <Template>
                                     <div class="sa-amount-preview">
