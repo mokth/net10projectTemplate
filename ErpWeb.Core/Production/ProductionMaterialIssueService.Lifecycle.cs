@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -34,7 +35,18 @@ public sealed partial class ProductionMaterialIssueService
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var batch = await LockIssueBatchAsync(db, scope.CompanyCode, scope.BranchCode!, batchNo, ct);
             var link = await LockIssueLinkByBatchAsync(db, scope.CompanyCode, scope.BranchCode!, batchNo, ct);
-            if (batch is null || link is null || batch.BatchStatus != IvBatchStatuses.New || link.Status != ProductionPostingLinkStatuses.Draft)
+            if (batch is null || link is null)
+            {
+                items.Add(new() { BatchNo = batchNo, Succeeded = false, Message = "Only a NEW draft can be changed." });
+                continue;
+            }
+            if (delete && batch.DeletedAtUtc is not null)
+            {
+                items.Add(new() { BatchNo = batchNo, Succeeded = true });
+                await tx.CommitAsync(ct);
+                continue;
+            }
+            if (!delete && (batch.BatchStatus != IvBatchStatuses.New || link.Status != ProductionPostingLinkStatuses.Draft))
             {
                 items.Add(new() { BatchNo = batchNo, Succeeded = false, Message = "Only a NEW draft can be changed." });
                 continue;
@@ -44,26 +56,38 @@ public sealed partial class ProductionMaterialIssueService
                 await LockMaterialAsync(db, materialId, ct);
             if (delete)
             {
-                var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync(ct);
-                var detailIds = details.Select(x => x.Id).ToArray();
-                if (detailIds.Length > 0
-                    && await db.ProductionMaterialMovements.AsNoTracking()
-                        .AnyAsync(x => x.InventoryBatchDetailId.HasValue
-                            && detailIds.Contains(x.InventoryBatchDetailId.Value), ct))
+                var decision = await TransactionDeleteApplicator.DecideAsync(
+                    db,
+                    new TransactionDeleteSubject(
+                        scope.CompanyCode, scope.BranchCode!,
+                        TransactionDeleteOwnerTypes.ProductionMaterialIssue,
+                        batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        batch.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    ct);
+                if (decision.Mode == TransactionDeleteMode.Block)
                 {
                     items.Add(new()
                     {
                         BatchNo = batchNo,
                         Succeeded = false,
-                        Message = "This draft was previously posted; cancel it instead of deleting."
+                        Message = decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus
                     });
                     continue;
                 }
-                db.ProductionMaterialIssueLines.RemoveRange(maps);
-                await db.SaveChangesAsync(ct);
-                db.IvTrxBatchDetails.RemoveRange(details);
-                db.ProductionPostingLinks.Remove(link);
-                db.IvTrxBatches.Remove(batch);
+
+                if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+                {
+                    InventoryBatchRetention.Archive(batch, scope.UserId, null);
+                }
+                else
+                {
+                    var details = await db.IvTrxBatchDetails.Where(x => x.BatchId == batch.Id).ToListAsync(ct);
+                    db.ProductionMaterialIssueLines.RemoveRange(maps);
+                    await db.SaveChangesAsync(ct);
+                    db.IvTrxBatchDetails.RemoveRange(details);
+                    db.ProductionPostingLinks.Remove(link);
+                    db.IvTrxBatches.Remove(batch);
+                }
             }
             else
             {
@@ -119,6 +143,8 @@ public sealed partial class ProductionMaterialIssueService
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, company, branch, ct);
             var batch = await LockIssueBatchAsync(db, company, branch, batchNo, ct);
             var link = await LockIssueLinkByBatchAsync(db, company, branch, batchNo, ct);
+            if (batch?.DeletedAtUtc is not null)
+                return TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This material issue");
             if (batch is null || link is null || batch.BatchStatus != IvBatchStatuses.New || link.Status != ProductionPostingLinkStatuses.Draft)
                 return "Only a NEW material issue draft can be posted.";
             var order = db.Database.IsSqlServer()
@@ -172,6 +198,7 @@ public sealed partial class ProductionMaterialIssueService
                 join otherBatch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals otherBatch.Id
                 where materialIds.Contains(map.WorkOrderMaterialId) && map.InventoryBatchNo != batchNo
                     && otherLink.Status == ProductionPostingLinkStatuses.Draft && otherBatch.BatchStatus == IvBatchStatuses.New
+                    && otherBatch.DeletedAtUtc == null
                 select new { map.WorkOrderMaterialId, map.IssueQty }).ToListAsync(ct);
             foreach (var group in maps.GroupBy(x => x.WorkOrderMaterialId))
             {

@@ -84,6 +84,9 @@ public class SaInvoiceConfiguration : IEntityTypeConfiguration<SaInvoice>
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackDate).HasColumnType("datetime");
         builder.Property(e => e.RollbackBy).HasMaxLength(20);
+        builder.Property(e => e.DeletedAtUtc).HasColumnType("datetime2");
+        builder.Property(e => e.DeletedBy).HasMaxLength(20);
+        builder.Property(e => e.DeleteReason).HasMaxLength(250);
         // Audit pair spelled as the LIVE columns. dbo.SaInvoice is the one sales document table that
         // does NOT use the legacy Updated/UpdatedUID pair (SaCust/SaSo/SaDo/SaCdn all do) - it uses
         // ModifiedDate/ModifiedBy. Do not alias these back: a full-entity read (the invoice list)

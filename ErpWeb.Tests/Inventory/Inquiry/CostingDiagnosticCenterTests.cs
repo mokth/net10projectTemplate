@@ -134,6 +134,65 @@ public sealed partial class CostingDiagnosticCenterTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task History_without_a_batch_row_is_a_missing_source()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.IvTrxHistories.Add(new IvTrxHistory
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            BatchNo = 88001,
+            TrxType = "MR",
+            BatchStatus = "POSTED",
+            ICode = "ITEM-1",
+            TrxDtTime = new DateTime(2026, 10, 1)
+        });
+        await db.SaveChangesAsync();
+
+        var page = await new CostingDiagnosticService(_factory, new Tenant(), new Access(viewCost: true))
+            .SearchAsync(new CostingHealthQuery());
+
+        Assert.Contains(page.Findings, x => x.Code == CostingFindingCodes.SourceDocumentMissing
+            && x.Severity == CostingFindingSeverity.Critical
+            && x.SourceDocumentNo == "88001");
+    }
+
+    [Fact]
+    public async Task Archived_batch_with_history_is_not_a_missing_source()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.IvTrxBatches.Add(new IvTrxBatch
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            BatchNo = 88002,
+            TrxType = "MR",
+            BatchStatus = "NEW",
+            TrxDtTime = new DateTime(2026, 10, 1),
+            DeletedAtUtc = new DateTime(2026, 10, 2),
+            DeletedBy = "tester",
+            DeleteReason = "Deleted after rollback"
+        });
+        db.IvTrxHistories.Add(new IvTrxHistory
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            BatchNo = 88002,
+            TrxType = "MR",
+            BatchStatus = "POSTED",
+            ICode = "ITEM-1",
+            TrxDtTime = new DateTime(2026, 10, 1)
+        });
+        await db.SaveChangesAsync();
+
+        var page = await new CostingDiagnosticService(_factory, new Tenant(), new Access(viewCost: true))
+            .SearchAsync(new CostingHealthQuery());
+
+        Assert.DoesNotContain(page.Findings, x => x.Code == CostingFindingCodes.SourceDocumentMissing
+            && x.SourceDocumentNo == "88002");
+    }
+
+    [Fact]
     public async Task Missing_facts_unsealed_postings_and_broken_reversals_are_reported()
     {
         await AddPostingAsync("MR", "2", isSealed: false);

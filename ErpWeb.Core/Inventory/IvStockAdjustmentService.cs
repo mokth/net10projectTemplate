@@ -1,6 +1,8 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
@@ -377,6 +379,12 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             return IvStockAdjustmentOperationResult.Fail("Stock adjustment was not found.");
         }
 
+        if (batch.DeletedAtUtc is not null)
+        {
+            return IvStockAdjustmentOperationResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This stock adjustment")!);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvStockAdjustmentOperationResult.Fail("Only NEW stock adjustments can be edited.");
@@ -462,6 +470,8 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(
+            db, context.CompanyCode!, context.BranchCode!, cancellationToken);
 
         foreach (var no in nos)
         {
@@ -478,15 +488,14 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
                 return IvStockAdjustmentOperationResult.Fail($"Stock adjustment {no} was not found.");
             }
 
-            if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
-            {
-                return IvStockAdjustmentOperationResult.Fail(
-                    $"Stock adjustment {no} cannot be deleted because it is not NEW.");
-            }
+            if (batch.DeletedAtUtc is not null)
+                continue;
 
-            var details = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-            db.IvTrxBatchDetails.RemoveRange(details);
-            db.IvTrxBatches.Remove(batch);
+            var deleteError = await TransactionDeleteApplicator.ApplyInventoryBatchAsync(
+                db, batch, TransactionDeleteOwnerTypes.InventoryBatch, context.UserId, null, cancellationToken);
+            if (deleteError is not null)
+                return IvStockAdjustmentOperationResult.Fail($"Stock adjustment {no}: {deleteError}");
+
             await db.SaveChangesAsync(cancellationToken);
         }
 

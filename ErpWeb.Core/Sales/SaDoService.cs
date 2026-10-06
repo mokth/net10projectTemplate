@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
@@ -615,6 +616,14 @@ public sealed class SaDoService : ISaDoService
                 return SaDoOperationResult.Fail("Delivery order was not found.", SaDoErrorKind.NotFound);
             }
 
+            if (deliveryOrder.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(deliveryOrder.DeletedAtUtc, "This delivery order")!,
+                    SaDoErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -823,10 +832,8 @@ public sealed class SaDoService : ISaDoService
                 return SaDoOperationResult.Fail($"Delivery order {item.DoNo} was not found.");
             }
 
-            if (!string.Equals(deliveryOrder.Status, SaDoStatuses.New, StringComparison.OrdinalIgnoreCase))
-            {
-                return SaDoOperationResult.Fail($"Delivery order {item.DoNo} cannot be deleted because it is not NEW.");
-            }
+            if (deliveryOrder.DeletedAtUtc is not null)
+                continue;
 
             if (!RowVersionsEqual(deliveryOrder.RowVersion, item.RowVersion))
             {
@@ -835,15 +842,45 @@ public sealed class SaDoService : ISaDoService
                     SaDoErrorKind.Concurrency);
             }
 
-            var doRef = SaDoSpRefs.ToRefNo(item.DoNo);
-            await _shipments.ReleaseShipmentReservationAsync(
+            var decision = await TransactionDeleteApplicator.DecideAsync(
                 db,
-                context.CompanyCode!,
-                context.BranchCode!,
-                context.LocationCode!,
-                doRef,
-                removeBatch: true,
+                new TransactionDeleteSubject(
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    TransactionDeleteOwnerTypes.SalesDeliveryOrder,
+                    item.DoNo,
+                    item.DoNo),
                 cancellationToken);
+            if (decision.Mode == TransactionDeleteMode.Block)
+            {
+                return SaDoOperationResult.Fail(
+                    $"Delivery order {item.DoNo}: {decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus}");
+            }
+
+            var doRef = SaDoSpRefs.ToRefNo(item.DoNo);
+            var ownedBatch = await _postingRepo.LockSpBatchByRefAsync(
+                db, context.CompanyCode!, context.BranchCode!, doRef, cancellationToken);
+            if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+            {
+                InventoryBatchRetention.Archive(deliveryOrder, context.UserId, null);
+                if (ownedBatch is not null)
+                    InventoryBatchRetention.Archive(ownedBatch, context.UserId, null);
+                await db.SaveChangesAsync(cancellationToken);
+                continue;
+            }
+
+            if (ownedBatch is not null)
+            {
+                var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, ownedBatch, cancellationToken);
+                if (!removed)
+                {
+                    InventoryBatchRetention.Archive(deliveryOrder, context.UserId, null);
+                    InventoryBatchRetention.Archive(ownedBatch, context.UserId, null);
+                    await db.SaveChangesAsync(cancellationToken);
+                    continue;
+                }
+            }
+
             await db.Entry(deliveryOrder).Collection(x => x.Details).LoadAsync(cancellationToken);
             db.SaDoDetails.RemoveRange(deliveryOrder.Details);
             db.SaDos.Remove(deliveryOrder);
@@ -895,6 +932,14 @@ public sealed class SaDoService : ISaDoService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaDoOperationResult.Fail("Delivery order was not found.", SaDoErrorKind.NotFound);
+            }
+
+            if (deliveryOrder.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(deliveryOrder.DeletedAtUtc, "This delivery order")!,
+                    SaDoErrorKind.BusinessRule);
             }
 
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1128,6 +1173,14 @@ public sealed class SaDoService : ISaDoService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaDoOperationResult.Fail("Delivery order was not found.", SaDoErrorKind.NotFound);
+            }
+
+            if (deliveryOrder.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(deliveryOrder.DeletedAtUtc, "This delivery order")!,
+                    SaDoErrorKind.BusinessRule);
             }
 
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1542,6 +1595,13 @@ public sealed class SaDoService : ISaDoService
                 return SaDoPostingItemResult.Failed(doNo, "Delivery order was not found.");
             }
 
+            if (deliveryOrder.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoPostingItemResult.Failed(
+                    doNo, TransactionLifecycleGuard.ArchivedError(deliveryOrder.DeletedAtUtc, "This delivery order")!);
+            }
+
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1757,6 +1817,13 @@ public sealed class SaDoService : ISaDoService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaDoPostingItemResult.Failed(doNo, "Delivery order was not found.");
+            }
+
+            if (deliveryOrder.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoPostingItemResult.Failed(
+                    doNo, TransactionLifecycleGuard.ArchivedError(deliveryOrder.DeletedAtUtc, "This delivery order")!);
             }
 
             if (!string.Equals(deliveryOrder.Status, SaDoStatuses.Posted, StringComparison.OrdinalIgnoreCase))

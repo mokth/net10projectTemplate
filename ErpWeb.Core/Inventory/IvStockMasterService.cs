@@ -766,6 +766,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
             where d.CompanyCode == companyCode
                   && d.ICode == iCode
                   && b.BatchStatus == IvBatchStatuses.New
+                  && b.DeletedAtUtc == null
             select d.Id).AnyAsync(cancellationToken);
         if (hasDraft)
         {

@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
@@ -687,6 +688,14 @@ public sealed class SaCdnService : ISaCdnService
                 return SaCdnOperationResult.Fail("Document was not found.", SaCdnErrorKind.NotFound);
             }
 
+            if (cdn.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaCdnOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, "This document")!,
+                    SaCdnErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(cdn.Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -886,11 +895,8 @@ public sealed class SaCdnService : ISaCdnService
                     return SaCdnOperationResult.Fail("Not authorized.", SaCdnErrorKind.Authorization);
                 }
 
-                if (!string.Equals(cdn.Status, SaCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
-                {
-                    await tx.RollbackAsync(cancellationToken);
-                    return SaCdnOperationResult.Fail($"Document {no} is not NEW and cannot be deleted.");
-                }
+                if (cdn.DeletedAtUtc is not null)
+                    continue;
 
                 // e-Invoice structural edit lock (same rule as UpdateAsync).
                 if (EInvoiceStatuses.IsLocked(cdn.IrbmStatus))
@@ -908,25 +914,42 @@ public sealed class SaCdnService : ISaCdnService
                         SaCdnErrorKind.Concurrency);
                 }
 
-                // Check for CR batch
+                var decision = await TransactionDeleteApplicator.DecideAsync(
+                    db,
+                    new TransactionDeleteSubject(
+                        context.CompanyCode!,
+                        context.BranchCode!,
+                        TransactionDeleteOwnerTypes.SalesCdn,
+                        no,
+                        no),
+                    cancellationToken);
+                if (decision.Mode == TransactionDeleteMode.Block)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SaCdnOperationResult.Fail(
+                        $"Document {no}: {decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus}",
+                        SaCdnErrorKind.BusinessRule);
+                }
+
                 var crBatch = await SaCdnCrLock.LockByCnRefAsync(
                     db, _postingRepo, context.CompanyCode!, context.BranchCode!, no, cancellationToken);
+                if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+                {
+                    InventoryBatchRetention.Archive(cdn, context.UserId, null);
+                    if (crBatch is not null)
+                        InventoryBatchRetention.Archive(crBatch, context.UserId, null);
+                    continue;
+                }
 
                 if (crBatch is not null)
                 {
-                    if (string.Equals(crBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+                    var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(
+                        db, crBatch, cancellationToken);
+                    if (!removed)
                     {
-                        await tx.RollbackAsync(cancellationToken);
-                        return SaCdnOperationResult.Fail(
-                            $"Document {no} has a POSTED stock return batch and cannot be deleted.",
-                            SaCdnErrorKind.BusinessRule);
-                    }
-
-                    if (string.Equals(crBatch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
-                    {
-                        await _posting.DeleteNewStockInBatchInTransactionAsync(
-                            db, context.CompanyCode!, context.BranchCode!,
-                            crBatch.BatchNo, IvTrxTypes.CustomerReturn, cancellationToken);
+                        InventoryBatchRetention.Archive(cdn, context.UserId, null);
+                        InventoryBatchRetention.Archive(crBatch, context.UserId, null);
+                        continue;
                     }
                 }
 
@@ -1187,6 +1210,7 @@ public sealed class SaCdnService : ISaCdnService
                 && x.BranchCode == context.BranchCode
                 && x.Type == SaCdnTypes.CreditNote
                 && x.InvNo != null && x.InvNo != string.Empty
+                && x.DeletedAtUtc == null
                 && (x.Status == SaCdnStatuses.New || x.Status == SaCdnStatuses.Posted)
                 && (custFilter == null || x.CustCode == custFilter))
             .Select(x => new { InvNo = x.InvNo!, x.DocNo, x.Status, x.TotAmnt })
@@ -1426,6 +1450,13 @@ public sealed class SaCdnService : ISaCdnService
                 return SaCdnPostingItemResult.Failed(docNo, "Not authorized.");
             }
 
+            if (cdn.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaCdnPostingItemResult.Failed(
+                    docNo, TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, "This document")!);
+            }
+
             if (string.Equals(cdn.Status, SaCdnStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1520,9 +1551,8 @@ public sealed class SaCdnService : ISaCdnService
                     }
                     if (string.Equals(crBatch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
                     {
-                        await _posting.DeleteNewStockInBatchInTransactionAsync(
-                            db, context.CompanyCode!, context.BranchCode!,
-                            crBatch.BatchNo, IvTrxTypes.CustomerReturn, cancellationToken);
+                        await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(
+                            db, crBatch, cancellationToken);
                     }
                 }
             }
@@ -1668,6 +1698,13 @@ public sealed class SaCdnService : ISaCdnService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaCdnPostingItemResult.Failed(docNo, "Document was not found.");
+            }
+
+            if (cdn.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaCdnPostingItemResult.Failed(
+                    docNo, TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, "This document")!);
             }
 
             if (!await CanAsync(cdn.Type, PermissionCodes.Rollback, cancellationToken))

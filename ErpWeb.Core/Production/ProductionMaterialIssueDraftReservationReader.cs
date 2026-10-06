@@ -26,6 +26,7 @@ public sealed class ProductionMaterialIssueDraftReservationReader : IProductionM
                               && link.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
                               && link.Status == ProductionPostingLinkStatuses.Draft
                               && batch.BatchStatus == IvBatchStatuses.New
+                              && batch.DeletedAtUtc == null
                               && batch.TrxDtTime <= issueDate
                               && (!excludeInventoryBatchNo.HasValue || line.InventoryBatchNo != excludeInventoryBatchNo.Value)
                               && detail.FromBalLocId.HasValue

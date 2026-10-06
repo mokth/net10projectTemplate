@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -147,6 +148,9 @@ public sealed class PoCdnService : IPoCdnService
     /// <summary>C40: the single authoritative POST gate. The approval phase extends this, not replaces it.</summary>
     private static string? CanPost(PoCdn cdn)
     {
+        if (cdn.DeletedAtUtc is not null)
+            return TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, "This document");
+
         if (!string.Equals(cdn.Status, PoCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return "Only NEW documents can be posted.";
@@ -755,6 +759,14 @@ public sealed class PoCdnService : IPoCdnService
             // Checked before the RowVersion presence guard deliberately: a caller that omits
             // RowVersion on a POSTED document should be told it is immutable, not that someone
             // else changed it.
+            if (cdn.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoCdnOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, $"Document {no}")!,
+                    PoCdnErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(cdn.Status, PoCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1627,15 +1639,21 @@ public sealed class PoCdnService : IPoCdnService
 
         if (stockLines.Count == 0)
         {
-            if (existing is not null
-                && string.Equals(existing.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+            if (existing is null)
             {
-                await _posting.DeleteNewStockInBatchInTransactionAsync(
-                    db, context.CompanyCode!, context.BranchCode!, existing.BatchNo,
-                    IvTrxTypes.VendorReturn, cancellationToken);
+                cdn.VrBatchNo = null;
+                return;
             }
 
-            cdn.VrBatchNo = null;
+            if (existing.DeletedAtUtc is not null)
+                return;
+
+            if (!string.Equals(existing.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, existing, cancellationToken);
+            if (removed)
+                cdn.VrBatchNo = null;
             return;
         }
 
@@ -1663,6 +1681,12 @@ public sealed class PoCdnService : IPoCdnService
             return;
         }
 
+        if (existing.DeletedAtUtc is not null)
+        {
+            throw new InvalidOperationException(
+                TransactionLifecycleGuard.ArchivedError(existing.DeletedAtUtc, $"Document {cdn.DocNo}")!);
+        }
+
         if (string.Equals(existing.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
             // C36: a POSTED VR owned by a NEW CN is an impossible combination for a draft edit.
@@ -1670,8 +1694,7 @@ public sealed class PoCdnService : IPoCdnService
                 $"Document {cdn.DocNo} has a POSTED vendor-return batch and cannot be re-drafted.");
         }
 
-        var oldDetails = await _postingRepo.LoadDetailsForBatchAsync(db, existing.Id, cancellationToken);
-        db.IvTrxBatchDetails.RemoveRange(oldDetails);
+        await InventoryBatchRetention.RemoveMutableDetailsAsync(db, existing, cancellationToken);
         existing.Details.Clear();
         AddVrBatchDetails(existing, cdn, stockLines, context.CompanyCode!, context.BranchCode!, existing.BatchNo);
         existing.SourceFingerprint = PoCdnCalc.ComputeSourceFingerprint(cdn.Details);
@@ -1712,10 +1735,15 @@ public sealed class PoCdnService : IPoCdnService
                 $"Document {cdn.DocNo} has a POSTED vendor-return batch and cannot disable return stock.");
         }
 
-        await _posting.DeleteNewStockInBatchInTransactionAsync(
-            db, context.CompanyCode!, context.BranchCode!, existing.BatchNo,
-            IvTrxTypes.VendorReturn, cancellationToken);
-        cdn.VrBatchNo = null;
+        if (existing.DeletedAtUtc is not null)
+        {
+            throw new InvalidOperationException(
+                TransactionLifecycleGuard.ArchivedError(existing.DeletedAtUtc, $"Document {cdn.DocNo}")!);
+        }
+
+        var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, existing, cancellationToken);
+        if (removed)
+            cdn.VrBatchNo = null;
     }
 
     /// <summary>
@@ -1804,10 +1832,10 @@ public sealed class PoCdnService : IPoCdnService
                     continue;
                 }
 
-                if (!string.Equals(cdn.Status, PoCdnStatuses.New, StringComparison.OrdinalIgnoreCase))
+                if (cdn.DeletedAtUtc is not null)
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    results.Add(PoCdnPostingItemResult.Failed(no, "Only NEW documents can be deleted."));
+                    await tx.CommitAsync(cancellationToken);
+                    results.Add(new PoCdnPostingItemResult { DocNo = no, Succeeded = true, Outcome = "Deleted" });
                     continue;
                 }
 
@@ -1823,17 +1851,47 @@ public sealed class PoCdnService : IPoCdnService
                     db.Entry(cdn).Property(x => x.RowVersion).OriginalValue = item.RowVersion;
                 }
 
-                await db.Entry(cdn).Collection(x => x.Details).LoadAsync(cancellationToken);
+                var decision = await TransactionDeleteApplicator.DecideAsync(
+                    db,
+                    new TransactionDeleteSubject(
+                        write.CompanyCode!, write.BranchCode!,
+                        TransactionDeleteOwnerTypes.PurchaseCdn, no, no),
+                    cancellationToken);
+                if (decision.Mode == TransactionDeleteMode.Block)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    results.Add(PoCdnPostingItemResult.Failed(
+                        no, decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus));
+                    continue;
+                }
 
-                // C7: a NEW draft may own a NEW VR batch — delete it with the document.
+                await db.Entry(cdn).Collection(x => x.Details).LoadAsync(cancellationToken);
                 var vrBatch = await PoCdnVrLock.LockByVrRefAsync(
                     db, _postingRepo, write.CompanyCode!, write.BranchCode!, no, cancellationToken);
-                if (vrBatch is not null
-                    && string.Equals(vrBatch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+                if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
                 {
-                    await _posting.DeleteNewStockInBatchInTransactionAsync(
-                        db, write.CompanyCode!, write.BranchCode!, vrBatch.BatchNo,
-                        IvTrxTypes.VendorReturn, cancellationToken);
+                    InventoryBatchRetention.Archive(cdn, write.UserId, null);
+                    if (vrBatch is not null)
+                        InventoryBatchRetention.Archive(vrBatch, write.UserId, null);
+                    await db.SaveChangesAsync(cancellationToken);
+                    await tx.CommitAsync(cancellationToken);
+                    results.Add(new PoCdnPostingItemResult { DocNo = no, Succeeded = true, Outcome = "Deleted" });
+                    continue;
+                }
+
+                if (vrBatch is not null)
+                {
+                    var removedHeader = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(
+                        db, vrBatch, cancellationToken);
+                    if (!removedHeader)
+                    {
+                        InventoryBatchRetention.Archive(cdn, write.UserId, null);
+                        InventoryBatchRetention.Archive(vrBatch, write.UserId, null);
+                        await db.SaveChangesAsync(cancellationToken);
+                        await tx.CommitAsync(cancellationToken);
+                        results.Add(new PoCdnPostingItemResult { DocNo = no, Succeeded = true, Outcome = "Deleted" });
+                        continue;
+                    }
                 }
 
                 db.PoCdns.Remove(cdn);
@@ -2080,22 +2138,24 @@ public sealed class PoCdnService : IPoCdnService
                 // ReturnStock false: clean up any leftover NEW VR batch owned by this draft.
                 var vrBatch = await PoCdnVrLock.LockByVrRefAsync(
                     db, _postingRepo, write.CompanyCode!, write.BranchCode!, no, cancellationToken);
-                if (vrBatch is not null)
+                if (vrBatch is null)
                 {
-                    if (string.Equals(vrBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
-                    {
-                        await tx.RollbackAsync(cancellationToken);
-                        return PoCdnPostingItemResult.Failed(
-                            no, PoCdnReasonCodes.VrOrphan,
-                            "Unexpected POSTED vendor-return batch exists. Contact administrator.");
-                    }
-
-                    await _posting.DeleteNewStockInBatchInTransactionAsync(
-                        db, write.CompanyCode!, write.BranchCode!, vrBatch.BatchNo,
-                        IvTrxTypes.VendorReturn, cancellationToken);
+                    cdn.VrBatchNo = null;
                 }
-
-                cdn.VrBatchNo = null;
+                else if (string.Equals(vrBatch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(
+                        no, PoCdnReasonCodes.VrOrphan,
+                        "Unexpected POSTED vendor-return batch exists. Contact administrator.");
+                }
+                else
+                {
+                    var removedHeader = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(
+                        db, vrBatch, cancellationToken);
+                    if (removedHeader)
+                        cdn.VrBatchNo = null;
+                }
             }
 
         FinancialCosting:
@@ -2400,6 +2460,13 @@ public sealed class PoCdnService : IPoCdnService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoCdnPostingItemResult.Failed(no, "Document was not found.");
+            }
+
+            if (cdn.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoCdnPostingItemResult.Failed(
+                    no, TransactionLifecycleGuard.ArchivedError(cdn.DeletedAtUtc, "This document")!);
             }
 
             if (!await CanAsync(cdn.Type, PermissionCodes.Rollback, cancellationToken))
@@ -2774,6 +2841,7 @@ public sealed class PoCdnService : IPoCdnService
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode
                         && x.InvNo == no
+                        && x.DeletedAtUtc == null
                         && (x.Status == PoCdnStatuses.New || x.Status == PoCdnStatuses.Posted))
             .Where(x => excludeDocNo == null || x.DocNo != excludeDocNo)
             .Select(x => new PoCdnReservationRowDto

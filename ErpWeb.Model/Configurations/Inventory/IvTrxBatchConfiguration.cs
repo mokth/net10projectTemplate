@@ -26,6 +26,9 @@ public class IvTrxBatchConfiguration : IEntityTypeConfiguration<IvTrxBatch>
         builder.Property(e => e.RollbackBy).HasMaxLength(10);
         builder.Property(e => e.ForceCloseBy).HasMaxLength(10);
         builder.Property(e => e.ForceCloseReason).HasMaxLength(250);
+        builder.Property(e => e.DeletedAtUtc).HasColumnType("datetime2");
+        builder.Property(e => e.DeletedBy).HasMaxLength(10);
+        builder.Property(e => e.DeleteReason).HasMaxLength(250);
         builder.Property(e => e.PostedCount).HasDefaultValue(0);
         builder.Property(e => e.RollbackCount).HasDefaultValue(0);
         builder.Property(e => e.CreatedDate).HasColumnName("Created");

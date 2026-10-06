@@ -1,6 +1,8 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
@@ -382,6 +384,12 @@ public sealed class IvStockReturnService : IIvStockReturnService
             return IvStockReturnOperationResult.Fail("Stock return was not found.");
         }
 
+        if (batch.DeletedAtUtc is not null)
+        {
+            return IvStockReturnOperationResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This stock return")!);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvStockReturnOperationResult.Fail("Only NEW stock returns can be edited.");
@@ -420,6 +428,12 @@ public sealed class IvStockReturnService : IIvStockReturnService
         db.IvTrxBatchDetails.RemoveRange(existingDetails);
         batch.Details.Clear();
         AddDetails(batch, validatedResult.Lines!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo);
+
+        if (batch.DeletedAtUtc is not null)
+        {
+            return IvStockReturnOperationResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This stock return")!);
+        }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
@@ -467,6 +481,8 @@ public sealed class IvStockReturnService : IIvStockReturnService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(
+            db, context.CompanyCode!, context.BranchCode!, cancellationToken);
 
         foreach (var batchNo in nos)
         {
@@ -483,15 +499,14 @@ public sealed class IvStockReturnService : IIvStockReturnService
                 return IvStockReturnOperationResult.Fail($"Stock return {batchNo} was not found.");
             }
 
-            if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
-            {
-                return IvStockReturnOperationResult.Fail(
-                    $"Stock return {batchNo} cannot be deleted because it is not NEW.");
-            }
+            if (batch.DeletedAtUtc is not null)
+                continue;
 
-            var details = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-            db.IvTrxBatchDetails.RemoveRange(details);
-            db.IvTrxBatches.Remove(batch);
+            var deleteError = await TransactionDeleteApplicator.ApplyInventoryBatchAsync(
+                db, batch, TransactionDeleteOwnerTypes.InventoryBatch, context.UserId, null, cancellationToken);
+            if (deleteError is not null)
+                return IvStockReturnOperationResult.Fail($"Stock return {batchNo}: {deleteError}");
+
             await db.SaveChangesAsync(cancellationToken);
         }
 

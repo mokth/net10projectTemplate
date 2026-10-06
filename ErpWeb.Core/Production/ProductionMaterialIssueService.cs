@@ -132,6 +132,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id
             where materialIds.Contains(map.WorkOrderMaterialId)
                 && link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New
+                && batch.DeletedAtUtc == null
                 && (!validatedExcludeBatchNo.HasValue || map.InventoryBatchNo != validatedExcludeBatchNo.Value)
             select new { map.WorkOrderMaterialId, map.IssueQty }).ToListAsync(cancellationToken);
 
@@ -302,7 +303,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             x.CompanyCode == companyCode && x.BranchCode == branchCode
             && x.BatchNo == excludeBatchNo.Value
             && x.TrxType == IvTrxTypes.IssueToProduction
-            && x.BatchStatus == IvBatchStatuses.New, cancellationToken);
+            && x.BatchStatus == IvBatchStatuses.New
+            && x.DeletedAtUtc == null, cancellationToken);
         if (!batchOk) return null;
         if (operationId.HasValue)
         {
@@ -329,7 +331,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                               && link.WorkOrderId == workOrderId
                               && link.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
                               && (!excludeBatchNo.HasValue || map.InventoryBatchNo != excludeBatchNo.Value)
-                              && ((link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New)
+                              && ((link.Status == ProductionPostingLinkStatuses.Draft && batch.BatchStatus == IvBatchStatuses.New && batch.DeletedAtUtc == null)
                                   || (link.Status == ProductionPostingLinkStatuses.Succeeded && batch.BatchStatus == IvBatchStatuses.Posted))
                           select new
                           {

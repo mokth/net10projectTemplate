@@ -3,6 +3,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
@@ -273,6 +274,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 where b.CompanyCode == company
                     && b.BranchCode == branch
                     && b.BatchStatus == IvBatchStatuses.New
+                    && b.DeletedAtUtc == null
                     && b.TrxType == type
                     && d.PoNo != null
                     && poNos.Contains(d.PoNo)
@@ -587,6 +589,12 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             return IvGoodsReceiptOperationResult.Fail("Goods receipt was not found.");
         }
 
+        if (batch.DeletedAtUtc is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This goods receipt")!);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvGoodsReceiptOperationResult.Fail("Only NEW goods receipts can be edited.");
@@ -662,6 +670,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(
+            db, context.CompanyCode!, context.BranchCode!, cancellationToken);
         foreach (var batchNo in nos)
         {
             var batch = await _postingRepo.LockBatchForUpdateAsync(db, context.CompanyCode!, context.BranchCode!, batchNo, cancellationToken);
@@ -670,14 +680,14 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 return IvGoodsReceiptOperationResult.Fail($"Goods receipt {batchNo} was not found.");
             }
 
-            if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
-            {
-                return IvGoodsReceiptOperationResult.Fail($"Goods receipt {batchNo} cannot be deleted because it is not NEW.");
-            }
+            if (batch.DeletedAtUtc is not null)
+                continue;
 
-            var details = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-            db.IvTrxBatchDetails.RemoveRange(details);
-            db.IvTrxBatches.Remove(batch);
+            var deleteError = await TransactionDeleteApplicator.ApplyInventoryBatchAsync(
+                db, batch, TransactionDeleteOwnerTypes.InventoryBatch, context.UserId, null, cancellationToken);
+            if (deleteError is not null)
+                return IvGoodsReceiptOperationResult.Fail($"Goods receipt {batchNo}: {deleteError}");
+
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -1014,6 +1024,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             from d in b.Details
             where b.CompanyCode == companyCode
                 && b.BatchStatus == IvBatchStatuses.New
+                && b.DeletedAtUtc == null
                 && draftTypes.Contains(b.TrxType)
                 && d.ICode == code
                 && d.ToLotNo != null

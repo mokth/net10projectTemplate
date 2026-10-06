@@ -167,6 +167,7 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
         var blockingBatchNos = await db.IvTrxBatches.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                         && x.BatchStatus == IvBatchStatuses.New
+                        && x.DeletedAtUtc == null
                         && x.TrxDtTime >= periodFrom && x.TrxDtTime < periodTo.AddDays(1))
             .Select(x => x.BatchNo)
             .OrderBy(x => x)
@@ -535,6 +536,7 @@ public sealed partial class IvPeriodCloseService : IIvPeriodCloseService
             : await db.IvTrxBatches.AsNoTracking()
                 .Where(x => x.CompanyCode == header.CompanyCode && x.BranchCode == header.BranchCode
                             && x.BatchStatus == IvBatchStatuses.New
+                            && x.DeletedAtUtc == null
                             && x.TrxDtTime >= header.PeriodFrom && x.TrxDtTime < header.PeriodTo.AddDays(1))
                 .Select(x => x.BatchNo)
                 .OrderBy(x => x)

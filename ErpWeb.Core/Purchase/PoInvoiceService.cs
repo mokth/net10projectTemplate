@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Purchase;
@@ -464,6 +465,14 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoiceOperationResult.Fail("Document was not found.", PoInvoiceErrorKind.NotFound);
             }
 
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoiceOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This document")!,
+                    PoInvoiceErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(invoice.Status, PoInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -558,10 +567,10 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     continue;
                 }
 
-                if (!string.Equals(invoice.Status, PoInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
+                if (invoice.DeletedAtUtc is not null)
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    results.Add(PoInvoicePostingItemResult.Failed(docNo, "Only NEW documents can be deleted."));
+                    await tx.CommitAsync(cancellationToken);
+                    results.Add(new PoInvoicePostingItemResult { DocNo = docNo, Succeeded = true, Outcome = "Deleted" });
                     continue;
                 }
 
@@ -575,6 +584,29 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     }
 
                     db.Entry(invoice).Property(x => x.RowVersion).OriginalValue = item.RowVersion;
+                }
+
+                var decision = await TransactionDeleteApplicator.DecideAsync(
+                    db,
+                    new TransactionDeleteSubject(
+                        write.CompanyCode, write.BranchCode,
+                        TransactionDeleteOwnerTypes.PurchaseInvoice, docNo, docNo),
+                    cancellationToken);
+                if (decision.Mode == TransactionDeleteMode.Block)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    results.Add(PoInvoicePostingItemResult.Failed(
+                        docNo, decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus));
+                    continue;
+                }
+
+                if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+                {
+                    InventoryBatchRetention.Archive(invoice, write.UserId, null);
+                    await db.SaveChangesAsync(cancellationToken);
+                    await tx.CommitAsync(cancellationToken);
+                    results.Add(new PoInvoicePostingItemResult { DocNo = docNo, Succeeded = true, Outcome = "Deleted" });
+                    continue;
                 }
 
                 await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -915,6 +947,13 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, "Document was not found.");
             }
 
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(
+                    docNo, TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This document")!);
+            }
+
             if (string.Equals(invoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1112,6 +1151,13 @@ public sealed class PoInvoiceService : IPoInvoiceService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoInvoicePostingItemResult.Failed(docNo, "Document was not found.");
+            }
+
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(
+                    docNo, TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This document")!);
             }
 
             if (string.Equals(invoice.Status, PoInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))

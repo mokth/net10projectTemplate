@@ -23,6 +23,7 @@ public static class CostingFindingCodes
     public const string EpochCoverage = "CD-027";
     public const string SalesCogsLineageIncomplete = "CD-039";
     public const string CostStateMissing = "CD-040";
+    public const string SourceDocumentMissing = "CD-041";
 }
 
 public static class CostingRepairActions

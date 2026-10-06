@@ -7,6 +7,7 @@ using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 
 namespace ErpWeb.Core.Production;
 
@@ -204,6 +205,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             && x.CompanyCode == scope.CompanyCode
             && x.BranchCode == scope.BranchCode, cancellationToken);
         if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+        if (output.DeletedAtUtc is not null)
+            return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
         if (output.Status != ProductionOutputStatuses.New)
             return Fail("Only NEW drafts can be edited.");
         if (!output.RowVersion.SequenceEqual(request.RowVersion ?? []))
@@ -252,14 +255,42 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             x.Uid == outputId && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode, cancellationToken);
         if (output is null)
             return IvMasterOperationResult<bool>.Fail(IvMasterErrorCode.NotFound, "Production output was not found.");
-        if (output.Status != ProductionOutputStatuses.New)
-            return IvMasterOperationResult<bool>.Fail(IvMasterErrorCode.Validation, "Only NEW drafts can be deleted.");
+        if (output.DeletedAtUtc is not null)
+            return IvMasterOperationResult<bool>.Ok(true);
+
+        var decision = await TransactionDeleteApplicator.DecideAsync(
+            db,
+            new TransactionDeleteSubject(
+                scope.CompanyCode, scope.BranchCode!,
+                TransactionDeleteOwnerTypes.ProductionOutput,
+                output.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                output.DocumentNo),
+            cancellationToken);
+        if (decision.Mode == TransactionDeleteMode.Block)
+            return IvMasterOperationResult<bool>.Fail(
+                IvMasterErrorCode.Validation,
+                decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus);
+        if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+        {
+            InventoryBatchRetention.Archive(output, scope.UserId, null);
+            await db.SaveChangesAsync(cancellationToken);
+            return IvMasterOperationResult<bool>.Ok(true);
+        }
 
         var link = await db.ProductionPostingLinks.SingleOrDefaultAsync(x =>
             x.CompanyCode == scope.CompanyCode
             && x.BranchCode == scope.BranchCode
             && x.CommandType == ProductionPostingCommandTypes.OutputPost
             && x.PostingRequestId == output.PostingRequestId, cancellationToken);
+        if (link is not null
+            && !string.Equals(link.Status, ProductionPostingLinkStatuses.Draft, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(link.Status, ProductionPostingLinkStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+        {
+            InventoryBatchRetention.Archive(output, scope.UserId, null);
+            await db.SaveChangesAsync(cancellationToken);
+            return IvMasterOperationResult<bool>.Ok(true);
+        }
+
         if (link is not null) db.ProductionPostingLinks.Remove(link);
         db.ProductionOutputs.Remove(output);
         await db.SaveChangesAsync(cancellationToken);
@@ -291,7 +322,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var q = db.ProductionOutputs.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.DeletedAtUtc == null);
         if (!string.IsNullOrWhiteSpace(query.Status))
             q = q.Where(x => x.Status == query.Status.Trim());
         if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))

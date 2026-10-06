@@ -16,6 +16,10 @@ public sealed class ProductionFinishedGoodReceipt
     public long? ReversalPostingId { get; set; }
     public int? CorrectedBatchId { get; set; }
     public string? ReversalReason { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+    public string? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
+    public bool IsDeleted => DeletedAtUtc.HasValue;
     public ICollection<ProductionFinishedGoodSource> Sources { get; set; } = [];
 }
 

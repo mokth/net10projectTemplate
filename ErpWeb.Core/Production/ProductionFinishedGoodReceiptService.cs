@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
@@ -53,7 +54,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             await using var db = await factory.CreateDbContextAsync(ct);
             var rows = from r in db.ProductionFinishedGoodReceiptRows.AsNoTracking()
                 join w in db.ProductionWorkOrders on r.WorkOrderId equals w.Uid
-                where r.CompanyCode == scope.CompanyCode && r.BranchCode == scope.BranchCode
+                where r.CompanyCode == scope.CompanyCode && r.BranchCode == scope.BranchCode && r.DeletedAtUtc == null
                 select new { r, w.WorkOrderNo };
             var term = query.SearchText?.Trim();
             if (!string.IsNullOrWhiteSpace(term))
@@ -315,6 +316,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             else
             {
                 r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
+                if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
+                    throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
                 if (r.Batch.BatchStatus != "NEW") throw new FgException("Only NEW receipts can be edited.");
                 db.ProductionFinishedGoodSourceRows.RemoveRange(r.Sources);
                 db.IvTrxBatchDetails.RemoveRange(r.Sources.Select(x => x.Detail));
@@ -386,7 +389,31 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
             var r = await LoadAsync(db, scope, id, true, ct); Version(r, expectedVersion);
-            if (r.Batch.BatchStatus != "NEW") throw new FgException("Only NEW receipts can be deleted.");
+            if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
+            {
+                await tx.CommitAsync(ct);
+                return IvMasterOperationResult<bool>.Ok(true);
+            }
+
+            var decision = await TransactionDeleteApplicator.DecideAsync(
+                db,
+                new TransactionDeleteSubject(
+                    scope.CompanyCode, scope.BranchCode!,
+                    TransactionDeleteOwnerTypes.ProductionFinishedGood,
+                    r.BatchId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    r.Batch.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                ct);
+            if (decision.Mode == TransactionDeleteMode.Block)
+                throw new FgException(decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus);
+            if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+            {
+                InventoryBatchRetention.Archive(r, scope.UserId, null);
+                InventoryBatchRetention.Archive(r.Batch, scope.UserId, null);
+                await db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                return IvMasterOperationResult<bool>.Ok(true);
+            }
+
             db.ProductionFinishedGoodSourceRows.RemoveRange(r.Sources); db.IvTrxBatchDetails.RemoveRange(r.Sources.Select(x => x.Detail));
             db.ProductionFinishedGoodReceiptRows.Remove(r); db.IvTrxBatches.Remove(r.Batch);
             await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return IvMasterOperationResult<bool>.Ok(true);

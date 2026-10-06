@@ -7,6 +7,7 @@ using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -389,6 +390,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, StockInNotFoundMessage(expectedTrxType));
         }
 
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
+
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
@@ -697,6 +701,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var rollbackEffectiveAt = postingContext?.Posting.EffectiveAt ?? batch.TrxDtTime;
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
+
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, rollbackEffectiveAt, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
@@ -969,6 +976,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
         }
 
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
+
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
@@ -1053,6 +1063,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Non-stock goods receipt was not found.");
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
@@ -1144,6 +1157,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock adjustment was not found.");
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
@@ -1397,6 +1413,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock adjustment was not found.");
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
@@ -1831,15 +1850,22 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 $"Stock-in batch {batchNo} was not found or has the wrong type (expected {expectedTrxType}).");
         }
 
+        if (batch.DeletedAtUtc is not null)
+        {
+            throw new InvalidOperationException(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}")!);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
                 $"Stock-in batch {batchNo} cannot be deleted because it is not NEW (status: {batch.BatchStatus}).");
         }
 
-        var details = await _posting.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-        db.IvTrxBatchDetails.RemoveRange(details);
-        db.IvTrxBatches.Remove(batch);
+        if (!await InventoryBatchRetention.TryRemoveTrueDraftAsync(db, batch, cancellationToken))
+        {
+            throw new InvalidOperationException(TransactionDeleteMessages.HistoricalBatch);
+        }
         // No SaveChanges/Commit — caller owns the transaction.
     }
 
@@ -1912,6 +1938,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutNotFoundMessage(expectedTrxType));
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
@@ -2168,6 +2197,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var rollbackEffectiveAt = postingContext?.Posting.EffectiveAt ?? batch.TrxDtTime;
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
+
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, rollbackEffectiveAt, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
@@ -2351,6 +2383,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
@@ -2785,6 +2820,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
         }
+
+        if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
+            return IvInventoryPostingBatchResult.Fail(batchNo, archivedBatch);
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {

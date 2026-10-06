@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
@@ -45,6 +46,7 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
 
         var postingIds = await MatchingPostingIdsAsync(db, company, branch, query, cancellationToken);
         await AddUnsealedPostingsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
+        await AddMissingSourceDocumentsAsync(db, company, branch, query, findings, cancellationToken);
         await AddFactsWithoutSealedPostingAsync(db, company, branch, query, postingIds, findings, cancellationToken);
         await AddBrokenReversalsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
         await AddHistoryWithoutFactsAsync(db, company, branch, query, postingIds, findings, cancellationToken);
@@ -235,6 +237,50 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
             null,
             CostingRepairTargetKind.DiagnosticOnly,
             CostingRepairActions.TraceSourceDocument);
+
+    private static async Task AddMissingSourceDocumentsAsync(
+        AppDbContext db, string company, string branch, CostingHealthQuery query,
+        List<CostingFinding> findings, CancellationToken cancellationToken)
+    {
+        var historyBatchNos = await db.IvTrxHistories.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch)
+            .Select(x => x.BatchNo)
+            .Distinct()
+            .Take(50)
+            .ToListAsync(cancellationToken);
+        var linkedBatchNos = await db.ProductionPostingLinks.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                && x.InventoryBatchNo != null
+                && x.Status != ProductionPostingLinkStatuses.Draft
+                && x.Status != ProductionPostingLinkStatuses.Cancelled)
+            .Select(x => x.InventoryBatchNo!.Value)
+            .Distinct()
+            .Take(50)
+            .ToListAsync(cancellationToken);
+        var wanted = historyBatchNos.Concat(linkedBatchNos).Distinct().ToList();
+        if (wanted.Count == 0)
+            return;
+
+        var present = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && wanted.Contains(x.BatchNo))
+            .Select(x => x.BatchNo)
+            .ToListAsync(cancellationToken);
+        var presentSet = present.ToHashSet();
+        foreach (var batchNo in wanted)
+        {
+            if (presentSet.Contains(batchNo))
+                continue;
+            findings.Add(new CostingFinding(
+                CostingFindingCodes.SourceDocumentMissing, CostingFindingSeverity.Critical, true,
+                query.ItemCode, null, null, null, null,
+                "INVENTORY", batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture), null, null,
+                "Stock history exists for a batch whose document row is missing.",
+                "Costing cannot trace this physical source. The ledger rows were not changed.",
+                null, null, null, null,
+                "Trace the missing source document. Do not edit the ledger rows.",
+                null, CostingRepairTargetKind.DiagnosticOnly, CostingRepairActions.TraceSourceDocument));
+        }
+    }
 
     private static async Task AddUnsealedPostingsAsync(
         AppDbContext db, string company, string branch, CostingHealthQuery query, HashSet<long>? postingIds,

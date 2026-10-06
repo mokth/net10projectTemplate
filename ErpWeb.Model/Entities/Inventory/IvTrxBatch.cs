@@ -40,6 +40,12 @@ public class IvTrxBatch
     /// <summary>True when this batch has been stamped by a DO force-close and is now immutable.</summary>
     public bool IsForceClosed => ForceCloseDate is not null;
 
+    /// <summary>Historical-delete archive stamp. Null means the batch is still operational.</summary>
+    public DateTime? DeletedAtUtc { get; set; }
+    public string? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
+    public bool IsDeleted => DeletedAtUtc.HasValue;
+
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

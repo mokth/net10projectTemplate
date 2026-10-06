@@ -348,6 +348,7 @@ public static class SaSoLineReserve
                 equals new { h.CompanyCode, h.BranchCode, h.DoNo }
             where d.CompanyCode == company
                   && d.BranchCode == branch
+                  && h.DeletedAtUtc == null
                   && soNos.Contains(d.SoNo)
                   && d.SoNo != string.Empty
                   && d.SoLine != null
@@ -403,6 +404,7 @@ public static class SaSoLineReserve
                 equals new { h.CompanyCode, h.BranchCode, h.InvNo }
             where d.CompanyCode == company
                   && d.BranchCode == branch
+                  && h.DeletedAtUtc == null
                   && soNos.Contains(d.SoNo)
                   && d.SoNo != string.Empty
                   && d.SoLine != null

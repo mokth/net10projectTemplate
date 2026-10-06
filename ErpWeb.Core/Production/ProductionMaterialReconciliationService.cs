@@ -28,6 +28,7 @@ public sealed class ProductionMaterialReconciliationService : IProductionMateria
                                 && link.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
                                 && link.Status == ProductionPostingLinkStatuses.Draft
                                 && batch.BatchStatus == IvBatchStatuses.New
+                                && batch.DeletedAtUtc == null
                             select batch.BatchNo).ToListAsync(cancellationToken);
         foreach (var batchNo in drafts.Distinct().OrderBy(x => x))
             findings.Add(new ProductionMaterialReconciliationFinding

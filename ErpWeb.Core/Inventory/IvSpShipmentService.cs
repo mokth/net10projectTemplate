@@ -1,4 +1,5 @@
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
@@ -64,6 +65,13 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                 IvSpShipmentErrorKind.BusinessRule);
         }
 
+        if (batch?.DeletedAtUtc is not null)
+        {
+            return IvSpShipmentResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This shipment")!,
+                IvSpShipmentErrorKind.BusinessRule);
+        }
+
         if (batch is not null
             && string.Equals(batch.BatchStatus, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase))
         {
@@ -93,8 +101,15 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             if (batch is not null)
             {
                 await LockReleasedBalancesAsync(db, company, branch, existingDetails, cancellationToken);
-                db.IvTrxBatchDetails.RemoveRange(existingDetails);
-                db.IvTrxBatches.Remove(batch);
+                if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+                {
+                    await InventoryBatchRetention.RemoveMutableDetailsAsync(db, batch, cancellationToken);
+                    return IvSpShipmentResult.Ok(batch.Id, batch.BatchNo, [], []);
+                }
+
+                var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, batch, cancellationToken);
+                if (!removed)
+                    return IvSpShipmentResult.Ok(batch.Id, batch.BatchNo, [], []);
             }
 
             return IvSpShipmentResult.Ok(0, 0, [], []);
@@ -677,14 +692,22 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             return;
         }
 
-        
+        if (batch.DeletedAtUtc is not null)
+        {
+            return;
+        }
+
         var details = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
         await LockReleasedBalancesAsync(db, company, branch, details, cancellationToken);
-        db.IvTrxBatchDetails.RemoveRange(details);
         if (removeBatch)
         {
-            db.IvTrxBatches.Remove(batch);
+            var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, batch, cancellationToken);
+            if (!removed)
+                return;
+            return;
         }
+
+        await InventoryBatchRetention.RemoveMutableDetailsAsync(db, batch, cancellationToken);
     }
 
     private async Task LockReleasedBalancesAsync(
@@ -805,6 +828,7 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                   && batch.LocationCode == location
                   && batch.TrxType == IvTrxTypes.SalesOut
                   && batch.BatchStatus == IvBatchStatuses.New
+                  && batch.DeletedAtUtc == null
             select detail;
 
         if (excludeDetailIds is { Count: > 0 })

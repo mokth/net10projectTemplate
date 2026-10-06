@@ -11,6 +11,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -97,6 +98,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IPurchaseCostInquiryService, PurchaseCostInquiryService>();
         services.AddScoped<IStockValuationQueryService, StockValuationQueryService>();
         services.AddScoped<ICostingDiagnosticService, CostingDiagnosticService>();
+        services.AddScoped<ITransactionDeletePolicyService, TransactionDeletePolicyService>();
         services.AddScoped<ICostingTraceService, CostingTraceService>();
         services.AddScoped<ICostingRepairOwnershipResolver, CostingRepairOwnershipResolver>();
         services.AddScoped<CostingStateRepairPlanner>();

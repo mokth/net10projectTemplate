@@ -71,6 +71,9 @@ public class SaDoConfiguration : IEntityTypeConfiguration<SaDo>
         builder.Property(e => e.ShipOutRemark).HasMaxLength(500);
         builder.Property(e => e.PostedBy).HasMaxLength(20);
         builder.Property(e => e.RollbackBy).HasMaxLength(20);
+        builder.Property(e => e.DeletedAtUtc).HasColumnType("datetime2");
+        builder.Property(e => e.DeletedBy).HasMaxLength(20);
+        builder.Property(e => e.DeleteReason).HasMaxLength(250);
 
         builder.Property(e => e.CreatedDate).HasColumnName("Created").HasColumnType("datetime2");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(20);

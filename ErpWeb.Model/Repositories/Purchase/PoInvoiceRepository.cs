@@ -142,7 +142,7 @@ WHERE CompanyCode = {company}
         var take = Math.Clamp(args.Take <= 0 ? 20 : args.Take, 1, MaxPageSize);
 
         var query = db.PoInvoices.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch);
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.DeletedAtUtc == null);
 
         if (!string.IsNullOrWhiteSpace(args.Type))
         {

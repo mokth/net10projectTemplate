@@ -124,6 +124,7 @@ public sealed partial class ProductionMaterialIssueService
             join draftBatch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals draftBatch.Id
             where requestedIds.Contains(map.WorkOrderMaterialId)
                 && draftLink.Status == ProductionPostingLinkStatuses.Draft && draftBatch.BatchStatus == IvBatchStatuses.New
+                && draftBatch.DeletedAtUtc == null
                 && (!existingBatchNo.HasValue || map.InventoryBatchNo != existingBatchNo.Value)
             select new { map.WorkOrderMaterialId, map.IssueQty }).ToListAsync(ct);
         foreach (var line in request.Lines)

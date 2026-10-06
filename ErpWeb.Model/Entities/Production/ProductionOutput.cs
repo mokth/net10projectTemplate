@@ -41,6 +41,11 @@ public class ProductionOutput
     public DateTime? ReversedDate { get; set; }
     public string? ReversedBy { get; set; }
 
+    public DateTime? DeletedAtUtc { get; set; }
+    public string? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
+    public bool IsDeleted => DeletedAtUtc.HasValue;
+
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? ModifiedDate { get; set; }

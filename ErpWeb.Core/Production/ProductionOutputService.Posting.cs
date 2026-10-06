@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
@@ -24,6 +25,8 @@ public sealed partial class ProductionOutputService
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, outputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+            if (output.DeletedAtUtc is not null)
+                return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
             if (output.Status == ProductionOutputStatuses.Posted)
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)

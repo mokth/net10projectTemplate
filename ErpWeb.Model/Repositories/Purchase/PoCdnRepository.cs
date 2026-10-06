@@ -200,7 +200,7 @@ WHERE CompanyCode = {company}
         var take = Math.Clamp(args.Take <= 0 ? 20 : args.Take, 1, MaxPageSize);
 
         var query = db.PoCdns.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.Type == type);
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.Type == type && x.DeletedAtUtc == null);
 
         if (!string.IsNullOrWhiteSpace(args.Status))
         {
@@ -449,6 +449,7 @@ WHERE CompanyCode = {company}
                 && x.BranchCode == branch
                 && x.Type == PoCdnTypes.CreditNote
                 && x.InvNo == invoice
+                && x.DeletedAtUtc == null
                 && (x.Status == PoCdnStatuses.New || x.Status == PoCdnStatuses.Posted));
 
         if (exclude.Length > 0)

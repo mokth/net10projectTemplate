@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
@@ -634,6 +635,14 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 return SaInvoiceOperationResult.Fail("Invoice was not found.", SaInvoiceErrorKind.NotFound);
             }
 
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This invoice")!,
+                    SaInvoiceErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -816,10 +825,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 return SaInvoiceOperationResult.Fail($"Invoice {item.InvNo} was not found.");
             }
 
-            if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
-            {
-                return SaInvoiceOperationResult.Fail($"Invoice {item.InvNo} cannot be deleted because it is not NEW.");
-            }
+            if (invoice.DeletedAtUtc is not null)
+                continue;
 
             // e-Invoice structural edit lock (same rule as UpdateAsync).
             if (EInvoiceStatuses.IsLocked(invoice.IrbmStatus))
@@ -842,14 +849,44 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 return SaInvoiceOperationResult.Fail(cnBlocker, SaInvoiceErrorKind.BusinessRule);
             }
 
-            await _shipments.ReleaseShipmentReservationAsync(
+            var decision = await TransactionDeleteApplicator.DecideAsync(
                 db,
-                context.CompanyCode!,
-                context.BranchCode!,
-                context.LocationCode!,
-                item.InvNo,
-                removeBatch: true,
+                new TransactionDeleteSubject(
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    TransactionDeleteOwnerTypes.SalesInvoice,
+                    item.InvNo,
+                    item.InvNo),
                 cancellationToken);
+            if (decision.Mode == TransactionDeleteMode.Block)
+            {
+                return SaInvoiceOperationResult.Fail(
+                    $"Invoice {item.InvNo}: {decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus}");
+            }
+
+            var ownedBatch = await _postingRepo.LockSpBatchByRefAsync(
+                db, context.CompanyCode!, context.BranchCode!, item.InvNo, cancellationToken);
+            if (decision.Mode == TransactionDeleteMode.ArchiveHistorical)
+            {
+                InventoryBatchRetention.Archive(invoice, context.UserId, null);
+                if (ownedBatch is not null)
+                    InventoryBatchRetention.Archive(ownedBatch, context.UserId, null);
+                await db.SaveChangesAsync(cancellationToken);
+                continue;
+            }
+
+            if (ownedBatch is not null)
+            {
+                var removed = await InventoryBatchRetention.ReleaseOwnedNewBatchAsync(db, ownedBatch, cancellationToken);
+                if (!removed)
+                {
+                    InventoryBatchRetention.Archive(invoice, context.UserId, null);
+                    InventoryBatchRetention.Archive(ownedBatch, context.UserId, null);
+                    await db.SaveChangesAsync(cancellationToken);
+                    continue;
+                }
+            }
+
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
             db.SaInvoiceDetails.RemoveRange(invoice.Details);
             db.SaInvoices.Remove(invoice);
@@ -876,6 +913,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             .Where(x => x.CompanyCode == companyCode
                 && x.BranchCode == branchCode
                 && x.InvNo == invNo
+                && x.DeletedAtUtc == null
                 && (x.Status == SaCdnStatuses.New || x.Status == SaCdnStatuses.Posted))
             .Select(x => new { x.DocNo, x.Status })
             .ToListAsync(cancellationToken);
@@ -972,6 +1010,14 @@ public sealed class SaInvoiceService : ISaInvoiceService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaInvoiceOperationResult.Fail("Invoice was not found.", SaInvoiceErrorKind.NotFound);
+            }
+
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This invoice")!,
+                    SaInvoiceErrorKind.BusinessRule);
             }
 
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1211,6 +1257,14 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 return SaInvoiceOperationResult.Fail("Invoice was not found.", SaInvoiceErrorKind.NotFound);
             }
 
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(
+                    TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This invoice")!,
+                    SaInvoiceErrorKind.BusinessRule);
+            }
+
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1447,6 +1501,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 return SaInvoicePostingItemResult.Failed(invNo, "Invoice was not found.");
             }
 
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(
+                    invNo, TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This invoice")!);
+            }
+
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1662,6 +1723,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return SaInvoicePostingItemResult.Failed(invNo, "Invoice was not found.");
+            }
+
+            if (invoice.DeletedAtUtc is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(
+                    invNo, TransactionLifecycleGuard.ArchivedError(invoice.DeletedAtUtc, "This invoice")!);
             }
 
             if (!string.Equals(invoice.Status, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))

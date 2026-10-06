@@ -42,6 +42,9 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.PostingRequestId).HasMaxLength(64).IsRequired();
         builder.Property(x => x.PostedBy).HasMaxLength(10);
         builder.Property(x => x.ReversedBy).HasMaxLength(10);
+        builder.Property(x => x.DeletedAtUtc).HasColumnType("datetime2");
+        builder.Property(x => x.DeletedBy).HasMaxLength(10);
+        builder.Property(x => x.DeleteReason).HasMaxLength(250);
         builder.Property(x => x.CreatedBy).HasMaxLength(10).IsRequired();
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);
         builder.Property(x => x.RowVersion).IsRowVersion();

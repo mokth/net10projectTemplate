@@ -59,6 +59,11 @@ public class SaCdn
     public string? PostedBy { get; set; }
     public DateTime? RollbackDate { get; set; }
     public string? RollbackBy { get; set; }
+
+    public DateTime? DeletedAtUtc { get; set; }
+    public string? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
+    public bool IsDeleted => DeletedAtUtc.HasValue;
     /// <summary>Append-only financial costing revision for post/rollback/repost identity.</summary>
     public int CostingRevision { get; set; }
 

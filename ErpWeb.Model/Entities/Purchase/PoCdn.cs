@@ -95,6 +95,11 @@ public class PoCdn
     public DateTime? RollbackDate { get; set; }
     public string? RollbackBy { get; set; }
 
+    public DateTime? DeletedAtUtc { get; set; }
+    public string? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
+    public bool IsDeleted => DeletedAtUtc.HasValue;
+
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

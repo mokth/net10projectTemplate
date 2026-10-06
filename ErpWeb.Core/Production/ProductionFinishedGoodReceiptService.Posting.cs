@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
@@ -42,6 +43,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(result);
             }
             var r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
+            if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
+                throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
             if (r.Batch.TrxType != "FG" || r.Batch.BatchStatus != (reversal ? "POSTED" : "NEW"))
                 throw new FgException(reversal ? "Only POSTED FG receipts can be reversed." : "Only NEW FG receipts can be posted.");
             if (!reversal && !options.Value.PostingEnabled) throw new FgException("FG posting is disabled pending release acceptance.");

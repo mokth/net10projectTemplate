@@ -89,7 +89,7 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
         var take = Math.Clamp(args.Take <= 0 ? 20 : args.Take, 1, MaxPageSize);
 
         var query = db.IvTrxBatches.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.TrxType == trxType);
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.TrxType == trxType && x.DeletedAtUtc == null);
 
         if (!string.IsNullOrWhiteSpace(args.BatchStatus))
         {
@@ -231,7 +231,29 @@ public sealed class IvStockTransactionRepository : IIvStockTransactionRepository
             return false;
         }
 
-        if (!string.Equals(batch.BatchStatus, "NEW", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(batch.BatchStatus, "NEW", StringComparison.OrdinalIgnoreCase)
+            || batch.DeletedAtUtc is not null
+            || batch.PostedCount != 0
+            || batch.RollbackCount != 0
+            || batch.PostedDate is not null
+            || batch.RollbackDate is not null
+            || batch.ForceCloseDate is not null)
+        {
+            return false;
+        }
+
+        var company = batch.CompanyCode;
+        var branch = batch.BranchCode;
+        var sourceId = batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (await db.IvTrxHistories.AsNoTracking().AnyAsync(x =>
+                x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batch.BatchNo, cancellationToken)
+            || await db.StockPostings.AsNoTracking().AnyAsync(x =>
+                x.CompanyCode == company && x.BranchCode == branch
+                && x.SourceModule == "INVENTORY" && x.SourceDocumentType == batch.TrxType
+                && x.SourceDocumentId == sourceId, cancellationToken)
+            || await db.ProductionMaterialMovements.AsNoTracking().AnyAsync(x =>
+                x.CompanyCode == company && x.BranchCode == branch
+                && (x.InventoryBatchId == batch.Id || x.InventoryBatchNo == batch.BatchNo), cancellationToken))
         {
             return false;
         }

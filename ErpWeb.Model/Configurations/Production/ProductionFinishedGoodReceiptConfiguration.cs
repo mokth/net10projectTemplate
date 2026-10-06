@@ -37,6 +37,9 @@ public sealed class ProductionFinishedGoodReceiptConfiguration :
         ConfigureProperties(b);
         b.Property(x => x.CompanyCode).HasMaxLength(5); b.Property(x => x.BranchCode).HasMaxLength(5);
         b.Property(x => x.ReversalReason).HasMaxLength(500);
+        b.Property(x => x.DeletedAtUtc).HasColumnType("datetime2");
+        b.Property(x => x.DeletedBy).HasMaxLength(10);
+        b.Property(x => x.DeleteReason).HasMaxLength(250);
     }
     public void Configure(EntityTypeBuilder<ProductionFinishedGoodSource> b)
     {
