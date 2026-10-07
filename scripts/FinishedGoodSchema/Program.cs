@@ -23,7 +23,7 @@ foreach (var batch in Regex.Split(db.Database.GenerateCreateScript(), @"^GO\s*$"
 }
 foreach (var (table, column, type) in new[] {
     ("IvTrxBatchDetail", "PriceEvidence", "nvarchar(200)"), ("IvBalLoc", "PriceEvidence", "nvarchar(200)"),
-    ("IvTrxHistory", "PriceEvidence", "nvarchar(200)"), ("IvTrxHistory", "ExactTransferredValue", "decimal(18,4)"),
+    ("IvTrxHistory", "PriceEvidence", "nvarchar(200)"), ("IvTrxHistory", "ExactTransferredValue", "decimal(19,6)"),
     ("IvTrxHistory", "ValuationStatus", "nvarchar(20)"), ("IvTrxHistory", "EvidenceBaseQty", "decimal(18,4)"), ("IvTrxHistory", "EvidenceBaseUom", "nvarchar(10)") })
     sql.AppendLine($"IF COL_LENGTH(N'dbo.{table}', N'{column}') IS NULL ALTER TABLE dbo.{table} ADD {column} {type} NULL;\nGO");
 File.WriteAllText(args[0], sql.ToString());

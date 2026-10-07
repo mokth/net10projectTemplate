@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Transactions;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
@@ -296,13 +297,13 @@ public sealed partial class ProductionOutputService
                 // proportional splits from leaving value stranded in an empty production pile.
                 var takeCost = IvQty.Round(lot.BaseQty - fact.BaseQty) <= 0m
                     ? lot.TotalCost
-                    : IvQty.Round(lot.TotalCost * (fact.BaseQty / lot.BaseQty));
+                    : StockLedgerPrecision.Money(lot.TotalCost * (fact.BaseQty / lot.BaseQty));
                 lot.Qty = IvQty.Round(lot.Qty - fact.LotQty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty - fact.BaseQty);
-                lot.TotalCost = IvQty.Round(lot.TotalCost - takeCost);
-                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
+                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost - takeCost);
+                lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
                 lot.LastMovementDate = output.ProductionDate;
-                totalConsumedCost = IvQty.Round(totalConsumedCost + takeCost);
+                totalConsumedCost = StockLedgerPrecision.Money(totalConsumedCost + takeCost);
 
                 var balMov = new ProductionBalLotMovement
                 {
@@ -312,7 +313,7 @@ public sealed partial class ProductionOutputService
                     Uom = lot.Uom,
                     BaseQty = fact.BaseQty,
                     BaseUom = lot.BaseUom,
-                    UnitCost = fact.BaseQty > 0m ? IvQty.Round(takeCost / fact.BaseQty) : 0m,
+                    UnitCost = fact.BaseQty > 0m ? StockLedgerPrecision.Money(takeCost / fact.BaseQty) : 0m,
                     TotalCost = takeCost,
                     WorkOrderId = order.Uid,
                     WorkOrderMaterialId = fact.Material.Uid,
@@ -367,15 +368,15 @@ public sealed partial class ProductionOutputService
             {
                 var handoffCost = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase) <= 0m
                     ? handoffLot.TotalCost
-                    : IvQty.Round(handoffLot.TotalCost * (handoffConsumeBase / handoffLot.BaseQty));
+                    : StockLedgerPrecision.Money(handoffLot.TotalCost * (handoffConsumeBase / handoffLot.BaseQty));
                 handoffLot.Qty = IvQty.Round(handoffLot.Qty - handoffConsumeQty);
                 handoffLot.BaseQty = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase);
-                handoffLot.TotalCost = IvQty.Round(handoffLot.TotalCost - handoffCost);
+                handoffLot.TotalCost = StockLedgerPrecision.Money(handoffLot.TotalCost - handoffCost);
                 handoffLot.AverageUnitCost = handoffLot.BaseQty > 0m
-                    ? IvQty.Round(handoffLot.TotalCost / handoffLot.BaseQty)
+                    ? StockLedgerPrecision.Money(handoffLot.TotalCost / handoffLot.BaseQty)
                     : 0m;
                 handoffLot.LastMovementDate = output.ProductionDate;
-                totalConsumedCost = IvQty.Round(totalConsumedCost + handoffCost);
+                totalConsumedCost = StockLedgerPrecision.Money(totalConsumedCost + handoffCost);
 
                 db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
                 {
@@ -385,7 +386,7 @@ public sealed partial class ProductionOutputService
                     Uom = consumerContract.Uom,
                     BaseQty = handoffConsumeBase,
                     BaseUom = consumerContract.BaseUom,
-                    UnitCost = handoffConsumeBase > 0m ? IvQty.Round(handoffCost / handoffConsumeBase) : 0m,
+                    UnitCost = handoffConsumeBase > 0m ? StockLedgerPrecision.Money(handoffCost / handoffConsumeBase) : 0m,
                     TotalCost = handoffCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
@@ -418,7 +419,7 @@ public sealed partial class ProductionOutputService
                     Uom = producerContract.Uom,
                     BaseQty = produceBase,
                     BaseUom = producerContract.BaseUom,
-                    UnitCost = produceBase > 0m ? IvQty.Round(totalConsumedCost / produceBase) : 0m,
+                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(totalConsumedCost / produceBase) : 0m,
                     TotalCost = totalConsumedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
@@ -450,7 +451,7 @@ public sealed partial class ProductionOutputService
                     Uom = output.OutputUom,
                     BaseQty = produceBase,
                     BaseUom = routeStep.OutputBaseUom ?? output.OutputUom,
-                    UnitCost = produceBase > 0m ? IvQty.Round(totalConsumedCost / produceBase) : 0m,
+                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(totalConsumedCost / produceBase) : 0m,
                     TotalCost = totalConsumedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
@@ -691,8 +692,8 @@ public sealed partial class ProductionOutputService
 
             existing.Qty = IvQty.Round(existing.Qty + output.GoodQty);
             existing.BaseQty = IvQty.Round(existing.BaseQty + produceBase);
-            existing.TotalCost = IvQty.Round(existing.TotalCost + producedCost);
-            existing.AverageUnitCost = existing.BaseQty > 0m ? IvQty.Round(existing.TotalCost / existing.BaseQty) : 0m;
+            existing.TotalCost = StockLedgerPrecision.Money(existing.TotalCost + producedCost);
+            existing.AverageUnitCost = existing.BaseQty > 0m ? StockLedgerPrecision.Money(existing.TotalCost / existing.BaseQty) : 0m;
             existing.LastMovementDate = output.ProductionDate;
             return (existing, null);
         }
@@ -709,7 +710,7 @@ public sealed partial class ProductionOutputService
             BaseUom = contract.BaseUom,
             ConversionFactorToBase = contract.ConversionFactorToBase,
             TotalCost = producedCost,
-            AverageUnitCost = produceBase > 0m ? IvQty.Round(producedCost / produceBase) : 0m,
+            AverageUnitCost = produceBase > 0m ? StockLedgerPrecision.Money(producedCost / produceBase) : 0m,
             WorkOrderId = order.Uid,
             WorkOrderNo = order.WorkOrderNo,
             ProducingRouteStepId = null,
@@ -787,8 +788,8 @@ public sealed partial class ProductionOutputService
             }
             existing.Qty = IvQty.Round(existing.Qty + output.GoodQty);
             existing.BaseQty = IvQty.Round(existing.BaseQty + produceBase);
-            existing.TotalCost = IvQty.Round(existing.TotalCost + producedCost);
-            existing.AverageUnitCost = existing.BaseQty > 0m ? IvQty.Round(existing.TotalCost / existing.BaseQty) : 0m;
+            existing.TotalCost = StockLedgerPrecision.Money(existing.TotalCost + producedCost);
+            existing.AverageUnitCost = existing.BaseQty > 0m ? StockLedgerPrecision.Money(existing.TotalCost / existing.BaseQty) : 0m;
             existing.LastMovementDate = output.ProductionDate;
             return existing;
         }
@@ -805,7 +806,7 @@ public sealed partial class ProductionOutputService
             BaseUom = routeStep.OutputBaseUom ?? output.OutputUom,
             ConversionFactorToBase = routeStep.OutputConversionFactorToBase ?? 1m,
             TotalCost = producedCost,
-            AverageUnitCost = produceBase > 0m ? IvQty.Round(producedCost / produceBase) : 0m,
+            AverageUnitCost = produceBase > 0m ? StockLedgerPrecision.Money(producedCost / produceBase) : 0m,
             WorkOrderId = order.Uid,
             WorkOrderNo = order.WorkOrderNo,
             BalanceStage = routeStep.OutputType == PrRouteOutputTypes.FinishedGoods ? "FG_STAGING" : "PROCESS_WIP",

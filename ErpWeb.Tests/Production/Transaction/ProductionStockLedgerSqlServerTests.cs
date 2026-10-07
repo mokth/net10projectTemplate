@@ -88,6 +88,69 @@ public sealed class ProductionStockLedgerSqlServerTests
     }
 
     [Fact]
+    public async Task SqlServer_production_authority_money_columns_keep_six_decimals()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+            return;
+
+        await EnsureLedgerSchemaAsync(cs);
+        await using var connection = new SqlConnection(cs);
+        await connection.OpenAsync();
+        await ExecuteScriptAsync(connection, "scripts/alter-production-cost-money-precision-v2.sql");
+
+        var targets = new[]
+        {
+            (Table: "PrMaterialMovement", Column: "UnitCost"),
+            (Table: "PrMaterialMovement", Column: "TotalCost"),
+            (Table: "PrProductionBalLot", Column: "TotalCost"),
+            (Table: "PrProductionBalLot", Column: "AverageUnitCost"),
+            (Table: "PrProductionBalLotMovement", Column: "UnitCost"),
+            (Table: "PrProductionBalLotMovement", Column: "TotalCost"),
+            (Table: "PrFinishedGoodFact", Column: "TotalValue"),
+            (Table: "PrPoolValuation", Column: "TrackedValue"),
+            (Table: "PrValuationEvidence", Column: "Price"),
+            (Table: "IvTrxHistory", Column: "ExactTransferredValue")
+        };
+        var columns = await ReadColumnPrecisionAsync(connection, targets);
+        Assert.Equal(targets.Length, columns.Count);
+        foreach (var target in targets)
+        {
+            Assert.True(columns.TryGetValue(target, out var precision), $"Missing dbo.{target.Table}.{target.Column}.");
+            Assert.Equal((byte)19, precision.Precision);
+            Assert.Equal((byte)6, precision.Scale);
+        }
+
+        var company = UniqueCompany("P");
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
+        await using (var db = new AppDbContext(options))
+        {
+            db.IvTrxHistories.Add(new IvTrxHistory
+            {
+                CompanyCode = company,
+                BranchCode = "HQ",
+                BatchNo = UniquePositiveInt(),
+                TrxLineNo = 1,
+                TrxDtTime = DateTime.UtcNow,
+                TrxType = IvTrxTypes.FinishedGoods,
+                BatchStatus = IvBatchStatuses.Posted,
+                ICode = "FG-PRECISION",
+                ExactTransferredValue = 1.000001m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+        {
+            var value = await db.IvTrxHistories
+                .Where(x => x.CompanyCode == company && x.ICode == "FG-PRECISION")
+                .Select(x => x.ExactTransferredValue)
+                .SingleAsync();
+            Assert.Equal(1.000001m, value);
+        }
+    }
+
+    [Fact]
     public async Task SqlServer_ledger_scripts_are_rerunnable_without_replacing_current_movement_constraint()
     {
         var cs = TryResolveScratch();
@@ -270,6 +333,39 @@ public sealed class ProductionStockLedgerSqlServerTests
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync(), "MovementType column was not found.");
         return new MovementColumnMetadata(reader.GetString(0), reader.GetInt16(1), reader.GetBoolean(2));
+    }
+
+    private static async Task<Dictionary<(string Table, string Column), (byte Precision, byte Scale)>>
+        ReadColumnPrecisionAsync(
+            SqlConnection connection,
+            IReadOnlyCollection<(string Table, string Column)> targets)
+    {
+        await using var command = connection.CreateCommand();
+        var values = string.Join(",\n", targets.Select((target, index) =>
+            $"(@table{index}, @column{index})"));
+        command.CommandText = $"""
+            SELECT v.TableName, v.ColumnName, c.precision, c.scale
+            FROM (VALUES
+                {values}
+            ) AS v(TableName, ColumnName)
+            INNER JOIN sys.tables AS t
+                ON t.schema_id = SCHEMA_ID(N'dbo') AND t.name = v.TableName
+            INNER JOIN sys.columns AS c
+                ON c.object_id = t.object_id AND c.name = v.ColumnName;
+            """;
+        for (var index = 0; index < targets.Count; index++)
+        {
+            var parameter = command.Parameters.Add($"@table{index}", System.Data.SqlDbType.NVarChar, 128);
+            parameter.Value = targets.ElementAt(index).Table;
+            parameter = command.Parameters.Add($"@column{index}", System.Data.SqlDbType.NVarChar, 128);
+            parameter.Value = targets.ElementAt(index).Column;
+        }
+
+        var result = new Dictionary<(string Table, string Column), (byte Precision, byte Scale)>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result[(reader.GetString(0), reader.GetString(1))] = (reader.GetByte(2), reader.GetByte(3));
+        return result;
     }
 
     private static async Task<SealFixture> SeedSealFixtureAsync(string connectionString)

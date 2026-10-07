@@ -90,6 +90,135 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Moving_average_preserves_six_decimal_cost_after_reload()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.StockCostStates.Add(new StockCostState
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                ItemCode = "ITEM-1",
+                CostMethod = StockCostMethods.MovingAverage,
+                OnHandBaseQty = 3m,
+                InventoryValue = 0.999999m,
+                AverageUnitCost = 0.333333m,
+                CurrentUnitCost = 0.333333m,
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await PostIssueAsync(1m, new DateTime(2026, 10, 2, 8, 0, 0));
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var fact = await verify.StockValuationFacts.SingleAsync(x => x.Direction == -1);
+        var state = await verify.StockCostStates.SingleAsync();
+        Assert.Equal(0.333333m, fact.CostAmount);
+        Assert.Equal(0.666666m, state.InventoryValue);
+        Assert.Equal(0.333333m, state.AverageUnitCost);
+    }
+
+    [Fact]
+    public async Task Fifo_issue_splits_layers_and_aggregates_the_production_grain()
+    {
+        await SetCostMethodAsync(StockCostMethods.Fifo);
+        await PostReceiptAsync(2m, 2m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostReceiptAsync(5m, 3m, new DateTime(2026, 10, 2, 8, 0, 0));
+        await PostIssueAsync(4m, new DateTime(2026, 10, 3, 8, 0, 0));
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var issueFacts = await verify.StockValuationFacts
+            .Where(x => x.Direction == -1)
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+        Assert.Equal(2, issueFacts.Count);
+        Assert.Equal(2m, issueFacts[0].BaseQty);
+        Assert.Equal(4m, issueFacts[0].CostAmount);
+        Assert.Equal(2m, issueFacts[1].BaseQty);
+        Assert.Equal(6m, issueFacts[1].CostAmount);
+        Assert.Equal(10m, issueFacts.Sum(x => x.CostAmount));
+
+        var state = await verify.StockCostStates.SingleAsync();
+        Assert.Equal(3m, state.OnHandBaseQty);
+        Assert.Equal(9m, state.InventoryValue);
+        var layers = await verify.StockFifoLayers.OrderBy(x => x.Id).ToListAsync();
+        Assert.Equal(2, layers.Count);
+        Assert.Equal(0m, layers[0].RemainingQty);
+        Assert.Equal(3m, layers[1].RemainingQty);
+        Assert.Equal(9m, layers[1].RemainingValue);
+    }
+
+    [Fact]
+    public async Task Fifo_finished_good_receipt_uses_exact_transferred_value_for_fact_and_layer()
+    {
+        await SetCostMethodAsync(StockCostMethods.Fifo);
+        await PostFinishedGoodReceiptAsync(3m, 1.000001m, new DateTime(2026, 10, 1, 8, 0, 0));
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var fact = await verify.StockValuationFacts.SingleAsync(x => x.Direction == 1);
+        var layer = await verify.StockFifoLayers.SingleAsync();
+        Assert.Equal(1.000001m, fact.CostAmount);
+        Assert.Equal(StockValuationSources.ProductionActual, fact.ValuationSource);
+        Assert.Equal(1.000001m, layer.OriginalValue);
+        Assert.Equal(1.000001m, layer.RemainingValue);
+    }
+
+    [Fact]
+    public async Task Preseal_valuation_then_complete_is_idempotent()
+    {
+        var balanceId = (await BalanceIdsAsync())[0];
+        var effectiveAt = new DateTime(2026, 10, 2, 8, 0, 0);
+        var sourceId = (++_batchNo).ToString();
+        var command = new StockPostingCommand
+        {
+            RequestId = Guid.NewGuid(),
+            CommandType = "PRESEAL_TEST",
+            SourceModule = "INVENTORY",
+            SourceDocumentType = "PRESEAL",
+            SourceDocumentId = sourceId,
+            SourceDocumentNo = sourceId,
+            DocumentRevision = 1,
+            PostingRole = "PRIMARY",
+            EffectiveAt = effectiveAt,
+            Evidence = StockPostingFingerprint.Create(new { sourceId }, new { effectiveAt })
+        };
+        var coordinator = new StockPostingCoordinator(
+            _factory, new Tenant(), new BranchStockTransactionLock(),
+            new StockPeriodGuard(), new NoActiveStockFreezeGuard(),
+            new InventoryValuationService());
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            var begin = await coordinator.BeginInTransactionAsync(db, command);
+            Assert.True(begin.LedgerEnabled, begin.Error?.Message);
+            var context = begin.Context ?? throw new InvalidOperationException(begin.Error?.Message ?? "Posting context was not created.");
+            var history = History(IvTrxTypes.MiscellaneousReceipt);
+            history.ToBalLocId = balanceId;
+            history.ToWarehouse = "MAIN";
+            history.ToLocation = "A";
+            history.ToStdQty = 3m;
+            history.ToStdUom = "EA";
+            history.UnitPrice = 2m;
+            history.PriceEvidence = InventoryCostEvidenceTypes.ManualApproved;
+            db.IvTrxHistories.Add(history);
+            new IvInventoryHistoryWriter().StampGeneration(context, [history], 1);
+            await db.SaveChangesAsync();
+
+            await coordinator.ValuePendingInTransactionAsync(context);
+            await coordinator.CompleteInTransactionAsync(context);
+            await transaction.CommitAsync();
+        }
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Single(await verify.StockValuationFacts.ToListAsync());
+        var state = await verify.StockCostStates.SingleAsync();
+        Assert.Equal(3m, state.OnHandBaseQty);
+        Assert.Equal(6m, state.InventoryValue);
+    }
+
+    [Fact]
     public async Task Transfer_creates_equal_out_and_in_facts_without_changing_pool_value()
     {
         await PostReceiptAsync(10m, 7.25m, new DateTime(2026, 10, 1, 8, 0, 0));
@@ -395,6 +524,37 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             writer.StampGeneration(context, [history], 1);
             return Task.CompletedTask;
         });
+    }
+
+    private async Task<long> PostFinishedGoodReceiptAsync(
+        decimal qty,
+        decimal exactValue,
+        DateTime effectiveAt)
+    {
+        var balanceId = (await BalanceIdsAsync())[0];
+        return await ExecuteAsync(effectiveAt, "FG", (context, writer) =>
+        {
+            var history = History(IvTrxTypes.FinishedGoods);
+            history.ToBalLocId = balanceId;
+            history.ToWarehouse = "MAIN";
+            history.ToLocation = "A";
+            history.ToStdQty = qty;
+            history.ToStdUom = "EA";
+            history.UnitPrice = 0.3333m;
+            history.ExactTransferredValue = exactValue;
+            history.PriceEvidence = "FG_EXACT_BASE_CURRENCY";
+            context.Db.IvTrxHistories.Add(history);
+            writer.StampGeneration(context, [history], 1);
+            return Task.CompletedTask;
+        });
+    }
+
+    private async Task SetCostMethodAsync(string costMethod)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var policy = await db.StockCostPolicyRevisions.SingleAsync();
+        policy.CostMethod = costMethod;
+        await db.SaveChangesAsync();
     }
 
     private async Task<long> ExecuteAsync(

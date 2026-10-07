@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -271,7 +272,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             if (r.Batch.BatchStatus == "NEW" && error is not null) result.ReadinessErrors.Add(error);
             decimal? value = null;
             if (costs && r.PostingId is not null) value = await db.ProductionFinishedGoodFactRows.Where(x => x.SourceId == s.Id && x.ReversesFactId == null).Select(x => (decimal?)x.TotalValue).SingleOrDefaultAsync(ct);
-            else if (costs && error is null && lot.BaseQty > 0) value = IvQty.Round(lot.TotalCost * s.BaseQty / lot.BaseQty);
+            else if (costs && error is null && lot.BaseQty > 0) value = StockLedgerPrecision.Money(lot.TotalCost * s.BaseQty / lot.BaseQty);
             var item = await db.IvStockMasters.AsNoTracking()
                 .SingleAsync(x => x.CompanyCode == r.CompanyCode && x.ICode == lot.ItemCode, ct);
             result.Lines.Add(new() { SourceId = s.Id, ProductionBalLotId = lot.Uid, ItemCode = lot.ItemCode,

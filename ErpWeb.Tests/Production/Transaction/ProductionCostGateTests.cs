@@ -8,6 +8,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -89,6 +90,47 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         Assert.True(posted.Succeeded, posted.Message);
         Assert.Equal(1, posted.Data!.SucceededCount);
         await AssertIssueLineageAsync(draft.Data.BatchNo);
+    }
+
+    [Fact]
+    public async Task Ip_uses_v2_cost_authority_across_the_production_chain()
+    {
+        await SeedActiveEpochAsync();
+        var materialId = await SeedIssueGraphAsync();
+        await SeedBalanceAsync(24, unitPrice: 5m, evidence: ProductionLedgerTestFixture.TestPriceEvidence);
+        await SeedMovingAverageStateAsync("RM001", onHandQty: 10m, inventoryValue: 20m, averageUnitCost: 2m);
+        var sut = CreateIssueService();
+        var draft = await sut.CreateAsync(await IssueRequestAsync(materialId, 24));
+        Assert.True(draft.Succeeded, draft.Message);
+
+        var posted = await sut.PostAsync([draft.Data!.BatchNo]);
+        Assert.True(posted.Succeeded, posted.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var posting = Assert.Single(await db.StockPostings.ToListAsync());
+        var link = await db.ProductionPostingLinks.SingleAsync(x => x.InventoryBatchNo == draft.Data.BatchNo);
+        var inventoryFact = Assert.Single(await db.StockValuationFacts
+            .Where(x => x.StockPostingId == posting.Id && x.Direction < 0
+                && x.MovementCode == "PRODUCTION_MATERIAL_OUT")
+            .ToListAsync());
+        var material = Assert.Single(await db.ProductionMaterialMovements
+            .Where(x => x.PostingLinkId == link.Uid && x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .ToListAsync());
+        var balMovement = Assert.Single(await db.ProductionBalLotMovements
+            .Where(x => x.PostingLinkId == link.Uid && x.MovementType == ProductionBalLotMovementTypes.Issue)
+            .ToListAsync());
+        var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == material.ProductionBalLotId);
+        var pool = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == lot.Uid);
+
+        Assert.Equal(link.Uid, posting.ProductionPostingLinkId);
+        Assert.Equal(link.Uid, inventoryFact.ProductionPostingLinkId);
+        Assert.Equal(material.Uid, inventoryFact.ProductionMovementId);
+        Assert.Equal(8m, inventoryFact.CostAmount);
+        Assert.Equal(8m, material.TotalCost);
+        Assert.Equal(2m, material.UnitCost);
+        Assert.Equal(8m, balMovement.TotalCost);
+        Assert.Equal(8m, lot.TotalCost);
+        Assert.Equal(8m, pool.TrackedValue);
     }
 
     [Fact]
@@ -379,6 +421,28 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
             Id = id, CompanyCode = "DEMO", BranchCode = "HQ", ICode = "RM001", WhCode = "WH01",
             LocCode = $"BIN-{id}", LotNo = "", IStatus = IvItemStatuses.Active, StdQty = qty, StdUom = "KG",
             TransDate = new DateTime(2026, 9, 1), UnitPrice = unitPrice, PriceEvidence = evidence, RowVersion = [1]
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task SeedMovingAverageStateAsync(
+        string itemCode,
+        decimal onHandQty,
+        decimal inventoryValue,
+        decimal averageUnitCost)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.StockCostStates.Add(new StockCostState
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            ItemCode = itemCode,
+            CostMethod = StockCostMethods.MovingAverage,
+            OnHandBaseQty = onHandQty,
+            InventoryValue = inventoryValue,
+            AverageUnitCost = averageUnitCost,
+            CurrentUnitCost = averageUnitCost,
+            RowVersion = [1]
         });
         await db.SaveChangesAsync();
     }

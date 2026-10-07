@@ -51,8 +51,8 @@ BEGIN
         -- Informational only: inventory rollback can physically remove IvTrxHistory rows.
         InventoryHistoryID int NULL,
         InventoryPostingOperationID nvarchar(64) NULL,
-        UnitCost decimal(18,4) NOT NULL,
-        TotalCost decimal(18,4) NOT NULL,
+        UnitCost decimal(19,6) NOT NULL,
+        TotalCost decimal(19,6) NOT NULL,
         PostingLinkID bigint NOT NULL,
         OriginalMovementID bigint NULL,
         Reason nvarchar(50) NULL,

@@ -28,8 +28,8 @@ public sealed class ProductionBalLotMovementConfiguration : IEntityTypeConfigura
         builder.Property(x => x.Uom).HasColumnName("UOM").HasMaxLength(10).IsRequired();
         builder.Property(x => x.BaseQty).HasPrecision(18, 4);
         builder.Property(x => x.BaseUom).HasColumnName("BaseUOM").HasMaxLength(10).IsRequired();
-        builder.Property(x => x.UnitCost).HasPrecision(18, 4);
-        builder.Property(x => x.TotalCost).HasPrecision(18, 4);
+        builder.Property(x => x.UnitCost).HasPrecision(19, 6);
+        builder.Property(x => x.TotalCost).HasPrecision(19, 6);
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.WorkOrderMaterialId).HasColumnName("WorkOrderMaterialID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");

@@ -1,6 +1,8 @@
 using ErpWeb.Core.Numbering;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -26,6 +28,10 @@ public sealed class ProductionDailyOutputSchemaTests
         var entity = Model.FindEntityType(typeof(ProductionBalLot))
             ?? throw new InvalidOperationException("ProductionBalLot is not mapped.");
         Assert.Equal("PrProductionBalLot", entity.GetTableName());
+        Assert.Equal(19, entity.FindProperty(nameof(ProductionBalLot.TotalCost))!.GetPrecision());
+        Assert.Equal(6, entity.FindProperty(nameof(ProductionBalLot.TotalCost))!.GetScale());
+        Assert.Equal(19, entity.FindProperty(nameof(ProductionBalLot.AverageUnitCost))!.GetPrecision());
+        Assert.Equal(6, entity.FindProperty(nameof(ProductionBalLot.AverageUnitCost))!.GetScale());
         var indexes = entity.GetIndexes().Select(x => x.GetDatabaseName()).ToHashSet();
         Assert.Contains("UQ_PrProductionBalLot_MaterialIn", indexes);
         Assert.Contains("UQ_PrProductionBalLot_Wip", indexes);
@@ -37,6 +43,10 @@ public sealed class ProductionDailyOutputSchemaTests
         var entity = Model.FindEntityType(typeof(ProductionBalLotMovement))
             ?? throw new InvalidOperationException("ProductionBalLotMovement is not mapped.");
         Assert.Equal("PrProductionBalLotMovement", entity.GetTableName());
+        Assert.Equal(19, entity.FindProperty(nameof(ProductionBalLotMovement.UnitCost))!.GetPrecision());
+        Assert.Equal(6, entity.FindProperty(nameof(ProductionBalLotMovement.UnitCost))!.GetScale());
+        Assert.Equal(19, entity.FindProperty(nameof(ProductionBalLotMovement.TotalCost))!.GetPrecision());
+        Assert.Equal(6, entity.FindProperty(nameof(ProductionBalLotMovement.TotalCost))!.GetScale());
         var checks = entity.GetCheckConstraints().Select(x => x.Name).ToHashSet();
         Assert.Contains("CK_PrProductionBalLotMovement_Type", checks);
     }
@@ -67,6 +77,29 @@ public sealed class ProductionDailyOutputSchemaTests
         Assert.True(indexes["UQ_PrMaterialMovement_PostingBalLotLine"].IsUnique);
         Assert.Contains("InventoryBatchDetailID", indexes["UQ_PrMaterialMovement_PostingInventoryLine"].GetFilter()!, StringComparison.Ordinal);
         Assert.Contains("ProductionBalLotMovementID", indexes["UQ_PrMaterialMovement_PostingBalLotLine"].GetFilter()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_cost_authority_money_fields_use_six_decimals()
+    {
+        AssertMoneyPrecision<ProductionFinishedGoodFact>(nameof(ProductionFinishedGoodFact.TotalValue));
+        AssertMoneyPrecision<ProductionPoolValuation>(nameof(ProductionPoolValuation.TrackedValue));
+        AssertMoneyPrecision<ProductionValuationEvidence>(nameof(ProductionValuationEvidence.Price));
+        AssertMoneyPrecision<IvTrxHistory>(nameof(IvTrxHistory.ExactTransferredValue));
+
+        var snapshot = Model.FindEntityType(typeof(ProductionFinishedGoodPriceSnapshot))!;
+        Assert.Equal(18, snapshot.FindProperty(nameof(ProductionFinishedGoodPriceSnapshot.PostedUnitPrice))!.GetPrecision());
+        Assert.Equal(4, snapshot.FindProperty(nameof(ProductionFinishedGoodPriceSnapshot.PostedUnitPrice))!.GetScale());
+    }
+
+    private static void AssertMoneyPrecision<T>(string propertyName) where T : class
+    {
+        var entity = Model.FindEntityType(typeof(T))
+            ?? throw new InvalidOperationException($"{typeof(T).Name} is not mapped.");
+        var property = entity.FindProperty(propertyName)
+            ?? throw new InvalidOperationException($"{typeof(T).Name}.{propertyName} is not mapped.");
+        Assert.Equal(19, property.GetPrecision());
+        Assert.Equal(6, property.GetScale());
     }
 
     [Fact]

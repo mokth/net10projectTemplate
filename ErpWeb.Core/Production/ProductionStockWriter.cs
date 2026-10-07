@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
@@ -62,15 +63,17 @@ public sealed class ProductionStockWriter(IStockMovementRegistry registry) : IPr
 
             var factor = leg.Balance.ConversionFactorToBase;
             var nextQty = IvQty.Round(nextBase / factor);
-            var value = leg.ExactTotalValue ?? IvQty.Round(roundedBase * leg.Balance.AverageUnitCost);
+            var value = leg.ExactTotalValue is decimal exact
+                ? StockLedgerPrecision.Money(exact)
+                : StockLedgerPrecision.Money(roundedBase * leg.Balance.AverageUnitCost);
             if (value < 0m) throw new InvalidOperationException("Transferred value cannot be negative.");
             if (leg.ExactTotalValue.HasValue)
             {
-                var nextValue = IvQty.Round(leg.Balance.TotalCost + definition.Direction * value);
+                var nextValue = StockLedgerPrecision.Money(leg.Balance.TotalCost + definition.Direction * value);
                 if (nextValue < 0m || (nextBase == 0m && nextValue != 0m))
                     throw new InvalidOperationException("Production value would become negative or stranded.");
                 leg.Balance.TotalCost = nextValue;
-                leg.Balance.AverageUnitCost = nextBase > 0m ? IvQty.Round(nextValue / nextBase) : 0m;
+                leg.Balance.AverageUnitCost = nextBase > 0m ? StockLedgerPrecision.Money(nextValue / nextBase) : 0m;
             }
             leg.Balance.BaseQty = nextBase;
             leg.Balance.Qty = nextQty;
@@ -85,7 +88,7 @@ public sealed class ProductionStockWriter(IStockMovementRegistry registry) : IPr
                 Uom = leg.Balance.Uom,
                 BaseQty = roundedBase,
                 BaseUom = leg.Balance.BaseUom,
-                UnitCost = IvQty.Round(value / roundedBase),
+                UnitCost = StockLedgerPrecision.Money(value / roundedBase),
                 TotalCost = value,
                 WorkOrderId = leg.WorkOrderId,
                 WorkOrderMaterialId = leg.WorkOrderMaterialId,

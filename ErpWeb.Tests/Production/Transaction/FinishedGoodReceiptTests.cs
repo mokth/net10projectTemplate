@@ -30,7 +30,7 @@ public sealed class FinishedGoodReceiptMathTests
     public void Final_depletion_and_many_lines_conserve_exact_value()
     {
         var value = FinishedGoodReceiptMath.AllocateValue(3, 10, [(9, 1), (1, 1), (2, 1)]);
-        Assert.Equal(10, value.Values.Sum()); Assert.Equal(3.3334m, value[9]);
+        Assert.Equal(10, value.Values.Sum()); Assert.Equal(3.333334m, value[9]);
     }
     [Fact]
     public void Tiny_values_do_not_create_negative_remainders()

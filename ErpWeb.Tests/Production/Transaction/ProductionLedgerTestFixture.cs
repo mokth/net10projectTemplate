@@ -66,6 +66,23 @@ internal static class ProductionLedgerTestFixture
         string company = "DEMO",
         string branch = "HQ",
         IInventoryValuationService? valuation = null) =>
+        CreateCoordinatorCore(
+            factory,
+            company,
+            branch,
+            valuation ?? new InventoryValuationService());
+
+    public static StockPostingCoordinator CreateCoordinatorWithoutValuation(
+        IDbContextFactory<AppDbContext> factory,
+        string company = "DEMO",
+        string branch = "HQ") =>
+        CreateCoordinatorCore(factory, company, branch, valuation: null);
+
+    private static StockPostingCoordinator CreateCoordinatorCore(
+        IDbContextFactory<AppDbContext> factory,
+        string company,
+        string branch,
+        IInventoryValuationService? valuation) =>
         new(
             factory,
             InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch),

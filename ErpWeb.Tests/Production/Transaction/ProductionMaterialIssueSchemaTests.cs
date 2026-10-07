@@ -51,6 +51,10 @@ public sealed class ProductionMaterialIssueSchemaTests
         Assert.Equal(18, Entity.FindProperty(nameof(ProductionMaterialMovement.Qty))!.GetPrecision());
         Assert.Equal(4, Entity.FindProperty(nameof(ProductionMaterialMovement.Qty))!.GetScale());
         Assert.Equal(8, Entity.FindProperty(nameof(ProductionMaterialMovement.ConversionFactorToBase))!.GetScale());
+        Assert.Equal(19, Entity.FindProperty(nameof(ProductionMaterialMovement.UnitCost))!.GetPrecision());
+        Assert.Equal(6, Entity.FindProperty(nameof(ProductionMaterialMovement.UnitCost))!.GetScale());
+        Assert.Equal(19, Entity.FindProperty(nameof(ProductionMaterialMovement.TotalCost))!.GetPrecision());
+        Assert.Equal(6, Entity.FindProperty(nameof(ProductionMaterialMovement.TotalCost))!.GetScale());
 
         var checks = Entity.GetCheckConstraints().Select(x => x.Name).ToHashSet();
         Assert.Contains("CK_PrMaterialMovement_Qty", checks);

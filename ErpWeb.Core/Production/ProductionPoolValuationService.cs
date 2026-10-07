@@ -1,7 +1,9 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
@@ -34,7 +36,7 @@ public static class ProductionPoolValuationService
                 {
                     ProductionBalLotId = lot.Uid,
                     TrackedBaseQty = IvQty.Round(lot.BaseQty - samePool.Sum(x => registry.GetRequired(x.MovementType).Direction * x.BaseQty)),
-                    TrackedValue = IvQty.Round(lot.TotalCost - samePool.Sum(x => registry.GetRequired(x.MovementType).Direction * x.TotalCost))
+                    TrackedValue = StockLedgerPrecision.Money(lot.TotalCost - samePool.Sum(x => registry.GetRequired(x.MovementType).Direction * x.TotalCost))
                 };
                 db.ProductionPoolValuationRows.Add(pool);
             }
@@ -55,13 +57,26 @@ public static class ProductionPoolValuationService
                 ? await db.IvTrxHistories.SingleOrDefaultAsync(x => x.Id == historyId, ct) : null;
             if (movement.MovementType == ProductionBalLotMovementTypes.Issue)
             {
-                var verified = ProductionCostReadiness.HasVerifiedInventoryCost(
-                    history?.UnitPrice,
-                    history?.PriceEvidence);
-                status = verified ? Verified : Unvalued;
-                basis = verified
-                    ? history!.PriceEvidence!.Trim()
-                    : "MISSING_OR_INVALID_INVENTORY_PRICE_EVIDENCE";
+                var valuationFacts = await db.StockValuationFacts
+                    .Where(x => x.StockPostingId == context.Posting.Id
+                        && x.InventoryHistoryId == movement.InventoryHistoryId
+                        && x.Direction < 0
+                        && x.MovementCode == "PRODUCTION_MATERIAL_OUT"
+                        && x.ValuationStatus == StockValuationStatuses.Valued)
+                    .ToListAsync(ct);
+                var factQty = IvQty.Round(valuationFacts.Sum(x => x.BaseQty));
+                var factValue = StockLedgerPrecision.Money(valuationFacts.Sum(x => x.CostAmount));
+                if (movement.InventoryHistoryId is null
+                    || valuationFacts.Count == 0
+                    || factQty != IvQty.Round(movement.BaseQty)
+                    || factValue != StockLedgerPrecision.Money(movement.TotalCost))
+                {
+                    throw new InvalidOperationException(
+                        $"Production ISSUE movement {movement.Uid} does not reconcile to V2 inventory valuation facts.");
+                }
+
+                status = Verified;
+                basis = $"STOCK_VALUATION:{context.CostMethod}";
             }
             if (direction > 0)
             {
@@ -77,7 +92,12 @@ public static class ProductionPoolValuationService
             {
                 MovementId = movement.Uid, ProductionBalLotId = lot.Uid, Generation = pool.Generation,
                 Status = status, Basis = basis, Currency = status == Verified ? "COMPANY_BASE" : null,
-                PriceUom = movement.BaseUom, Price = status == Verified ? movement.UnitCost : null,
+                PriceUom = movement.BaseUom,
+                Price = status == Verified
+                    ? StockLedgerPrecision.Money(movement.BaseQty > 0m
+                        ? movement.TotalCost / movement.BaseQty
+                        : movement.UnitCost)
+                    : null,
                 ConversionFactor = movement.ConversionFactorToBase, InventoryHistoryId = history?.Id,
                 OriginalMovementId = movement.OriginalMovementId
             };
@@ -130,7 +150,7 @@ public static class ProductionPoolValuationService
                 foreach (var inputId in inputIds)
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = inputId, ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
             pool.TrackedBaseQty = IvQty.Round(pool.TrackedBaseQty + direction * movement.BaseQty);
-            pool.TrackedValue = IvQty.Round(pool.TrackedValue + direction * movement.TotalCost);
+            pool.TrackedValue = StockLedgerPrecision.Money(pool.TrackedValue + direction * movement.TotalCost);
             if (pool.TrackedBaseQty < 0 || pool.TrackedValue < 0 || (pool.TrackedBaseQty == 0 && pool.TrackedValue != 0))
                 throw new InvalidOperationException("Production quantity/value reconciliation failed.");
             await db.SaveChangesAsync(ct);

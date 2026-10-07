@@ -64,6 +64,18 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             ? Task.CompletedTask
             : _coordinator.CompleteInTransactionAsync(context, cancellationToken);
 
+    public Task ValuePostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default)
+    {
+        if (context is null)
+            throw new InvalidOperationException("A V2 posting context is required for pre-seal valuation.");
+        if (_coordinator is null)
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ValuationRequired,
+                "V2 inventory valuation is required before this posting can continue."));
+        return _coordinator.ValuePendingInTransactionAsync(context, cancellationToken);
+    }
+
     private async Task<(StockPostingContext? Context, IvInventoryPostingBatchResult? Fail)> BeginStandaloneLedgerAsync(
         AppDbContext db,
         string companyCode,

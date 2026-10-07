@@ -545,6 +545,9 @@ public sealed partial class CostingDiagnosticCenterTests
         public Task<IvInventoryPostingBatchResult> PostStockOutInTransactionAsync(AppDbContext db, string companyCode, string branchCode, string userId, int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task ValuePostingInTransactionAsync(StockPostingContext? context, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(AppDbContext db, string companyCode, string branchCode, string userId, int batchNo, string expectedTrxType, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 

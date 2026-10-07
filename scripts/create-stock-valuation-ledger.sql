@@ -12,7 +12,7 @@ IF COL_LENGTH(N'dbo.IvTrxBatchDetail', N'PriceEvidence') IS NULL
 IF COL_LENGTH(N'dbo.IvTrxHistory', N'PriceEvidence') IS NULL
     ALTER TABLE dbo.IvTrxHistory ADD PriceEvidence nvarchar(200) NULL;
 IF COL_LENGTH(N'dbo.IvTrxHistory', N'ExactTransferredValue') IS NULL
-    ALTER TABLE dbo.IvTrxHistory ADD ExactTransferredValue decimal(18,4) NULL;
+    ALTER TABLE dbo.IvTrxHistory ADD ExactTransferredValue decimal(19,6) NULL;
 IF COL_LENGTH(N'dbo.IvTrxHistory', N'ValuationStatus') IS NULL
     ALTER TABLE dbo.IvTrxHistory ADD ValuationStatus nvarchar(20) NULL;
 

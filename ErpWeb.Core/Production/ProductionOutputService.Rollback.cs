@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Transactions;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
@@ -187,8 +188,8 @@ public sealed partial class ProductionOutputService
 
                 lot.Qty = IvQty.Round(lot.Qty + originalBal.Qty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty + originalBal.BaseQty);
-                lot.TotalCost = IvQty.Round(lot.TotalCost + originalBal.TotalCost);
-                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
+                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + originalBal.TotalCost);
+                lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var balRev = new ProductionBalLotMovement
                 {
@@ -266,8 +267,8 @@ public sealed partial class ProductionOutputService
 
                 lot.Qty = IvQty.Round(lot.Qty + handoffConsume.Qty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty + handoffConsume.BaseQty);
-                lot.TotalCost = IvQty.Round(lot.TotalCost + handoffConsume.TotalCost);
-                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
+                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + handoffConsume.TotalCost);
+                lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var balRev = new ProductionBalLotMovement
                 {
@@ -307,13 +308,13 @@ public sealed partial class ProductionOutputService
 
                 var nextQty = IvQty.Round(lot.Qty - produce.Qty);
                 var nextBaseQty = IvQty.Round(lot.BaseQty - produce.BaseQty);
-                var nextCost = IvQty.Round(lot.TotalCost - produce.TotalCost);
+                var nextCost = StockLedgerPrecision.Money(lot.TotalCost - produce.TotalCost);
                 if (nextQty < 0m || nextBaseQty < 0m || nextCost < 0m)
                     return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
                 lot.Qty = nextQty;
                 lot.BaseQty = nextBaseQty;
                 lot.TotalCost = nextCost;
-                lot.AverageUnitCost = lot.BaseQty > 0m ? IvQty.Round(lot.TotalCost / lot.BaseQty) : 0m;
+                lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var produceRev = new ProductionBalLotMovement
                 {
@@ -323,7 +324,7 @@ public sealed partial class ProductionOutputService
                     Uom = produce.Uom,
                     BaseQty = produce.BaseQty,
                     BaseUom = produce.BaseUom,
-                    UnitCost = produce.BaseQty > 0m ? IvQty.Round(produce.TotalCost / produce.BaseQty) : 0m,
+                    UnitCost = produce.BaseQty > 0m ? StockLedgerPrecision.Money(produce.TotalCost / produce.BaseQty) : 0m,
                     TotalCost = produce.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,

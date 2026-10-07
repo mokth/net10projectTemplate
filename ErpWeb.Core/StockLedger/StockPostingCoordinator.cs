@@ -21,6 +21,10 @@ public interface IStockPostingCoordinator
     Task CompleteInTransactionAsync(
         StockPostingContext context,
         CancellationToken cancellationToken = default);
+
+    Task ValuePendingInTransactionAsync(
+        StockPostingContext context,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record StockPostingBeginResult(
@@ -278,6 +282,21 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         context.Posting.SealedAtUtc = DateTime.UtcNow;
         await context.Db.SaveChangesAsync(cancellationToken);
         await ClearDatabaseWriteContextAsync(context.Db, cancellationToken);
+    }
+
+    public async Task ValuePendingInTransactionAsync(
+        StockPostingContext context,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.EnsureUnsealed();
+        if (_valuation is null)
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ValuationRequired,
+                "V2 inventory valuation is required before this posting can continue."));
+
+        await _valuation.ValuePendingAsync(context, cancellationToken);
+        await context.Db.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task SetDatabaseWriteContextAsync(AppDbContext db, long postingId, CancellationToken ct)

@@ -635,12 +635,26 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 else
                 {
                     var quantity = Positive(history.ToStdQty, "receipt quantity");
-                    var unitCost = ResolveFifoReceiptUnitCost(history, detail, states);
+                    decimal? forcedAmount = null;
+                    decimal? forcedUnitCost = null;
+                    var source = StockValuationSources.Fifo;
+                    if (history.ExactTransferredValue is decimal exact)
+                    {
+                        forcedAmount = RoundMoney(Math.Abs(exact));
+                        forcedUnitCost = quantity == 0m ? 0m : RoundMoney(forcedAmount.Value / quantity);
+                        source = StockValuationSources.ProductionActual;
+                    }
+                    else
+                    {
+                        var unitCost = ResolveFifoReceiptUnitCost(history, detail, states);
+                        forcedAmount = RoundMoney(quantity * unitCost);
+                        forcedUnitCost = unitCost;
+                    }
                     var fact = AppendReceipt(
                         context, history, detail, states, splitOrdinal: 0,
-                        forcedAmount: RoundMoney(quantity * unitCost),
-                        forcedUnitCost: unitCost,
-                        forcedSource: StockValuationSources.Fifo,
+                        forcedAmount: forcedAmount,
+                        forcedUnitCost: forcedUnitCost,
+                        forcedSource: source,
                         originalFactId: null,
                         result, baseCurrency);
                     AddFifoLayer(context, layersByItem, fact);
@@ -1775,41 +1789,47 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var issueFacts = facts
             .Where(x => x.Direction < 0
                         && x.InventoryHistoryId is > 0
-                        && string.Equals(x.MovementCode, "PRODUCTION_MATERIAL_OUT", StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(x => x.InventoryHistoryId!.Value);
+                        && string.Equals(x.MovementCode, "PRODUCTION_MATERIAL_OUT", StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.ValuationStatus, StockValuationStatuses.Valued, StringComparison.Ordinal))
+            .GroupBy(x => x.InventoryHistoryId!.Value)
+            .ToDictionary(x => x.Key, x => x.ToArray());
         if (issueFacts.Count == 0)
             return;
 
         var historyIds = issueFacts.Keys.ToArray();
         var movements = await db.ProductionMaterialMovements
             .Where(x => x.InventoryHistoryId != null && historyIds.Contains(x.InventoryHistoryId.Value))
+            .Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue)
             .OrderBy(x => x.Uid)
             .ToListAsync(cancellationToken);
-        foreach (var group in movements.GroupBy(x => x.InventoryHistoryId!.Value))
+        var movementsByHistory = movements
+            .GroupBy(x => x.InventoryHistoryId!.Value)
+            .ToDictionary(x => x.Key, x => x.ToArray());
+        foreach (var historyId in historyIds)
         {
-            var fact = issueFacts[group.Key];
-            var rows = group.ToArray();
-            var totalBaseQty = rows.Sum(x => x.BaseQty);
-            if (totalBaseQty <= 0m)
+            if (!movementsByHistory.TryGetValue(historyId, out var rows) || rows.Length != 1)
                 throw LedgerError(StockLedgerErrorCodes.LedgerMismatch,
-                    $"Production movements for inventory history {group.Key} have no positive base quantity.");
+                    $"Expected exactly one ProductionMaterialMovement for inventory history {historyId}, found {rows?.Length ?? 0}.");
 
-            var allocated = 0m;
-            for (var i = 0; i < rows.Length; i++)
+            var movement = rows[0];
+            var valuationFacts = issueFacts[historyId];
+            var factQty = IvQty.Round(valuationFacts.Sum(x => x.BaseQty));
+            if (factQty != movement.BaseQty || movement.BaseQty <= 0m)
+                throw LedgerError(StockLedgerErrorCodes.LedgerMismatch,
+                    $"Production movement for inventory history {historyId} does not reconcile in quantity.");
+
+            var factValue = RoundMoney(valuationFacts.Sum(x => x.CostAmount));
+            movement.TotalCost = factValue;
+            movement.UnitCost = RoundMoney(movement.TotalCost / movement.BaseQty);
+            movement.StockPostingId = valuationFacts[0].StockPostingId;
+            foreach (var fact in valuationFacts)
             {
-                var movement = rows[i];
-                var amount = i == rows.Length - 1
-                    ? fact.CostAmount - allocated
-                    : RoundMoney(fact.CostAmount * movement.BaseQty / totalBaseQty);
-                allocated += amount;
-                movement.UnitCost = RoundMoney(amount / movement.BaseQty);
-                movement.TotalCost = amount;
-                movement.StockPostingId = fact.StockPostingId;
-                movement.SourceLineId = fact.SourceLineId;
-                movement.SplitOrdinal = fact.SplitOrdinal;
-                fact.ProductionMovementId ??= movement.Uid;
-                fact.WorkOrderId ??= movement.WorkOrderId;
-                fact.WorkOrderOperationId ??= movement.WorkOrderOperationId;
+                // FIFO may split one inventory history into several facts. All splits share
+                // the production identity; their inventory source-line/split identity remains
+                // immutable on the V2 facts themselves.
+                fact.ProductionMovementId = movement.Uid;
+                fact.WorkOrderId = movement.WorkOrderId;
+                fact.WorkOrderOperationId = movement.WorkOrderOperationId;
             }
         }
     }

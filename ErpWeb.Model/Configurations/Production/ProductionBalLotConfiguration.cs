@@ -33,8 +33,8 @@ public sealed class ProductionBalLotConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.BaseQty).HasPrecision(18, 4);
         builder.Property(x => x.BaseUom).HasColumnName("BaseUOM").HasMaxLength(10).IsRequired();
         builder.Property(x => x.ConversionFactorToBase).HasPrecision(18, 8);
-        builder.Property(x => x.TotalCost).HasPrecision(18, 4);
-        builder.Property(x => x.AverageUnitCost).HasPrecision(18, 4);
+        builder.Property(x => x.TotalCost).HasPrecision(19, 6);
+        builder.Property(x => x.AverageUnitCost).HasPrecision(19, 6);
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.WorkOrderNo).HasMaxLength(30).IsRequired();
         builder.Property(x => x.WorkOrderMaterialId).HasColumnName("WorkOrderMaterialID");

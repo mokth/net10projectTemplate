@@ -1,9 +1,11 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 
@@ -231,6 +233,9 @@ public sealed partial class ProductionMaterialIssueService
             if (!ledger.LedgerEnabled || ledger.Context is null)
                 return "Issue to Production requires an active V2 stock ledger for this company/branch.";
             var ledgerContext = ledger.Context;
+            // The production link is part of valuation lineage and must be present before
+            // the inventory writer creates histories/facts.
+            ledgerContext.Posting.ProductionPostingLinkId = link.Uid;
             var balanceIds = details.Select(x => x.FromBalLocId!.Value).Distinct().ToArray();
             var sliceKeys = await db.IvBalLocs.AsNoTracking().Where(x => balanceIds.Contains(x.Id))
                 .Select(x => new { x.Id, Key = new IvStockSliceKey(x.CompanyCode, x.BranchCode, x.ICode, x.WhCode, x.LocCode, x.LotNo, x.IStatus) }).ToListAsync(ct);
@@ -303,11 +308,13 @@ public sealed partial class ProductionMaterialIssueService
                     LotId = history.FromLotId, FromBalLocId = history.FromBalLocId!.Value, ItemStatus = history.IStatus ?? "",
                     InventoryBatchId = batch.Id, InventoryBatchNo = batchNo, InventoryBatchDetailId = detail.Id,
                     InventoryTrxLineNo = detail.TrxLineNo, InventoryHistoryId = history.Id,
-                    InventoryPostingOperationId = posted.OperationId?.ToString("N"), UnitCost = map.BaseQty > 0 ? IvQty.Round((history.FrStdQty ?? 0m) * (history.UnitPrice ?? 0m) / map.BaseQty) : 0m,
-                    TotalCost = IvQty.Round((history.FrStdQty ?? 0m) * (history.UnitPrice ?? 0m)), PostingLinkId = link.Uid,
+                    InventoryPostingOperationId = posted.OperationId?.ToString("N"), UnitCost = 0m,
+                    TotalCost = 0m, PostingLinkId = link.Uid,
                     Remarks = batch.Remarks, CreatedDate = now, CreatedBy = user });
             }
             await db.SaveChangesAsync(ct);
+            await StampProductionMaterialIdentityAsync(ledgerContext, link.Uid, ct);
+            await _inventoryPosting.ValuePostingInTransactionAsync(ledgerContext, ct);
             var allFacts = await db.ProductionMaterialMovements.AsNoTracking().Where(x => materialIds.Contains(x.WorkOrderMaterialId))
                 .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.Qty }).ToListAsync(ct);
             foreach (var material in materials.Values)
@@ -321,7 +328,7 @@ public sealed partial class ProductionMaterialIssueService
                     rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
                 material.ModifiedDate = now; material.ModifiedBy = user;
             }
-            await CreateMaterialInLotsAsync(db, order, link, now, user, ct);
+            await CreateMaterialInLotsAsync(ledgerContext, order, link, now, user, ct);
             await StampIssueLedgerFactsAsync(ledgerContext, link.Uid, ct);
             TestHookAfterIssueValuation?.Invoke();
             await ProductionPostingInvariant.AssertIssueVerifiedAsync(ledgerContext, link.Uid, ct);
@@ -334,7 +341,6 @@ public sealed partial class ProductionMaterialIssueService
             link.PostingOperationId = posted.OperationId?.ToString("N"); link.Status = ProductionPostingLinkStatuses.Succeeded;
             link.ResultCode = "OK"; link.ResultMessage = $"Posted IP batch {batchNo}."; link.CompletedDate = now;
             await db.SaveChangesAsync(ct);
-            ledgerContext.Posting.ProductionPostingLinkId = link.Uid;
             await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, ct);
             ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(ct);
@@ -355,6 +361,26 @@ public sealed partial class ProductionMaterialIssueService
             await tx.RollbackAsync(CancellationToken.None);
             return "Posting conflicted with another change; reload and retry.";
         }
+    }
+
+    private static async Task StampProductionMaterialIdentityAsync(
+        ErpWeb.Core.StockLedger.StockPostingContext context,
+        long postingLinkId,
+        CancellationToken cancellationToken)
+    {
+        var materials = await context.Db.ProductionMaterialMovements
+            .Where(x => x.PostingLinkId == postingLinkId && x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .OrderBy(x => x.Uid)
+            .ToListAsync(cancellationToken);
+        foreach (var material in materials)
+        {
+            material.StockPostingId = context.Posting.Id;
+            material.SourceLineId = material.InventoryBatchDetailId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                ?? throw new InvalidOperationException("Issue movement is missing an inventory detail identity.");
+            material.SplitOrdinal = 0;
+        }
+
+        await context.Db.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task StampIssueLedgerFactsAsync(
@@ -390,34 +416,28 @@ public sealed partial class ProductionMaterialIssueService
             movement.PhysicalLotNo = lot.PhysicalLotNo;
             movement.StockStatusCode = lot.StockStatusCode ?? "AVAILABLE";
             movement.ConversionFactorToBase = lot.ConversionFactorToBase;
-            movement.SourceLineId = lot.OriginalIssueMovementId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            var material = lot.OriginalIssueMovementId is long materialId
+                ? await context.Db.ProductionMaterialMovements.SingleOrDefaultAsync(x => x.Uid == materialId, cancellationToken)
+                : null;
+            movement.SourceLineId = material?.SourceLineId
                 ?? movement.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             movement.SplitOrdinal = 0;
             movement.ValuationStatus = "UNVALUED";
             lot.LastStockEventEffectiveAt = context.Posting.EffectiveAt;
-        }
-        var materials = await context.Db.ProductionMaterialMovements
-            .Where(x => x.PostingLinkId == postingLinkId && x.MovementType == ProductionMaterialMovementTypes.Issue)
-            .ToListAsync(cancellationToken);
-        foreach (var material in materials)
-        {
-            material.StockPostingId = context.Posting.Id;
-            material.SourceLineId = material.InventoryBatchDetailId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                ?? throw new InvalidOperationException("Issue movement is missing an inventory detail identity.");
-            material.SplitOrdinal = 0;
         }
         await context.Db.SaveChangesAsync(cancellationToken);
         await ProductionPoolValuationService.RecordAsync(context, movements, cancellationToken);
     }
 
     private static async Task CreateMaterialInLotsAsync(
-        AppDbContext db,
+        ErpWeb.Core.StockLedger.StockPostingContext context,
         ProductionWorkOrder order,
         ProductionPostingLink link,
         DateTime now,
         string user,
         CancellationToken ct)
     {
+        var db = context.Db;
         var issueMovements = await db.ProductionMaterialMovements
             .Where(x => x.PostingLinkId == link.Uid
                         && x.MovementType == ProductionMaterialMovementTypes.Issue)
@@ -426,6 +446,35 @@ public sealed partial class ProductionMaterialIssueService
 
         foreach (var movement in issueMovements)
         {
+            if (movement.StockPostingId != context.Posting.Id
+                || movement.InventoryHistoryId is not int historyId
+                || movement.BaseQty <= 0m
+                || movement.TotalCost < 0m)
+            {
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} is not valued on the current posting.");
+            }
+
+            var facts = await db.StockValuationFacts
+                .Where(x => x.StockPostingId == context.Posting.Id
+                    && x.InventoryHistoryId == historyId
+                    && x.Direction < 0
+                    && x.MovementCode == "PRODUCTION_MATERIAL_OUT"
+                    && x.ValuationStatus == StockValuationStatuses.Valued)
+                .ToListAsync(ct);
+            var factQty = IvQty.Round(facts.Sum(x => x.BaseQty));
+            var factValue = ErpWeb.Core.StockLedger.Costing.StockLedgerPrecision.Money(facts.Sum(x => x.CostAmount));
+            if (facts.Count == 0
+                || factQty != movement.BaseQty
+                || factValue != ErpWeb.Core.StockLedger.Costing.StockLedgerPrecision.Money(movement.TotalCost))
+            {
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} does not reconcile to V2 valuation facts.");
+            }
+
+            movement.TotalCost = factValue;
+            movement.UnitCost = ErpWeb.Core.StockLedger.Costing.StockLedgerPrecision.Money(
+                movement.TotalCost / movement.BaseQty);
             var material = await db.ProductionWorkOrderMaterials
                 .SingleAsync(x => x.Uid == movement.WorkOrderMaterialId, ct);
             var lot = new ProductionBalLot
@@ -442,7 +491,7 @@ public sealed partial class ProductionMaterialIssueService
                 ConversionFactorToBase = movement.ConversionFactorToBase,
                 TotalCost = movement.TotalCost,
                 AverageUnitCost = movement.BaseQty > 0m
-                    ? IvQty.Round(movement.TotalCost / movement.BaseQty)
+                    ? StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty)
                     : movement.UnitCost,
                 WorkOrderId = order.Uid,
                 WorkOrderNo = order.WorkOrderNo,

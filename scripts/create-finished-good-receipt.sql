@@ -70,7 +70,7 @@ CREATE TABLE [PrFinishedGoodFact] (
     [InventoryHistoryId] int NOT NULL,
     [DestinationBalanceId] int NOT NULL,
     [BaseQty] decimal(18,4) NOT NULL,
-    [TotalValue] decimal(18,4) NOT NULL,
+    [TotalValue] decimal(19,6) NOT NULL,
     [ReversesFactId] bigint NULL,
     CONSTRAINT [PK_PrFinishedGoodFact] PRIMARY KEY ([Id]),
     CONSTRAINT [FK_PrFinishedGoodFact_IvBalLoc_DestinationBalanceId] FOREIGN KEY ([DestinationBalanceId]) REFERENCES [IvBalLoc] ([ID]) ON DELETE NO ACTION,
@@ -108,7 +108,7 @@ CREATE TABLE [PrPoolValuation] (
     [Generation] int NOT NULL,
     [Status] nvarchar(200) NOT NULL,
     [TrackedBaseQty] decimal(18,4) NOT NULL,
-    [TrackedValue] decimal(18,4) NOT NULL,
+    [TrackedValue] decimal(19,6) NOT NULL,
     CONSTRAINT [PK_PrPoolValuation] PRIMARY KEY ([ProductionBalLotId]),
     CONSTRAINT [FK_PrPoolValuation_PrProductionBalLot_ProductionBalLotId] FOREIGN KEY ([ProductionBalLotId]) REFERENCES [PrProductionBalLot] ([UID]) ON DELETE NO ACTION
 );
@@ -140,7 +140,7 @@ CREATE TABLE [PrValuationEvidence] (
     [Basis] nvarchar(200) NOT NULL,
     [Currency] nvarchar(200) NULL,
     [PriceUom] nvarchar(200) NULL,
-    [Price] decimal(18,4) NULL,
+    [Price] decimal(19,6) NULL,
     [ConversionFactor] decimal(18,8) NULL,
     [InventoryHistoryId] int NULL,
     [OriginalMovementId] bigint NULL,
@@ -251,7 +251,7 @@ IF COL_LENGTH(N'dbo.IvBalLoc', N'PriceEvidence') IS NULL ALTER TABLE dbo.IvBalLo
 GO
 IF COL_LENGTH(N'dbo.IvTrxHistory', N'PriceEvidence') IS NULL ALTER TABLE dbo.IvTrxHistory ADD PriceEvidence nvarchar(200) NULL;
 GO
-IF COL_LENGTH(N'dbo.IvTrxHistory', N'ExactTransferredValue') IS NULL ALTER TABLE dbo.IvTrxHistory ADD ExactTransferredValue decimal(18,4) NULL;
+IF COL_LENGTH(N'dbo.IvTrxHistory', N'ExactTransferredValue') IS NULL ALTER TABLE dbo.IvTrxHistory ADD ExactTransferredValue decimal(19,6) NULL;
 GO
 IF COL_LENGTH(N'dbo.IvTrxHistory', N'ValuationStatus') IS NULL ALTER TABLE dbo.IvTrxHistory ADD ValuationStatus nvarchar(20) NULL;
 GO

@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
@@ -72,7 +73,7 @@ public static class ProductionBalLotOpening
 
         var factor = issue.ConversionFactorToBase <= 0m ? 1m : issue.ConversionFactorToBase;
         var remainingQty = IvQty.Round(remainingBase / factor);
-        var remainingCost = IvQty.Round(remainingBase * issue.UnitCost);
+        var remainingCost = StockLedgerPrecision.Money(remainingBase * issue.UnitCost);
         return new OpeningResult(true, remainingBase, remainingQty, remainingCost, null);
     }
 

@@ -57,6 +57,9 @@ public interface IIvInventoryPostingService
         StockPostingContext? context, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
+    Task ValuePostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default);
+
     Task<IvInventoryPostingResult> PostAsync(
         string trxType,
         IReadOnlyList<int> batchNos,

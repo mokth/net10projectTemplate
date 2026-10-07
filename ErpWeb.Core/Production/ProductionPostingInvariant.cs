@@ -1,5 +1,8 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
@@ -28,6 +31,7 @@ public static class ProductionPostingInvariant
         if (movements.Count == 0)
             throw new ProductionPostingInvariantException("No ISSUE movement was recorded for the posting link.");
 
+        await AssertMaterialMovementsAsync(context, postingLinkId, ct);
         await AssertMovementsAsync(context, movements, requireIssueHistory: true, ct);
         await AssertTouchedPoolsAsync(context, movements, ct);
     }
@@ -131,6 +135,65 @@ public static class ProductionPostingInvariant
             var nonempty = lot.BaseQty != 0m || lot.TotalCost != 0m;
             if (nonempty && !string.Equals(pool.Status, ProductionPoolValuationService.Verified, StringComparison.Ordinal))
                 throw new ProductionPostingInvariantException($"Production pool {lotId} is not VERIFIED.");
+        }
+    }
+
+    private static async Task AssertMaterialMovementsAsync(
+        StockPostingContext context,
+        long postingLinkId,
+        CancellationToken ct)
+    {
+        var materials = await context.Db.ProductionMaterialMovements
+            .Where(x => x.PostingLinkId == postingLinkId
+                && x.MovementType == ProductionMaterialMovementTypes.Issue)
+            .OrderBy(x => x.Uid)
+            .ToListAsync(ct);
+        if (materials.Count == 0)
+            throw new ProductionPostingInvariantException("No production material movement was recorded for the posting link.");
+
+        foreach (var movement in materials)
+        {
+            if (movement.StockPostingId != context.Posting.Id
+                || movement.InventoryHistoryId is null
+                || movement.BaseQty <= 0m
+                || movement.TotalCost < 0m
+                || string.IsNullOrWhiteSpace(movement.SourceLineId)
+                || movement.SplitOrdinal != 0)
+            {
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} is missing current-posting valuation identity.");
+            }
+
+            var facts = await context.Db.StockValuationFacts
+                .Where(x => x.StockPostingId == context.Posting.Id
+                    && x.InventoryHistoryId == movement.InventoryHistoryId
+                    && x.Direction < 0
+                    && x.MovementCode == "PRODUCTION_MATERIAL_OUT"
+                    && x.ValuationStatus == StockValuationStatuses.Valued)
+                .ToListAsync(ct);
+            if (facts.Count == 0)
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} has no VERIFIED V2 valuation facts.");
+
+            var factQty = IvQty.Round(facts.Sum(x => x.BaseQty));
+            var factValue = StockLedgerPrecision.Money(facts.Sum(x => x.CostAmount));
+            if (factQty != movement.BaseQty || factValue != StockLedgerPrecision.Money(movement.TotalCost))
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} does not reconcile to V2 valuation facts.");
+
+            var expectedUnitCost = StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty);
+            if (StockLedgerPrecision.Money(movement.UnitCost) != expectedUnitCost)
+                throw new ProductionPostingInvariantException(
+                    $"Production material movement {movement.Uid} has an incorrect authoritative unit cost.");
+
+            if (facts.Any(x => x.ProductionPostingLinkId != postingLinkId
+                || x.ProductionMovementId != movement.Uid
+                || x.WorkOrderId != movement.WorkOrderId
+                || x.WorkOrderOperationId != movement.WorkOrderOperationId))
+            {
+                throw new ProductionPostingInvariantException(
+                    $"V2 valuation facts for production material movement {movement.Uid} have incomplete production lineage.");
+            }
         }
     }
 }

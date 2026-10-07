@@ -17,7 +17,12 @@ public sealed class ProductionFinishedGoodReceiptConfiguration :
         foreach (var p in b.Metadata.GetProperties())
         {
             if (p.ClrType == typeof(decimal) || p.ClrType == typeof(decimal?))
-                b.Property(p.Name).HasPrecision(18, p.Name.Contains("Factor") ? 8 : 4);
+            {
+                var isAuthorityMoney = p.Name is "TotalValue" or "TrackedValue" or "Price";
+                b.Property(p.Name).HasPrecision(
+                    isAuthorityMoney ? 19 : 18,
+                    p.Name.Contains("Factor") ? 8 : isAuthorityMoney ? 6 : 4);
+            }
             if (p.ClrType == typeof(string)) b.Property(p.Name).HasMaxLength(200);
         }
     }

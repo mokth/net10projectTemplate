@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using CdnStatuses = ErpWeb.Core.Sales.SaCdnStatuses;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -52,6 +53,11 @@ internal sealed class FailRollbackInventoryPostingService : IIvInventoryPostingS
         string expectedTrxType,
         CancellationToken cancellationToken = default) =>
         _inner.PostStockOutInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
+
+    public Task ValuePostingInTransactionAsync(
+        StockPostingContext? context,
+        CancellationToken cancellationToken = default) =>
+        _inner.ValuePostingInTransactionAsync(context, cancellationToken);
 
     public Task<IvInventoryPostingBatchResult> RollBackStockOutInTransactionAsync(
         AppDbContext db,

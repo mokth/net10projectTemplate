@@ -46,8 +46,8 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.Property(x => x.ProductionBalLotId).HasColumnName("ProductionBalLotID");
         builder.Property(x => x.ProductionBalLotMovementId).HasColumnName("ProductionBalLotMovementID");
         builder.Property(x => x.ProductionOutputId).HasColumnName("ProductionOutputID");
-        builder.Property(x => x.UnitCost).HasPrecision(18, 4);
-        builder.Property(x => x.TotalCost).HasPrecision(18, 4);
+        builder.Property(x => x.UnitCost).HasPrecision(19, 6);
+        builder.Property(x => x.TotalCost).HasPrecision(19, 6);
         builder.Property(x => x.PostingLinkId).HasColumnName("PostingLinkID");
         builder.Property(x => x.OriginalMovementId).HasColumnName("OriginalMovementID");
         builder.Property(x => x.StockPostingId).HasColumnName("StockPostingID");

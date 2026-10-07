@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger.Costing;
 
 namespace ErpWeb.Core.Production;
 
@@ -23,14 +24,20 @@ public static class FinishedGoodReceiptMath
         if (availableBaseQty <= 0 || totalValue < 0 || lines.Count == 0 || lines.Any(x => x.BaseQty <= 0)
             || lines.Select(x => x.Id).Distinct().Count() != lines.Count || qty > availableBaseQty)
             throw new InvalidOperationException("Insufficient source quantity or invalid valuation allocation.");
-        var value = qty == availableBaseQty ? totalValue : IvQty.Round(totalValue * qty / availableBaseQty);
+        var value = qty == availableBaseQty
+            ? StockLedgerPrecision.Money(totalValue)
+            : StockLedgerPrecision.Money(totalValue * qty / availableBaseQty);
         var remaining = value;
         var result = new Dictionary<long, decimal>();
         var ordered = lines.OrderBy(x => x.Id).ToArray();
         for (var i = 0; i < ordered.Length; i++)
         {
-            var amount = i == ordered.Length - 1 ? remaining : Math.Min(remaining, IvQty.Round(value * ordered[i].BaseQty / qty));
-            result.Add(ordered[i].Id, amount); remaining -= amount;
+            var amount = i == ordered.Length - 1
+                ? remaining
+                : Math.Min(remaining, StockLedgerPrecision.Money(value * ordered[i].BaseQty / qty));
+            amount = StockLedgerPrecision.Money(amount);
+            result.Add(ordered[i].Id, amount);
+            remaining = StockLedgerPrecision.Money(remaining - amount);
         }
         return result;
     }
