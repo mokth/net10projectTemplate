@@ -86,17 +86,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Vendors"
-                                                ValueFieldName="@nameof(PoInvoiceVendorLookupRow.SuppCode)"
-                                                TextFieldName="@nameof(PoInvoiceVendorLookupRow.DisplayText)"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Value="@Model.VendorCode"
-                                                ValueChanged="@(async (string? v) => await OnVendorChanged(v))"
-                                                Enabled="@IsEditable"
-                                                NullText="Select vendor"
-                                                CssClass="w-100 required-field" />
+                                    <PoSupplierPicker SuppCode="@Model.VendorCode"
+                                                      Selected="@OnVendorSelectedAsync"
+                                                      Cleared="@OnVendorClearedAsync"
+                                                      Enabled="@IsEditable"
+                                                      NullText="Select vendor"
+                                                      InputCssClass="w-100 required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Name" ColSpanMd="12">
@@ -391,27 +386,57 @@
                  @bind-Visible="PoPickerVisible">
             <Content>
                 <div class="sdoc-popup-body">
-                    <DxGrid Data="@PoPickerRows"
-                            KeyFieldName="@nameof(PoInvoicePoLinePickerRow.DisplayText)"
-                            PageSize="10"
-                            SelectionMode="GridSelectionMode.Multiple"
-                            @bind-SelectedDataItems="SelectedPoLines"
-                            CssClass="sdoc-line-grid">
-                        <Columns>
-                            <DxGridSelectionColumn Width="40px" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoNo)" Caption="PO" Width="120px" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.Line)" Caption="Line" Width="60px" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.ICode)" Caption="Item" Width="100px" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PurchaseUom)" Caption="UOM" Width="70px" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.InvoiceableQty)" Caption="Invoiceable" Width="110px" DisplayFormat="n4" />
-                            <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoUnitPrice)" Caption="PO Price" Width="110px" DisplayFormat="n6" />
-                        </Columns>
-                    </DxGrid>
+                    <div class="sdoc-field-row mb-2">
+                        <DxTextBox @bind-Text="@PoPickerSearchText"
+                                   NullText="Search PO / item…"
+                                   CssClass="w-100"
+                                   Enabled="@(!PoPickerLoading)" />
+                        <DxButton Text="Search"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@SearchPoPickerAsync"
+                                  Enabled="@(!PoPickerLoading)" />
+                    </div>
+                    @if (PoPickerLoading && PoPickerRows.Count == 0)
+                    {
+                        <p class="mb-0">Loading invoiceable PO lines…</p>
+                    }
+                    else
+                    {
+                        @if (PoPickerTotalCount > 0)
+                        {
+                            <p class="sdoc-popup-hint mb-2">Showing @PoPickerRows.Count of @PoPickerTotalCount invoiceable line(s).</p>
+                        }
+                        <DxGrid Data="@PoPickerRows"
+                                KeyFieldName="@nameof(PoInvoicePoLinePickerRow.DisplayText)"
+                                PageSize="10"
+                                SelectionMode="GridSelectionMode.Multiple"
+                                @bind-SelectedDataItems="SelectedPoLines"
+                                CssClass="sdoc-line-grid">
+                            <Columns>
+                                <DxGridSelectionColumn Width="40px" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoNo)" Caption="PO" Width="120px" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.Line)" Caption="Line" Width="60px" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.ICode)" Caption="Item" Width="100px" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PurchaseUom)" Caption="UOM" Width="70px" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.InvoiceableQty)" Caption="Invoiceable" Width="110px" DisplayFormat="n4" />
+                                <DxGridDataColumn FieldName="@nameof(PoInvoicePoLinePickerRow.PoUnitPrice)" Caption="PO Price" Width="110px" DisplayFormat="n6" />
+                            </Columns>
+                        </DxGrid>
+                        @if (PoPickerHasMore)
+                        {
+                            <div class="mt-2">
+                                <DxButton Text="Load more"
+                                          RenderStyle="ButtonRenderStyle.Secondary"
+                                          Click="@LoadMorePoPickerAsync"
+                                          Enabled="@(!PoPickerLoading)" />
+                            </div>
+                        }
+                    }
                 </div>
                 <div class="sdoc-popup-footer">
                     <div class="sdoc-popup-footer__actions">
                         <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PoPickerVisible = false)" />
-                        <DxButton Text="Add selected" RenderStyle="ButtonRenderStyle.Primary" Click="@AddSelectedPoLines" />
+                        <DxButton Text="Add selected" RenderStyle="ButtonRenderStyle.Primary" Click="@AddSelectedPoLines" Enabled="@(!PoPickerLoading)" />
                     </div>
                 </div>
             </Content>

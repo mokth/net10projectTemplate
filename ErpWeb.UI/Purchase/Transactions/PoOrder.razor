@@ -98,16 +98,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="Supplier" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Vendors"
-                                                TextFieldName="@nameof(PoOrderVendorLookupRow.DisplayText)"
-                                                ValueFieldName="@nameof(PoOrderVendorLookupRow.SuppCode)"
-                                                Value="@VendCode"
-                                                ValueChanged="@(async (string? v) => await OnVendCodeChanged(v))"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Enabled="@CanEditSupplier"
-                                                NullText="Select supplier"
-                                                CssClass="w-100 required-field" />
+                                    <PoSupplierPicker SuppCode="@VendCode"
+                                                      Selected="@OnSupplierSelectedAsync"
+                                                      Cleared="@OnSupplierClearedAsync"
+                                                      Enabled="@CanEditSupplier"
+                                                      NullText="Select supplier"
+                                                      InputCssClass="w-100 required-field" />
                                     @FieldError("VendCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -611,15 +607,16 @@
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                         <DxFormLayoutItem Caption="Item" ColSpanMd="8">
                             <Template>
-                                <DxComboBox Data="@Items"
-                                            TextFieldName="@nameof(PoOrderItemLookupRow.DisplayText)"
-                                            ValueFieldName="@nameof(PoOrderItemLookupRow.ICode)"
-                                            Value="@Popup.ICode"
-                                            ValueChanged="@((string? v) => OnPopupItemChanged(v))"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            Enabled="@CanEditPopupIdentity"
-                                            NullText="Select item"
-                                            CssClass="w-100 required-field" />
+                                <PoPurchasingItemPicker ICode="@Popup.ICode"
+                                                        SecondaryName="@Popup.IDesc"
+                                                        Selected="@OnPopupItemSelected"
+                                                        Cleared="@OnPopupItemCleared"
+                                                        Enabled="@CanEditPopupIdentity"
+                                                        IncludeIndirect="true"
+                                                        MenuCode="@MenuCodes.PurchaseOrder"
+                                                        ShowUnitPrice="@CanViewCost"
+                                                        NullText="Select item"
+                                                        InputCssClass="w-100 required-field" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="ETA" ColSpanMd="4">

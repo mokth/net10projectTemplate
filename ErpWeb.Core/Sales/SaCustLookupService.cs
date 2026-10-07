@@ -1,7 +1,9 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Repositories.Sales;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Sales;
@@ -10,11 +12,16 @@ public sealed class SaCustLookupService : ISaCustLookupService
 {
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
+    private readonly ISaCustRepository _customers;
 
-    public SaCustLookupService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant)
+    public SaCustLookupService(
+        IDbContextFactory<AppDbContext> dbFactory,
+        IInventoryTenantContext tenant,
+        ISaCustRepository? customers = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
+        _customers = customers ?? new SaCustRepository(dbFactory);
     }
 
     public Task<IReadOnlyList<IvCodeLookupRow>> ListTypesAsync(CancellationToken cancellationToken = default) =>
@@ -284,6 +291,59 @@ public sealed class SaCustLookupService : ISaCustLookupService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<LargeLookupResolveResult<SaCustomerLookupRow>> ResolveCustomerAsync(
+        string custCode,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return LargeLookupResolveResult<SaCustomerLookupRow>.Fail("Invalid company context.");
+        }
+
+        var code = (custCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return LargeLookupResolveResult<SaCustomerLookupRow>.Fail("Customer code is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var row = await _customers.GetByCodeAsync(db, scope.CompanyCode, code, includeChildren: false, cancellationToken);
+        if (row is null || !row.IsActive)
+        {
+            return LargeLookupResolveResult<SaCustomerLookupRow>.Fail($"Customer '{code}' was not found.");
+        }
+
+        return LargeLookupResolveResult<SaCustomerLookupRow>.Ok(MapCustomer(row));
+    }
+
+    public async Task<LargeLookupPage<SaCustomerLookupRow>> SearchCustomersPagedAsync(
+        LargeLookupSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return LargeLookupPage<SaCustomerLookupRow>.Fail("Invalid company context.");
+        }
+
+        request ??= new LargeLookupSearchRequest();
+        var (rows, total) = await _customers.SearchPagedAsync(
+            scope.CompanyCode,
+            new SaCustSearchArgs
+            {
+                SearchText = request.SearchText,
+                IsActive = true,
+                Skip = request.NormalizedSkip,
+                Take = request.NormalizedTake,
+                SortField = nameof(SaCust.CustCode),
+                SortDescending = false
+            },
+            cancellationToken);
+
+        return LargeLookupPage<SaCustomerLookupRow>.Ok(rows.Select(MapCustomer).ToList(), total);
+    }
+
     public async Task<IReadOnlyList<IvCodeLookupRow>> ListSalesRepsForAssignmentAsync(CancellationToken cancellationToken = default)
     {
         var scope = _tenant.TryCompanyScope();
@@ -353,4 +413,12 @@ public sealed class SaCustLookupService : ISaCustLookupService
 
         return list.Any(x => string.Equals(x.Code, trimmed, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static SaCustomerLookupRow MapCustomer(SaCust x) =>
+        new()
+        {
+            CustCode = x.CustCode,
+            CustName = x.CustName,
+            Currency = x.Currency
+        };
 }

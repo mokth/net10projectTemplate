@@ -107,16 +107,13 @@
                         <Items>
                             <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Customers"
-                                                TextFieldName="@nameof(SaInvoiceCustomerLookupRow.DisplayText)"
-                                                ValueFieldName="@nameof(SaInvoiceCustomerLookupRow.CustCode)"
-                                                Value="@CustCode"
-                                                ValueChanged="@(async (string? v) => await OnCustCodeChanged(v))"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Enabled="@CanEditDocument"
-                                                NullText="Select customer"
-                                                CssClass="w-100 required-field" />
+                                    <SaCustomerPicker CustCode="@CustCode"
+                                                      SecondaryName="@CustName"
+                                                      Selected="@OnCustomerSelectedAsync"
+                                                      Cleared="@OnCustomerClearedAsync"
+                                                      Enabled="@CanEditDocument"
+                                                      NullText="Customer code"
+                                                      InputCssClass="required-field" />
                                     @FieldError("CustCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -580,15 +577,12 @@
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                     <DxFormLayoutItem Caption="Item" ColSpanMd="12">
                         <Template>
-                            <DxComboBox Data="@Items"
-                                        TextFieldName="@nameof(SaInvoiceItemLookupRow.DisplayText)"
-                                        ValueFieldName="@nameof(SaInvoiceItemLookupRow.ICode)"
-                                        Value="@Popup.ICode"
-                                        ValueChanged="@((string? v) => OnPopupItemChangedAsync(v))"
-                                        SearchMode="ListSearchMode.AutoSearch"
-                                        Enabled="@CanEditDocument"
-                                        NullText="Select item"
-                                        CssClass="w-100 required-field" />
+                            <IvStockMasterPicker ICode="@Popup.ICode"
+                                                 Selected="@OnPopupItemSelectedAsync"
+                                                 Cleared="@OnPopupItemClearedAsync"
+                                                 Enabled="@CanEditDocument"
+                                                 NullText="Item code"
+                                                 InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Description" ColSpanMd="8">
@@ -842,17 +836,29 @@
              @bind-Visible="@DoPickerVisible">
         <Content>
             <div class="sdoc-popup-body">
+                <div class="sdoc-field-row mb-2">
+                    <DxTextBox @bind-Text="@DoPickerSearchText"
+                               NullText="Search DO / SO / item…"
+                               CssClass="w-100"
+                               Enabled="@(!DoPickerLoading)" />
+                    <DxButton Text="Search"
+                              RenderStyle="ButtonRenderStyle.Secondary"
+                              Click="@SearchDoPickerAsync"
+                              Enabled="@(!DoPickerLoading)" />
+                </div>
                 @if (!string.IsNullOrWhiteSpace(DoPickerError))
                 {
                     <p class="sdoc-popup-error">@DoPickerError</p>
                 }
-                @if (DoPickerLoading)
+                @if (DoPickerLoading && DoPickerLines.Count == 0)
                 {
                     <p class="mb-0">Loading posted delivery order lines…</p>
                 }
                 else if (DoPickerLines.Count > 0)
                 {
-                    <p class="sdoc-popup-hint mb-2">All remaining lines are selected. Uncheck items to skip them.</p>
+                    <p class="sdoc-popup-hint mb-2">
+                        Showing @DoPickerLines.Count of @DoPickerTotalCount remaining line(s). Selected rows will be added.
+                    </p>
                     <DxGrid Data="@DoPickerLines"
                             KeyFieldName="@nameof(SaDoBillablePickerRow.PickerKey)"
                             SelectionMode="GridSelectionMode.Multiple"
@@ -875,6 +881,15 @@
                             <DxGridDataColumn FieldName="@nameof(SaDoBillablePickerRow.RemainingBillableQty)" Caption="Billable qty" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         </Columns>
                     </DxGrid>
+                    @if (DoPickerHasMore)
+                    {
+                        <div class="mt-2">
+                            <DxButton Text="Load more"
+                                      RenderStyle="ButtonRenderStyle.Secondary"
+                                      Click="@LoadMoreDoPickerAsync"
+                                      Enabled="@(!DoPickerLoading)" />
+                        </div>
+                    }
                 }
             </div>
             <div class="sdoc-popup-footer">

@@ -1,0 +1,80 @@
+@namespace ErpWeb.UI.Purchase.Lookups
+@using Microsoft.AspNetCore.Components.Web
+
+<DxPopup HeaderCssClass="code-style"
+         HeaderText="SELECT PURCHASE ITEM"
+         CloseOnOutsideClick="false"
+         Width="85vw"
+         CssClass="common-popup"
+         @bind-Visible="@Visible"
+         Closing="@OnClosing">
+    <Content>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-warning py-2">@_error</div>
+        }
+
+        <div class="d-flex gap-2 mb-2 align-items-end">
+            <div class="flex-grow-1">
+                <label class="form-label mb-0">Search</label>
+                <DxTextBox @bind-Text="@_searchText"
+                           NullText="Item code / description"
+                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                           @onkeydown="OnSearchKeyDownAsync" />
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="SEARCH"
+                      IconCssClass="fa-solid fa-magnifying-glass"
+                      Click="@SearchAsync" />
+        </div>
+
+        <DxGrid @ref="_grid"
+                Data="@_items"
+                KeyFieldName="@nameof(PoPurchasingItemLookupRow.ICode)"
+                ShowFilterRow="false"
+                ShowGroupPanel="false"
+                PageSize="@_pageSize"
+                TextWrapEnabled="false"
+                FocusedRowEnabled="true"
+                RowDoubleClick="@OnRowDoubleClick"
+                SelectedDataItemChanged="@OnSelectedItemChanged">
+            <Columns>
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.ICode)" Caption="ITEM CODE" Width="130px" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.IDesc)" Caption="DESCRIPTION" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.SourceLabel)" Caption="SOURCE" Width="90px" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.PurchaseUom)" Caption="UOM" Width="70px" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.Category)" Caption="CATEGORY" Width="110px" />
+                @if (ShowUnitPrice)
+                {
+                    <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.UnitPrice)" Caption="UNIT PRICE" Width="110px" DisplayFormat="n4" />
+                }
+            </Columns>
+        </DxGrid>
+
+        <div class="d-flex justify-content-between align-items-center mt-2">
+            <span class="text-muted small">@_totalCount item(s)</span>
+            <div class="d-flex gap-2">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="PREV"
+                          Enabled="@(_skip > 0 && !_loading)"
+                          Click="@PrevPageAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="NEXT"
+                          Enabled="@(_skip + _pageSize < _totalCount && !_loading)"
+                          Click="@NextPageAsync" />
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-3" @onkeydown="OnKeyDown">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                      Text="SELECT"
+                      IconCssClass="fa-solid fa-check"
+                      Click="@SelectFocusedAsync"
+                      Enabled="@(_focused is not null)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="CANCEL"
+                      IconCssClass="fa-solid fa-xmark"
+                      Click="@CloseAsync" />
+        </div>
+    </Content>
+</DxPopup>

@@ -109,8 +109,6 @@ public partial class SaCdn : PageBase, IDisposable
     private string _type = "CN";
 
     protected List<SaCdnLineVm> Lines { get; set; } = [];
-    protected List<SaCdnCustomerLookupRow> Customers { get; set; } = [];
-    protected List<SaCdnItemLookupRow> Items { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaCdnTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
@@ -284,8 +282,6 @@ public partial class SaCdn : PageBase, IDisposable
 
         if (lookups.Succeeded)
         {
-            Customers = lookups.Customers.ToList();
-            Items = lookups.Items.ToList();
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
@@ -391,25 +387,6 @@ public partial class SaCdn : PageBase, IDisposable
 
     private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
-    /// <summary>
-    /// The customer lookup is ACTIVE-only, so a document whose customer has since been deactivated can
-    /// no longer be resolved by the combo. A <c>DxComboBox</c> renders blank over a non-empty column and
-    /// raises <c>ValueChanged(null)</c> for an unresolved value - which the page must not mistake for the
-    /// operator clearing the customer. Keep the document's own customer selectable (the same
-    /// "append the current value when absent" pattern used by <c>SaCustEntry</c>).
-    /// </summary>
-    private void EnsureCustomerOption(string? custCode)
-    {
-        var code = (custCode ?? string.Empty).Trim();
-        if (code.Length == 0 ||
-            Customers.Any(x => string.Equals(x.CustCode, code, StringComparison.OrdinalIgnoreCase)))
-        {
-            return;
-        }
-
-        Customers.Add(new SaCdnCustomerLookupRow { CustCode = code, CustName = CustName ?? code });
-    }
-
     private void ApplyDocument(SaCdnDocument doc)
     {
         DocNo = doc.DocNo;
@@ -450,8 +427,6 @@ public partial class SaCdn : PageBase, IDisposable
         TotAmnt = doc.TotAmnt;
         _rowVersion = doc.RowVersion;
         Lines = doc.Lines.Select(SaCdnLineVm.FromDto).ToList();
-
-        EnsureCustomerOption(CustCode);
     }
 
     /// <summary>R9: refresh the draft-CN reservation indicator for the linked invoice.</summary>
@@ -523,6 +498,11 @@ public partial class SaCdn : PageBase, IDisposable
         ApplyDefaults(d);
         Remarks = null;
     }
+
+    protected Task OnCustomerSelectedAsync(SaCustomerLookupRow row) =>
+        OnCustCodeChanged(row.CustCode);
+
+    protected Task OnCustomerClearedAsync() => OnCustCodeChanged(null);
 
     protected async Task OnCustCodeChanged(string? value)
     {
@@ -689,7 +669,7 @@ public partial class SaCdn : PageBase, IDisposable
         Popup = new SaCdnLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
-            // first active warehouse as the fallback (applied in OnPopupItemChangedAsync).
+            // first active warehouse as the fallback (applied in OnPopupItemSelectedAsync).
             FrWarehouse = null,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
@@ -734,15 +714,23 @@ public partial class SaCdn : PageBase, IDisposable
         MarkDirty();
     }
 
-    protected async Task OnPopupItemChangedAsync(string? iCode)
+    protected Task OnPopupItemClearedAsync()
     {
-        Popup.ICode = iCode ?? string.Empty;
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is null) return;
+        Popup.ICode = string.Empty;
+        Popup.IDesc = null;
+        _priceHint = null;
+        return Task.CompletedTask;
+    }
 
+    protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
         Popup.StockControl = item.StockControl;
+        Popup.Classification = item.Classification;
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
         {

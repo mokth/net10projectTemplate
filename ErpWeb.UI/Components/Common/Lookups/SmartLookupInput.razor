@@ -1,0 +1,40 @@
+@namespace ErpWeb.UI.Components.Common.Lookups
+@typeparam TItem
+@using Microsoft.AspNetCore.Components.Web
+
+<div class="smart-lookup @CssClass">
+    <div class="smart-lookup__row">
+        <DxTextBox Text="@_state.InputText"
+                   TextChanged="@OnTextChangedAsync"
+                   TextExpression="@TextExpression"
+                   NullText="@NullText"
+                   Enabled="@Enabled"
+                   ReadOnly="@ReadOnly"
+                   InputCssClass="@BuildInputCssClass()"
+                   CssClass="smart-lookup__input"
+                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
+                   BindValueMode="BindValueMode.OnInput"
+                   @onkeydown="OnKeyDownAsync" />
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                  IconCssClass="fa-solid fa-magnifying-glass"
+                  CssClass="smart-lookup__search"
+                  Enabled="@(Enabled && !ReadOnly)"
+                  Click="@OpenSearchAsync"
+                  aria-label="@SearchButtonAriaLabel"
+                  title="@SearchButtonAriaLabel" />
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(EffectiveSecondaryText) && !_state.ShowInvalid)
+    {
+        <div class="smart-lookup__secondary">@EffectiveSecondaryText</div>
+    }
+
+    @if (_state.IsResolving)
+    {
+        <div class="smart-lookup__status smart-lookup__status--resolving">Looking up…</div>
+    }
+    else if (_state.ShowInvalid && !string.IsNullOrWhiteSpace(_state.ErrorMessage))
+    {
+        <div class="smart-lookup__status smart-lookup__status--invalid">@_state.ErrorMessage</div>
+    }
+</div>

@@ -235,46 +235,8 @@ public sealed class PoOrderService : IPoOrderService
 		{
 			string company = context.CompanyCode;
 			string branch = context.BranchCode;
-			List<PoOrderItemLookupRow> direct = await (from x in db.IvStockMasters.AsNoTracking()
-				where x.CompanyCode == company && x.IsActive
-				orderby x.ICode
-				select new PoOrderItemLookupRow
-				{
-					ICode = x.ICode,
-					IDesc = x.IDesc,
-					IsIndirect = false,
-					IType = x.IType,
-					PurchaseUom = x.PurUom,
-					StdUom = x.StdUom,
-					PackSz = (x.PurStdPackSize ?? x.StdPackSize ?? 1m),
-					UnitPrice = x.PurchasePrice,
-					TaxGroup = (x.PurchaseTaxGroup ?? x.TaxGroup),
-					DefWarehouse = x.DefWarehouse
-				}).ToListAsync(cancellationToken);
-			List<PoOrderItemLookupRow> indirect = await (from x in db.PoPurItems.AsNoTracking()
-				where x.CompanyCode == company
-				orderby x.ICode
-				select new PoOrderItemLookupRow
-				{
-					ICode = x.ICode,
-					IDesc = x.IDesc,
-					IsIndirect = true,
-					PurchaseUom = x.PurUom,
-					PackSz = 1m,
-					UnitPrice = x.UnitPrice,
-					Category = x.Category,
-					Moq = x.Moq
-				}).ToListAsync(cancellationToken);
-			List<PoOrderVendorLookupRow> vendors = await (from x in db.PoSuppliers.AsNoTracking()
-				where x.CompanyCode == company && x.BranchCode == branch && x.IsActive
-				orderby x.SuppCode
-				select new PoOrderVendorLookupRow
-				{
-					SuppCode = x.SuppCode,
-					SuppName = x.SuppName,
-					Currency = x.Currency,
-					PoPrefix = x.PoPrefix
-				}).ToListAsync(cancellationToken);
+			// Direct/indirect items and vendors are intentionally not preloaded —
+			// PoPurchasingItemPicker / PoSupplierPicker resolve them on demand.
 			List<PoOrderTaxGroupLookupRow> taxGroups = await (from x in db.SaTaxGroups.AsNoTracking()
 				where x.CompanyCode == company
 				orderby x.TaxGrCode
@@ -343,9 +305,9 @@ public sealed class PoOrderService : IPoOrderService
 				}).ToListAsync(cancellationToken);
 			PoOrderLookups poOrderLookups = new PoOrderLookups
 			{
-				DirectItems = direct,
-				IndirectItems = indirect,
-				Vendors = vendors,
+				DirectItems = [],
+				IndirectItems = [],
+				Vendors = [],
 				TaxGroups = taxGroups,
 				Currencies = currencies,
 				BuyingTerms = buyingTerms,

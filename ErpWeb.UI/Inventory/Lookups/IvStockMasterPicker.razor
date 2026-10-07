@@ -1,16 +1,24 @@
 @namespace ErpWeb.UI.Inventory.Lookups
+@using ErpWeb.UI.Components.Common.Lookups
 
-<div class="iv-stock-picker d-flex gap-1 align-items-center">
-    <DxTextBox @bind-Text="@ICode"
-               ReadOnly="true"
-               InputCssClass="@InputCssClass"
-               CssClass="flex-grow-1" />
-    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-              IconCssClass="fa-solid fa-magnifying-glass"
-              Text="Search"
-              Click="@OpenSearchAsync"
-              Enabled="@Enabled" />
-</div>
+<SmartLookupInput @ref="_smartLookup"
+                  TItem="IvStockMasterLookupRow"
+                  Value="@ICode"
+                  DisplayText="@ICode"
+                  SecondaryText="@_secondaryText"
+                  Enabled="@Enabled"
+                  InputCssClass="@InputCssClass"
+                  NullText="@NullText"
+                  SearchButtonAriaLabel="Search items"
+                  NotFoundMessage="Item not found"
+                  ResolveAsync="@ResolveItemAsync"
+                  GetCode="@(static x => x.ICode)"
+                  GetDisplayText="@(static x => x.ICode)"
+                  GetSecondaryText="@(static x => x.IDesc)"
+                  ItemResolved="@CommitSelectionAsync"
+                  Cleared="@OnClearedAsync"
+                  OpenSearch="@OpenSearchAsync" />
 
 <IvStockMasterSearchPopup @bind-Visible="@_popupVisible"
-                          Selected="OnSelectedAsync" />
+                          InitialSearchText="@_popupSearchText"
+                          Selected="OnPopupSelectedAsync" />

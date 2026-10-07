@@ -128,8 +128,6 @@ public partial class SaInvoice : PageBase, IDisposable
     private IReadOnlyList<SaCustAddressVm> _shipToOptions = [];
 
     protected List<SaInvoiceLineVm> Lines { get; set; } = [];
-    protected List<SaInvoiceCustomerLookupRow> Customers { get; set; } = [];
-    protected List<SaInvoiceItemLookupRow> Items { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
@@ -150,6 +148,9 @@ public partial class SaInvoice : PageBase, IDisposable
     protected List<SaDoBillablePickerRow> DoPickerLines { get; set; } = [];
     protected IReadOnlyList<SaDoBillablePickerRow> SelectedDoPickerLines { get; set; } = [];
     protected string? DoPickerError { get; set; }
+    protected string? DoPickerSearchText { get; set; }
+    protected int DoPickerTotalCount { get; set; }
+    protected bool DoPickerHasMore => DoPickerLines.Count < DoPickerTotalCount;
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -366,8 +367,6 @@ public partial class SaInvoice : PageBase, IDisposable
 
         if (lookups.Succeeded)
         {
-            Customers = lookups.Customers.ToList();
-            Items = lookups.Items.ToList();
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
@@ -493,25 +492,6 @@ public partial class SaInvoice : PageBase, IDisposable
 
     private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
-    /// <summary>
-    /// The customer lookup is ACTIVE-only, so a document whose customer has since been deactivated can
-    /// no longer be resolved by the combo. A <c>DxComboBox</c> renders blank over a non-empty column and
-    /// raises <c>ValueChanged(null)</c> for an unresolved value - which the page must not mistake for the
-    /// operator clearing the customer. Keep the document's own customer selectable (the same
-    /// "append the current value when absent" pattern used by <c>SaCustEntry</c>).
-    /// </summary>
-    private void EnsureCustomerOption(string? custCode)
-    {
-        var code = (custCode ?? string.Empty).Trim();
-        if (code.Length == 0 ||
-            Customers.Any(x => string.Equals(x.CustCode, code, StringComparison.OrdinalIgnoreCase)))
-        {
-            return;
-        }
-
-        Customers.Add(new SaInvoiceCustomerLookupRow { CustCode = code, CustName = CustName ?? code });
-    }
-
     private void ApplyDocument(SaInvoiceDocument doc)
     {
         InvNo = doc.InvNo;
@@ -564,12 +544,7 @@ public partial class SaInvoice : PageBase, IDisposable
         _hasShipment = doc.SpBatchNo is not null || doc.Shipment.Count > 0;
         _rowVersion = doc.RowVersion ?? [];
         Lines = doc.Lines.Select(SaInvoiceLineVm.FromDto).ToList();
-        foreach (var line in Lines)
-        {
-            RefreshPackFromItem(line);
-        }
-
-        EnsureCustomerOption(CustCode);
+        // Pack/UOM/stock-control/classification come from the persisted line — do not reload the full item master.
     }
 
     private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
@@ -627,6 +602,11 @@ public partial class SaInvoice : PageBase, IDisposable
         _shipToLine = null;
         Remark = null;
     }
+
+    protected Task OnCustomerSelectedAsync(SaCustomerLookupRow row) =>
+        OnCustCodeChanged(row.CustCode);
+
+    protected Task OnCustomerClearedAsync() => OnCustCodeChanged(null);
 
     protected async Task OnCustCodeChanged(string? value)
     {
@@ -883,7 +863,7 @@ public partial class SaInvoice : PageBase, IDisposable
         Popup = new SaInvoiceLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
-            // first active warehouse as the fallback (applied in OnPopupItemChangedAsync).
+            // first active warehouse as the fallback (applied in OnPopupItemSelectedAsync).
             FrWarehouse = null,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
@@ -969,7 +949,7 @@ public partial class SaInvoice : PageBase, IDisposable
         SoPickerVisible = false;
     }
 
-    protected void AddFromSo()
+    protected async Task AddFromSo()
     {
         if (string.IsNullOrWhiteSpace(SelectedSourceSoNo))
         {
@@ -1000,7 +980,7 @@ public partial class SaInvoice : PageBase, IDisposable
                 continue;
             }
 
-            Lines.Add(ApplyItemClassification(SaInvoiceLineVm.FromSalesOrder(source, SelectedSourceSoNo)));
+            Lines.Add(await ApplyItemClassificationAsync(SaInvoiceLineVm.FromSalesOrder(source, SelectedSourceSoNo)));
             added++;
         }
 
@@ -1028,12 +1008,38 @@ public partial class SaInvoice : PageBase, IDisposable
 
         DoPickerVisible = true;
         DoPickerError = null;
+        DoPickerSearchText = null;
         SelectedDoPickerLines = [];
         DoPickerLines = [];
+        DoPickerTotalCount = 0;
+        await LoadDoPickerPageAsync(append: false);
+    }
+
+    protected Task SearchDoPickerAsync() => LoadDoPickerPageAsync(append: false);
+
+    protected Task LoadMoreDoPickerAsync() => LoadDoPickerPageAsync(append: true);
+
+    private async Task LoadDoPickerPageAsync(bool append)
+    {
+        if (!CanOpenDoPicker)
+        {
+            return;
+        }
+
         DoPickerLoading = true;
+        DoPickerError = null;
         try
         {
-            var result = await Dos.GetBillableLinesAsync(CustCode!, Currency, _cts.Token);
+            var result = await Dos.SearchBillableLinesAsync(
+                new SaDoBillableLinesQuery
+                {
+                    CustCode = CustCode!,
+                    Currency = Currency,
+                    SearchText = DoPickerSearchText,
+                    Skip = append ? DoPickerLines.Count : 0,
+                    Take = 50
+                },
+                _cts.Token);
             if (_disposed)
             {
                 return;
@@ -1042,8 +1048,13 @@ public partial class SaInvoice : PageBase, IDisposable
             if (!result.Succeeded)
             {
                 DoPickerError = result.ErrorMessage ?? "Unable to load posted delivery orders.";
-                DoPickerLines = [];
-                SelectedDoPickerLines = [];
+                if (!append)
+                {
+                    DoPickerLines = [];
+                    SelectedDoPickerLines = [];
+                    DoPickerTotalCount = 0;
+                }
+
                 return;
             }
 
@@ -1051,13 +1062,34 @@ public partial class SaInvoice : PageBase, IDisposable
                 .Where(x => x.LinkDo && !string.IsNullOrWhiteSpace(x.DoNo) && x.DoLine is not null)
                 .Select(x => (DoNo: x.DoNo!, DoLine: (int)x.DoLine!.Value));
             var filtered = SaDocPickerLines.FilterRemainingDoLines(result.BillableLines, existingKeys);
-            DoPickerLines = filtered
+            var pageRows = filtered
                 .Select(x => new SaDoBillablePickerRow { Source = x })
                 .ToList();
+
+            if (append)
+            {
+                var known = new HashSet<string>(
+                    DoPickerLines.Select(x => x.PickerKey),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var row in pageRows.Where(x => known.Add(x.PickerKey)))
+                {
+                    DoPickerLines.Add(row);
+                }
+
+                DoPickerLines = DoPickerLines.ToList();
+            }
+            else
+            {
+                DoPickerLines = pageRows;
+            }
+
+            DoPickerTotalCount = result.BillableLinesTotalCount;
             SelectedDoPickerLines = SaDocPickerLines.SelectAllCurrent(DoPickerLines);
             if (DoPickerLines.Count == 0)
             {
-                DoPickerError = "No remaining posted delivery order lines for this customer.";
+                DoPickerError = string.IsNullOrWhiteSpace(DoPickerSearchText)
+                    ? "No remaining posted delivery order lines for this customer."
+                    : "No matching delivery order lines.";
             }
         }
         finally
@@ -1076,7 +1108,7 @@ public partial class SaInvoice : PageBase, IDisposable
         DoPickerVisible = false;
     }
 
-    protected void AddFromDo()
+    protected async Task AddFromDo()
     {
         if (SelectedDoPickerLines.Count == 0)
         {
@@ -1103,7 +1135,7 @@ public partial class SaInvoice : PageBase, IDisposable
                 continue;
             }
 
-            Lines.Add(ApplyItemClassification(SaInvoiceLineVm.FromDeliveryOrder(source)));
+            Lines.Add(await ApplyItemClassificationAsync(SaInvoiceLineVm.FromDeliveryOrder(source)));
             added++;
         }
 
@@ -1135,7 +1167,6 @@ public partial class SaInvoice : PageBase, IDisposable
         // recorded, so a manual change on a reopened line is still governed. `??=` preserves a real
         // prior engine price when one exists.
         Popup.OriginalUnitPrice ??= line.UnitPrice;
-        RefreshPackFromItem(Popup);
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
         _priceBlockMessage = null;
@@ -1161,16 +1192,19 @@ public partial class SaInvoice : PageBase, IDisposable
         MarkDirty();
     }
 
-    protected async Task OnPopupItemChangedAsync(string? iCode)
+    protected Task OnPopupItemClearedAsync()
     {
-        Popup.ICode = iCode ?? string.Empty;
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
-        {
-            _priceHint = null;
-            return;
-        }
+        Popup.ICode = string.Empty;
+        Popup.IDesc = null;
+        _priceHint = null;
+        return Task.CompletedTask;
+    }
 
+    protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
         Popup.StdPackSize = item.StdPackSize;
@@ -1784,17 +1818,6 @@ public partial class SaInvoice : PageBase, IDisposable
         return match?.Percentage ?? 0m;
     }
 
-    private void RefreshPackFromItem(SaInvoiceLineVm line)
-    {
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, line.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is not null)
-        {
-            line.StdPackSize = item.StdPackSize;
-            line.StockControl = item.StockControl;
-            line.StdUom = item.StdUom ?? line.StdUom;
-        }
-    }
-
     private void Renumber()
     {
         for (var i = 0; i < Lines.Count; i++)
@@ -1878,23 +1901,27 @@ public partial class SaInvoice : PageBase, IDisposable
         DoPickerVisible = false;
         DoPickerLoading = false;
         DoPickerError = null;
+        DoPickerSearchText = null;
+        DoPickerTotalCount = 0;
         DoPickerLines = [];
         SelectedDoPickerLines = [];
     }
 
-    private SaInvoiceLineVm ApplyItemClassification(SaInvoiceLineVm line)
+    private async Task<SaInvoiceLineVm> ApplyItemClassificationAsync(SaInvoiceLineVm line)
     {
-        if (string.IsNullOrWhiteSpace(line.Classification))
+        if (!string.IsNullOrWhiteSpace(line.Classification) || string.IsNullOrWhiteSpace(line.ICode))
         {
-            line.Classification = ClassificationFromItem(line.ICode);
+            return line;
+        }
+
+        var result = await InventoryLookups.ResolveItemAsync(line.ICode, _cts.Token);
+        if (result.Succeeded && result.Item is not null && !string.IsNullOrWhiteSpace(result.Item.Classification))
+        {
+            line.Classification = result.Item.Classification;
         }
 
         return line;
     }
-
-    private string? ClassificationFromItem(string? iCode) =>
-        Items.FirstOrDefault(x => string.Equals(x.ICode, iCode, StringComparison.OrdinalIgnoreCase))
-            ?.Classification;
 }
 
 public sealed class SaInvoiceLineVm

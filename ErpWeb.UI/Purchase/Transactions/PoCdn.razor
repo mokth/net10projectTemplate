@@ -88,16 +88,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Vendors"
-                                                TextFieldName="@nameof(PoCdnVendorLookupRow.DisplayText)"
-                                                ValueFieldName="@nameof(PoCdnVendorLookupRow.VendorCode)"
-                                                Value="@VendorCode"
-                                                ValueChanged="@(async (string? v) => await OnVendorChanged(v))"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Enabled="@CanEditDocument"
-                                                NullText="Select vendor"
-                                                CssClass="w-100 required-field" />
+                                    <PoSupplierPicker SuppCode="@VendorCode"
+                                                      Selected="@OnVendorSelectedAsync"
+                                                      Cleared="@OnVendorClearedAsync"
+                                                      Enabled="@CanEditDocument"
+                                                      NullText="Select vendor"
+                                                      InputCssClass="w-100 required-field" />
                                     @FieldError("VendorCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -417,14 +413,11 @@
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                     <DxFormLayoutItem Caption="Item" ColSpanMd="8">
                         <Template>
-                            <DxComboBox Data="@Items"
-                                        TextFieldName="@nameof(PoCdnItemLookupRow.DisplayText)"
-                                        ValueFieldName="@nameof(PoCdnItemLookupRow.ICode)"
-                                        Value="@Popup.ICode"
-                                        ValueChanged="@((string? v) => OnPopupItemChanged(v))"
-                                        SearchMode="ListSearchMode.AutoSearch"
-                                        NullText="Select item"
-                                        CssClass="w-100 required-field" />
+                            <IvStockMasterPicker ICode="@Popup.ICode"
+                                                 Selected="@OnPopupItemSelected"
+                                                 Cleared="@OnPopupItemCleared"
+                                                 NullText="Select item"
+                                                 InputCssClass="w-100 required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Source inv line" ColSpanMd="4">

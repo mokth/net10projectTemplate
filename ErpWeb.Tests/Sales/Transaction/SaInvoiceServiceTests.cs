@@ -1242,14 +1242,24 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetLookups_includes_item_Classification()
+    public async Task GetLookups_omits_bulk_items_and_resolve_supplies_classification()
     {
         var sut = CreateSut();
         var lookups = await sut.GetLookupsAsync();
 
         Assert.True(lookups.Succeeded, lookups.ErrorMessage);
-        Assert.Equal("CLASS-S", lookups.Items.Single(x => x.ICode == "SVC1").Classification);
-        Assert.Equal("CLASS-A", lookups.Items.Single(x => x.ICode == "A100").Classification);
+        Assert.Empty(lookups.Items);
+        Assert.Empty(lookups.Customers);
+        Assert.NotEmpty(lookups.Warehouses);
+        Assert.NotEmpty(lookups.TaxGroups);
+
+        var inventory = CreateInventoryLookups();
+        var svc1 = await inventory.ResolveItemAsync("SVC1");
+        Assert.True(svc1.Succeeded, svc1.ErrorMessage);
+        Assert.Equal("CLASS-S", svc1.Item!.Classification);
+        var a100 = await inventory.ResolveItemAsync("A100");
+        Assert.True(a100.Succeeded, a100.ErrorMessage);
+        Assert.Equal("CLASS-A", a100.Item!.Classification);
     }
 
     [Fact]
@@ -2533,5 +2543,18 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         return access;
+    }
+
+    private IIvInventoryLookupService CreateInventoryLookups(string company = "DEMO", string branch = "HQ")
+    {
+        var current = new Mock<ICurrentUserService>();
+        current.SetupGet(x => x.IsAuthenticated).Returns(true);
+        current.SetupGet(x => x.CompanyCode).Returns(company);
+        current.SetupGet(x => x.BranchCode).Returns(branch);
+        return new IvInventoryLookupService(
+            current.Object,
+            new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory),
+            _factory);
     }
 }

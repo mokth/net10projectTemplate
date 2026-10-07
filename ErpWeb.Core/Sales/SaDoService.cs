@@ -89,23 +89,11 @@ public sealed class SaDoService : ISaDoService
             return SaDoOperationResult.Fail("Not authorized.", SaDoErrorKind.Authorization);
         }
 
-        var items = await _stockMasters.ListActiveForLookupAsync(context.CompanyCode!, cancellationToken);
+        // Items and Customers are intentionally not preloaded — smart server-side pickers resolve them on demand.
         var warehouses = await _common.ListActiveWarehousesAsync(
             context.CompanyCode!, context.BranchCode!, cancellationToken);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var customers = await db.SaCusts.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode && x.IsActive)
-            .OrderBy(x => x.CustCode)
-            .Select(x => new SaDoCustomerLookupRow
-            {
-                CustCode = x.CustCode,
-                CustName = x.CustName,
-                Currency = x.Currency,
-                DiscountMethod = x.DiscountMethod,
-                DecPoint = x.DecPoint
-            })
-            .ToListAsync(cancellationToken);
 
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
@@ -138,23 +126,11 @@ public sealed class SaDoService : ISaDoService
             .ToListAsync(cancellationToken);
 
         return SaDoOperationResult.OkLookups(
-            items.Select(x => new SaDoItemLookupRow
-            {
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                StdUom = x.StdUom,
-                StdPackSize = x.StdPackSize,
-                SellingPrice = x.SellingPrice,
-                TaxGroup = x.TaxGroup,
-                StockControl = x.StockControl,
-                DefWarehouse = x.DefWarehouse
-            }).ToList(),
             warehouses.Select(x => new IvWarehouseLookupRow
             {
                 WarehouseCode = x.WarehouseCode,
                 WarehouseDesc = x.WarehouseDesc
             }).ToList(),
-            customers,
             taxGroups,
             payCodes,
             departments,
@@ -1463,10 +1439,25 @@ public sealed class SaDoService : ISaDoService
         return SaDoOperationResult.OkPosting(results);
     }
 
-    public async Task<SaDoOperationResult> GetBillableLinesAsync(
+    public Task<SaDoOperationResult> GetBillableLinesAsync(
         string custCode,
         string? currency,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        // Unpaged path for existing callers/tests. Invoice UI uses SearchBillableLinesAsync.
+        SearchBillableLinesCoreAsync(
+            new SaDoBillableLinesQuery { CustCode = custCode, Currency = currency },
+            page: false,
+            cancellationToken);
+
+    public Task<SaDoOperationResult> SearchBillableLinesAsync(
+        SaDoBillableLinesQuery query,
+        CancellationToken cancellationToken = default) =>
+        SearchBillableLinesCoreAsync(query, page: true, cancellationToken);
+
+    private async Task<SaDoOperationResult> SearchBillableLinesCoreAsync(
+        SaDoBillableLinesQuery query,
+        bool page,
+        CancellationToken cancellationToken)
     {
         var context = ValidateUserContext();
         if (context.Error is not null)
@@ -1479,35 +1470,58 @@ public sealed class SaDoService : ISaDoService
             return SaDoOperationResult.Fail("Not authorized.", SaDoErrorKind.Authorization);
         }
 
-        var cust = (custCode ?? string.Empty).Trim();
+        query ??= new SaDoBillableLinesQuery();
+        var cust = (query.CustCode ?? string.Empty).Trim();
         if (cust.Length == 0)
         {
             return SaDoOperationResult.FailValidation("Customer is required.");
         }
 
-        var curr = string.IsNullOrWhiteSpace(currency) ? null : currency.Trim();
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var curr = string.IsNullOrWhiteSpace(query.Currency) ? null : query.Currency.Trim();
+        var term = string.IsNullOrWhiteSpace(query.SearchText) ? null : query.SearchText.Trim();
+        var skip = page ? query.NormalizedSkip : 0;
+        var take = page ? query.NormalizedTake : int.MaxValue;
 
-        var headers = await db.SaDos.AsNoTracking()
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = context.CompanyCode!;
+        var branch = context.BranchCode!;
+
+        // Candidate posted DO headers for this customer/currency (DoNo only — light).
+        var headerQuery = db.SaDos.AsNoTracking()
             .Where(x =>
-                x.CompanyCode == context.CompanyCode
-                && x.BranchCode == context.BranchCode
+                x.CompanyCode == company
+                && x.BranchCode == branch
                 && x.CustCode == cust
                 && x.Status == SaDoStatuses.Posted
-                && (curr == null || x.Currency == null || x.Currency == curr))
-            .OrderBy(x => x.DoNo)
-            .ToListAsync(cancellationToken);
+                && (curr == null || x.Currency == null || x.Currency == curr));
 
-        if (headers.Count == 0)
+        if (term is not null)
         {
-            return SaDoOperationResult.OkBillableLines([]);
+            headerQuery = headerQuery.Where(x =>
+                x.DoNo.Contains(term)
+                || db.SaDoDetails.Any(d =>
+                    d.CompanyCode == company
+                    && d.BranchCode == branch
+                    && d.DoNo == x.DoNo
+                    && ((d.ICode != null && d.ICode.Contains(term))
+                        || (d.IDesc != null && d.IDesc.Contains(term))
+                        || (d.SoNo != null && d.SoNo.Contains(term)))));
         }
 
-        var doNos = headers.Select(x => x.DoNo).ToList();
+        var doNos = await headerQuery
+            .OrderBy(x => x.DoNo)
+            .Select(x => x.DoNo)
+            .ToListAsync(cancellationToken);
+
+        if (doNos.Count == 0)
+        {
+            return SaDoOperationResult.OkBillableLines([], totalCount: 0);
+        }
+
         var details = await db.SaDoDetails.AsNoTracking()
             .Where(x =>
-                x.CompanyCode == context.CompanyCode
-                && x.BranchCode == context.BranchCode
+                x.CompanyCode == company
+                && x.BranchCode == branch
                 && doNos.Contains(x.DoNo))
             .OrderBy(x => x.DoNo)
             .ThenBy(x => x.Line)
@@ -1515,8 +1529,8 @@ public sealed class SaDoService : ISaDoService
 
         var billed = await db.SaDocApplications.AsNoTracking()
             .Where(x =>
-                x.CompanyCode == context.CompanyCode
-                && x.BranchCode == context.BranchCode
+                x.CompanyCode == company
+                && x.BranchCode == branch
                 && x.SourceDocType == SaDocTypes.Do
                 && doNos.Contains(x.SourceDocId)
                 && x.TargetDocType == SaDocTypes.Inv)
@@ -1528,14 +1542,7 @@ public sealed class SaDoService : ISaDoService
             x => (x.SourceDocId.ToUpperInvariant(), x.SourceLineId),
             x => x.Qty);
 
-        var custPoBySo = await SaDocCustPoLookup.LoadAsync(
-            db,
-            context.CompanyCode!,
-            context.BranchCode!,
-            details.Select(x => (x.SoNo, x.CustRel)),
-            cancellationToken);
-
-        var rows = new List<SaDoBillableLineDto>();
+        var remainingDetails = new List<(Model.Entities.Sales.SaDoDetail Detail, decimal Remaining)>();
         foreach (var detail in details)
         {
             var used = billedMap.GetValueOrDefault((detail.DoNo.ToUpperInvariant(), detail.Line));
@@ -1545,6 +1552,31 @@ public sealed class SaDoService : ISaDoService
                 continue;
             }
 
+            if (term is not null
+                && !detail.DoNo.Contains(term, StringComparison.OrdinalIgnoreCase)
+                && !(detail.ICode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                && !(detail.IDesc?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                && !(detail.SoNo?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false))
+            {
+                continue;
+            }
+
+            remainingDetails.Add((detail, remaining));
+        }
+
+        var totalCount = remainingDetails.Count;
+        var pageDetails = remainingDetails.Skip(skip).Take(take).ToList();
+
+        var custPoBySo = await SaDocCustPoLookup.LoadAsync(
+            db,
+            company,
+            branch,
+            pageDetails.Select(x => (x.Detail.SoNo, x.Detail.CustRel)),
+            cancellationToken);
+
+        var rows = new List<SaDoBillableLineDto>(pageDetails.Count);
+        foreach (var (detail, remaining) in pageDetails)
+        {
             rows.Add(new SaDoBillableLineDto
             {
                 DoNo = detail.DoNo,
@@ -1572,7 +1604,7 @@ public sealed class SaDoService : ISaDoService
             });
         }
 
-        return SaDoOperationResult.OkBillableLines(rows);
+        return SaDoOperationResult.OkBillableLines(rows, totalCount);
     }
 
     // ─────────────────────────── Private: PostOneAsync ───────────────────────────

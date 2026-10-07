@@ -60,10 +60,12 @@ public sealed class SaQtOperationResult
     public static SaQtOperationResult OkList(SaQtListPage page) =>
         new() { Succeeded = true, ErrorKind = SaQtErrorKind.None, ListPage = page };
 
+    /// <summary>
+    /// Bounded page-startup lookups only. Items and Customers are resolved on demand via smart
+    /// server-side pickers and are intentionally empty here.
+    /// </summary>
     public static SaQtOperationResult OkLookups(
-        IReadOnlyList<SaSoItemLookupRow> items,
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
-        IReadOnlyList<SaSoCustomerLookupRow> customers,
         IReadOnlyList<SaSoTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
         IReadOnlyList<IvCodeLookupRow>? projects = null) =>
@@ -71,9 +73,9 @@ public sealed class SaQtOperationResult
         {
             Succeeded = true,
             ErrorKind = SaQtErrorKind.None,
-            Items = items,
+            Items = [],
             Warehouses = warehouses,
-            Customers = customers,
+            Customers = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             Projects = projects ?? []

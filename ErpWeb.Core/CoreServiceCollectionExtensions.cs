@@ -272,6 +272,8 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IPoSupplierLookupService, PoSupplierLookupService>();
 
+        services.AddScoped<IPoPurchasingItemLookupService, PoPurchasingItemLookupService>();
+
         services.AddScoped<IPoSupplierAttachmentService, PoSupplierAttachmentService>();
 
         services.AddScoped<IPoSupplierAttachmentFileCleanup>(sp =>

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -86,17 +87,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var vendors = await db.PoSuppliers.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode && x.IsActive)
-            .OrderBy(x => x.SuppCode)
-            .Select(x => new PoInvoiceVendorLookupRow
-            {
-                SuppCode = x.SuppCode,
-                SuppName = x.SuppName ?? string.Empty,
-                Currency = x.Currency
-            })
-            .ToListAsync(cancellationToken);
 
+        // Vendors are intentionally not preloaded — PoSupplierPicker resolves them on demand.
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == scope.CompanyCode)
             .OrderBy(x => x.TaxGrCode)
@@ -139,7 +131,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
 
         return PoInvoiceOperationResult.OkLookups(new PoInvoiceLookups
         {
-            Vendors = vendors,
+            Vendors = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             Currencies = currencies,
@@ -762,6 +754,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
     public async Task<PoInvoiceOperationResult> SearchInvoiceablePoLinesAsync(
         string vendorCode,
         string? searchText,
+        int skip = 0,
+        int take = 50,
         CancellationToken cancellationToken = default)
     {
         var scope = _tenant.TryBranchScope();
@@ -781,66 +775,101 @@ public sealed class PoInvoiceService : IPoInvoiceService
             return PoInvoiceOperationResult.FailValidation("Vendor is required.");
         }
 
+        var pageSkip = Math.Max(0, skip);
+        var pageTake = Math.Clamp(take <= 0 ? 50 : take, 1, LargeLookupSearchRequest.MaxPageSize);
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var term = (searchText ?? string.Empty).Trim();
-        var headers = await db.PoOrders.AsNoTracking()
-            .Include(x => x.Details)
+
+        // Latest release per PO for this vendor (header keys only — no 100-header cap).
+        var headerKeys = await db.PoOrders.AsNoTracking()
             .Where(x => x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
                 && x.VendCode == vendor
                 && x.Status != PoOrderStatuses.Cancelled)
-            .OrderByDescending(x => x.PoDate)
-            .Take(100)
+            .Select(x => new { x.PoNo, x.PoRelNo, x.PoDate })
             .ToListAsync(cancellationToken);
 
-        var latestByPo = headers
+        var latestKeys = headerKeys
             .GroupBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(x => x.PoRelNo).First())
+            .OrderByDescending(x => x.PoDate)
+            .ThenBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var rows = new List<PoInvoicePoLinePickerRow>();
-        foreach (var po in latestByPo)
+        if (latestKeys.Count == 0)
         {
-            foreach (var d in po.Details.OrderBy(x => x.Line))
-            {
-                var net = PoOrderCalc.ComputeNetReceived(d.RecvQty, d.ReturnQty);
-                var invoiceable = PoOrderCalc.ComputeInvoiceable(d.RecvQty, d.ReturnQty, d.InvoicedQty);
-                if (net <= 0m || invoiceable <= 0m)
-                {
-                    continue;
-                }
-
-                if (term.Length > 0
-                    && !(po.PoNo.Contains(term, StringComparison.OrdinalIgnoreCase)
-                        || (d.ICode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
-                        || (d.IDesc?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)))
-                {
-                    continue;
-                }
-
-                rows.Add(new PoInvoicePoLinePickerRow
-                {
-                    PoNo = po.PoNo,
-                    PoRelNo = po.PoRelNo,
-                    Line = d.Line,
-                    ICode = d.ICode,
-                    IDesc = d.IDesc,
-                    PurchaseUom = d.PurchaseUom,
-                    PoUnitPrice = d.PoUnitPrice,
-                    OrderedQty = d.PoPurQty,
-                    RecvQty = d.RecvQty,
-                    ReturnQty = d.ReturnQty,
-                    InvoicedQty = d.InvoicedQty,
-                    InvoiceableQty = invoiceable,
-                    NetReceivedQty = net,
-                    OneTime = d.OneTime,
-                    TaxGroup = d.TaxGroup,
-                    IsInclusive = d.IsInclusive
-                });
-            }
+            return PoInvoiceOperationResult.OkPoLines([], totalCount: 0);
         }
 
-        return PoInvoiceOperationResult.OkPoLines(rows.Take(100).ToList());
+        var poNos = latestKeys.Select(x => x.PoNo).ToList();
+        var relByPo = latestKeys.ToDictionary(
+            x => x.PoNo,
+            x => x.PoRelNo,
+            StringComparer.OrdinalIgnoreCase);
+
+        var details = await db.PoOrderDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && poNos.Contains(x.PoNo))
+            .OrderBy(x => x.PoNo)
+            .ThenBy(x => x.Line)
+            .ToListAsync(cancellationToken);
+
+        var rows = new List<PoInvoicePoLinePickerRow>();
+        foreach (var d in details)
+        {
+            if (!relByPo.TryGetValue(d.PoNo, out var expectedRel) || d.PoRelNo != expectedRel)
+            {
+                continue;
+            }
+
+            var net = PoOrderCalc.ComputeNetReceived(d.RecvQty, d.ReturnQty);
+            var invoiceable = PoOrderCalc.ComputeInvoiceable(d.RecvQty, d.ReturnQty, d.InvoicedQty);
+            if (net <= 0m || invoiceable <= 0m)
+            {
+                continue;
+            }
+
+            if (term.Length > 0
+                && !(d.PoNo.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || (d.ICode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (d.IDesc?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)))
+            {
+                continue;
+            }
+
+            rows.Add(new PoInvoicePoLinePickerRow
+            {
+                PoNo = d.PoNo,
+                PoRelNo = d.PoRelNo,
+                Line = d.Line,
+                ICode = d.ICode,
+                IDesc = d.IDesc,
+                PurchaseUom = d.PurchaseUom,
+                PoUnitPrice = d.PoUnitPrice,
+                OrderedQty = d.PoPurQty,
+                RecvQty = d.RecvQty,
+                ReturnQty = d.ReturnQty,
+                InvoicedQty = d.InvoicedQty,
+                InvoiceableQty = invoiceable,
+                NetReceivedQty = net,
+                OneTime = d.OneTime,
+                TaxGroup = d.TaxGroup,
+                IsInclusive = d.IsInclusive
+            });
+        }
+
+        // Preserve previous ordering preference: newest PO date first, then line.
+        var poDate = latestKeys.ToDictionary(x => x.PoNo, x => x.PoDate, StringComparer.OrdinalIgnoreCase);
+        rows = rows
+            .OrderByDescending(x => poDate.GetValueOrDefault(x.PoNo))
+            .ThenBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Line)
+            .ToList();
+
+        var total = rows.Count;
+        return PoInvoiceOperationResult.OkPoLines(rows.Skip(pageSkip).Take(pageTake).ToList(), total);
     }
 
     public async Task<PoInvoiceOperationResult> CopyFromInvoiceAsync(

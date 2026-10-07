@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Sales;
 
@@ -37,6 +38,7 @@ public sealed class SaDoOperationResult
     public IReadOnlyList<IvCodeLookupRow> Departments { get; init; } = [];
     public IReadOnlyList<IvCodeLookupRow> Projects { get; init; } = [];
     public IReadOnlyList<SaDoBillableLineDto> BillableLines { get; init; } = [];
+    public int BillableLinesTotalCount { get; init; }
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -58,10 +60,11 @@ public sealed class SaDoOperationResult
     public static SaDoOperationResult OkList(SaDoListPage page) =>
         new() { Succeeded = true, ErrorKind = SaDoErrorKind.None, ListPage = page };
 
+    /// <summary>
+    /// Bounded page-startup lookups only. Items and Customers are resolved on demand via smart pickers.
+    /// </summary>
     public static SaDoOperationResult OkLookups(
-        IReadOnlyList<SaDoItemLookupRow> items,
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
-        IReadOnlyList<SaDoCustomerLookupRow> customers,
         IReadOnlyList<SaDoTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
         IReadOnlyList<IvCodeLookupRow>? departments = null,
@@ -70,9 +73,9 @@ public sealed class SaDoOperationResult
         {
             Succeeded = true,
             ErrorKind = SaDoErrorKind.None,
-            Items = items,
+            Items = [],
             Warehouses = warehouses,
-            Customers = customers,
+            Customers = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             Departments = departments ?? [],
@@ -85,8 +88,16 @@ public sealed class SaDoOperationResult
     public static SaDoOperationResult OkRate(decimal rate, bool valid) =>
         new() { Succeeded = true, ErrorKind = SaDoErrorKind.None, CurrRate = rate, CurrRateValid = valid };
 
-    public static SaDoOperationResult OkBillableLines(IReadOnlyList<SaDoBillableLineDto> lines) =>
-        new() { Succeeded = true, ErrorKind = SaDoErrorKind.None, BillableLines = lines };
+    public static SaDoOperationResult OkBillableLines(
+        IReadOnlyList<SaDoBillableLineDto> lines,
+        int? totalCount = null) =>
+        new()
+        {
+            Succeeded = true,
+            ErrorKind = SaDoErrorKind.None,
+            BillableLines = lines,
+            BillableLinesTotalCount = totalCount ?? lines.Count
+        };
 
     public static SaDoOperationResult OkConfirmation(SaDoDocument document, string message) =>
         new()
@@ -486,6 +497,24 @@ public sealed class SaDoLineRequest
     public string? Remarks { get; set; }
 }
 
+/// <summary>Paged search for posted DO lines with remaining invoiceable quantity.</summary>
+public sealed class SaDoBillableLinesQuery
+{
+    public string CustCode { get; init; } = string.Empty;
+    public string? Currency { get; init; }
+    public string? SearchText { get; init; }
+    public int Skip { get; init; }
+    public int Take { get; init; } = LargeLookupSearchRequest.DefaultPageSize;
+
+    public int NormalizedSkip => Math.Max(0, Skip);
+
+    public int NormalizedTake =>
+        Math.Clamp(
+            Take <= 0 ? LargeLookupSearchRequest.DefaultPageSize : Take,
+            1,
+            LargeLookupSearchRequest.MaxPageSize);
+}
+
 public sealed class SaDoBillableLineDto
 {
     public string DoNo { get; init; } = string.Empty;
@@ -599,5 +628,13 @@ public interface ISaDoService
     Task<SaDoOperationResult> GetBillableLinesAsync(
         string custCode,
         string? currency,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Server-paged posted DO lines with remaining billable qty. Same remaining-qty rules as
+    /// <see cref="GetBillableLinesAsync"/>; only the fetch shape changes.
+    /// </summary>
+    Task<SaDoOperationResult> SearchBillableLinesAsync(
+        SaDoBillableLinesQuery query,
         CancellationToken cancellationToken = default);
 }

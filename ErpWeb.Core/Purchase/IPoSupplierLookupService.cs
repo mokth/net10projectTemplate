@@ -1,6 +1,16 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Purchase;
+
+public sealed class PoSupplierLookupRow
+{
+    public string SuppCode { get; init; } = string.Empty;
+    public string? SuppName { get; init; }
+    public string? Currency { get; init; }
+    public string DisplayText =>
+        string.IsNullOrWhiteSpace(SuppName) ? SuppCode : $"{SuppCode} — {SuppName}";
+}
 
 public interface IPoSupplierLookupService
 {
@@ -16,6 +26,16 @@ public interface IPoSupplierLookupService
     Task<IReadOnlyList<IvCodeLookupRow>> SearchSuppliersAsync(
         string? searchText = null,
         int maxRows = 200,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Exact supplier-code resolve for smart lookup. Active, company+branch scoped.</summary>
+    Task<LargeLookupResolveResult<PoSupplierLookupRow>> ResolveSupplierAsync(
+        string suppCode,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Server-paged active supplier search for smart lookup popups.</summary>
+    Task<LargeLookupPage<PoSupplierLookupRow>> SearchSuppliersPagedAsync(
+        LargeLookupSearchRequest request,
         CancellationToken cancellationToken = default);
 
     Task<bool> ValidateAreaAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);

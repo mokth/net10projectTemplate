@@ -115,8 +115,6 @@ public partial class SaSo : PageBase, IDisposable
 
     protected List<SaSoLineVm> Lines { get; set; } = [];
     protected List<SaSoRevisionHistoryRow> Revisions { get; set; } = [];
-    protected List<SaSoCustomerLookupRow> Customers { get; set; } = [];
-    protected List<SaSoItemLookupRow> Items { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaSoTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
@@ -235,8 +233,6 @@ public partial class SaSo : PageBase, IDisposable
 
         if (lookups.Succeeded)
         {
-            Customers = lookups.Customers.ToList();
-            Items = lookups.Items.ToList();
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
@@ -365,25 +361,6 @@ public partial class SaSo : PageBase, IDisposable
 
     private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
-    /// <summary>
-    /// The customer lookup is ACTIVE-only, so a document whose customer has since been deactivated can
-    /// no longer be resolved by the combo. A <c>DxComboBox</c> renders blank over a non-empty column and
-    /// raises <c>ValueChanged(null)</c> for an unresolved value - which the page must not mistake for the
-    /// operator clearing the customer. Keep the document's own customer selectable (the same
-    /// "append the current value when absent" pattern used by <c>SaCustEntry</c>).
-    /// </summary>
-    private void EnsureCustomerOption(string? custCode)
-    {
-        var code = (custCode ?? string.Empty).Trim();
-        if (code.Length == 0 ||
-            Customers.Any(x => string.Equals(x.CustCode, code, StringComparison.OrdinalIgnoreCase)))
-        {
-            return;
-        }
-
-        Customers.Add(new SaSoCustomerLookupRow { CustCode = code, CustName = CustName ?? code });
-    }
-
     private void ApplyDocument(SaSoDocument doc)
     {
         SoNo = doc.SoNo;
@@ -441,12 +418,7 @@ public partial class SaSo : PageBase, IDisposable
         _rowVersion = doc.RowVersion ?? [];
         Revisions = doc.Revisions.ToList();
         Lines = doc.Lines.Select(SaSoLineVm.FromDto).ToList();
-        foreach (var line in Lines)
-        {
-            RefreshPackFromItem(line);
-        }
-
-        EnsureCustomerOption(CustCode);
+        // Pack/UOM/stock-control come from the persisted line — do not reload the full item master.
     }
 
     private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
@@ -504,6 +476,11 @@ public partial class SaSo : PageBase, IDisposable
         Remarks = null;
     }
 
+    protected Task OnCustomerSelectedAsync(SaCustomerLookupRow row) =>
+        OnCustCodeChanged(row.CustCode);
+
+    protected Task OnCustomerClearedAsync() => OnCustCodeChanged(null);
+
     protected async Task OnCustCodeChanged(string? value)
     {
         if (_isApplyingDefaults || _disposed || !CanEditCustomer)
@@ -518,11 +495,7 @@ public partial class SaSo : PageBase, IDisposable
             return;
         }
 
-        // A loaded document must never be destroyed by a phantom blank: when the combo cannot resolve the
-        // document's customer it raises ValueChanged(null) with no operator action, and the legacy
-        // "clearing the customer wipes the document" path would silently blank the address/Tel/Fax block
-        // on screen (the row keeps the values, but the next save would persist the blanks). Only a NEW
-        // document keeps the silent wipe; a saved document is left untouched.
+        // Explicit clear only — smart lookup never emits null for an invalid typed replacement.
         if (next is null && !IsNewMode)
         {
             return;
@@ -743,7 +716,7 @@ public partial class SaSo : PageBase, IDisposable
         Popup = new SaSoLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
-            // first active warehouse as the fallback (applied in OnPopupItemChangedAsync).
+            // first active warehouse as the fallback (applied in OnPopupItemSelectedAsync).
             Warehouse = null,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
@@ -771,7 +744,6 @@ public partial class SaSo : PageBase, IDisposable
         // `??=` keeps a real prior engine price when one exists, instead of overwriting it with the
         // overridden value and losing the original.
         Popup.OriginalUnitPrice ??= line.UnitPrice;
-        RefreshPackFromItem(Popup);
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
         _priceBlockMessage = null;
@@ -801,21 +773,25 @@ public partial class SaSo : PageBase, IDisposable
         CanMutateLines
         && !(IsShippedStatus && line.ShippedQty > 0m);
 
-    protected async Task OnPopupItemChangedAsync(string? iCode)
+    protected Task OnPopupItemClearedAsync()
     {
-        Popup.ICode = iCode ?? string.Empty;
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
-        {
-            _priceHint = null;
-            return;
-        }
+        Popup.ICode = string.Empty;
+        Popup.IDesc = null;
+        _priceHint = null;
+        return Task.CompletedTask;
+    }
 
+    protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
         Popup.SellingUom = item.SellingUom;
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
+        Popup.Classification = item.Classification;
 
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
@@ -1296,18 +1272,6 @@ public partial class SaSo : PageBase, IDisposable
         var match = TaxGroups.FirstOrDefault(x =>
             string.Equals(x.TaxGrCode, code, StringComparison.OrdinalIgnoreCase));
         return match?.Percentage ?? 0m;
-    }
-
-    private void RefreshPackFromItem(SaSoLineVm line)
-    {
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, line.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is not null)
-        {
-            line.StdPackSize = item.StdPackSize;
-            line.StockControl = item.StockControl;
-            line.StdUom = item.StdUom ?? line.StdUom;
-            line.SellingUom = item.SellingUom ?? line.SellingUom;
-        }
     }
 
     private void Renumber()

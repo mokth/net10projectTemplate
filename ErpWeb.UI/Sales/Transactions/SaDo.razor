@@ -85,16 +85,13 @@
                         <Items>
                             <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Customers"
-                                                TextFieldName="@nameof(SaDoCustomerLookupRow.DisplayText)"
-                                                ValueFieldName="@nameof(SaDoCustomerLookupRow.CustCode)"
-                                                Value="@CustCode"
-                                                ValueChanged="@(async (string? v) => await OnCustCodeChanged(v))"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Enabled="@CanEditDocument"
-                                                NullText="Select customer"
-                                                CssClass="w-100 required-field" />
+                                    <SaCustomerPicker CustCode="@CustCode"
+                                                      SecondaryName="@CustName"
+                                                      Selected="@OnCustomerSelectedAsync"
+                                                      Cleared="@OnCustomerClearedAsync"
+                                                      Enabled="@CanEditDocument"
+                                                      NullText="Customer code"
+                                                      InputCssClass="required-field" />
                                     @FieldError("CustCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -505,15 +502,12 @@
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                     <DxFormLayoutItem Caption="Item" ColSpanMd="12">
                         <Template>
-                            <DxComboBox Data="@Items"
-                                        TextFieldName="@nameof(SaDoItemLookupRow.DisplayText)"
-                                        ValueFieldName="@nameof(SaDoItemLookupRow.ICode)"
-                                        Value="@Popup.ICode"
-                                        ValueChanged="@((string? v) => OnPopupItemChangedAsync(v))"
-                                        SearchMode="ListSearchMode.AutoSearch"
-                                        Enabled="@CanEditDocument"
-                                        NullText="Select item"
-                                        CssClass="w-100 required-field" />
+                            <IvStockMasterPicker ICode="@Popup.ICode"
+                                                 Selected="@OnPopupItemSelectedAsync"
+                                                 Cleared="@OnPopupItemClearedAsync"
+                                                 Enabled="@CanEditDocument"
+                                                 NullText="Item code"
+                                                 InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Description" ColSpanMd="8">

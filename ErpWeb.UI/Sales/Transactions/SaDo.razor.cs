@@ -117,8 +117,6 @@ public partial class SaDo : PageBase, IDisposable
     private IReadOnlyList<SaCustAddressVm> _shipToOptions = [];
 
     protected List<SaDoLineVm> Lines { get; set; } = [];
-    protected List<SaDoCustomerLookupRow> Customers { get; set; } = [];
-    protected List<SaDoItemLookupRow> Items { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaDoTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
@@ -224,8 +222,6 @@ public partial class SaDo : PageBase, IDisposable
 
         if (lookups.Succeeded)
         {
-            Customers = lookups.Customers.ToList();
-            Items = lookups.Items.ToList();
             Warehouses = lookups.Warehouses.ToList();
             TaxGroups = lookups.TaxGroups.ToList();
             PayCodes = lookups.PayCodes.ToList();
@@ -347,25 +343,6 @@ public partial class SaDo : PageBase, IDisposable
 
     private static string NormCustCode(string? custCode) => (custCode ?? string.Empty).Trim();
 
-    /// <summary>
-    /// The customer lookup is ACTIVE-only, so a document whose customer has since been deactivated can
-    /// no longer be resolved by the combo. A <c>DxComboBox</c> renders blank over a non-empty column and
-    /// raises <c>ValueChanged(null)</c> for an unresolved value - which the page must not mistake for the
-    /// operator clearing the customer. Keep the document's own customer selectable (the same
-    /// "append the current value when absent" pattern used by <c>SaCustEntry</c>).
-    /// </summary>
-    private void EnsureCustomerOption(string? custCode)
-    {
-        var code = (custCode ?? string.Empty).Trim();
-        if (code.Length == 0 ||
-            Customers.Any(x => string.Equals(x.CustCode, code, StringComparison.OrdinalIgnoreCase)))
-        {
-            return;
-        }
-
-        Customers.Add(new SaDoCustomerLookupRow { CustCode = code, CustName = CustName ?? code });
-    }
-
     private void ApplyDocument(SaDoDocument doc)
     {
         DoNo = doc.DoNo;
@@ -413,12 +390,7 @@ public partial class SaDo : PageBase, IDisposable
         _hasShipment = doc.SpBatchNo is not null || doc.Shipment.Count > 0;
         _rowVersion = doc.RowVersion ?? [];
         Lines = doc.Lines.Select(SaDoLineVm.FromDto).ToList();
-        foreach (var line in Lines)
-        {
-            RefreshPackFromItem(line);
-        }
-
-        EnsureCustomerOption(CustCode);
+        // Pack/UOM/stock-control come from the persisted line — do not reload the full item master.
     }
 
     private async Task ApplyCustomerDefaultsAsync(string? custCode, bool addressApply, int seq)
@@ -476,6 +448,11 @@ public partial class SaDo : PageBase, IDisposable
         _shipToLine = null;
         Remarks = null;
     }
+
+    protected Task OnCustomerSelectedAsync(SaCustomerLookupRow row) =>
+        OnCustCodeChanged(row.CustCode);
+
+    protected Task OnCustomerClearedAsync() => OnCustCodeChanged(null);
 
     protected async Task OnCustCodeChanged(string? value)
     {
@@ -722,7 +699,7 @@ public partial class SaDo : PageBase, IDisposable
         Popup = new SaDoLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
-            // first active warehouse as the fallback (applied in OnPopupItemChangedAsync).
+            // first active warehouse as the fallback (applied in OnPopupItemSelectedAsync).
             FrWarehouse = null,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
@@ -865,7 +842,6 @@ public partial class SaDo : PageBase, IDisposable
 
         _editingLine = line;
         Popup = line.Clone();
-        RefreshPackFromItem(Popup);
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
         _priceBlockMessage = null;
@@ -891,16 +867,19 @@ public partial class SaDo : PageBase, IDisposable
         MarkDirty();
     }
 
-    protected async Task OnPopupItemChangedAsync(string? iCode)
+    protected Task OnPopupItemClearedAsync()
     {
-        Popup.ICode = iCode ?? string.Empty;
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, Popup.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
-        {
-            _priceHint = null;
-            return;
-        }
+        Popup.ICode = string.Empty;
+        Popup.IDesc = null;
+        _priceHint = null;
+        return Task.CompletedTask;
+    }
 
+    protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
         Popup.StdPackSize = item.StdPackSize;
@@ -1442,17 +1421,6 @@ public partial class SaDo : PageBase, IDisposable
         var match = TaxGroups.FirstOrDefault(x =>
             string.Equals(x.TaxGrCode, code, StringComparison.OrdinalIgnoreCase));
         return match?.Percentage ?? 0m;
-    }
-
-    private void RefreshPackFromItem(SaDoLineVm line)
-    {
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, line.ICode, StringComparison.OrdinalIgnoreCase));
-        if (item is not null)
-        {
-            line.StdPackSize = item.StdPackSize;
-            line.StockControl = item.StockControl;
-            line.StdUom = item.StdUom ?? line.StdUom;
-        }
     }
 
     private void Renumber()

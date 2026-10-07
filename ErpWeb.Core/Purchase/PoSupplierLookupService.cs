@@ -1,6 +1,9 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Purchase;
@@ -9,11 +12,16 @@ public sealed class PoSupplierLookupService : IPoSupplierLookupService
 {
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
+    private readonly IPoSupplierRepository _suppliers;
 
-    public PoSupplierLookupService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant)
+    public PoSupplierLookupService(
+        IDbContextFactory<AppDbContext> dbFactory,
+        IInventoryTenantContext tenant,
+        IPoSupplierRepository? suppliers = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
+        _suppliers = suppliers ?? new PoSupplierRepository(dbFactory);
     }
 
     public async Task<IReadOnlyList<IvCodeLookupRow>> ListAreasForAssignmentAsync(CancellationToken cancellationToken = default)
@@ -157,6 +165,66 @@ public sealed class PoSupplierLookupService : IPoSupplierLookupService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<LargeLookupResolveResult<PoSupplierLookupRow>> ResolveSupplierAsync(
+        string suppCode,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryBranchScope();
+        if (scope is null || string.IsNullOrWhiteSpace(scope.BranchCode))
+        {
+            return LargeLookupResolveResult<PoSupplierLookupRow>.Fail("Invalid company context.");
+        }
+
+        var code = (suppCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return LargeLookupResolveResult<PoSupplierLookupRow>.Fail("Supplier code is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var row = await _suppliers.GetByCodeAsync(
+            db,
+            scope.CompanyCode,
+            scope.BranchCode!,
+            code,
+            includeChildren: false,
+            cancellationToken);
+        if (row is null || !row.IsActive)
+        {
+            return LargeLookupResolveResult<PoSupplierLookupRow>.Fail($"Supplier '{code}' was not found.");
+        }
+
+        return LargeLookupResolveResult<PoSupplierLookupRow>.Ok(MapSupplier(row));
+    }
+
+    public async Task<LargeLookupPage<PoSupplierLookupRow>> SearchSuppliersPagedAsync(
+        LargeLookupSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryBranchScope();
+        if (scope is null || string.IsNullOrWhiteSpace(scope.BranchCode))
+        {
+            return LargeLookupPage<PoSupplierLookupRow>.Fail("Invalid company context.");
+        }
+
+        request ??= new LargeLookupSearchRequest();
+        var (rows, total) = await _suppliers.SearchPagedAsync(
+            scope.CompanyCode,
+            scope.BranchCode!,
+            new PoSupplierSearchArgs
+            {
+                SearchText = request.SearchText,
+                IsActive = true,
+                Skip = request.NormalizedSkip,
+                Take = request.NormalizedTake,
+                SortField = nameof(PoSupplier.SuppCode),
+                SortDescending = false
+            },
+            cancellationToken);
+
+        return LargeLookupPage<PoSupplierLookupRow>.Ok(rows.Select(MapSupplier).ToList(), total);
+    }
+
     private async Task<IReadOnlyList<IvCodeLookupRow>> ListMsCodesAsync(string codeType, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -195,4 +263,12 @@ public sealed class PoSupplierLookupService : IPoSupplierLookupService
 
         return list.Any(x => string.Equals(x.Code, trimmed, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static PoSupplierLookupRow MapSupplier(PoSupplier x) =>
+        new()
+        {
+            SuppCode = x.SuppCode,
+            SuppName = x.SuppName,
+            Currency = x.Currency
+        };
 }

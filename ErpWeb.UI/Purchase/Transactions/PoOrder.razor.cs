@@ -121,8 +121,6 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     protected List<PoOrderLineVm> Lines { get; set; } = [];
     protected List<PoOrderRevisionRow> Revisions { get; set; } = [];
     protected List<PoOrderAttachmentRow> AttachmentRows { get; set; } = [];
-    protected List<PoOrderItemLookupRow> Items { get; set; } = [];
-    protected List<PoOrderVendorLookupRow> Vendors { get; set; } = [];
     protected List<PoOrderTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<PoOrderCodeLookupRow> Currencies { get; set; } = [];
     protected List<PoOrderCodeLookupRow> BuyingTerms { get; set; } = [];
@@ -380,10 +378,6 @@ public partial class PoOrder : PageBase, IAsyncDisposable
 
     private void ApplyLookups(PoOrderLookups lookups)
     {
-        Items = lookups.DirectItems.Concat(lookups.IndirectItems)
-            .OrderBy(x => x.ICode, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        Vendors = lookups.Vendors.ToList();
         TaxGroups = lookups.TaxGroups.ToList();
         Currencies = lookups.Currencies.ToList();
         BuyingTerms = lookups.BuyingTerms.ToList();
@@ -461,6 +455,14 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         _shipToLine = null;
         RecalcDocument();
     }
+
+    protected Task OnSupplierSelectedAsync(PoSupplierLookupRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return OnVendCodeChanged(row.SuppCode);
+    }
+
+    protected Task OnSupplierClearedAsync() => OnVendCodeChanged(null);
 
     protected async Task OnVendCodeChanged(string? value)
     {
@@ -679,26 +681,38 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     protected bool CanEditLine(PoOrderLineVm line) => CanMutateLines;
     protected bool CanDeleteLine(PoOrderLineVm line) => CanMutateLines && !line.IsReceived;
 
-    protected void OnPopupItemChanged(string? iCode)
+    protected void OnPopupItemCleared()
     {
         if (!CanEditPopupIdentity)
         {
             return;
         }
 
-        Popup.ICode = iCode;
-        var item = Items.FirstOrDefault(x => string.Equals(x.ICode, iCode, StringComparison.OrdinalIgnoreCase));
-        if (item is null)
+        Popup.ICode = null;
+        Popup.IDesc = null;
+        RecalcPopupDerived();
+    }
+
+    protected void OnPopupItemSelected(PoPurchasingItemLookupRow item)
+    {
+        if (!CanEditPopupIdentity)
         {
             return;
         }
 
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.IType = item.IType;
         Popup.PurchaseUom = item.PurchaseUom;
         Popup.StdUom = item.StdUom;
         Popup.PackSz = item.PackSz == 0m ? 1m : item.PackSz;
-        Popup.PoUnitPrice = item.UnitPrice ?? 0m;
+        if (CanViewCost)
+        {
+            Popup.PoUnitPrice = item.UnitPrice ?? 0m;
+        }
+
         Popup.TaxGroup = item.TaxGroup;
         Popup.ToWarehouse = item.DefWarehouse ?? Popup.ToWarehouse;
         Popup.CurCode = CurCode;

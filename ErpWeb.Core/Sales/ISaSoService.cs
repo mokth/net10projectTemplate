@@ -51,10 +51,11 @@ public sealed class SaSoOperationResult
     public static SaSoOperationResult OkList(SaSoListPage page) =>
         new() { Succeeded = true, ErrorKind = SaSoErrorKind.None, ListPage = page };
 
+    /// <summary>
+    /// Bounded page-startup lookups only. Items and Customers are resolved on demand via smart pickers.
+    /// </summary>
     public static SaSoOperationResult OkLookups(
-        IReadOnlyList<SaSoItemLookupRow> items,
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
-        IReadOnlyList<SaSoCustomerLookupRow> customers,
         IReadOnlyList<SaSoTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
         IReadOnlyList<IvCodeLookupRow>? departments = null,
@@ -63,9 +64,9 @@ public sealed class SaSoOperationResult
         {
             Succeeded = true,
             ErrorKind = SaSoErrorKind.None,
-            Items = items,
+            Items = [],
             Warehouses = warehouses,
-            Customers = customers,
+            Customers = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             Departments = departments ?? [],

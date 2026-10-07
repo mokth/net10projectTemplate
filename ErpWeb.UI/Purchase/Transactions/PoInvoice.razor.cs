@@ -33,7 +33,6 @@ public partial class PoInvoice : PageBase
         CurrRate = 1m
     };
 
-    protected List<PoInvoiceVendorLookupRow> Vendors { get; set; } = [];
     protected List<PoInvoiceTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
     protected List<IvCodeLookupRow> Currencies { get; set; } = [];
@@ -43,6 +42,10 @@ public partial class PoInvoice : PageBase
     protected List<PoInvoicePoLinePickerRow> PoPickerRows { get; set; } = [];
     protected IReadOnlyList<object> SelectedPoLines { get; set; } = [];
     protected bool PoPickerVisible;
+    protected bool PoPickerLoading;
+    protected string? PoPickerSearchText;
+    protected int PoPickerTotalCount;
+    protected bool PoPickerHasMore => PoPickerRows.Count < PoPickerTotalCount;
     protected int ActiveTabIndex;
     protected decimal? PriceToleranceEdit
     {
@@ -143,7 +146,6 @@ public partial class PoInvoice : PageBase
         var lookups = await Invoices.GetLookupsAsync();
         if (lookups.Succeeded && lookups.Lookups is not null)
         {
-            Vendors = lookups.Lookups.Vendors.ToList();
             TaxGroups = lookups.Lookups.TaxGroups.ToList();
             PayCodes = lookups.Lookups.PayCodes.ToList();
             Currencies = lookups.Lookups.Currencies.ToList();
@@ -196,6 +198,14 @@ public partial class PoInvoice : PageBase
         Navigation.NavigateTo(DocumentReturnNavigation.PreserveReturnUrl(
             Navigation.Uri, $"/purchase/invoices/edit/{Uri.EscapeDataString(Model.DocNo)}"));
 
+    protected Task OnVendorSelectedAsync(PoSupplierLookupRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return OnVendorChanged(row.SuppCode);
+    }
+
+    protected Task OnVendorClearedAsync() => OnVendorChanged(null);
+
     protected async Task OnVendorChanged(string? vendorCode)
     {
         Model.VendorCode = vendorCode ?? string.Empty;
@@ -236,16 +246,63 @@ public partial class PoInvoice : PageBase
             return;
         }
 
-        var result = await Invoices.SearchInvoiceablePoLinesAsync(Model.VendorCode, null);
-        if (!result.Succeeded)
+        PoPickerSearchText = null;
+        PoPickerRows = [];
+        PoPickerTotalCount = 0;
+        SelectedPoLines = [];
+        PoPickerVisible = true;
+        await LoadPoPickerPageAsync(append: false);
+    }
+
+    protected Task SearchPoPickerAsync() => LoadPoPickerPageAsync(append: false);
+
+    protected Task LoadMorePoPickerAsync() => LoadPoPickerPageAsync(append: true);
+
+    private async Task LoadPoPickerPageAsync(bool append)
+    {
+        if (string.IsNullOrWhiteSpace(Model.VendorCode))
         {
-            ErrorMessage = result.ErrorMessage;
             return;
         }
 
-        PoPickerRows = result.PoLinePickerRows.ToList();
-        SelectedPoLines = [];
-        PoPickerVisible = true;
+        PoPickerLoading = true;
+        try
+        {
+            var result = await Invoices.SearchInvoiceablePoLinesAsync(
+                Model.VendorCode,
+                PoPickerSearchText,
+                skip: append ? PoPickerRows.Count : 0,
+                take: 50);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            if (append)
+            {
+                var known = new HashSet<string>(
+                    PoPickerRows.Select(x => x.DisplayText),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var row in result.PoLinePickerRows.Where(x => known.Add(x.DisplayText)))
+                {
+                    PoPickerRows.Add(row);
+                }
+
+                PoPickerRows = PoPickerRows.ToList();
+            }
+            else
+            {
+                PoPickerRows = result.PoLinePickerRows.ToList();
+                SelectedPoLines = [];
+            }
+
+            PoPickerTotalCount = result.PoLinePickerTotalCount;
+        }
+        finally
+        {
+            PoPickerLoading = false;
+        }
     }
 
     protected void AddSelectedPoLines()

@@ -62,10 +62,11 @@ public sealed class SaInvoiceOperationResult
     public static SaInvoiceOperationResult OkList(SaInvoiceListPage page) =>
         new() { Succeeded = true, ErrorKind = SaInvoiceErrorKind.None, ListPage = page };
 
+    /// <summary>
+    /// Bounded page-startup lookups only. Items and Customers are resolved on demand via smart pickers.
+    /// </summary>
     public static SaInvoiceOperationResult OkLookups(
-        IReadOnlyList<SaInvoiceItemLookupRow> items,
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
-        IReadOnlyList<SaInvoiceCustomerLookupRow> customers,
         IReadOnlyList<SaInvoiceTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
         IReadOnlyList<IvCodeLookupRow>? salesReps = null,
@@ -75,9 +76,9 @@ public sealed class SaInvoiceOperationResult
         {
             Succeeded = true,
             ErrorKind = SaInvoiceErrorKind.None,
-            Items = items,
+            Items = [],
             Warehouses = warehouses,
-            Customers = customers,
+            Customers = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             SalesReps = salesReps ?? [],

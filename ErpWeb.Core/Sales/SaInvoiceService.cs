@@ -101,24 +101,11 @@ public sealed class SaInvoiceService : ISaInvoiceService
             return SaInvoiceOperationResult.Fail("Not authorized.", SaInvoiceErrorKind.Authorization);
         }
 
-        var items = await _stockMasters.ListActiveForLookupAsync(context.CompanyCode!, cancellationToken);
+        // Items and Customers are intentionally not preloaded — smart server-side pickers resolve them on demand.
         var warehouses = await _common.ListActiveWarehousesAsync(
             context.CompanyCode!, context.BranchCode!, cancellationToken);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var customers = await db.SaCusts.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode && x.IsActive)
-            .OrderBy(x => x.CustCode)
-            .Select(x => new SaInvoiceCustomerLookupRow
-            {
-                CustCode = x.CustCode,
-                CustName = x.CustName,
-                Currency = x.Currency,
-                InvoicePrefix = x.InvoicePrefix,
-                DiscountMethod = x.DiscountMethod,
-                DecPoint = x.DecPoint
-            })
-            .ToListAsync(cancellationToken);
 
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
@@ -161,25 +148,11 @@ public sealed class SaInvoiceService : ISaInvoiceService
             .ToListAsync(cancellationToken);
 
         return SaInvoiceOperationResult.OkLookups(
-            items.Select(x => new SaInvoiceItemLookupRow
-            {
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                StdUom = x.StdUom,
-                StdPackSize = x.StdPackSize,
-                SellingPrice = x.SellingPrice,
-                SellingGlCode = x.SellingGlCode,
-                TaxGroup = x.TaxGroup,
-                StockControl = x.StockControl,
-                DefWarehouse = x.DefWarehouse,
-                Classification = x.Classification
-            }).ToList(),
             warehouses.Select(x => new IvWarehouseLookupRow
             {
                 WarehouseCode = x.WarehouseCode,
                 WarehouseDesc = x.WarehouseDesc
             }).ToList(),
-            customers,
             taxGroups,
             payCodes,
             salesReps,

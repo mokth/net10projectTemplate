@@ -1,0 +1,56 @@
+.smart-lookup {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    width: 100%;
+}
+
+.smart-lookup__row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0.25rem;
+    min-width: 0;
+    width: 100%;
+}
+
+.smart-lookup__input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.smart-lookup__search {
+    flex: 0 0 auto;
+    align-self: stretch;
+}
+
+.smart-lookup__secondary {
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color, #6c757d);
+    line-height: 1.2;
+    padding-left: 0.1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.smart-lookup__status {
+    font-size: 0.75rem;
+    line-height: 1.2;
+    padding-left: 0.1rem;
+}
+
+.smart-lookup__status--resolving {
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.smart-lookup__status--invalid {
+    color: var(--bs-danger, #dc3545);
+}
+
+.smart-lookup__input--invalid ::deep .dxbl-text-edit-input,
+.smart-lookup__input--invalid ::deep input {
+    border-color: var(--bs-danger, #dc3545);
+}

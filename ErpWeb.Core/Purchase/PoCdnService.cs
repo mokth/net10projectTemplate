@@ -176,27 +176,8 @@ public sealed class PoCdnService : IPoCdnService
             return PoCdnOperationResult.Fail("Not authorized.", PoCdnErrorKind.Authorization);
         }
 
-        var stockRows = await _stockMasters.ListActiveForLookupAsync(context.CompanyCode!, cancellationToken);
-        var items = stockRows.Select(x => new PoCdnItemLookupRow
-        {
-            ICode = x.ICode,
-            IDesc = x.IDesc,
-            IType = x.IType,
-            StdUom = x.StdUom,
-            PurUom = x.PurUom,
-            StdPackSize = x.StdPackSize,
-            PurStdPackSize = x.PurStdPackSize,
-            PurchasePrice = x.PurchasePrice,
-            PurchaseGlCode = x.PurchaseGlCode,
-            TaxGroup = x.TaxGroup,
-            PurchaseTaxGroup = x.PurchaseTaxGroup,
-            StockControl = x.StockControl,
-            LotControl = x.LotControl,
-            DefWarehouse = x.DefWarehouse,
-            DefLocation = x.DefLocation,
-            Classification = x.Classification
-        }).ToList();
-
+        // Stock items and vendors are intentionally not preloaded —
+        // IvStockMasterPicker / PoSupplierPicker resolve them on demand.
         var warehouseRows = await _common.ListActiveWarehousesAsync(
             context.CompanyCode!, context.BranchCode!, cancellationToken);
         var warehouses = warehouseRows.Select(x => new IvWarehouseLookupRow
@@ -206,21 +187,6 @@ public sealed class PoCdnService : IPoCdnService
         }).ToList();
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-
-        var vendors = await db.PoSuppliers.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode)
-            .OrderBy(x => x.SuppCode)
-            .Select(x => new PoCdnVendorLookupRow
-            {
-                VendorCode = x.SuppCode,
-                VendorName = x.SuppName,
-                Currency = x.Currency,
-                PayCode = x.PayCode,
-                TaxGrCode = x.TaxGrCode,
-                IsActive = x.IsActive,
-                Suspended = x.Suspend == true
-            })
-            .ToListAsync(cancellationToken);
 
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
@@ -271,7 +237,8 @@ public sealed class PoCdnService : IPoCdnService
             })
             .ToList();
 
-        return PoCdnOperationResult.OkLookups(items, warehouses, vendors, taxGroups, payCodes, departments, projects, reasonCodes);
+        return PoCdnOperationResult.OkLookups(
+            [], warehouses, [], taxGroups, payCodes, departments, projects, reasonCodes);
     }
 
     public async Task<PoCdnOperationResult> GetVendorDefaultsAsync(

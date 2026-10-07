@@ -1,3 +1,4 @@
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Repositories.Inventory;
@@ -20,10 +21,21 @@ public sealed class IvStockMasterLookupRow
     public string? IType { get; init; }
     public string? IClassCode { get; init; }
     public string? StdUom { get; init; }
+    public string? SellingUom { get; init; }
+    public string? PurUom { get; init; }
+    public decimal? StdPackSize { get; init; }
+    public decimal? PurStdPackSize { get; init; }
     public string? DefWarehouse { get; init; }
     public string? DefLocation { get; init; }
     public bool LotControl { get; init; }
+    public bool StockControl { get; init; }
+    public decimal? SellingPrice { get; init; }
     public decimal? PurchasePrice { get; init; }
+    public string? TaxGroup { get; init; }
+    public string? PurchaseTaxGroup { get; init; }
+    public string? Classification { get; init; }
+    public string? SellingGlCode { get; init; }
+    public string? PurchaseGlCode { get; init; }
     public string DisplayText => string.IsNullOrWhiteSpace(IDesc) ? ICode : $"{ICode} — {IDesc}";
 }
 
@@ -116,6 +128,13 @@ public interface IIvInventoryLookupService
 {
     Task<IvInventoryLookupResult> SearchStockMastersAsync(
         IvStockMasterSearchRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Server-paged active item search for smart lookup popups. Never returns an unbounded set.
+    /// </summary>
+    Task<LargeLookupPage<IvStockMasterLookupRow>> SearchStockMastersPagedAsync(
+        LargeLookupSearchRequest request,
         CancellationToken cancellationToken = default);
 
     Task<IvOnHandSearchResult> SearchOnHandAsync(
@@ -214,20 +233,41 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
                 cancellationToken);
         }
 
-        var items = rows.Select(x => new IvStockMasterLookupRow
-        {
-            ICode = x.ICode,
-            IDesc = x.IDesc,
-            IType = x.IType,
-            IClassCode = x.IClassCode,
-            StdUom = x.StdUom,
-            DefWarehouse = x.DefWarehouse,
-            DefLocation = x.DefLocation,
-            LotControl = x.LotControl,
-            PurchasePrice = x.PurchasePrice
-        }).ToList();
+        var items = rows.Select(MapStock).ToList();
 
         return IvInventoryLookupResult.OkItems(items);
+    }
+
+    public async Task<LargeLookupPage<IvStockMasterLookupRow>> SearchStockMastersPagedAsync(
+        LargeLookupSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = Authorize();
+        if (ctx.Error is not null)
+        {
+            return LargeLookupPage<IvStockMasterLookupRow>.Fail(ctx.Error);
+        }
+
+        request ??= new LargeLookupSearchRequest();
+        var (rows, total) = await _stockMasters.SearchPagedAsync(
+            ctx.CompanyCode!,
+            new StockMasterSearchArgs(
+                SearchText: request.SearchText,
+                IsActive: true,
+                IClassCode: null,
+                ISubClassCode: null,
+                IType: null,
+                DefWarehouse: null,
+                Brand: null,
+                SortField: nameof(Model.Entities.Inventory.IvStockMaster.ICode),
+                SortDescending: false,
+                Skip: request.NormalizedSkip,
+                Take: request.NormalizedTake),
+            cancellationToken);
+
+        return LargeLookupPage<IvStockMasterLookupRow>.Ok(
+            rows.Select(MapStock).ToList(),
+            total);
     }
 
     public async Task<IvOnHandSearchResult> SearchOnHandAsync(
@@ -548,10 +588,21 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             IType = x.IType,
             IClassCode = x.IClassCode,
             StdUom = x.StdUom,
+            SellingUom = x.SellingUom,
+            PurUom = x.PurUom,
+            StdPackSize = x.StdPackSize,
+            PurStdPackSize = x.PurStdPackSize,
             DefWarehouse = x.DefWarehouse,
             DefLocation = x.DefLocation,
             LotControl = x.LotControl,
-            PurchasePrice = x.PurchasePrice
+            StockControl = x.StockControl,
+            SellingPrice = x.SellingPrice,
+            PurchasePrice = x.PurchasePrice,
+            TaxGroup = x.TaxGroup,
+            PurchaseTaxGroup = x.PurchaseTaxGroup,
+            Classification = x.Classification,
+            SellingGlCode = x.SellingGlCode,
+            PurchaseGlCode = x.PurchaseGlCode
         };
 
     private static IvBalLocLookupRow MapOnHand(IvOnHandBalanceRow x) =>

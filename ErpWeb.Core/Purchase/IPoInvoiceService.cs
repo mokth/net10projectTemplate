@@ -27,6 +27,7 @@ public sealed class PoInvoiceOperationResult
     public PoInvoiceVendorDefaults? VendorDefaults { get; init; }
     public IReadOnlyList<PoInvoiceInvoicePickerRow> InvoicePickerRows { get; init; } = [];
     public IReadOnlyList<PoInvoicePoLinePickerRow> PoLinePickerRows { get; init; } = [];
+    public int PoLinePickerTotalCount { get; init; }
     public IReadOnlyList<PoInvoicePostingItemResult> Posting { get; init; } = [];
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -58,8 +59,16 @@ public sealed class PoInvoiceOperationResult
     public static PoInvoiceOperationResult OkInvoicePicker(IReadOnlyList<PoInvoiceInvoicePickerRow> rows) =>
         new() { Succeeded = true, ErrorKind = PoInvoiceErrorKind.None, InvoicePickerRows = rows };
 
-    public static PoInvoiceOperationResult OkPoLines(IReadOnlyList<PoInvoicePoLinePickerRow> rows) =>
-        new() { Succeeded = true, ErrorKind = PoInvoiceErrorKind.None, PoLinePickerRows = rows };
+    public static PoInvoiceOperationResult OkPoLines(
+        IReadOnlyList<PoInvoicePoLinePickerRow> rows,
+        int? totalCount = null) =>
+        new()
+        {
+            Succeeded = true,
+            ErrorKind = PoInvoiceErrorKind.None,
+            PoLinePickerRows = rows,
+            PoLinePickerTotalCount = totalCount ?? rows.Count
+        };
 
     public static PoInvoiceOperationResult OkPosting(IReadOnlyList<PoInvoicePostingItemResult> posting)
     {
@@ -415,6 +424,8 @@ public interface IPoInvoiceService
     Task<PoInvoiceOperationResult> SearchInvoiceablePoLinesAsync(
         string vendorCode,
         string? searchText,
+        int skip = 0,
+        int take = 50,
         CancellationToken cancellationToken = default);
 
     Task<PoInvoiceOperationResult> CopyFromInvoiceAsync(

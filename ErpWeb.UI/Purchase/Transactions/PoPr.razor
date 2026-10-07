@@ -440,15 +440,16 @@
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                         <DxFormLayoutItem Caption="Item" ColSpanMd="8">
                             <Template>
-                                <DxComboBox Data="@Items"
-                                            TextFieldName="@nameof(PoPrItemLookupRow.DisplayText)"
-                                            ValueFieldName="@nameof(PoPrItemLookupRow.ICode)"
-                                            Value="@Popup.ICode"
-                                            ValueChanged="@((string? v) => OnPopupItemChanged(v))"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            Enabled="@(!PopupReadOnly)"
-                                            NullText="Select item"
-                                            CssClass="w-100 required-field" />
+                                <PoPurchasingItemPicker ICode="@Popup.ICode"
+                                                        SecondaryName="@Popup.IDesc"
+                                                        Selected="@OnPopupItemSelected"
+                                                        Cleared="@OnPopupItemCleared"
+                                                        Enabled="@(!PopupReadOnly)"
+                                                        IncludeIndirect="true"
+                                                        MenuCode="@MenuCodes.PurchaseRequisition"
+                                                        ShowUnitPrice="@CanViewCost"
+                                                        NullText="Select item"
+                                                        InputCssClass="w-100 required-field" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="ETA" ColSpanMd="4">
@@ -480,16 +481,12 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Vendor" ColSpanMd="4">
                             <Template>
-                                <DxComboBox Data="@Vendors"
-                                            TextFieldName="@nameof(PoPrVendorLookupRow.DisplayText)"
-                                            ValueFieldName="@nameof(PoPrVendorLookupRow.SuppCode)"
-                                            Value="@Popup.VendorCd"
-                                            ValueChanged="@((string? v) => OnPopupVendorChanged(v))"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            Enabled="@(!PopupReadOnly)"
-                                            NullText="Select vendor"
-                                            CssClass="w-100" />
+                                <PoSupplierPicker SuppCode="@Popup.VendorCd"
+                                                  Selected="@OnPopupVendorSelected"
+                                                  Cleared="@OnPopupVendorCleared"
+                                                  Enabled="@(!PopupReadOnly)"
+                                                  NullText="Select vendor"
+                                                  InputCssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="One-time vendor" ColSpanMd="4">

@@ -131,7 +131,6 @@ public partial class PoSbCdn : PageBase
     protected decimal TaxTotal => EditLines.Sum(x => x.TaxAmt);
     protected decimal GrandTotal => GrossTotal + TaxTotal;
 
-    protected IReadOnlyList<PoSbVendorLookupRow> Vendors => Lookups.Vendors;
     protected IReadOnlyList<PoSbTaxGroupLookupRow> TaxGroups => Lookups.TaxGroups;
     protected IReadOnlyList<PoSbCodeLookupRow> Currencies => Lookups.Currencies;
     protected IReadOnlyList<PoSbCodeLookupRow> Uoms => Lookups.Uoms;
@@ -278,6 +277,14 @@ public partial class PoSbCdn : PageBase
     }
 
     // ── Header events ────────────────────────────────────────────────────────
+
+    protected Task OnVendorSelectedAsync(PoSupplierLookupRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return OnVendorChangedAsync(row.SuppCode);
+    }
+
+    protected Task OnVendorClearedAsync() => OnVendorChangedAsync(null);
 
     protected async Task OnVendorChangedAsync(string? vendorCode)
     {

@@ -82,8 +82,6 @@ public partial class PoCdn : PageBase, IDisposable
     protected Dictionary<string, string> ValidationErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Lookups ──────────────────────────────────────────────────────────────
-    protected List<PoCdnVendorLookupRow> Vendors { get; set; } = [];
-    protected List<PoCdnItemLookupRow> Items { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<PoCdnTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> PayCodes { get; set; } = [];
@@ -219,8 +217,6 @@ public partial class PoCdn : PageBase, IDisposable
             var lookups = await Cdns.GetLookupsAsync(_type, _cts.Token);
             if (lookups.Succeeded)
             {
-                Vendors = lookups.Vendors.ToList();
-                Items = lookups.Items.ToList();
                 Warehouses = lookups.Warehouses.ToList();
                 TaxGroups = lookups.TaxGroups.ToList();
                 PayCodes = lookups.PayCodes.ToList();
@@ -337,13 +333,20 @@ public partial class PoCdn : PageBase, IDisposable
         await RefreshFxAsync();
     }
 
+    protected Task OnVendorSelectedAsync(PoSupplierLookupRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return OnVendorChanged(row.SuppCode);
+    }
+
+    protected Task OnVendorClearedAsync() => OnVendorChanged(null);
+
     protected async Task OnVendorChanged(string? vendorCode)
     {
         VendorCode = vendorCode;
-        VendorName = Vendors.FirstOrDefault(x => x.VendorCode == vendorCode)?.VendorName;
-
         if (string.IsNullOrWhiteSpace(vendorCode))
         {
+            VendorName = null;
             VendorBlockedMessage = null;
             return;
         }
@@ -610,19 +613,25 @@ public partial class PoCdn : PageBase, IDisposable
         RecalcDocument();
     }
 
-    protected void OnPopupItemChanged(string? iCode)
+    protected void OnPopupItemCleared()
     {
-        Popup.ICode = iCode;
-        var item = Items.FirstOrDefault(x => x.ICode == iCode);
-        if (item is null) return;
+        Popup.ICode = null;
+        Popup.IDesc = null;
+    }
 
+    protected void OnPopupItemSelected(IvStockMasterLookupRow item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.UnitPrice = item.PurchasePrice ?? Popup.UnitPrice;
         Popup.TaxGroup ??= item.PurchaseTaxGroup ?? item.TaxGroup;
         Popup.ItemGlCode = item.PurchaseGlCode;
         Popup.Classification = item.Classification;
         Popup.StockControl = item.StockControl;
-        Popup.StdCustPSize = PoCdnCalc.IsUsablePackSize(item.ItemPackSize) ? item.ItemPackSize : 1m;
+        var pack = PoOrderCalc.EffectivePackSize(item.PurStdPackSize ?? item.StdPackSize ?? 1m);
+        Popup.StdCustPSize = PoCdnCalc.IsUsablePackSize(pack) ? pack : 1m;
     }
 
     protected void OnPopupSave()

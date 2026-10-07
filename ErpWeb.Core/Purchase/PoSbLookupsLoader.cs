@@ -12,16 +12,7 @@ internal static class PoSbLookupsLoader
     public static async Task<PoSbLookups> LoadAsync(
         AppDbContext db, string companyCode, CancellationToken cancellationToken)
     {
-        var vendors = await db.PoSuppliers.AsNoTracking()
-            .Where(x => x.CompanyCode == companyCode && x.IsActive)
-            .OrderBy(x => x.SuppCode)
-            .Select(x => new PoSbVendorLookupRow
-            {
-                SuppCode = x.SuppCode,
-                DisplayText = x.SuppCode + " - " + x.SuppName
-            })
-            .ToListAsync(cancellationToken);
-
+        // Vendors are intentionally not preloaded — PoSupplierPicker resolves them on demand.
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == companyCode)
             .OrderBy(x => x.TaxGrCode)
@@ -57,7 +48,7 @@ internal static class PoSbLookupsLoader
 
         return new PoSbLookups
         {
-            Vendors = vendors,
+            Vendors = [],
             TaxGroups = taxGroups,
             Currencies = currencies,
             Uoms = uoms

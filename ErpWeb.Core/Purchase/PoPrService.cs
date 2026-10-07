@@ -90,52 +90,8 @@ public sealed class PoPrService : IPoPrService
         var company = context.CompanyCode!;
         var branch = context.BranchCode!;
 
-        var direct = await db.IvStockMasters.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.IsActive)
-            .OrderBy(x => x.ICode)
-            .Select(x => new PoPrItemLookupRow
-            {
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                IsIndirect = false,
-                PurchaseUom = x.PurUom,
-                StdUom = x.StdUom,
-                PackSz = x.PurStdPackSize ?? x.StdPackSize ?? 1m,
-                UnitPrice = x.PurchasePrice,
-                TaxGroup = x.PurchaseTaxGroup ?? x.TaxGroup,
-                DefWarehouse = x.DefWarehouse
-            })
-            .ToListAsync(cancellationToken);
-
-        var indirect = await db.PoPurItems.AsNoTracking()
-            .Where(x => x.CompanyCode == company)
-            .OrderBy(x => x.ICode)
-            .Select(x => new PoPrItemLookupRow
-            {
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                IsIndirect = true,
-                PurchaseUom = x.PurUom,
-                PackSz = 1m,
-                UnitPrice = x.UnitPrice,
-                Category = x.Category,
-                VendorCd = x.Vendor,
-                VendNm = x.VendName,
-                Moq = x.Moq
-            })
-            .ToListAsync(cancellationToken);
-
-        var vendors = await db.PoSuppliers.AsNoTracking()
-            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.IsActive)
-            .OrderBy(x => x.SuppCode)
-            .Select(x => new PoPrVendorLookupRow
-            {
-                SuppCode = x.SuppCode,
-                SuppName = x.SuppName,
-                Currency = x.Currency
-            })
-            .ToListAsync(cancellationToken);
-
+        // Direct/indirect items and vendors are intentionally not preloaded —
+        // PoPurchasingItemPicker / PoSupplierPicker resolve them on demand.
         var taxGroups = await db.SaTaxGroups.AsNoTracking()
             .Where(x => x.CompanyCode == company)
             .OrderBy(x => x.TaxGrCode)
@@ -206,9 +162,9 @@ public sealed class PoPrService : IPoPrService
 
         return PoPrOperationResult.OkLookups(new PoPrLookups
         {
-            DirectItems = direct,
-            IndirectItems = indirect,
-            Vendors = vendors,
+            DirectItems = [],
+            IndirectItems = [],
+            Vendors = [],
             TaxGroups = taxGroups,
             Currencies = currencies,
             BuyingTerms = buyingTerms,

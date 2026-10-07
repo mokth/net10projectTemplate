@@ -1,0 +1,24 @@
+@namespace ErpWeb.UI.Sales.Lookups
+@using ErpWeb.UI.Components.Common.Lookups
+
+<SmartLookupInput @ref="_smartLookup"
+                  TItem="SaCustomerLookupRow"
+                  Value="@CustCode"
+                  DisplayText="@CustCode"
+                  SecondaryText="@EffectiveSecondaryText"
+                  Enabled="@Enabled"
+                  InputCssClass="@InputCssClass"
+                  NullText="@NullText"
+                  SearchButtonAriaLabel="Search customers"
+                  NotFoundMessage="Customer not found"
+                  ResolveAsync="@ResolveCustomerAsync"
+                  GetCode="@(static x => x.CustCode)"
+                  GetDisplayText="@(static x => x.CustCode)"
+                  GetSecondaryText="@(static x => x.CustName)"
+                  ItemResolved="@CommitSelectionAsync"
+                  Cleared="@OnClearedAsync"
+                  OpenSearch="@OpenSearchAsync" />
+
+<SaCustomerSearchPopup @bind-Visible="@_popupVisible"
+                       InitialSearchText="@_popupSearchText"
+                       Selected="OnPopupSelectedAsync" />

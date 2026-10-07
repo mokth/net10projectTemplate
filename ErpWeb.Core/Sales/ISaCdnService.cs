@@ -64,10 +64,11 @@ public sealed class SaCdnOperationResult
     public static SaCdnOperationResult OkList(SaCdnListPage page) =>
         new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None, ListPage = page };
 
+    /// <summary>
+    /// Bounded page-startup lookups only. Items and Customers are resolved on demand via smart pickers.
+    /// </summary>
     public static SaCdnOperationResult OkLookups(
-        IReadOnlyList<SaCdnItemLookupRow> items,
         IReadOnlyList<IvWarehouseLookupRow> warehouses,
-        IReadOnlyList<SaCdnCustomerLookupRow> customers,
         IReadOnlyList<SaCdnTaxGroupLookupRow> taxGroups,
         IReadOnlyList<IvCodeLookupRow> payCodes,
         IReadOnlyList<IvCodeLookupRow>? departments = null,
@@ -76,9 +77,9 @@ public sealed class SaCdnOperationResult
         {
             Succeeded = true,
             ErrorKind = SaCdnErrorKind.None,
-            Items = items,
+            Items = [],
             Warehouses = warehouses,
-            Customers = customers,
+            Customers = [],
             TaxGroups = taxGroups,
             PayCodes = payCodes,
             Departments = departments ?? [],

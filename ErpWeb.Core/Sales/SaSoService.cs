@@ -70,23 +70,7 @@ public sealed class SaSoService : ISaSoService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        var items = await db.IvStockMasters.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode && x.IsActive)
-            .OrderBy(x => x.ICode)
-            .Select(x => new SaSoItemLookupRow
-            {
-                ICode = x.ICode,
-                IDesc = x.IDesc,
-                SellingUom = x.SellingUom,
-                StdUom = x.StdUom,
-                StdPackSize = x.StdPackSize,
-                SellingPrice = x.SellingPrice,
-                TaxGroup = x.TaxGroup,
-                StockControl = x.StockControl,
-                DefWarehouse = x.DefWarehouse
-            })
-            .ToListAsync(cancellationToken);
-
+        // Items and Customers are intentionally not preloaded — smart server-side pickers resolve them on demand.
         var warehouses = await db.IvWarehouses.AsNoTracking()
             .Where(x =>
                 x.CompanyCode == context.CompanyCode
@@ -97,19 +81,6 @@ public sealed class SaSoService : ISaSoService
             {
                 WarehouseCode = x.WarehouseCode,
                 WarehouseDesc = x.WarehouseDesc
-            })
-            .ToListAsync(cancellationToken);
-
-        var customers = await db.SaCusts.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode && x.IsActive)
-            .OrderBy(x => x.CustCode)
-            .Select(x => new SaSoCustomerLookupRow
-            {
-                CustCode = x.CustCode,
-                CustName = x.CustName,
-                Currency = x.Currency,
-                DiscountMethod = x.DiscountMethod,
-                DecPoint = x.DecPoint
             })
             .ToListAsync(cancellationToken);
 
@@ -152,7 +123,7 @@ public sealed class SaSoService : ISaSoService
             .ToListAsync(cancellationToken);
 
         return SaSoOperationResult.OkLookups(
-            items, warehouses, customers, taxGroups, payCodes, departments, projects);
+            warehouses, taxGroups, payCodes, departments, projects);
     }
 
     public async Task<SaSoOperationResult> GetCustomerDefaultsAsync(

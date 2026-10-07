@@ -1,6 +1,16 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Sales;
+
+public sealed class SaCustomerLookupRow
+{
+    public string CustCode { get; init; } = string.Empty;
+    public string? CustName { get; init; }
+    public string? Currency { get; init; }
+    public string DisplayText =>
+        string.IsNullOrWhiteSpace(CustName) ? CustCode : $"{CustCode} — {CustName}";
+}
 
 public interface ISaCustLookupService
 {
@@ -32,6 +42,16 @@ public interface ISaCustLookupService
     Task<IReadOnlyList<IvCodeLookupRow>> SearchCustomersAsync(
         string? searchText = null,
         int maxRows = 200,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Exact customer-code resolve for smart lookup. Active customers only.</summary>
+    Task<LargeLookupResolveResult<SaCustomerLookupRow>> ResolveCustomerAsync(
+        string custCode,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Server-paged active customer search for smart lookup popups.</summary>
+    Task<LargeLookupPage<SaCustomerLookupRow>> SearchCustomersPagedAsync(
+        LargeLookupSearchRequest request,
         CancellationToken cancellationToken = default);
 
     /// <summary>

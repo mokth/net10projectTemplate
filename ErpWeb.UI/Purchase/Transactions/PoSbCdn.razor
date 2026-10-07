@@ -77,17 +77,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@Vendors"
-                                                ValueFieldName="@nameof(PoSbVendorLookupRow.SuppCode)"
-                                                TextFieldName="@nameof(PoSbVendorLookupRow.DisplayText)"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Value="@Model.VendorCode"
-                                                ValueChanged="@(async (string? v) => await OnVendorChangedAsync(v))"
-                                                Enabled="@IsEditable"
-                                                NullText="Select vendor"
-                                                CssClass="w-100 required-field" />
+                                    <PoSupplierPicker SuppCode="@Model.VendorCode"
+                                                      Selected="@OnVendorSelectedAsync"
+                                                      Cleared="@OnVendorClearedAsync"
+                                                      Enabled="@IsEditable"
+                                                      NullText="Select vendor"
+                                                      InputCssClass="w-100 required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Name" ColSpanMd="12">

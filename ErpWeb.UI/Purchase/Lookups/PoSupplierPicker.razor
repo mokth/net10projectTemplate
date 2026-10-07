@@ -1,0 +1,24 @@
+@namespace ErpWeb.UI.Purchase.Lookups
+@using ErpWeb.UI.Components.Common.Lookups
+
+<SmartLookupInput @ref="_smartLookup"
+                  TItem="PoSupplierLookupRow"
+                  Value="@SuppCode"
+                  DisplayText="@SuppCode"
+                  SecondaryText="@_secondaryText"
+                  Enabled="@Enabled"
+                  InputCssClass="@InputCssClass"
+                  NullText="@NullText"
+                  SearchButtonAriaLabel="Search suppliers"
+                  NotFoundMessage="Supplier not found"
+                  ResolveAsync="@ResolveSupplierAsync"
+                  GetCode="@(static x => x.SuppCode)"
+                  GetDisplayText="@(static x => x.SuppCode)"
+                  GetSecondaryText="@(static x => x.SuppName)"
+                  ItemResolved="@CommitSelectionAsync"
+                  Cleared="@OnClearedAsync"
+                  OpenSearch="@OpenSearchAsync" />
+
+<PoSupplierSearchPopup @bind-Visible="@_popupVisible"
+                       InitialSearchText="@_popupSearchText"
+                       Selected="OnPopupSelectedAsync" />

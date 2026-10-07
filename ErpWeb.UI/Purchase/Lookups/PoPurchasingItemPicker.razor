@@ -1,0 +1,27 @@
+@namespace ErpWeb.UI.Purchase.Lookups
+@using ErpWeb.UI.Components.Common.Lookups
+
+<SmartLookupInput @ref="_smartLookup"
+                  TItem="PoPurchasingItemLookupRow"
+                  Value="@ICode"
+                  DisplayText="@ICode"
+                  SecondaryText="@EffectiveSecondaryText"
+                  Enabled="@Enabled"
+                  InputCssClass="@InputCssClass"
+                  NullText="@NullText"
+                  SearchButtonAriaLabel="Search purchase items"
+                  NotFoundMessage="Item not found"
+                  ResolveAsync="@ResolveItemAsync"
+                  GetCode="@(static x => x.ICode)"
+                  GetDisplayText="@(static x => x.ICode)"
+                  GetSecondaryText="@(static x => x.IDesc)"
+                  ItemResolved="@CommitSelectionAsync"
+                  Cleared="@OnClearedAsync"
+                  OpenSearch="@OpenSearchAsync" />
+
+<PoPurchasingItemSearchPopup @bind-Visible="@_popupVisible"
+                             InitialSearchText="@_popupSearchText"
+                             IncludeIndirect="@IncludeIndirect"
+                             MenuCode="@MenuCode"
+                             ShowUnitPrice="@ShowUnitPrice"
+                             Selected="OnPopupSelectedAsync" />
