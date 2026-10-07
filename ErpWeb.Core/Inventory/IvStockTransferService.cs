@@ -982,11 +982,9 @@ public sealed class IvStockTransferService : IIvStockTransferService
             return ($"Line {lineNo}: source and destination stock slice must be different.", null);
         }
 
-        var unitPrice = line.UnitPrice > 0m ? line.UnitPrice : bal.UnitPrice ?? item.PurchasePrice ?? 0m;
-        if (unitPrice < 0)
-        {
-            return ($"Line {lineNo}: unit price cannot be negative.", null);
-        }
+        // Outbound valuation is determined by InventoryValuationService.
+        // This field is retained only for backward-compatible operational display.
+        var unitPrice = bal.UnitPrice ?? 0m;
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
 

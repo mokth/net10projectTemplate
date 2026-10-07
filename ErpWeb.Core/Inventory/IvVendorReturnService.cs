@@ -934,10 +934,10 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
             return ($"Line {lineNo}: quantity must be greater than zero.", null);
         }
 
-        if (line.UnitPrice < 0)
-        {
-            return ($"Line {lineNo}: unit price cannot be negative.", null);
-        }
+        // Outbound valuation is determined by InventoryValuationService.
+        // This field is retained only for backward-compatible operational display.
+        // Supplier commercial price stays on the purchase order / purchase credit note.
+        var operationalUnitPrice = bal.UnitPrice ?? 0m;
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
         var remarks = CombineRemarks(line.Reason, line.Remarks);
@@ -957,7 +957,7 @@ public sealed class IvVendorReturnService : IIvVendorReturnService
             iStatus,
             iClassCode,
             expiry,
-            line.UnitPrice,
+            operationalUnitPrice,
             remarks));
     }
 

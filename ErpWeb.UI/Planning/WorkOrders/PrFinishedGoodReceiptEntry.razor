@@ -633,6 +633,7 @@
              HeaderText="Add source lot"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Width="90vw"
              MaxWidth="1200px"
              MaxHeight="90vh"
@@ -690,6 +691,7 @@
              HeaderText="Confirm Post"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => PostConfirmationVisible = false)">
         <BodyContentTemplate>
             <p>Post finished good receipt <strong>FG @Document.BatchNo</strong>?</p>
@@ -708,6 +710,7 @@
              HeaderText="Confirm Delete"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => DeleteConfirmationVisible = false)">
         <BodyContentTemplate>
             <p>Delete the NEW draft <strong>FG @Document.BatchNo</strong>?</p>
@@ -722,6 +725,7 @@
              HeaderText="Rollback Finished Good Receipt"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => RollbackConfirmVisible = false)">
         <BodyContentTemplate>
             <p>Enter a reason to roll back this posted document.</p>
@@ -737,6 +741,7 @@
              HeaderText="Change Work Order"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => ChangeWorkOrderVisible = false)">
         <BodyContentTemplate>
             <p>Changing the Work Order clears every receipt line on this document.</p>

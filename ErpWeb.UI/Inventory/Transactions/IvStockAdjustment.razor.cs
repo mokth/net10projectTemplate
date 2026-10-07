@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -56,8 +57,12 @@ public partial class IvStockAdjustment : PageBase
             : "View stock adjustment";
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
-    protected decimal DocumentTotal => Lines.Sum(x => x.Amount);
-    protected decimal PopupAmount => decimal.Round(Popup.AdjustQty * Popup.UnitPrice, 2);
+    protected bool CanPriceOverride;
+    protected string? ActiveCostMethod;
+    protected bool IsStandardCost =>
+        string.Equals(ActiveCostMethod, StockCostMethods.Standard, StringComparison.OrdinalIgnoreCase);
+    protected bool ShowCostOverride =>
+        Popup.AdjustQty > 0m && CanPriceOverride && !IsStandardCost && Popup.OverrideSystemCost;
 
     protected decimal PopupAdjustQty
     {
@@ -129,6 +134,7 @@ public partial class IvStockAdjustment : PageBase
         if (!_lookupsLoaded)
         {
             CanEditPermission = await AccessRights.CanAsync(MenuCodes.InventoryStockAdjustment, PermissionCodes.Edit);
+            CanPriceOverride = await AccessRights.CanAsync(MenuCodes.InventoryStockAdjustment, PermissionCodes.PriceOverride);
             _lookupsLoaded = true;
         }
 
@@ -242,6 +248,7 @@ public partial class IvStockAdjustment : PageBase
         _editingLine = null;
         Popup = new IvStockAdjustmentPopupVm();
         PopupError = null;
+        await RefreshCostMethodAsync();
         PopupVisible = true;
     }
 
@@ -277,10 +284,12 @@ public partial class IvStockAdjustment : PageBase
             UnitPrice = line.UnitPrice,
             CostEvidenceType = line.CostEvidenceType,
             CostOverrideReason = line.CostOverrideReason,
+            OverrideSystemCost = line.AdjustQty > 0m && !string.IsNullOrWhiteSpace(line.CostEvidenceType),
             Reason = line.Reason,
             Remarks = line.Remarks
         };
         PopupError = null;
+        await RefreshCostMethodAsync();
         PopupVisible = true;
     }
 
@@ -338,7 +347,6 @@ public partial class IvStockAdjustment : PageBase
         Popup.IDesc = item.IDesc ?? string.Empty;
         Popup.IClassCode = item.IClassCode ?? string.Empty;
         Popup.LotControl = item.LotControl;
-        Popup.UnitPrice = item.PurchasePrice ?? 0m;
         ResetBalLocSelection();
     }
 
@@ -359,11 +367,6 @@ public partial class IvStockAdjustment : PageBase
         if (string.IsNullOrWhiteSpace(Popup.IClassCode) && !string.IsNullOrWhiteSpace(row.IClassCode))
         {
             Popup.IClassCode = row.IClassCode;
-        }
-
-        if (Popup.UnitPrice == 0m && row.PurchasePrice is > 0m)
-        {
-            Popup.UnitPrice = row.PurchasePrice.Value;
         }
 
         Popup.Reason = null;
@@ -610,9 +613,9 @@ public partial class IvStockAdjustment : PageBase
             return "Remark is required when reason is OTHER.";
         }
 
-        if (Popup.UnitPrice < 0)
+        if (ShowCostOverride && Popup.UnitPrice < 0)
         {
-            return "Unit price cannot be negative.";
+            return "Override unit cost cannot be negative.";
         }
 
         if (Popup.AdjustQty <= 0m && !string.IsNullOrWhiteSpace(Popup.CostEvidenceType))
@@ -620,11 +623,16 @@ public partial class IvStockAdjustment : PageBase
             return "Cost evidence applies only to positive adjustments; negative adjustments use authoritative current cost.";
         }
 
-        if (Popup.AdjustQty > 0m
+        if (ShowCostOverride
             && string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase)
             && string.IsNullOrWhiteSpace(Popup.CostOverrideReason))
         {
             return "A cost approval reason is required for zero-cost adjustments.";
+        }
+
+        if (ShowCostOverride && string.IsNullOrWhiteSpace(Popup.CostEvidenceType))
+        {
+            return "Evidence type is required when overriding system cost.";
         }
 
         return null;
@@ -643,13 +651,22 @@ public partial class IvStockAdjustment : PageBase
         line.AdjustQty = Popup.AdjustQty;
         line.Uom = Popup.Uom.Trim();
         line.IStatus = Popup.IStatus.Trim().ToUpperInvariant();
-        line.UnitPrice = Popup.UnitPrice;
-        line.CostEvidenceType = string.IsNullOrWhiteSpace(Popup.CostEvidenceType)
-            ? null
-            : Popup.CostEvidenceType.Trim().ToUpperInvariant();
-        line.CostOverrideReason = string.IsNullOrWhiteSpace(Popup.CostOverrideReason)
-            ? null
-            : Popup.CostOverrideReason.Trim();
+        if (ShowCostOverride)
+        {
+            line.UnitPrice = Popup.UnitPrice;
+            line.CostEvidenceType = string.IsNullOrWhiteSpace(Popup.CostEvidenceType)
+                ? null
+                : Popup.CostEvidenceType.Trim().ToUpperInvariant();
+            line.CostOverrideReason = string.IsNullOrWhiteSpace(Popup.CostOverrideReason)
+                ? null
+                : Popup.CostOverrideReason.Trim();
+        }
+        else
+        {
+            line.UnitPrice = 0m;
+            line.CostEvidenceType = null;
+            line.CostOverrideReason = null;
+        }
         line.ExpiryDate = Popup.ExpiryDate;
         line.Reason = string.IsNullOrWhiteSpace(Popup.Reason) ? null : Popup.Reason.Trim();
         line.Remarks = string.IsNullOrWhiteSpace(Popup.Remarks) ? null : Popup.Remarks.Trim();
@@ -671,7 +688,13 @@ public partial class IvStockAdjustment : PageBase
         Popup.Reason = null;
         Popup.CostEvidenceType = null;
         Popup.CostOverrideReason = null;
+        Popup.OverrideSystemCost = false;
         Popup.Remarks = null;
+    }
+
+    private async Task RefreshCostMethodAsync()
+    {
+        ActiveCostMethod = await StockAdjustment.GetActiveCostMethodAsync(Header.TrxDate);
     }
 
     private void RenumberLines()
@@ -743,6 +766,7 @@ public sealed class IvStockAdjustmentPopupVm
     public decimal UnitPrice { get; set; }
     public string? CostEvidenceType { get; set; }
     public string? CostOverrideReason { get; set; }
+    public bool OverrideSystemCost { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }
 }

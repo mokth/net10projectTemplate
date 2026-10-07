@@ -18,6 +18,7 @@ public class SaCdnDetailConfiguration : IEntityTypeConfiguration<SaCdnDetail>
         // Price override (plan Phase 4): the engine price is retained only when an operator changed it.
         builder.Property(e => e.OriginalUnitPrice).HasPrecision(18, 4);
         builder.Property(e => e.OverrideReason).HasMaxLength(100);
+        builder.Property(e => e.SourceInvLine);
 
         builder.Property(e => e.CompanyCode).HasMaxLength(10).IsRequired();
         builder.Property(e => e.BranchCode).HasMaxLength(10).IsRequired();

@@ -853,10 +853,9 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
             return ($"Line {lineNo}: quantity must be greater than zero.", null);
         }
 
-        if (line.UnitPrice < 0)
-        {
-            return ($"Line {lineNo}: unit price cannot be negative.", null);
-        }
+        // Outbound valuation is determined by InventoryValuationService.
+        // This field is retained only for backward-compatible operational display.
+        var operationalUnitPrice = bal.UnitPrice ?? 0m;
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
         var remarks = CombineRemarks(line.Reason, line.Remarks);
@@ -873,7 +872,7 @@ public sealed class IvMiscIssueService : IIvMiscIssueService
             iStatus,
             iClassCode,
             expiry,
-            line.UnitPrice,
+            operationalUnitPrice,
             remarks));
     }
 

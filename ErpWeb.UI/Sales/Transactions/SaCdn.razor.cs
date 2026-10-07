@@ -1278,6 +1278,7 @@ public sealed class SaCdnLineVm
     public string? IStatus { get; set; }
     public string? LotNo { get; set; }
     public DateTime? ExpiryDate { get; set; }
+    public short? SourceInvLine { get; set; }
 
     public SaCdnLineVm Clone() => new()
     {
@@ -1311,7 +1312,8 @@ public sealed class SaCdnLineVm
         LocCode = LocCode,
         IStatus = IStatus,
         LotNo = LotNo,
-        ExpiryDate = ExpiryDate
+        ExpiryDate = ExpiryDate,
+        SourceInvLine = SourceInvLine
     };
 
     public SaCdnLineRequest ToRequest() => new()
@@ -1340,7 +1342,8 @@ public sealed class SaCdnLineVm
         LocCode = LocCode,
         IStatus = IStatus,
         LotNo = LotNo,
-        ExpiryDate = ExpiryDate
+        ExpiryDate = ExpiryDate,
+        SourceInvLine = SourceInvLine
     };
 
     public SaInvoiceLineCalcState ToCalcState() => new()
@@ -1392,6 +1395,7 @@ public sealed class SaCdnLineVm
         LocCode = dto.LocCode,
         IStatus = dto.IStatus,
         LotNo = dto.LotNo,
-        ExpiryDate = dto.ExpiryDate
+        ExpiryDate = dto.ExpiryDate,
+        SourceInvLine = dto.SourceInvLine
     };
 }

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
@@ -224,6 +225,8 @@ public sealed class IvStockReturnService : IIvStockReturnService
                     LineNo = d.TrxLineNo,
                     ICode = code,
                     IDesc = d.IDesc,
+                    SourceInvNo = d.InvNo ?? string.Empty,
+                    SourceInvoiceLine = d.SoLineNo ?? 0,
                     ToWarehouse = d.ToWarehouse ?? string.Empty,
                     ToLocation = d.ToLocation,
                     ToLotNo = d.ToLotNo,
@@ -280,6 +283,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            excludeBatchNo: 0,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -402,6 +406,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            batch.BatchNo,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -538,11 +543,105 @@ public sealed class IvStockReturnService : IIvStockReturnService
         return IvStockReturnOperationResult.OkPosting(posting);
     }
 
+    public async Task<IvStockReturnOperationResult> SearchSourceInvoicesAsync(
+        string? searchText,
+        int take = 50,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvStockReturnOperationResult.Fail(context.Error);
+        }
+
+        take = Math.Clamp(take, 1, 50);
+        var term = (searchText ?? string.Empty).Trim();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.SaInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.Status == SaInvoiceStatuses.Posted);
+        if (term.Length > 0)
+        {
+            query = query.Where(x => x.InvNo.Contains(term)
+                                     || (x.CustCode != null && x.CustCode.Contains(term))
+                                     || (x.CustName != null && x.CustName.Contains(term)));
+        }
+
+        var rows = await query
+            .OrderByDescending(x => x.InvDate)
+            .ThenByDescending(x => x.InvNo)
+            .Take(take)
+            .Select(x => new IvStockReturnInvoiceLookupRow
+            {
+                InvNo = x.InvNo,
+                InvDate = x.InvDate,
+                CustCode = x.CustCode,
+                CustName = x.CustName
+            })
+            .ToListAsync(cancellationToken);
+        return IvStockReturnOperationResult.OkInvoices(rows);
+    }
+
+    public async Task<IvStockReturnOperationResult> GetSourceInvoiceLinesAsync(
+        string invNo,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvStockReturnOperationResult.Fail(context.Error);
+        }
+
+        var invoiceNo = (invNo ?? string.Empty).Trim();
+        if (invoiceNo.Length == 0)
+        {
+            return IvStockReturnOperationResult.Fail(
+                "Select the original posted invoice and invoice line before saving this stock return.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var posted = await db.SaInvoices.AsNoTracking()
+            .AnyAsync(x => x.CompanyCode == context.CompanyCode
+                           && x.BranchCode == context.BranchCode
+                           && x.InvNo == invoiceNo
+                           && x.Status == SaInvoiceStatuses.Posted,
+                cancellationToken);
+        if (!posted)
+        {
+            return IvStockReturnOperationResult.Fail($"Posted invoice '{invoiceNo}' was not found.");
+        }
+
+        var lines = await db.SaInvoiceDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.InvNo == invoiceNo
+                        && x.StockControl
+                        && x.Line > 0
+                        && x.Line <= short.MaxValue)
+            .OrderBy(x => x.Line)
+            .Select(x => new IvStockReturnInvoiceLineLookupRow
+            {
+                InvoiceLine = (short)x.Line,
+                ICode = x.ICode ?? string.Empty,
+                IDesc = x.IDesc,
+                Qty = x.Qty,
+                StdQty = x.StdQty,
+                StdUom = x.StdUom,
+                StockControl = x.StockControl,
+                DoNo = x.DoNo,
+                DoLine = x.DoLine
+            })
+            .ToListAsync(cancellationToken);
+        return IvStockReturnOperationResult.OkInvoiceLines(lines);
+    }
+
     private async Task<(string? ErrorMessage, List<ValidatedLine>? Lines)> ValidateLinesAsync(
         AppDbContext db,
         IReadOnlyList<IvStockReturnLineRequest>? lines,
         string companyCode,
         string branchCode,
+        int excludeBatchNo,
         CancellationToken cancellationToken)
     {
         if (lines is null || lines.Count == 0)
@@ -556,6 +655,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
         }
 
         var validated = new List<ValidatedLine>();
+        var claimed = new Dictionary<(string InvNo, short Line), decimal>();
         short lineNo = 1;
         foreach (var line in lines)
         {
@@ -570,6 +670,8 @@ public sealed class IvStockReturnService : IIvStockReturnService
                 companyCode,
                 branchCode,
                 lineNo,
+                excludeBatchNo,
+                claimed,
                 cancellationToken);
             if (error.ErrorMessage is not null)
             {
@@ -613,8 +715,10 @@ public sealed class IvStockReturnService : IIvStockReturnService
                 IStatus = row.IStatus,
                 IClassCode = row.IClassCode,
                 ExpiryDate = row.ExpiryDate,
-                UnitPrice = IvQty.Round(row.UnitPrice),
+                UnitPrice = 0m,
                 Remarks = row.Remarks,
+                InvNo = row.SourceInvNo,
+                SoLineNo = row.SourceInvoiceLine,
                 LocationCode = NullIfWhiteSpace(locationCode)
             });
             trxLineNo++;
@@ -627,12 +731,52 @@ public sealed class IvStockReturnService : IIvStockReturnService
         string companyCode,
         string branchCode,
         short lineNo,
+        int excludeBatchNo,
+        Dictionary<(string InvNo, short Line), decimal> claimed,
         CancellationToken cancellationToken)
     {
-        var iCode = (line.ICode ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(iCode))
+        var sourceInvNo = (line.SourceInvNo ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sourceInvNo) || line.SourceInvoiceLine <= 0)
         {
-            return ($"Line {lineNo}: item code is required.", null);
+            return ("Select the original posted invoice and invoice line before saving this stock return.", null);
+        }
+
+        var invoiceStatus = await db.SaInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.InvNo == sourceInvNo)
+            .Select(x => x.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (invoiceStatus is null)
+        {
+            return ($"Line {lineNo}: source invoice '{sourceInvNo}' was not found.", null);
+        }
+
+        if (!string.Equals(invoiceStatus, SaInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+        {
+            return ($"Line {lineNo}: source invoice '{sourceInvNo}' must be posted.", null);
+        }
+
+        var sourceLine = await db.SaInvoiceDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                        && x.BranchCode == branchCode
+                        && x.InvNo == sourceInvNo
+                        && x.Line == line.SourceInvoiceLine)
+            .Select(x => new { x.ICode, x.IDesc, x.StockControl, x.StdQty })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (sourceLine is null)
+        {
+            return ($"Line {lineNo}: source invoice line {line.SourceInvoiceLine} was not found.", null);
+        }
+
+        if (!sourceLine.StockControl)
+        {
+            return ($"Line {lineNo}: source invoice line {line.SourceInvoiceLine} is not stock controlled.", null);
+        }
+
+        var iCode = (sourceLine.ICode ?? string.Empty).Trim();
+        var requestedCode = (line.ICode ?? string.Empty).Trim();
+        if (!string.Equals(requestedCode, iCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return ($"Line {lineNo}: item '{requestedCode}' does not match source invoice line item '{iCode}'.", null);
         }
 
         var item = await _stockMasters.GetByCodeAsync(db, companyCode, iCode, cancellationToken);
@@ -731,10 +875,16 @@ public sealed class IvStockReturnService : IIvStockReturnService
             return ($"Line {lineNo}: quantity must be greater than zero.", null);
         }
 
-        if (line.UnitPrice < 0)
+        var sourceKey = (sourceInvNo, line.SourceInvoiceLine);
+        claimed.TryGetValue(sourceKey, out var claimedQty);
+        var alreadyReturned = await ReturnedQtyAsync(
+            db, companyCode, branchCode, sourceInvNo, line.SourceInvoiceLine, excludeBatchNo, cancellationToken);
+        if (alreadyReturned + claimedQty + line.Quantity > sourceLine.StdQty)
         {
-            return ($"Line {lineNo}: unit price cannot be negative.", null);
+            return ($"Line {lineNo}: return quantity exceeds the remaining quantity on invoice {sourceInvNo} line {line.SourceInvoiceLine}.", null);
         }
+
+        claimed[sourceKey] = claimedQty + line.Quantity;
 
         var lot = (line.ToLotNo ?? string.Empty).Trim();
         DateTime? expiry = line.ExpiryDate?.Date;
@@ -781,7 +931,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
             expiry = null;
         }
 
-        var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
+        var desc = string.IsNullOrWhiteSpace(sourceLine.IDesc) ? item.IDesc : sourceLine.IDesc.Trim();
 
         var reasonError = ValidateReasonCode(line.Reason, lineNo);
         if (reasonError is not null)
@@ -795,6 +945,8 @@ public sealed class IvStockReturnService : IIvStockReturnService
         return (null, new ValidatedLine(
             item,
             desc,
+            sourceInvNo,
+            line.SourceInvoiceLine,
             toWarehouse,
             toLocation,
             toLotNo,
@@ -803,8 +955,39 @@ public sealed class IvStockReturnService : IIvStockReturnService
             iStatus,
             iClassCode,
             expiry,
-            line.UnitPrice,
             remarks));
+    }
+
+    private static async Task<decimal> ReturnedQtyAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string invNo,
+        short invoiceLine,
+        int excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var batchNos = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                        && x.BranchCode == branchCode
+                        && x.TrxType == IvTrxTypes.CustomerReturn
+                        && x.DeletedAtUtc == null
+                        && x.BatchNo != excludeBatchNo
+                        && (x.BatchStatus == IvBatchStatuses.New || x.BatchStatus == IvBatchStatuses.Posted))
+            .Select(x => x.BatchNo)
+            .ToListAsync(cancellationToken);
+        if (batchNos.Count == 0)
+        {
+            return 0m;
+        }
+
+        return await db.IvTrxBatchDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                        && x.BranchCode == branchCode
+                        && batchNos.Contains(x.BatchNo)
+                        && x.InvNo == invNo
+                        && x.SoLineNo == invoiceLine)
+            .SumAsync(x => (decimal?)x.ToStdQty, cancellationToken) ?? 0m;
     }
 
     private static string? ValidateReasonCode(string? reason, short lineNo)
@@ -931,6 +1114,8 @@ public sealed class IvStockReturnService : IIvStockReturnService
     private sealed record ValidatedLine(
         IvStockMaster Item,
         string? IDesc,
+        string SourceInvNo,
+        short SourceInvoiceLine,
         string ToWarehouse,
         string ToLocation,
         string ToLotNo,
@@ -939,7 +1124,6 @@ public sealed class IvStockReturnService : IIvStockReturnService
         string IStatus,
         string IClassCode,
         DateTime? ExpiryDate,
-        decimal UnitPrice,
         string? Remarks);
 
     private readonly record struct UserContext(

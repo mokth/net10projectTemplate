@@ -337,6 +337,17 @@
     }
 }
 
+.sr-avail-advisory {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--sr-soft);
+    color: var(--sr-muted);
+    font-size: 0.82rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .sr-page {
         animation: none;

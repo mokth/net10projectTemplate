@@ -329,6 +329,9 @@ public sealed class SaCdnLineDto
     /// <summary>Phase 4: why the resolved price was changed; present only on a real override.</summary>
     public string? OverrideReason { get; init; }
 
+    /// <summary>Original posted invoice line. CN line numbers can be renumbered; this value cannot.</summary>
+    public short? SourceInvLine { get; init; }
+
     public decimal Amount { get; init; }
     public decimal ItemDiscount { get; init; }
     public decimal ItemDiscount2 { get; init; }
@@ -454,6 +457,9 @@ public sealed class SaCdnLineRequest
 
     /// <summary>Phase 4: why the resolved price was changed. Required whenever an override is declared.</summary>
     public string? OverrideReason { get; set; }
+
+    /// <summary>Original posted invoice line. Independent of the credit-note line number.</summary>
+    public short? SourceInvLine { get; set; }
 
     public decimal ItemDiscount { get; set; }
     public decimal ItemDiscount2 { get; set; }

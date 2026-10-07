@@ -392,13 +392,15 @@ public class SaCdnSqlServerConcurrencyTests
             Lines = [new SaCdnLineRequest { ICode = fixture.ServiceICode, Qty = qty, UnitPrice = price }]
         };
 
-    private static SaCdnSaveRequest ReturnStockCnRequest(Fixture fixture, decimal qty, string locCode) =>
+    private static SaCdnSaveRequest ReturnStockCnRequest(
+        Fixture fixture, decimal qty, string locCode, string invNo) =>
         new()
         {
             Type = "CN",
             DocDate = FixedToday,
             CustCode = fixture.CustCode,
             Currency = "MYR",
+            InvNo = invNo,
             ReturnStock = true,
             Lines =
             [
@@ -409,10 +411,45 @@ public class SaCdnSqlServerConcurrencyTests
                     UnitPrice = 10m,
                     FrWarehouse = "MAIN",
                     LocCode = locCode,
-                    IStatus = IvItemStatuses.Active
+                    IStatus = IvItemStatuses.Active,
+                    SourceInvLine = 1
                 }
             ]
         };
+
+    private static async Task<string> SeedPostedStockInvoiceAsync(
+        IDbContextFactory<AppDbContext> factory, Fixture fixture)
+    {
+        var invNo = "RS" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        await using var db = await factory.CreateDbContextAsync();
+        db.SaInvoices.Add(new SaInvoice
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = invNo,
+            CustCode = fixture.CustCode,
+            InvDate = FixedToday,
+            Status = SaInvoiceStatuses.Posted,
+            TotAmnt = 1_000_000m,
+            DoNo = string.Empty
+        });
+        db.SaInvoiceDetails.Add(new SaInvoiceDetail
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = invNo,
+            Line = 1,
+            ICode = fixture.StockICode,
+            Qty = 1000m,
+            StdQty = 1000m,
+            StdUom = "EA",
+            StockControl = true,
+            SoNo = string.Empty,
+            DoNo = string.Empty
+        });
+        await db.SaveChangesAsync();
+        return invNo;
+    }
 
     // ── Seed helpers ──────────────────────────────────────────────
 
@@ -598,7 +635,8 @@ public class SaCdnSqlServerConcurrencyTests
 
         // Save and post a ReturnStock CN (normal service)
         var sut = CreateCdnSut(factory);
-        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc));
+        var invNo = await SeedPostedStockInvoiceAsync(factory, fixture);
+        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc, invNo));
         Assert.True(save.Succeeded, save.ErrorMessage);
         var post = await sut.PostAsync(
             [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = save.Document!.RowVersion }]);
@@ -662,7 +700,8 @@ public class SaCdnSqlServerConcurrencyTests
         if (string.IsNullOrWhiteSpace(loc)) return;
 
         var sut = CreateCdnSut(factory);
-        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc));
+        var invNo = await SeedPostedStockInvoiceAsync(factory, fixture);
+        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc, invNo));
         Assert.True(save.Succeeded, save.ErrorMessage);
 
         // Install hook: throws after stock-in succeeds but before CN is marked POSTED
@@ -745,7 +784,8 @@ public class SaCdnSqlServerConcurrencyTests
         if (string.IsNullOrWhiteSpace(loc)) return;
 
         var sut = CreateCdnSut(factory);
-        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc));
+        var invNo = await SeedPostedStockInvoiceAsync(factory, fixture);
+        var save = await sut.SaveNewAsync(ReturnStockCnRequest(fixture, qty: 5m, loc, invNo));
         Assert.True(save.Succeeded, save.ErrorMessage);
         var post = await sut.PostAsync(
             [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = save.Document!.RowVersion }]);

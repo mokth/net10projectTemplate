@@ -357,7 +357,7 @@
             </section>
         }
 
-        <DxPopup @bind-Visible="@ConfirmVisible" HeaderText="Confirm repair" Width="480px" CloseOnOutsideClick="false">
+        <DxPopup @bind-Visible="@ConfirmVisible" HeaderText="Confirm repair" Width="480px" CloseOnOutsideClick="false" ShowFooter="true">
             <BodyContentTemplate>
                 <p>@(PreviewKind == CostingRepairTargetKind.CostState
                     ? "Rebuild the derived cost state from sealed evidence. Sealed postings and facts are not edited."

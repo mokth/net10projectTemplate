@@ -1082,7 +1082,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("No counted lines.");
         }
 
-        var masters = await _postingRepo.LockStockMastersAsync(
+        await _postingRepo.LockStockMastersAsync(
             db,
             context.CompanyCode!,
             counted.Select(l => l.ICode),
@@ -1166,8 +1166,10 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 continue;
             }
 
-            masters.TryGetValue(line.ICode, out var master);
-            var unitPrice = IvQty.Round(balance.UnitPrice ?? master?.PurchasePrice ?? 0m);
+            // Outbound valuation is determined by InventoryValuationService.
+            // This field is retained only for backward-compatible operational display.
+            // PurchasePrice is not an approved inventory cost.
+            var unitPrice = IvQty.Round(balance.UnitPrice ?? 0m);
 
             var detail = new IvTrxBatchDetail
             {

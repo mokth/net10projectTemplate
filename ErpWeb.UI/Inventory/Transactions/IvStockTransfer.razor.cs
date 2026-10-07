@@ -75,8 +75,6 @@ public partial class IvStockTransfer : PageBase
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
 
-    protected decimal DocumentTotal => Lines.Sum(x => x.Amount);
-    protected decimal PopupAmount => decimal.Round(Popup.Quantity * Popup.UnitPrice, 2);
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0;
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit transfer line" : "Add transfer line";
@@ -383,7 +381,6 @@ public partial class IvStockTransfer : PageBase
         Popup.IDesc = item.IDesc ?? string.Empty;
         Popup.IClassCode = item.IClassCode ?? string.Empty;
         Popup.LotControl = item.LotControl;
-        Popup.UnitPrice = item.PurchasePrice ?? 0m;
 
         // Clear previous balance location selection when item changes
         Popup.FromBalLocId = 0;
@@ -639,11 +636,6 @@ public partial class IvStockTransfer : PageBase
         if (Popup.Quantity <= 0)
         {
             return "Transfer quantity must be greater than zero.";
-        }
-
-        if (Popup.UnitPrice < 0)
-        {
-            return "Unit price cannot be negative.";
         }
 
         if (Popup.LotControl)

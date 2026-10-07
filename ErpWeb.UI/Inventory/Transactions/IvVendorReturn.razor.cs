@@ -64,8 +64,6 @@ public partial class IvVendorReturn : PageBase
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
 
-    protected decimal DocumentTotal => Lines.Sum(x => x.Amount);
-    protected decimal PopupAmount => decimal.Round(Popup.Quantity * Popup.UnitPrice, 2);
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0;
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit vendor return line" : "Add vendor return line";
@@ -313,7 +311,6 @@ public partial class IvVendorReturn : PageBase
         Popup.IDesc = item.IDesc ?? string.Empty;
         Popup.IClassCode = item.IClassCode ?? string.Empty;
         Popup.LotControl = item.LotControl;
-        Popup.UnitPrice = item.PurchasePrice ?? 0m;
 
         // Clear previous balance location selection when item changes
         Popup.FromBalLocId = 0;
@@ -568,11 +565,6 @@ public partial class IvVendorReturn : PageBase
             return "Return quantity must be greater than zero.";
         }
 
-        if (Popup.UnitPrice < 0)
-        {
-            return "Unit price cannot be negative.";
-        }
-
         return null;
     }
 
@@ -592,7 +584,7 @@ public partial class IvVendorReturn : PageBase
         line.Quantity = Popup.Quantity;
         line.Uom = Popup.Uom.Trim();
         line.IStatus = Popup.IStatus.Trim().ToUpperInvariant();
-        line.UnitPrice = Popup.UnitPrice;
+        line.UnitPrice = 0m;
         line.ExpiryDate = Popup.ExpiryDate;
         line.Reason = string.IsNullOrWhiteSpace(Popup.Reason) ? null : Popup.Reason.Trim();
         line.Remarks = string.IsNullOrWhiteSpace(Popup.Remarks) ? null : Popup.Remarks.Trim();

@@ -676,6 +676,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 }
             ]
         };
+        await AttachPostedStockSourceAsync(req);
 
         var save = await sut.SaveNewAsync(req);
         Assert.True(save.Succeeded, save.ErrorMessage);
@@ -766,6 +767,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 }
             ]
         };
+        await AttachPostedStockSourceAsync(req);
         var save = await sut.SaveNewAsync(req);
         Assert.True(save.Succeeded, save.ErrorMessage);
 
@@ -784,9 +786,12 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.True(del.Succeeded, del.ErrorMessage);
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Equal(0, await db.SaCdns.CountAsync());
+        var cdn = await db.SaCdns.SingleAsync();
+        Assert.NotNull(cdn.DeletedAtUtc);
         var refNo = SaCdnSpRefs.ToRefNo(save.DocNo!);
-        Assert.Equal(0, await db.IvTrxBatches.CountAsync(x => x.RefNo == refNo));
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.RefNo == refNo);
+        Assert.NotNull(batch.DeletedAtUtc);
+        Assert.Equal(0, await db.IvTrxBatches.CountAsync(x => x.RefNo == refNo && x.DeletedAtUtc == null));
     }
 
     // ─────────────────────────── 18. Fingerprint mismatch => Post fails ───────────────────────────
@@ -816,6 +821,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 }
             ]
         };
+        await AttachPostedStockSourceAsync(req);
         var save = await sut.SaveNewAsync(req);
         Assert.True(save.Succeeded, save.ErrorMessage);
 
@@ -868,6 +874,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 }
             ]
         };
+        await AttachPostedStockSourceAsync(req);
         var save = await sut.SaveNewAsync(req);
         Assert.True(save.Succeeded, save.ErrorMessage);
 
@@ -926,6 +933,7 @@ public class SaCdnServiceTests : IAsyncLifetime
                 }
             ]
         };
+        await AttachPostedStockSourceAsync(req);
         var save = await sut.SaveNewAsync(req);
         Assert.True(save.Succeeded, save.ErrorMessage);
 
@@ -1351,6 +1359,117 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.Equal("PL-A", get.Document.Lines[0].PricingRef);
     }
 
+    [Fact]
+    public async Task ReturnStock_without_source_invoice_line_is_rejected()
+    {
+        var sut = CreateSut();
+        var req = new SaCdnSaveRequest
+        {
+            Type = "CN",
+            DocDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            SalesmanCode = "SM1",
+            ReturnStock = true,
+            Lines =
+            [
+                new SaCdnLineRequest
+                {
+                    ICode = "A100",
+                    Qty = 1m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN",
+                    LocCode = "BIN1",
+                    IStatus = "ACTIVE"
+                }
+            ]
+        };
+
+        var save = await sut.SaveNewAsync(req);
+        Assert.False(save.Succeeded);
+        Assert.Contains(
+            "Stock return requires the original posted invoice and source invoice line for every stock item.",
+            save.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Subset_reorder_keeps_source_invoice_line_on_the_stock_return()
+    {
+        var invNo = "RS" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaInvoices.Add(new SaInvoice
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = invNo,
+                CustCode = "CUST01",
+                InvDate = FixedToday,
+                Status = SaInvoiceStatuses.Posted,
+                TotAmnt = 1_000_000m,
+                Currency = "MYR",
+                CurrRate = 1m,
+                DoNo = string.Empty
+            });
+            db.SaInvoiceDetails.AddRange(
+                InvoiceLine(invNo, 3),
+                InvoiceLine(invNo, 1),
+                InvoiceLine(invNo, 2));
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var copy = await sut.CopyFromInvoiceAsync(invNo);
+        Assert.True(copy.Succeeded, copy.ErrorMessage);
+        Assert.Equal(new short?[] { 1, 2, 3 }, copy.Document!.Lines.Select(x => x.SourceInvLine).ToArray());
+
+        var kept = copy.Document.Lines.Where(x => x.SourceInvLine is 2 or 3).ToList();
+        var save = await sut.SaveNewAsync(new SaCdnSaveRequest
+        {
+            Type = "CN",
+            DocDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            InvNo = invNo,
+            SalesmanCode = "SM1",
+            ReturnStock = true,
+            Lines = kept.Select(x => new SaCdnLineRequest
+            {
+                ICode = x.ICode,
+                Qty = x.Qty,
+                UnitPrice = x.UnitPrice,
+                SourceInvLine = x.SourceInvLine,
+                FrWarehouse = "MAIN",
+                LocCode = "BIN1",
+                IStatus = "ACTIVE"
+            }).ToList()
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var loaded = await sut.GetAsync(save.DocNo!);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        Assert.Equal(1, loaded.Document!.Lines[0].Line);
+        Assert.Equal((short)2, loaded.Document.Lines[0].SourceInvLine);
+        Assert.Equal(2, loaded.Document.Lines[1].Line);
+        Assert.Equal((short)3, loaded.Document.Lines[1].SourceInvLine);
+
+        var post = await sut.PostAsync([new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = loaded.Document.RowVersion }]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var refNo = SaCdnSpRefs.ToRefNo(save.DocNo!);
+        var batchNo = await verify.IvTrxBatches
+            .Where(x => x.RefNo == refNo && x.TrxType == IvTrxTypes.CustomerReturn)
+            .Select(x => x.BatchNo)
+            .SingleAsync();
+        var sourceLines = await verify.IvTrxBatchDetails
+            .Where(x => x.BatchNo == batchNo)
+            .OrderBy(x => x.TrxLineNo)
+            .Select(x => x.SoLineNo)
+            .ToListAsync();
+        Assert.Equal(new short?[] { 2, 3 }, sourceLines);
+    }
+
     // ─────────────────────────── Helpers ───────────────────────────
 
     /// <summary>
@@ -1569,6 +1688,61 @@ public class SaCdnServiceTests : IAsyncLifetime
         if (!post.Succeeded) throw new InvalidOperationException($"Failed to post invoice: {post.ErrorMessage}");
 
         return save.InvNo!;
+    }
+
+    private static SaInvoiceDetail InvoiceLine(string invNo, int line) => new()
+    {
+        CompanyCode = "DEMO",
+        BranchCode = "HQ",
+        InvNo = invNo,
+        Line = line,
+        ICode = "A100",
+        IDesc = "A100",
+        Qty = 1m,
+        StdQty = 1m,
+        StdUom = "EA",
+        UnitPrice = 10m,
+        StockControl = true,
+        SoNo = string.Empty,
+        DoNo = string.Empty
+    };
+
+    private async Task AttachPostedStockSourceAsync(SaCdnSaveRequest request, string iCode = "A100")
+    {
+        var invNo = "RS" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        await using var db = await _factory.CreateDbContextAsync();
+        db.SaInvoices.Add(new SaInvoice
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = invNo,
+            CustCode = "CUST01",
+            InvDate = FixedToday,
+            Status = SaInvoiceStatuses.Posted,
+            TotAmnt = 1_000_000m,
+            DoNo = string.Empty
+        });
+        db.SaInvoiceDetails.Add(new SaInvoiceDetail
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = invNo,
+            Line = 1,
+            ICode = iCode,
+            IDesc = iCode,
+            Qty = 1000m,
+            StdQty = 1000m,
+            StdUom = "EA",
+            StockControl = true,
+            SoNo = string.Empty,
+            DoNo = string.Empty
+        });
+        await db.SaveChangesAsync();
+        request.InvNo = invNo;
+        foreach (var line in request.Lines ?? [])
+        {
+            line.SourceInvLine = 1;
+        }
     }
 
     private SaInvoiceService CreateInvoiceService()

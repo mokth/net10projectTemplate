@@ -44,8 +44,8 @@
                     </div>
                 </div>
                 <div class="sr-hero__kpi">
-                    <span>Document total</span>
-                    <strong>@DocumentTotal.ToString("n2")</strong>
+                    <span>Inventory cost</span>
+                    <strong>Restored from the sale</strong>
                 </div>
             </header>
 
@@ -153,7 +153,8 @@
                                 </span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.UnitPrice)" Caption="Unit price" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvNo)" Caption="Invoice" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvoiceLine)" Caption="Inv line" Width="80px" />
                         <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Reason)" Caption="Reason" Width="100px">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvStockReturnLineVm)context.DataItem).Reason)
@@ -191,11 +192,11 @@
                 <p class="sr-footer__hint">
                     @if (IsViewMode)
                     {
-                        @($"{LineCountLabel} · Total {DocumentTotal:n2}")
+                        @($"{LineCountLabel}. Inventory cost is restored from the original sale.")
                     }
                     else
                     {
-                        @(Lines.Count == 0 ? "Add at least one item to save this stock return." : $"{LineCountLabel} · Total {DocumentTotal:n2}")
+                        @(Lines.Count == 0 ? "Add at least one item to save this stock return." : $"{LineCountLabel}. Inventory cost is restored from the original sale.")
                     }
                 </p>
                 <div class="sr-footer__actions">
@@ -245,6 +246,35 @@
             <div class="sr-popup-body">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sr-popup-form">
                     <DxFormLayoutGroup ColSpanMd="12">
+                        <HeaderContentTemplate>Source invoice</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Source invoice" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.SourceInvNo" maxlength="30" InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Source invoice line" ColSpanMd="6">
+                                <Template>
+                                    <DxSpinEdit @bind-Value="@Popup.SourceInvoiceLine"
+                                                Increment="1"
+                                                MinValue="1"
+                                                DisplayFormat="0"
+                                                BindValueMode="BindValueMode.OnInput"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem ColSpanMd="12">
+                                <Template>
+                                    <div class="sr-avail-advisory">
+                                        <i class="fa-solid fa-circle-info"></i>
+                                        Inventory cost is restored from the original sale.
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
@@ -263,7 +293,7 @@
                     </DxFormLayoutGroup>
 
                     <DxFormLayoutGroup ColSpanMd="12">
-                        <HeaderContentTemplate>Quantity and value</HeaderContentTemplate>
+                        <HeaderContentTemplate>Quantity</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
                                 <Template>
@@ -278,24 +308,6 @@
                             <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
                                 <Template>
                                     <DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.UnitPrice"
-                                                Increment="0.0001m"
-                                                MinValue="0m"
-                                                DisplayFormat="n4"
-                                                BindValueMode="BindValueMode.OnInput"
-                                                InputCssClass="required-field" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Line amount" ColSpanMd="12">
-                                <Template>
-                                    <div class="sr-amount-preview">
-                                        <span>Qty × unit price</span>
-                                        <strong>@PopupAmount.ToString("n2")</strong>
-                                    </div>
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>

@@ -1377,6 +1377,7 @@ public sealed class SaCdnService : ISaCdnService
             LocalAmount = d.LocalAmount,
             OrderType = d.OrderType,
             StockControl = d.StockControl,
+            SourceInvLine = d.Line is > 0 and <= short.MaxValue ? (short)d.Line : null,
             ItemGlCode = d.SellingGlCode,
             Classification = d.Classification,
             Remarks = d.Remarks
@@ -1881,6 +1882,7 @@ public sealed class SaCdnService : ISaCdnService
         string? IStatus,
         string? LotNo,
         DateTime? ExpiryDate,
+        short? SourceInvLine,
         SaInvoiceLineCalcState Calc);
 
     private async Task<PreparedLinesResult> PrepareLinesAsync(
@@ -2111,7 +2113,30 @@ public sealed class SaCdnService : ISaCdnService
                 IStatus: iStatus,
                 LotNo: lotNo,
                 ExpiryDate: expiryDate,
+                SourceInvLine: line.SourceInvLine,
                 Calc: calcState));
+
+            if (request.ReturnStock && item.StockControl && line.SourceInvLine is > 0)
+            {
+                var invNo = (request.InvNo ?? string.Empty).Trim();
+                var sourceOk = await db.SaInvoiceDetails.AsNoTracking().AnyAsync(
+                    x => x.CompanyCode == companyCode
+                         && x.BranchCode == branchCode
+                         && x.InvNo == invNo
+                         && x.Line == line.SourceInvLine.Value
+                         && x.ICode == item.ICode
+                         && x.StockControl
+                         && db.SaInvoices.Any(h => h.CompanyCode == companyCode
+                                                   && h.BranchCode == branchCode
+                                                   && h.InvNo == invNo
+                                                   && h.Status == SaInvoiceStatuses.Posted),
+                    cancellationToken);
+                if (!sourceOk)
+                {
+                    errors[$"Lines[{lineNo - 1}].SourceInvLine"] =
+                        "Stock return requires the original posted invoice and source invoice line for every stock item.";
+                }
+            }
 
             lineNo++;
         }
@@ -2297,6 +2322,11 @@ public sealed class SaCdnService : ISaCdnService
             {
                 return $"Line {line.Line}: warehouse is required for stock return.";
             }
+
+            if (line.SourceInvLine is null or <= 0)
+            {
+                return "Stock return requires the original posted invoice and source invoice line for every stock item.";
+            }
         }
 
         return null;
@@ -2336,10 +2366,7 @@ public sealed class SaCdnService : ISaCdnService
                 ExpiryDate = d.ExpiryDate,
                 UnitPrice = d.CostPrice > 0m ? d.CostPrice : 0m,
                 InvNo = cdn.InvNo,
-                // The CR batch line is the immutable source line identity used by the
-                // valuation owner resolver. It is intentionally the original CDN/invoice
-                // line, not the compacted stock-only batch line number.
-                SoLineNo = d.Line,
+                SoLineNo = d.SourceInvLine,
                 DoNo = cdn.DoNo,
                 LocationCode = cdn.LocationCode
             });
@@ -2424,7 +2451,8 @@ public sealed class SaCdnService : ISaCdnService
                 LocCode = d.LocCode,
                 IStatus = d.IStatus,
                 LotNo = d.LotNo,
-                ExpiryDate = d.ExpiryDate
+                ExpiryDate = d.ExpiryDate,
+                SourceInvLine = d.SourceInvLine
             }).ToList()
         };
     }
@@ -2481,7 +2509,8 @@ public sealed class SaCdnService : ISaCdnService
                 LocCode = line.LocCode,
                 IStatus = line.IStatus,
                 LotNo = line.LotNo,
-                ExpiryDate = line.ExpiryDate
+                ExpiryDate = line.ExpiryDate,
+                SourceInvLine = line.SourceInvLine
             });
         }
     }

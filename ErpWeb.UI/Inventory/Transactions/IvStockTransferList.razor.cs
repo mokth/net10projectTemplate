@@ -88,8 +88,7 @@ public partial class IvStockTransferList : PageBase, IDisposable
         new() { Caption = "Ref No", FieldName = nameof(IvStockTransferListRow.RefNo), Width = "120px", VisibleIndex = 4 },
         new() { Caption = "Remarks", FieldName = nameof(IvStockTransferListRow.Remarks), VisibleIndex = 5 },
         new() { Caption = "Lines", FieldName = nameof(IvStockTransferListRow.LineCount), Width = "80px", VisibleIndex = 6 },
-        new() { Caption = "Total", FieldName = nameof(IvStockTransferListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 7 },
-        ..AuditColumns.For(startVisibleIndex: 8)
+        ..AuditColumns.For(startVisibleIndex: 7)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

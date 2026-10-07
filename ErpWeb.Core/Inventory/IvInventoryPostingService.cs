@@ -626,6 +626,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 LocationCode = detail.LocationCode,
                 ToBalLocId = plan.BalLocId,
                 ToLotId = plan.LotId,
+                InvNo = detail.InvNo,
+                SoLineNo = detail.SoLineNo,
                 CreatedDate = now,
                 CreatedBy = uid
             });

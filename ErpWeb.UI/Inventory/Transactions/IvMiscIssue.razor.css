@@ -178,6 +178,12 @@
     color: var(--mi-ink);
 }
 
+.mi-lines__hint {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--mi-muted, #5c6b7a);
+}
+
 .mi-line-grid {
     width: 100%;
     flex: 1;

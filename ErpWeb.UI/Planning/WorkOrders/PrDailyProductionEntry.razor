@@ -706,6 +706,7 @@
              HeaderText="Confirm Post"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => PostConfirmationVisible = false)">
         <BodyContentTemplate>
             <p>Post daily production document <strong>@DocumentNo</strong>?</p>
@@ -720,6 +721,7 @@
              HeaderText="Confirm Delete"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => DeleteConfirmationVisible = false)">
         <BodyContentTemplate>
             <p>Delete the NEW draft <strong>@DocumentNo</strong>?</p>
@@ -734,6 +736,7 @@
              HeaderText="Rollback Daily Production"
              CloseOnOutsideClick="false"
              ShowCloseButton="true"
+             ShowFooter="true"
              Closed="@(() => RollbackConfirmVisible = false)">
         <BodyContentTemplate>
             <p>Enter a reason to roll back this posted document.</p>

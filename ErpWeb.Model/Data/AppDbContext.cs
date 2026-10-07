@@ -284,7 +284,10 @@ public class AppDbContext : DbContext
                 {
                     if (check.Sql?.Contains("N'", StringComparison.Ordinal) == true
                         || check.Sql?.Contains("LEN(", StringComparison.OrdinalIgnoreCase) == true
-                        || check.Name == "CK_PrMaterialMovement_Type")
+                        || check.Name == "CK_PrMaterialMovement_Type"
+                        // Decimal columns are TEXT in SQLite, so RemainingQty <= OriginalQty
+                        // compares lexicographically ("7.0" > "10.0") and rejects valid FIFO issues.
+                        || check.Name == "CK_StockFifoLayer_Quantities")
                         entityType.RemoveCheckConstraint(check.Name);
                 }
             }

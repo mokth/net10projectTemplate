@@ -98,7 +98,7 @@
         </section>
     </div>
 
-    <DxPopup @bind-Visible="FilterPopupVisible" HeaderText="Filter documents" Width="420px" CloseOnOutsideClick="false">
+    <DxPopup @bind-Visible="FilterPopupVisible" HeaderText="Filter documents" Width="420px" CloseOnOutsideClick="false" ShowFooter="true">
         <BodyTemplate>
             <div class="mb-3">
                 <label class="form-label">Status</label>
@@ -123,7 +123,7 @@
         </FooterTemplate>
     </DxPopup>
 
-    <DxPopup @bind-Visible="ConfirmVisible" HeaderText="Confirm" Width="420px" CloseOnOutsideClick="false">
+    <DxPopup @bind-Visible="ConfirmVisible" HeaderText="Confirm" Width="420px" CloseOnOutsideClick="false" ShowFooter="true">
         <BodyTemplate>
             <p class="mb-0">@ConfirmMessage</p>
         </BodyTemplate>

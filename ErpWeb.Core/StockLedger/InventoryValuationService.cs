@@ -612,8 +612,10 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 {
                     var quantity = Positive(history.ToStdQty, "transfer receipt quantity");
                     var amount = RoundMoney(issueFacts.Sum(x => x.CostAmount));
+                    // A multi-layer issue already uses split 0..n-1. The destination fact must
+                    // take the next ordinal or the posting-line identity collides.
                     AppendReceipt(
-                        context, history, detail, states, splitOrdinal: 1,
+                        context, history, detail, states, splitOrdinal: issueFacts.Count,
                         forcedAmount: amount,
                         forcedUnitCost: quantity == 0m ? 0m : RoundMoney(amount / quantity),
                         forcedSource: StockValuationSources.Fifo,
@@ -633,7 +635,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 else
                 {
                     var quantity = Positive(history.ToStdQty, "receipt quantity");
-                    var unitCost = ResolveReceiptUnitCost(history, detail);
+                    var unitCost = ResolveFifoReceiptUnitCost(history, detail, states);
                     var fact = AppendReceipt(
                         context, history, detail, states, splitOrdinal: 0,
                         forcedAmount: RoundMoney(quantity * unitCost),
@@ -1235,7 +1237,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
         {
             if (state.OnHandBaseQty <= 0m || state.InventoryValue < 0m)
                 throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
-                    $"Stock adjustment for item '{itemCode}' requires an approved opening/current cost before increasing stock.");
+                    MissingAdjustmentCostMessage(itemCode));
 
             unitCost = state.CurrentUnitCost;
             source = StockValuationSources.MovingAverage;
@@ -1245,7 +1247,15 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var resolvedUnitCost = unitCost.Value;
         var evidenceType = ResolveCostEvidenceType(history, detail);
         if (evidenceType is not null)
-            ValidateApprovedCostEvidence(history, detail, evidenceType, resolvedUnitCost);
+        {
+            // Standard inventory value stays on the effective standard cost. Evidence is audited
+            // against the approved unit on the document, not reinterpreted as that standard cost.
+            var evidenceUnit = string.Equals(forcedSource, StockValuationSources.Standard, StringComparison.OrdinalIgnoreCase)
+                               && string.Equals(history.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase)
+                ? detail?.UnitPrice ?? history.UnitPrice ?? resolvedUnitCost
+                : resolvedUnitCost;
+            ValidateApprovedCostEvidence(history, detail, evidenceType, evidenceUnit);
+        }
 
         var amount = forcedAmount ?? RoundMoney(quantity * resolvedUnitCost);
         if (amount < 0m || resolvedUnitCost < 0m)
@@ -1803,6 +1813,32 @@ public sealed class InventoryValuationService : IInventoryValuationService
             }
         }
     }
+
+    private static decimal ResolveFifoReceiptUnitCost(
+        IvTrxHistory history,
+        DetailEvidence? detail,
+        IDictionary<string, StockCostState> states)
+    {
+        if (string.Equals(history.TrxType, IvTrxTypes.StockAdjustment, StringComparison.OrdinalIgnoreCase)
+            && ResolveCostEvidenceType(history, detail) is null)
+        {
+            var itemCode = Required(history.ICode, "item code");
+            if (!states.TryGetValue(itemCode, out var state)
+                || state.OnHandBaseQty <= 0m
+                || state.InventoryValue < 0m)
+            {
+                throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                    MissingAdjustmentCostMessage(itemCode));
+            }
+
+            return state.CurrentUnitCost;
+        }
+
+        return ResolveReceiptUnitCost(history, detail);
+    }
+
+    private static string MissingAdjustmentCostMessage(string itemCode) =>
+        $"The system has no approved current inventory cost for item {itemCode}. Use an authorized cost override with supporting evidence before posting this positive adjustment.";
 
     private static decimal ResolveReceiptUnitCost(IvTrxHistory history, DetailEvidence? detail)
     {

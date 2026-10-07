@@ -123,7 +123,8 @@
         <DxPopup @bind-Visible="@CloseConfirmVisible"
                  HeaderText="Confirm close"
                  Width="480px"
-                 CloseOnOutsideClick="false">
+                 CloseOnOutsideClick="false"
+                 ShowFooter="true">
             <BodyContentTemplate>
                 <p>Close the period <strong>@(PeriodFrom?.ToString("dd/MM/yyyy")) – @(PeriodTo?.ToString("dd/MM/yyyy"))</strong>?</p>
                 <p class="iv-field-hint">
@@ -139,7 +140,8 @@
         <DxPopup @bind-Visible="@ReopenPopupVisible"
                  HeaderText="Reopen period"
                  Width="480px"
-                 CloseOnOutsideClick="false">
+                 CloseOnOutsideClick="false"
+                 ShowFooter="true">
             <BodyContentTemplate>
                 <p>
                     Reopen <strong>@(ReopenTarget?.PeriodFrom.ToString("dd/MM/yyyy")) – @(ReopenTarget?.PeriodTo.ToString("dd/MM/yyyy"))</strong>?

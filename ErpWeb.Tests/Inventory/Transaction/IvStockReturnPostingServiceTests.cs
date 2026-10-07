@@ -1,10 +1,12 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
@@ -100,6 +102,62 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             IsActive = true,
             RowVersion = Guid.NewGuid().ToByteArray()
         });
+        db.SaInvoices.Add(new SaInvoice
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = "INV-RET",
+            CustCode = "C001",
+            InvDate = FixedToday,
+            Status = SaInvoiceStatuses.Posted,
+            DoNo = string.Empty
+        });
+        db.SaInvoiceDetails.AddRange(
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 1,
+                ICode = "A100",
+                IDesc = "Widget",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            },
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 2,
+                ICode = "LOT1",
+                IDesc = "Lot item",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            },
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 3,
+                ICode = "INACT",
+                IDesc = "Will deactivate",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            });
         await db.SaveChangesAsync();
     }
 
@@ -290,6 +348,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             [
                 new IvStockReturnLineRequest
                 {
+                    SourceInvNo = "INV-RET",
+                    SourceInvoiceLine = 2,
                     ICode = "LOT1",
                     ToWarehouse = "MAIN",
                     ToLocation = "BIN1",
@@ -363,6 +423,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
             [
                 new IvStockReturnLineRequest
                 {
+                    SourceInvNo = "INV-RET",
+                    SourceInvoiceLine = 2,
                     ICode = "LOT1",
                     ToWarehouse = "MAIN",
                     ToLocation = "BIN1",
@@ -396,6 +458,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
                 ValidLine(5m),
                 new IvStockReturnLineRequest
                 {
+                    SourceInvNo = "INV-RET",
+                    SourceInvoiceLine = 3,
                     ICode = "INACT",
                     ToWarehouse = "MAIN",
                     ToLocation = "BIN1",
@@ -516,6 +580,8 @@ public class IvStockReturnPostingServiceTests : IAsyncLifetime
     private static IvStockReturnLineRequest ValidLine(decimal qty) =>
         new()
         {
+            SourceInvNo = "INV-RET",
+            SourceInvoiceLine = 1,
             ICode = "A100",
             ToWarehouse = "MAIN",
             ToLocation = "BIN1",

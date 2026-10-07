@@ -448,7 +448,7 @@ public class IvStockCountServiceTests : IAsyncLifetime
         var history = await db.IvTrxHistories.SingleAsync();
         Assert.Equal(IvTrxTypes.StockAdjustment, history.TrxType);
         Assert.Equal(30m, history.FrStdQty);
-        Assert.Equal(5m, history.UnitPrice);
+        Assert.Equal(0m, history.UnitPrice);
 
         var header = await db.IvStockCountHdrs.SingleAsync();
         Assert.Equal(IvStockCountStatuses.Posted, header.Status);

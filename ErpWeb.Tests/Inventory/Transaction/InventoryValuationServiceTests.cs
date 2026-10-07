@@ -167,7 +167,7 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             history.ToStdQty = 6m;
             history.ToStdUom = "EA";
             history.UnitPrice = 4.5m;
-            history.PriceEvidence = "TEST_APPROVED";
+            history.PriceEvidence = InventoryCostEvidenceTypes.ManualApproved;
             context.Db.IvTrxHistories.Add(history);
             writer.StampGeneration(context, [history], 1);
 
@@ -312,7 +312,7 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
                 history.ToStdQty = 1m;
                 history.ToStdUom = "EA";
                 history.UnitPrice = 2m;
-                history.PriceEvidence = "TEST_APPROVED";
+                history.PriceEvidence = InventoryCostEvidenceTypes.ManualApproved;
                 context.Db.IvTrxHistories.Add(history);
                 writer.StampGeneration(context, [history], 1);
                 return Task.CompletedTask;
@@ -373,7 +373,7 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             history.ToStdQty = qty;
             history.ToStdUom = "EA";
             history.UnitPrice = price;
-            history.PriceEvidence = "TEST_APPROVED";
+            history.PriceEvidence = InventoryCostEvidenceTypes.ManualApproved;
             context.Db.IvTrxHistories.Add(history);
             writer.StampGeneration(context, [history], 1);
             return Task.CompletedTask;

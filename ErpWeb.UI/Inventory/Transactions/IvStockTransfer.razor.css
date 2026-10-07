@@ -178,6 +178,12 @@
     color: var(--tr-ink);
 }
 
+.tr-lines__hint {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--tr-muted, #5c6b7a);
+}
+
 .tr-line-grid {
     width: 100%;
     flex: 1;

@@ -85,8 +85,7 @@ public partial class IvStockReturnList : PageBase, IDisposable
         new() { Caption = "Ref No", FieldName = nameof(IvStockReturnListRow.RefNo), Width = "120px", VisibleIndex = 4 },
         new() { Caption = "Remarks", FieldName = nameof(IvStockReturnListRow.Remarks), VisibleIndex = 5 },
         new() { Caption = "Lines", FieldName = nameof(IvStockReturnListRow.LineCount), Width = "80px", VisibleIndex = 6 },
-        new() { Caption = "Total", FieldName = nameof(IvStockReturnListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 7 },
-        ..AuditColumns.For(startVisibleIndex: 8)
+        ..AuditColumns.For(startVisibleIndex: 7)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];

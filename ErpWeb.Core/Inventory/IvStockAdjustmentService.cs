@@ -580,6 +580,32 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         return IvStockAdjustmentOperationResult.OkPosting(posting);
     }
 
+    public async Task<string?> GetActiveCostMethodAsync(
+        DateTime effectiveAt,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null || context.CompanyCode is null || context.BranchCode is null)
+        {
+            return null;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        try
+        {
+            return await new StockCostMethodResolver().ResolveAsync(
+                db,
+                context.CompanyCode,
+                context.BranchCode,
+                effectiveAt,
+                cancellationToken);
+        }
+        catch (StockLedgerException)
+        {
+            return null;
+        }
+    }
+
     private async Task<(string? ErrorMessage, List<ValidatedLine>? Lines)> ValidateLinesAsync(
         AppDbContext db,
         IReadOnlyList<IvStockAdjustmentLineRequest>? lines,
@@ -900,10 +926,18 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
         }
 
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
-        var unitPrice = line.UnitPrice;
-        if (unitPrice == 0m && costEvidenceType is null)
+        decimal unitPrice;
+        if (adjustQty <= 0m)
         {
-            unitPrice = bal.UnitPrice ?? item.PurchasePrice ?? 0m;
+            // Outbound valuation is determined by InventoryValuationService.
+            // This field is retained only for backward-compatible operational display.
+            unitPrice = bal.UnitPrice ?? 0m;
+        }
+        else
+        {
+            // Positive no-evidence cost is decided by InventoryValuationService.
+            // PurchasePrice is not approved cost evidence.
+            unitPrice = line.UnitPrice;
         }
 
         var remarks = IvStockAdjustmentLineInvariant.CombineRemarks(canonicalReason, line.Remarks);
@@ -942,7 +976,7 @@ public sealed class IvStockAdjustmentService : IIvStockAdjustmentService
             return null;
         }
 
-        return "A manual positive adjustment cost requires the PRICE_OVERRIDE permission.";
+        return "You are not authorized to override inventory cost.";
     }
 
     private static string? NormalizeRefNo(string? refNo, int batchNo)

@@ -64,8 +64,6 @@ public partial class IvScrap : PageBase
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
 
-    protected decimal DocumentTotal => Lines.Sum(x => x.Amount);
-    protected decimal PopupAmount => decimal.Round(Popup.Quantity * Popup.UnitPrice, 2);
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0;
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Scrap Information" : "Scrap Information";
@@ -307,7 +305,6 @@ public partial class IvScrap : PageBase
         Popup.IDesc = item.IDesc ?? string.Empty;
         Popup.IClassCode = item.IClassCode ?? string.Empty;
         Popup.LotControl = item.LotControl;
-        Popup.UnitPrice = item.PurchasePrice ?? 0m;
 
         // Clear previous balance location selection when item changes
         Popup.FromBalLocId = 0;
@@ -558,11 +555,6 @@ public partial class IvScrap : PageBase
             || !IvScrapReasons.All.Any(x => string.Equals(x, Popup.Reason.Trim(), StringComparison.OrdinalIgnoreCase)))
         {
             return "Reason is required.";
-        }
-
-        if (Popup.UnitPrice < 0)
-        {
-            return "Unit price cannot be negative.";
         }
 
         return null;

@@ -1,10 +1,12 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
@@ -338,6 +340,32 @@ public class IvInventoryPostingSqlServerConcurrencyTests
                 IsActive = true,
                 IClassCode = classCode
             });
+            var invNo = "CR" + iCode;
+            db.SaInvoices.Add(new SaInvoice
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = invNo,
+                CustCode = "C001",
+                InvDate = DateTime.Today,
+                Status = SaInvoiceStatuses.Posted,
+                DoNo = string.Empty
+            });
+            db.SaInvoiceDetails.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = invNo,
+                Line = 1,
+                ICode = iCode,
+                IDesc = "CR concurrency test item",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            });
             await db.SaveChangesAsync();
         }
 
@@ -367,6 +395,8 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             [
                 new IvStockReturnLineRequest
                 {
+                    SourceInvNo = "CR" + iCode,
+                    SourceInvoiceLine = 1,
                     ICode = iCode,
                     ToWarehouse = "MAIN",
                     ToLocation = string.Empty,

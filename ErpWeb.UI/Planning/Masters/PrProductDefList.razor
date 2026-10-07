@@ -121,6 +121,7 @@
                  CloseOnOutsideClick="false"
                  Width="520px"
                  CssClass="common-popup"
+                 ShowFooter="true"
                  @bind-Visible="@FilterPopupVisible">
             <Content>
                 <div class="iv-popup-body">
@@ -173,7 +174,8 @@
         <DxPopup HeaderText="Confirm delete"
                  @bind-Visible="@ConfirmVisible"
                  CloseOnOutsideClick="false"
-                 Width="420px">
+                 Width="420px"
+                 ShowFooter="true">
             <BodyContentTemplate>
                 <p class="iv-confirm__copy">@ConfirmMessage</p>
                 <p class="text-muted small mb-0">This removes the BOM definition only. Stock Master items are not deleted.</p>

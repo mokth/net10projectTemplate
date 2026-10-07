@@ -176,4 +176,8 @@ public interface IIvStockAdjustmentService
     Task<IvStockAdjustmentOperationResult> RollbackAsync(
         IReadOnlyList<int> batchNos,
         CancellationToken cancellationToken = default);
+
+    Task<string?> GetActiveCostMethodAsync(
+        DateTime effectiveAt,
+        CancellationToken cancellationToken = default);
 }

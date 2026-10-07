@@ -36,6 +36,7 @@ public class SaCdnDetail
     public string? IDiscountType1 { get; set; }
     public decimal NetAmount { get; set; }
     public decimal CostPrice { get; set; }
+    public short? SourceInvLine { get; set; }
     public string? Classification { get; set; }
 
     public string? FrWarehouse { get; set; }

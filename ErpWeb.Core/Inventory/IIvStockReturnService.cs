@@ -47,6 +47,15 @@ public sealed class IvStockReturnOperationResult
 
     public static IvStockReturnOperationResult Fail(string message) =>
         new() { Succeeded = false, ErrorMessage = message };
+
+    public IReadOnlyList<IvStockReturnInvoiceLookupRow> Invoices { get; init; } = [];
+    public IReadOnlyList<IvStockReturnInvoiceLineLookupRow> InvoiceLines { get; init; } = [];
+
+    public static IvStockReturnOperationResult OkInvoices(IReadOnlyList<IvStockReturnInvoiceLookupRow> rows) =>
+        new() { Succeeded = true, Invoices = rows };
+
+    public static IvStockReturnOperationResult OkInvoiceLines(IReadOnlyList<IvStockReturnInvoiceLineLookupRow> rows) =>
+        new() { Succeeded = true, InvoiceLines = rows };
 }
 
 public sealed class IvStockReturnListQuery
@@ -99,6 +108,8 @@ public sealed class IvStockReturnLineDto
     public short LineNo { get; init; }
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
+    public string SourceInvNo { get; init; } = string.Empty;
+    public short SourceInvoiceLine { get; init; }
     public string ToWarehouse { get; init; } = string.Empty;
     public string? ToLocation { get; init; }
     public string? ToLotNo { get; init; }
@@ -123,6 +134,8 @@ public sealed class IvStockReturnSaveRequest
 
 public sealed class IvStockReturnLineRequest
 {
+    public string SourceInvNo { get; set; } = string.Empty;
+    public short SourceInvoiceLine { get; set; }
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
     public string ToWarehouse { get; set; } = string.Empty;
@@ -136,6 +149,27 @@ public sealed class IvStockReturnLineRequest
     public DateTime? ExpiryDate { get; set; }
     public string? Reason { get; set; }
     public string? Remarks { get; set; }
+}
+
+public sealed class IvStockReturnInvoiceLookupRow
+{
+    public string InvNo { get; init; } = string.Empty;
+    public DateTime InvDate { get; init; }
+    public string? CustCode { get; init; }
+    public string? CustName { get; init; }
+}
+
+public sealed class IvStockReturnInvoiceLineLookupRow
+{
+    public short InvoiceLine { get; init; }
+    public string ICode { get; init; } = string.Empty;
+    public string? IDesc { get; init; }
+    public decimal Qty { get; init; }
+    public decimal StdQty { get; init; }
+    public string? StdUom { get; init; }
+    public bool StockControl { get; init; }
+    public string? DoNo { get; init; }
+    public short? DoLine { get; init; }
 }
 
 public interface IIvStockReturnService
@@ -171,5 +205,14 @@ public interface IIvStockReturnService
 
     Task<IvStockReturnOperationResult> RollbackAsync(
         IReadOnlyList<int> batchNos,
+        CancellationToken cancellationToken = default);
+
+    Task<IvStockReturnOperationResult> SearchSourceInvoicesAsync(
+        string? searchText,
+        int take = 50,
+        CancellationToken cancellationToken = default);
+
+    Task<IvStockReturnOperationResult> GetSourceInvoiceLinesAsync(
+        string invNo,
         CancellationToken cancellationToken = default);
 }

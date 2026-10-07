@@ -858,11 +858,6 @@ public sealed class IvScrapService : IIvScrapService
             return ($"Line {lineNo}: quantity must be greater than zero.", null);
         }
 
-        if (line.UnitPrice < 0)
-        {
-            return ($"Line {lineNo}: unit price cannot be negative.", null);
-        }
-
         var reasonError = ValidateReasonCode(line.Reason, lineNo);
         if (reasonError is not null)
         {
@@ -872,6 +867,10 @@ public sealed class IvScrapService : IIvScrapService
         var canonicalReason = NormalizeReasonCode(line.Reason)!;
         var desc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim();
         var remarks = CombineRemarks(canonicalReason, line.Remarks);
+
+        // Outbound valuation is determined by InventoryValuationService.
+        // This field is retained only for backward-compatible operational display.
+        var operationalUnitPrice = bal.UnitPrice ?? 0m;
 
         return (null, new ValidatedLine(
             item,
@@ -885,7 +884,7 @@ public sealed class IvScrapService : IIvScrapService
             iStatus,
             iClassCode,
             expiry,
-            line.UnitPrice,
+            operationalUnitPrice,
             remarks));
     }
 

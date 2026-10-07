@@ -1,9 +1,11 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -148,6 +150,63 @@ public class IvStockReturnServiceTests : IAsyncLifetime
                 IClassCode = "RAW",
                 StdUom = "EA",
                 IsActive = true
+            });
+
+        db.SaInvoices.Add(new SaInvoice
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            InvNo = "INV-RET",
+            CustCode = "C001",
+            InvDate = FixedToday,
+            Status = SaInvoiceStatuses.Posted,
+            DoNo = string.Empty
+        });
+        db.SaInvoiceDetails.AddRange(
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 1,
+                ICode = "A100",
+                IDesc = "Widget",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            },
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 2,
+                ICode = "LOT1",
+                IDesc = "Lot item",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "KG",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
+            },
+            new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                InvNo = "INV-RET",
+                Line = 3,
+                ICode = "DEAD",
+                IDesc = "Inactive",
+                Qty = 1000m,
+                StdQty = 1000m,
+                StdUom = "EA",
+                StockControl = true,
+                SoNo = string.Empty,
+                DoNo = string.Empty
             });
 
         await db.SaveChangesAsync();
@@ -324,6 +383,7 @@ public class IvStockReturnServiceTests : IAsyncLifetime
         var sut = CreateSut();
         var req = ValidNonLotLineRequest();
         req.ICode = "DEAD";
+        req.SourceInvoiceLine = 3;
         var result = await sut.SaveNewAsync(Wrap(req));
         Assert.False(result.Succeeded);
         Assert.Contains("not found", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
@@ -662,7 +722,7 @@ public class IvStockReturnServiceTests : IAsyncLifetime
         Assert.Single(result.ListPage.Rows);
         Assert.Equal(1, result.ListPage.Rows[0].BatchNo);
         Assert.Equal(1, result.ListPage.Rows[0].LineCount);
-        Assert.Equal(125m, result.ListPage.Rows[0].TotalAmount);
+        Assert.Equal(0m, result.ListPage.Rows[0].TotalAmount);
     }
 
     [Fact]
@@ -736,7 +796,7 @@ public class IvStockReturnServiceTests : IAsyncLifetime
         Assert.Equal("REF-UPD", loaded.Document!.RefNo);
         Assert.Equal("header note", loaded.Document.Remark);
         Assert.Equal(4m, loaded.Document.Lines[0].Quantity);
-        Assert.Equal(2m, loaded.Document.Lines[0].UnitPrice);
+        Assert.Equal(0m, loaded.Document.Lines[0].UnitPrice);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -819,6 +879,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
     private static IvStockReturnLineRequest ValidNonLotLineRequest() =>
         new()
         {
+            SourceInvNo = "INV-RET",
+            SourceInvoiceLine = 1,
             ICode = "A100",
             ToWarehouse = "MAIN",
             ToLocation = "BIN1",
@@ -834,6 +896,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
     private static IvStockReturnLineRequest ValidLotLineRequest() =>
         new()
         {
+            SourceInvNo = "INV-RET",
+            SourceInvoiceLine = 2,
             ICode = "LOT1",
             ToWarehouse = "MAIN",
             ToLocation = "BIN1",
@@ -851,6 +915,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
         new()
         {
             ICode = x.ICode,
+            SourceInvNo = x.SourceInvNo,
+            SourceInvoiceLine = x.SourceInvoiceLine,
             IDesc = x.IDesc,
             ToWarehouse = x.ToWarehouse,
             ToLocation = x.ToLocation,
