@@ -898,6 +898,278 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Create_and_release_builds_current_snapshot_and_releases()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await sut.CreateAndReleaseAsync(Request(10m));
+
+        Assert.True(released.Succeeded, released.Message);
+        var detail = released.Data!;
+        Assert.Equal(ProductionWorkOrderStatuses.Released, detail.Status);
+        Assert.Equal(ProductionSnapshotFormatVersions.Current, detail.SnapshotFormatVersion);
+        Assert.False(detail.IsLegacySnapshot);
+        Assert.NotNull(detail.SourceProductDefinitionRevisionId);
+        Assert.False(string.IsNullOrWhiteSpace(detail.DefinitionSourceHash));
+        Assert.NotEmpty(detail.RouteSteps);
+        Assert.NotEmpty(detail.Operations);
+        Assert.NotEmpty(detail.Materials);
+        Assert.NotNull(detail.ReleasedDate);
+        Assert.Equal(1, detail.AuditEvents.Count(x => x.EventType == ProductionAuditEventTypes.Created));
+        Assert.Equal(1, detail.AuditEvents.Count(x => x.EventType == ProductionAuditEventTypes.Released));
+        Assert.DoesNotContain(detail.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Refreshed);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var stored = await db.ProductionWorkOrders.SingleAsync();
+        Assert.Equal(ProductionSnapshotHashVersions.Current, stored.SnapshotHashVersion);
+        Assert.False(await db.IvTrxBatches.AnyAsync());
+        Assert.False(await db.IvTrxHistories.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Save_draft_from_local_planner_date_can_release()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var request = Request(10m);
+        request.PlannedStartDate = DateTime.SpecifyKind(new DateTime(2026, 10, 1), DateTimeKind.Local);
+        request.PlannedCompletionDate = DateTime.SpecifyKind(new DateTime(2026, 10, 3), DateTimeKind.Local);
+
+        var created = await sut.CreateDraftAsync(request);
+        Assert.True(created.Succeeded, created.Message);
+
+        var released = await ReleaseCurrentAsync(sut, created.Data!);
+        Assert.True(released.Succeeded, released.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, released.Data!.Status);
+    }
+
+    [Fact]
+    public async Task Create_and_release_failure_does_not_leave_draft()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut(readiness: new RejectingReadinessValidator());
+        var released = await sut.CreateAndReleaseAsync(Request(10m));
+
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+        Assert.Contains(ProductionReadinessErrorCodes.NoRoute, released.Message, StringComparison.Ordinal);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_and_release_rolls_back_when_release_feature_disabled()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut(releaseEnabled: false);
+        var released = await sut.CreateAndReleaseAsync(Request(10m));
+
+        Assert.False(released.Succeeded);
+        Assert.Contains(ProductionReadinessErrorCodes.ReleaseDisabled, released.Message, StringComparison.Ordinal);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_and_release_requires_add_permission()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut(deniedPermission: PermissionCodes.Add);
+        var released = await sut.CreateAndReleaseAsync(Request(10m));
+
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.AccessDenied, released.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_and_release_requires_release_permission()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut(deniedPermission: PermissionCodes.Approve);
+        var released = await sut.CreateAndReleaseAsync(Request(10m));
+
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.AccessDenied, released.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Update_and_release_applies_qty_recalculation_then_releases()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var before = created.Data!;
+        var beforeQty = Assert.Single(before.Materials).RequiredQty;
+
+        var released = await sut.UpdateAndReleaseAsync(UpdateAndRelease(before, plannedQty: 20m));
+
+        Assert.True(released.Succeeded, released.Message);
+        var detail = released.Data!;
+        Assert.Equal(ProductionWorkOrderStatuses.Released, detail.Status);
+        Assert.Equal(20m, detail.PlannedQty);
+        var material = Assert.Single(detail.Materials);
+        Assert.Equal(beforeQty * 2m, material.RequiredQty);
+        Assert.True(detail.SnapshotRevision > before.SnapshotRevision);
+        Assert.NotEqual(before.SnapshotHash, detail.SnapshotHash);
+        Assert.NotNull(detail.RouteSteps.First().PlannedStartDateTime);
+        Assert.Contains(detail.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+    }
+
+    [Fact]
+    public async Task Update_and_release_applies_header_change_then_releases()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        var released = await sut.UpdateAndReleaseAsync(UpdateAndRelease(created.Data!, remark: "Ship note"));
+
+        Assert.True(released.Succeeded, released.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, released.Data!.Status);
+        Assert.Equal("Ship note", released.Data.Remark);
+        Assert.Equal(created.Data!.PlannedQty, released.Data.PlannedQty);
+        Assert.Contains(released.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.DraftUpdated);
+        Assert.Contains(released.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+    }
+
+    [Fact]
+    public async Task Update_and_release_rejects_stale_rowversion()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var stale = created.Data!;
+
+        var saved = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = stale.WorkOrderNo,
+            PlannedQty = stale.PlannedQty,
+            SchedulingDirection = stale.SchedulingDirection,
+            ScheduleAnchorDateTime = stale.ScheduleAnchorDateTime,
+            Remark = "Saved first",
+            RowVersion = stale.RowVersion
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+
+        var raced = await sut.UpdateAndReleaseAsync(UpdateAndRelease(stale, remark: "Should not persist"));
+
+        Assert.False(raced.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, raced.ErrorCode);
+        var reload = await sut.GetAsync(stale.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reload.Data!.Status);
+        Assert.Equal("Saved first", reload.Data.Remark);
+        Assert.Equal(saved.Data!.SnapshotRevision, reload.Data.SnapshotRevision);
+        Assert.Equal(saved.Data.SnapshotHash, reload.Data.SnapshotHash);
+    }
+
+    [Fact]
+    public async Task Release_does_not_auto_refresh_changed_product_definition()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var draft = created.Data!;
+        var materialQty = Assert.Single(draft.Materials).RequiredQty;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.PrBomHdrs.Include(x => x.Lines).SingleAsync(x => x.ProdCode == "FG001");
+            header.Version = 9;
+            header.Lines.Single().StdQty = 50m;
+            await db.SaveChangesAsync();
+        }
+
+        var released = await ReleaseCurrentAsync(sut, draft);
+        Assert.True(released.Succeeded, released.Message);
+        Assert.Equal(draft.SourceProductDefinitionRevisionId, released.Data!.SourceProductDefinitionRevisionId);
+        Assert.Equal(draft.SourceBomVersion, released.Data.SourceBomVersion);
+        Assert.Equal(draft.DefinitionSourceHash, released.Data.DefinitionSourceHash);
+        Assert.Equal(draft.SnapshotHash, released.Data.SnapshotHash);
+        Assert.Equal(materialQty, Assert.Single(released.Data.Materials).RequiredQty);
+        Assert.DoesNotContain(released.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Refreshed);
+    }
+
+    [Fact]
+    public async Task Update_header_rejects_corrupted_saved_snapshot()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        await TamperMaterialQtyAsync();
+
+        var updated = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = created.Data!.WorkOrderNo,
+            PlannedQty = created.Data.PlannedQty,
+            SchedulingDirection = created.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = created.Data.ScheduleAnchorDateTime,
+            Remark = "Should not repair the hash",
+            RowVersion = created.Data.RowVersion
+        });
+
+        Assert.False(updated.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, updated.ErrorCode);
+        Assert.Contains(ProductionReadinessErrorCodes.SnapshotHashInvalid, updated.Message, StringComparison.Ordinal);
+        await AssertSnapshotUnchangedAsync(sut, created.Data);
+    }
+
+    [Fact]
+    public async Task Update_and_release_rejects_corrupted_saved_snapshot()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        await TamperMaterialQtyAsync();
+
+        var released = await sut.UpdateAndReleaseAsync(UpdateAndRelease(created.Data!, remark: "Should not release"));
+
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+        Assert.Contains(ProductionReadinessErrorCodes.SnapshotHashInvalid, released.Message, StringComparison.Ordinal);
+        await AssertSnapshotUnchangedAsync(sut, created.Data!);
+    }
+
+    [Fact]
+    public async Task Legacy_snapshot_release_requires_explicit_refresh()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync();
+            order.SnapshotFormatVersion = ProductionSnapshotFormatVersions.FullHierarchyV2;
+            order.IsLegacySnapshot = true;
+            await db.SaveChangesAsync();
+        }
+
+        var released = await sut.ReleaseAsync(created.Data!.WorkOrderNo, created.Data.RowVersion);
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+        Assert.Contains(
+            ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired,
+            released.Message,
+            StringComparison.Ordinal);
+
+        var reload = await sut.GetAsync(created.Data.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reload.Data!.Status);
+        Assert.DoesNotContain(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+    }
+
+    [Fact]
     public async Task Work_order_snapshot_blocks_product_definition_delete()
     {
         var workOrders = CreateSut();
@@ -1464,10 +1736,49 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             new IvUomConversionService(_factory));
     }
 
+    private static ProductionWorkOrderUpdateAndReleaseRequest UpdateAndRelease(
+        ProductionWorkOrderDetail detail,
+        decimal? plannedQty = null,
+        string? remark = null) => new()
+    {
+        WorkOrderNo = detail.WorkOrderNo,
+        PlannedQty = plannedQty ?? detail.PlannedQty,
+        SchedulingDirection = detail.SchedulingDirection,
+        ScheduleAnchorDateTime = detail.ScheduleAnchorDateTime,
+        SourceReference = detail.SourceReference,
+        Remark = remark ?? detail.Remark,
+        RowVersion = detail.RowVersion,
+        SnapshotRevision = detail.SnapshotRevision,
+        SnapshotHash = detail.SnapshotHash,
+        SourceProductDefinitionRevisionId = detail.SourceProductDefinitionRevisionId
+    };
+
+    private async Task TamperMaterialQtyAsync()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var material = await db.ProductionWorkOrderMaterials.SingleAsync();
+        material.RequiredQty = 999m;
+        material.RowVersion = Guid.NewGuid().ToByteArray();
+        await db.SaveChangesAsync();
+    }
+
+    private async Task AssertSnapshotUnchangedAsync(ProductionWorkOrderService sut, ProductionWorkOrderDetail before)
+    {
+        var reload = await sut.GetAsync(before.WorkOrderNo);
+        Assert.True(reload.Succeeded, reload.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reload.Data!.Status);
+        Assert.Equal(before.SnapshotRevision, reload.Data.SnapshotRevision);
+        Assert.Equal(before.SnapshotHash, reload.Data.SnapshotHash);
+        Assert.Equal(before.Remark, reload.Data.Remark);
+        Assert.DoesNotContain(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+        Assert.DoesNotContain(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.DraftUpdated);
+    }
+
     private ProductionWorkOrderService CreateSut(
         string branch = "HQ",
         string? deniedPermission = null,
-        bool releaseEnabled = true)
+        bool releaseEnabled = true,
+        IWorkOrderReadinessValidator? readiness = null)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(
@@ -1496,7 +1807,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             new WorkOrderSnapshotBuilder(_factory, new ProductDefinitionSnapshotLoader(_factory), quantities),
             quantities,
             new WorkOrderScheduleCalculator(new AlwaysOpenWorkOrderCalendarProvider()),
-            new WorkOrderReadinessValidator(),
+            readiness ?? new WorkOrderReadinessValidator(),
             Microsoft.Extensions.Options.Options.Create(new ProductionWorkOrderOptions { ReleaseEnabled = releaseEnabled }));
     }
 
@@ -1571,6 +1882,16 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         SourceType = ProductionSourceTypes.Manual,
         Remark = "Phase 1 test"
     };
+
+    private sealed class RejectingReadinessValidator : IWorkOrderReadinessValidator
+    {
+        public WorkOrderReadinessReport Validate(ProductionWorkOrder workOrder, WorkOrderReadinessContext context)
+        {
+            var report = new WorkOrderReadinessReport();
+            report.Add(ProductionReadinessErrorCodes.NoRoute, "Forced readiness failure for atomic rollback.");
+            return report;
+        }
+    }
 
     private static IvStockMaster Stock(
         string company,

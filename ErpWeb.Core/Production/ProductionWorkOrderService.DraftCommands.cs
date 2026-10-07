@@ -64,6 +64,87 @@ public sealed partial class ProductionWorkOrderService
         }
     }
 
+    public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateAndReleaseAsync(
+        ProductionWorkOrderDraftRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request ??= new ProductionWorkOrderDraftRequest();
+        var add = await AuthorizeAsync(PermissionCodes.Add, requireWriteScope: true, cancellationToken);
+        if (add.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(add.Error.Value.Code, add.Error.Value.Message);
+        }
+
+        var release = await AuthorizeAsync(ProductionPermissionCodes.Release, requireWriteScope: true, cancellationToken);
+        if (release.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(release.Error.Value.Code, release.Error.Value.Message);
+        }
+
+        var scope = add.Scope!;
+        var built = await BuildCurrentSnapshotAsync(
+            scope, request, snapshotRevision: 1, explicitScheduleAnchor: null, cancellationToken);
+        if (built.WorkOrder is null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var entity = built.WorkOrder;
+            entity.WorkOrderNo = await AllocateWorkOrderNoAsync(db, scope.CompanyCode, cancellationToken);
+            var now = DateTime.UtcNow;
+            entity.CreatedDate = now;
+            entity.CreatedBy = scope.UserId;
+            entity.ModifiedDate = now;
+            entity.ModifiedBy = scope.UserId;
+            entity.AuditEvents.Add(new ProductionAuditEvent
+            {
+                EventType = ProductionAuditEventTypes.Created,
+                ToStatus = ProductionWorkOrderStatuses.Draft,
+                SnapshotRevision = entity.SnapshotRevision,
+                DetailsJson = JsonSerializer.Serialize(new { entity.ProductCode, entity.SnapshotHash, entity.SourceBomVersion }),
+                OccurredDate = now,
+                ActorUserId = scope.UserId
+            });
+            db.ProductionWorkOrders.Add(entity);
+            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+
+            await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SchedulingSourceBusy + ": " + ex.Message);
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraint(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.DuplicateKey,
+                "A Work Order with the allocated number already exists. Try saving again.");
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return Concurrency<ProductionWorkOrderDetail>();
+        }
+    }
+
     public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> UpdateDraftHeaderAsync(
         ProductionWorkOrderHeaderUpdate request,
         CancellationToken cancellationToken = default)
@@ -80,70 +161,92 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
-            if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
-            {
-                throw new WorkOrderCommandException(
-                    IvMasterErrorCode.Validation,
-                    ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
-            }
-
-            var qtyChanged = entity.PlannedQty != request.PlannedQty;
-            var direction = string.IsNullOrWhiteSpace(request.SchedulingDirection)
-                ? entity.SchedulingDirection
-                : Normalize(request.SchedulingDirection);
-            if (!ProductionSchedulingDirections.IsKnown(direction))
-            {
-                throw new WorkOrderCommandException(
-                    IvMasterErrorCode.Validation,
-                    "Schedule direction must be FORWARD or BACKWARD.");
-            }
-            var anchor = request.ScheduleAnchorDateTime ?? entity.ScheduleAnchorDateTime;
-            var scheduleChanged = !string.Equals(entity.SchedulingDirection, direction, StringComparison.Ordinal)
-                || entity.ScheduleAnchorDateTime != anchor;
-
-            if (qtyChanged || scheduleChanged)
-            {
-                await WorkOrderSchedulingLock.AcquireAsync(
-                    db, auth.Scope!.CompanyCode, exclusive: false, cancellationToken);
-            }
-
-            entity.PlannedQty = request.PlannedQty;
-            entity.RemainingQty = request.PlannedQty;
-            entity.SchedulingDirection = direction;
-            entity.ScheduleAnchorDateTime = anchor;
-            entity.SourceReference = TrimTo(request.SourceReference, SourceReferenceMax);
-            entity.Remark = TrimTo(request.Remark, RemarkMax);
-
-            if (qtyChanged)
-            {
-                var quantities = await _quantities.CalculateAsync(entity, cancellationToken);
-                if (!quantities.Succeeded)
-                {
-                    throw new WorkOrderCommandException(IvMasterErrorCode.Validation, quantities.Summary);
-                }
-            }
-
-            if (qtyChanged || scheduleChanged)
-            {
-                var scheduled = await _scheduler.ScheduleAsync(entity, cancellationToken);
-                if (!scheduled.Succeeded)
-                {
-                    throw new WorkOrderCommandException(IvMasterErrorCode.Validation, scheduled.FailureCode + ": " + scheduled.FailureMessage);
-                }
-            }
-
-            var nextHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
-            if (string.Equals(nextHash, entity.SnapshotHash, StringComparison.Ordinal))
+            RequireCurrentSnapshot(entity);
+            var mutation = await ApplyDraftHeaderChangesAsync(
+                db,
+                entity,
+                auth.Scope!,
+                request.PlannedQty,
+                request.SchedulingDirection,
+                request.ScheduleAnchorDateTime,
+                request.SourceReference,
+                request.Remark,
+                cancellationToken);
+            if (!mutation.Changed)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
             }
 
-            entity.SnapshotHash = nextHash;
-            entity.SnapshotRevision += 1;
-            StampDraftAudit(entity, auth.Scope!, ProductionAuditEventTypes.DraftUpdated, "Header updated.");
-            TouchSqliteRowVersions(db, entity);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SchedulingSourceBusy + ": " + ex.Message);
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return Concurrency<ProductionWorkOrderDetail>();
+        }
+    }
+
+    public async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> UpdateAndReleaseAsync(
+        ProductionWorkOrderUpdateAndReleaseRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request ??= new ProductionWorkOrderUpdateAndReleaseRequest();
+        var edit = await AuthorizeAsync(PermissionCodes.Edit, requireWriteScope: true, cancellationToken);
+        if (edit.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(edit.Error.Value.Code, edit.Error.Value.Message);
+        }
+
+        var release = await AuthorizeAsync(ProductionPermissionCodes.Release, requireWriteScope: true, cancellationToken);
+        if (release.Error is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(release.Error.Value.Code, release.Error.Value.Message);
+        }
+
+        var scope = edit.Scope!;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var entity = await RequireDraftAsync(db, scope, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            RequireCurrentSnapshot(entity);
+            if (entity.SnapshotRevision != request.SnapshotRevision
+                || !string.Equals(entity.SnapshotHash, request.SnapshotHash, StringComparison.Ordinal)
+                || entity.SourceProductDefinitionRevisionId != request.SourceProductDefinitionRevisionId)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Concurrency,
+                    ProductionReadinessErrorCodes.SnapshotStale
+                    + ": The Draft changed after it was opened. Reload it before release.");
+            }
+
+            await ApplyDraftHeaderChangesAsync(
+                db,
+                entity,
+                scope,
+                request.PlannedQty,
+                request.SchedulingDirection,
+                request.ScheduleAnchorDateTime,
+                request.SourceReference,
+                request.Remark,
+                cancellationToken);
+
+            await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
@@ -563,7 +666,11 @@ public sealed partial class ProductionWorkOrderService
                 return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(IvMasterErrorCode.NotFound, "Work Order not found.");
             }
 
-            return await FinishCurrentReleaseAsync(db, tx, entity, scope, request, cancellationToken);
+            ValidateReleaseRequestFingerprint(db, entity, request);
+            await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
         }
         catch (WorkOrderSchedulingLockException ex)
         {
@@ -917,34 +1024,15 @@ public sealed partial class ProductionWorkOrderService
         }
     }
 
-    private async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> FinishCurrentReleaseAsync(
+    private static void ValidateReleaseRequestFingerprint(
         AppDbContext db,
-        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx,
         ProductionWorkOrder entity,
-        InventoryTenantScope scope,
-        ProductionWorkOrderReleaseRequest request,
-        CancellationToken cancellationToken)
+        ProductionWorkOrderReleaseRequest request)
     {
-        if (!_options.ReleaseEnabled)
-        {
-            await tx.RollbackAsync(cancellationToken);
-            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                IvMasterErrorCode.Validation,
-                ProductionReadinessErrorCodes.ReleaseDisabled + ": Release is disabled by configuration.");
-        }
-
-        if (!ProductionWorkOrderRules.CanRelease(entity.Status))
-        {
-            await tx.RollbackAsync(cancellationToken);
-            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                IvMasterErrorCode.Validation, "Only a Draft Work Order can be released.");
-        }
-
-        await WorkOrderSchedulingLock.AcquireAsync(db, scope.CompanyCode, exclusive: false, cancellationToken);
-
         if (request.RowVersion is not { Length: > 0 })
         {
-            throw new WorkOrderCommandException(IvMasterErrorCode.Concurrency, "The Work Order version is missing. Reload before release.");
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Concurrency, "The Work Order version is missing. Reload before release.");
         }
 
         db.Entry(entity).Property(x => x.RowVersion).OriginalValue = request.RowVersion;
@@ -956,7 +1044,36 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Concurrency,
                 ProductionReadinessErrorCodes.SnapshotStale + ": The Draft changed after it was opened. Reload it before release.");
         }
+    }
 
+    /// <summary>
+    /// Release invariants for a tracked current-format Draft. Does not save, commit, or roll back.
+    /// The caller owns the transaction.
+    /// </summary>
+    private async Task ValidateAndApplyCurrentReleaseAsync(
+        AppDbContext db,
+        ProductionWorkOrder entity,
+        InventoryTenantScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (!_options.ReleaseEnabled)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.ReleaseDisabled + ": Release is disabled by configuration.");
+        }
+
+        if (!ProductionWorkOrderRules.CanRelease(entity.Status))
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation, "Only a Draft Work Order can be released.");
+        }
+
+        await WorkOrderSchedulingLock.AcquireAsync(db, scope.CompanyCode, exclusive: false, cancellationToken);
+
+        // A Draft saved from a local planner date stored a kind-sensitive hash. SQL datetime2
+        // reloads the same clock time as Unspecified, so adopt the canonical hash before release.
+        WorkOrderSnapshotHasher.CanonicalizeStoredTimestampKindHash(entity);
         var recomputed = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
         var report = _readiness.Validate(entity, new WorkOrderReadinessContext
         {
@@ -1023,9 +1140,94 @@ public sealed partial class ProductionWorkOrderService
             ActorUserId = scope.UserId
         });
         TouchSqliteRowVersions(db, entity);
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-        return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+    }
+
+    private sealed record DraftHeaderMutationResult(bool Changed);
+
+    /// <summary>
+    /// Validates the persisted snapshot, then applies permitted header edits on a tracked Draft.
+    /// Does not save, commit, or roll back. A false <see cref="DraftHeaderMutationResult.Changed"/>
+    /// means the caller may return without persisting; Update and Release must still continue.
+    /// </summary>
+    private async Task<DraftHeaderMutationResult> ApplyDraftHeaderChangesAsync(
+        AppDbContext db,
+        ProductionWorkOrder entity,
+        InventoryTenantScope scope,
+        decimal plannedQty,
+        string? schedulingDirection,
+        DateTime? scheduleAnchorDateTime,
+        string? sourceReference,
+        string? remark,
+        CancellationToken cancellationToken)
+    {
+        if (!WorkOrderSnapshotHasher.MatchesStoredSnapshotHash(entity))
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.SnapshotHashInvalid
+                + ": The saved Work Order snapshot failed its integrity check.");
+        }
+
+        WorkOrderSnapshotHasher.CanonicalizeStoredTimestampKindHash(entity);
+
+        var qtyChanged = entity.PlannedQty != plannedQty;
+        var direction = string.IsNullOrWhiteSpace(schedulingDirection)
+            ? entity.SchedulingDirection
+            : Normalize(schedulingDirection);
+        if (!ProductionSchedulingDirections.IsKnown(direction))
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                "Schedule direction must be FORWARD or BACKWARD.");
+        }
+
+        var anchor = scheduleAnchorDateTime ?? entity.ScheduleAnchorDateTime;
+        var scheduleChanged = !string.Equals(entity.SchedulingDirection, direction, StringComparison.Ordinal)
+            || entity.ScheduleAnchorDateTime != anchor;
+
+        if (qtyChanged || scheduleChanged)
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(
+                db, scope.CompanyCode, exclusive: false, cancellationToken);
+        }
+
+        entity.PlannedQty = plannedQty;
+        entity.RemainingQty = plannedQty;
+        entity.SchedulingDirection = direction;
+        entity.ScheduleAnchorDateTime = anchor;
+        entity.SourceReference = TrimTo(sourceReference, SourceReferenceMax);
+        entity.Remark = TrimTo(remark, RemarkMax);
+
+        if (qtyChanged)
+        {
+            var quantities = await _quantities.CalculateAsync(entity, cancellationToken);
+            if (!quantities.Succeeded)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.Validation, quantities.Summary);
+            }
+        }
+
+        if (qtyChanged || scheduleChanged)
+        {
+            var scheduled = await _scheduler.ScheduleAsync(entity, cancellationToken);
+            if (!scheduled.Succeeded)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation, scheduled.FailureCode + ": " + scheduled.FailureMessage);
+            }
+        }
+
+        var nextHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
+        if (string.Equals(nextHash, entity.SnapshotHash, StringComparison.Ordinal))
+        {
+            return new DraftHeaderMutationResult(false);
+        }
+
+        entity.SnapshotHash = nextHash;
+        entity.SnapshotRevision += 1;
+        StampDraftAudit(entity, scope, ProductionAuditEventTypes.DraftUpdated, "Header updated.");
+        TouchSqliteRowVersions(db, entity);
+        return new DraftHeaderMutationResult(true);
     }
 
     private sealed class BuiltSnapshot

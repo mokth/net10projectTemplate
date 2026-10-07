@@ -90,15 +90,23 @@ public partial class PrWorkOrderEntry : PageBase
         DetailModel is not null && IsDraft && !IsCurrentSnapshot;
     protected bool CanEditInputs => CanEditFields && !NeedsDefinitionUpgrade;
     protected bool CanEditDefinition => IsNewMode && CanEditInputs;
+    protected bool CanEditProduct => IsNewMode && CanEditInputs;
+    protected bool CanEditSourceType => IsNewMode && CanEditInputs;
     protected bool CanOpenEdit => IsViewMode && IsDraft && CanEdit && DetailModel is not null;
     protected bool CanReopenForEdit => IsViewMode
         && DetailModel is { Status: ProductionWorkOrderStatuses.Released }
         && CanEdit
         && CanReopen;
-    protected bool CanReleaseAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
+    protected bool CanReleaseAction =>
+        !IsLoading
+        && !IsSubmitting
         && CanRelease
-        && IsCurrentSnapshot
-        && !HasUnsavedInputChanges;
+        && (
+            (IsNewMode && CanAdd)
+            || (DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
+                && IsCurrentSnapshot
+                && (!HasUnsavedInputChanges || CanEdit))
+        );
     protected bool IsCurrentSnapshot =>
         DetailModel?.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current;
     protected bool CanCancelAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft } && CanCancel;
@@ -213,7 +221,7 @@ public partial class PrWorkOrderEntry : PageBase
 
             if (PreviewModel is null && HasUnsavedInputChanges)
             {
-                return ["Inputs differ from the saved snapshot. Use Calculate Preview to inspect the changes, or Save Draft to apply them."];
+                return ["Inputs differ from the saved Work Order. Save Draft to keep the changes as Draft, or Release to apply them and release the Work Order."];
             }
 
             return warnings;
@@ -899,27 +907,122 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
 
+    protected string ReleaseConfirmHeading => IsNewMode
+        ? "Create and release this Work Order for production execution?"
+        : $"Release {CurrentWorkOrderNo} for execution?";
+
+    protected string ReleaseConfirmDetail => IsNewMode
+        ? "The Work Order will be created from the selected Product Definition, its route/material/schedule snapshot will be validated, and it will be released for execution. No inventory transaction will be posted."
+        : HasUnsavedInputChanges
+            ? "Your current quantity, schedule and header changes will be saved as part of Release. No inventory transaction will be posted."
+            : "The product, Product Definition, schedule and snapshot lines become read-only. This action does not post inventory.";
+
+    protected string ReleaseConfirmDismissText => IsNewMode ? "Continue Editing" : "Keep Draft";
+
     protected async Task ReleaseAsync()
     {
+        if (IsNewMode)
+        {
+            await CreateAndReleaseAsync();
+            return;
+        }
+
         if (DetailModel is null)
         {
             return;
         }
 
+        if (!IsCurrentSnapshot)
+        {
+            ReleaseConfirmVisible = false;
+            ErrorMessage = "This Draft uses an older snapshot format. Refresh Definition before releasing.";
+            return;
+        }
+
+        if (HasUnsavedInputChanges)
+        {
+            await UpdateAndReleaseAsync();
+            return;
+        }
+
+        await ReleaseSavedDraftAsync();
+    }
+
+    private async Task CreateAndReleaseAsync()
+    {
         IsSubmitting = true;
         ClearFeedback();
         try
         {
-            var result = IsCurrentSnapshot
-                ? await WorkOrders.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
-                {
-                    WorkOrderNo = DetailModel.WorkOrderNo,
-                    RowVersion = DetailModel.RowVersion,
-                    SnapshotRevision = DetailModel.SnapshotRevision,
-                    SnapshotHash = DetailModel.SnapshotHash,
-                    SourceProductDefinitionRevisionId = DetailModel.SourceProductDefinitionRevisionId
-                })
-                : await WorkOrders.ReleaseAsync(DetailModel.WorkOrderNo, DetailModel.RowVersion);
+            PrepareRequestIdentity();
+            var result = await WorkOrders.CreateAndReleaseAsync(Request);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            ApplyDetail(result.Data);
+            ReleaseConfirmVisible = false;
+            StatusMessage = $"Work Order {result.Data.WorkOrderNo} created and released. No inventory transaction was posted.";
+            SwitchToViewRoute(result.Data.WorkOrderNo);
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    private async Task UpdateAndReleaseAsync()
+    {
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.UpdateAndReleaseAsync(new ProductionWorkOrderUpdateAndReleaseRequest
+            {
+                WorkOrderNo = DetailModel!.WorkOrderNo,
+                PlannedQty = Request.PlannedQty,
+                SchedulingDirection = Request.SchedulingDirection,
+                ScheduleAnchorDateTime = GetRequestedScheduleAnchor(),
+                SourceReference = Request.SourceReference,
+                Remark = Request.Remark,
+                RowVersion = DetailModel.RowVersion,
+                SnapshotRevision = DetailModel.SnapshotRevision,
+                SnapshotHash = DetailModel.SnapshotHash,
+                SourceProductDefinitionRevisionId = DetailModel.SourceProductDefinitionRevisionId
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            ApplyDetail(result.Data);
+            ReleaseConfirmVisible = false;
+            StatusMessage = $"Work Order {result.Data.WorkOrderNo} released. No inventory transaction was posted.";
+            SwitchToViewRoute(result.Data.WorkOrderNo);
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    private async Task ReleaseSavedDraftAsync()
+    {
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+            {
+                WorkOrderNo = DetailModel!.WorkOrderNo,
+                RowVersion = DetailModel.RowVersion,
+                SnapshotRevision = DetailModel.SnapshotRevision,
+                SnapshotHash = DetailModel.SnapshotHash,
+                SourceProductDefinitionRevisionId = DetailModel.SourceProductDefinitionRevisionId
+            });
             if (!result.Succeeded || result.Data is null)
             {
                 ApplyFailure(result);

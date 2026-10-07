@@ -373,52 +373,16 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                     IvMasterErrorCode.Validation, "Only a Draft Work Order can be released.");
             }
 
-            if (entity.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current)
+            if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
             {
-                return await FinishCurrentReleaseAsync(
-                    db,
-                    tx,
-                    entity,
-                    scope,
-                    new ProductionWorkOrderReleaseRequest
-                    {
-                        WorkOrderNo = entity.WorkOrderNo,
-                        RowVersion = rowVersion,
-                        SourceProductDefinitionRevisionId = entity.SourceProductDefinitionRevisionId,
-                        SnapshotRevision = entity.SnapshotRevision,
-                        SnapshotHash = entity.SnapshotHash
-                    },
-                    cancellationToken);
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
+                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
             }
 
             db.Entry(entity).Property(x => x.RowVersion).OriginalValue = rowVersion;
-            var actualHash = ComputePersistedHash(entity);
-            if (!string.Equals(entity.SnapshotHash, actualHash, StringComparison.Ordinal))
-            {
-                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                    IvMasterErrorCode.Concurrency,
-                    "The saved snapshot no longer matches its integrity hash. Reprocess and save the Draft before release.");
-            }
-
-            var now = DateTime.UtcNow;
-            entity.Status = ProductionWorkOrderStatuses.Released;
-            entity.ReleasedDate = now;
-            entity.ReleasedBy = scope.UserId;
-            entity.ModifiedDate = now;
-            entity.ModifiedBy = scope.UserId;
-            entity.AuditEvents.Add(new ProductionAuditEvent
-            {
-                WorkOrder = entity,
-                EventType = ProductionAuditEventTypes.Released,
-                FromStatus = ProductionWorkOrderStatuses.Draft,
-                ToStatus = ProductionWorkOrderStatuses.Released,
-                SnapshotRevision = entity.SnapshotRevision,
-                Reason = "Draft snapshot approved for execution.",
-                OccurredDate = now,
-                ActorUserId = scope.UserId
-            });
-
-            TouchSqliteRowVersions(db, entity);
+            await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
@@ -1182,66 +1146,6 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         ContributesToPlan = row.ContributesToPlan,
         PlannedAmount = row.PlannedAmount
     };
-
-    private static string ComputePersistedHash(ProductionWorkOrder entity) =>
-        ProductionSnapshotHasher.Compute(
-            entity.ProductCode,
-            entity.ProductDescription,
-            entity.OutputUom,
-            entity.SourceBomHdrId,
-            entity.SourceBomVersion,
-            entity.BomBaseQty,
-            entity.BomBaseUom,
-            entity.PlannedQty,
-            entity.DefinitionEffectiveDate,
-            entity.PlannedStartDateTime,
-            entity.PlannedCompletionDateTime,
-            entity.SchedulingDirection,
-            entity.SourceType,
-            entity.SourceReference,
-            entity.Remark,
-            entity.Materials.Select(x => new ProductionSnapshotHashLine(
-                x.LineNo,
-                x.SourceBomHdrId,
-                x.SourceBomVersion,
-                x.SourceBomLineId,
-                x.ParentProductCode,
-                x.BomPath,
-                x.ComponentCode,
-                x.ComponentDescription,
-                x.MfgType,
-                x.ComponentQtyPerParent,
-                x.BomOutputQty,
-                x.BomOutputUom,
-                x.ScrapPercent,
-                x.Tolerance,
-                x.RequiredQty,
-                x.RequiredUom,
-                x.WarehouseCode,
-                x.LocationCode)),
-            entity.Operations.Select(x => new ProductionSnapshotHashOperation(
-                x.SequenceNo,
-                x.WorkCentreCode,
-                x.WorkCentreDescription,
-                x.OperationCode,
-                x.OperationDescription,
-                x.IsFinalOperation,
-                x.PlannedStartDateTime,
-                x.PlannedCompletionDateTime,
-                x.PlannedQty,
-                x.SetupLossQty,
-                x.OperationLossQty,
-                x.Resources.Select(r => new ProductionSnapshotHashResource(
-                    r.SequenceNo,
-                    r.ResourceType,
-                    r.ResourceCode,
-                    r.ResourceDescription,
-                    r.PlannedUnits,
-                    r.SetupMinutes,
-                    r.RunMinutes,
-                    r.QueueMinutes,
-                    r.Rate,
-                    r.PlannedAmount)).ToList())));
 
     private static ProductionSnapshotHashLine ToHashLine(ProductionWorkOrderMaterialVm x) => new(
         x.LineNo,

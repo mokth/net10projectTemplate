@@ -16,6 +16,9 @@ public sealed class WorkOrderSnapshotHasherTests
     private static readonly Guid OperationKeyA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static readonly Guid OperationKeyB = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
+    private static DateTime? AsLocal(DateTime? value) =>
+        value is null ? null : DateTime.SpecifyKind(value.Value, DateTimeKind.Local);
+
     private static ProductionWorkOrder Header() => new()
     {
         CompanyCode = "DEMO",
@@ -183,6 +186,69 @@ public sealed class WorkOrderSnapshotHasherTests
 
         Assert.Equal(first, second);
         Assert.Equal(64, first.Length);
+    }
+
+    [Fact]
+    public void Local_and_unspecified_timestamps_hash_the_same()
+    {
+        var unspecified = FullGraph();
+        var local = FullGraph();
+        local.ScheduleAnchorDateTime = DateTime.SpecifyKind(local.ScheduleAnchorDateTime!.Value, DateTimeKind.Local);
+        local.PlannedStartDateTime = DateTime.SpecifyKind(local.PlannedStartDateTime, DateTimeKind.Local);
+        local.PlannedCompletionDateTime = DateTime.SpecifyKind(local.PlannedCompletionDateTime, DateTimeKind.Local);
+
+        Assert.Equal(
+            WorkOrderSnapshotHasher.ComputeSnapshotHash(unspecified),
+            WorkOrderSnapshotHasher.ComputeSnapshotHash(local));
+    }
+
+    [Fact]
+    public void Local_anchor_hash_saved_before_normalization_is_canonicalized()
+    {
+        var saved = FullGraph();
+        saved.ScheduleAnchorDateTime = DateTime.SpecifyKind(saved.ScheduleAnchorDateTime!.Value, DateTimeKind.Local);
+        var storedHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(saved, TimestampHashRules.AsStored);
+
+        var reloaded = FullGraph();
+        reloaded.SnapshotHash = storedHash;
+        Assert.NotEqual(WorkOrderSnapshotHasher.ComputeSnapshotHash(reloaded), storedHash);
+        Assert.True(WorkOrderSnapshotHasher.MatchesStoredSnapshotHash(reloaded));
+
+        WorkOrderSnapshotHasher.CanonicalizeStoredTimestampKindHash(reloaded);
+
+        Assert.Equal(WorkOrderSnapshotHasher.ComputeSnapshotHash(reloaded), reloaded.SnapshotHash);
+    }
+
+    [Fact]
+    public void Local_planned_times_saved_before_normalization_are_canonicalized()
+    {
+        var saved = FullGraph();
+        saved.ScheduleAnchorDateTime = DateTime.SpecifyKind(saved.ScheduleAnchorDateTime!.Value, DateTimeKind.Local);
+        saved.PlannedStartDateTime = DateTime.SpecifyKind(saved.PlannedStartDateTime, DateTimeKind.Local);
+        saved.PlannedCompletionDateTime = DateTime.SpecifyKind(saved.PlannedCompletionDateTime, DateTimeKind.Local);
+        foreach (var step in saved.RouteSteps)
+        {
+            step.PlannedStartDateTime = AsLocal(step.PlannedStartDateTime);
+            step.PlannedCompletionDateTime = AsLocal(step.PlannedCompletionDateTime);
+            foreach (var operation in step.Operations)
+            {
+                operation.PlannedStartDateTime = AsLocal(operation.PlannedStartDateTime);
+                operation.PlannedCompletionDateTime = AsLocal(operation.PlannedCompletionDateTime);
+                foreach (var machine in operation.Machines)
+                {
+                    machine.PlannedStartDateTime = AsLocal(machine.PlannedStartDateTime);
+                    machine.PlannedCompletionDateTime = AsLocal(machine.PlannedCompletionDateTime);
+                }
+            }
+        }
+
+        var storedHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(saved, TimestampHashRules.AsStored);
+        var reloaded = FullGraph();
+        reloaded.SnapshotHash = storedHash;
+
+        Assert.True(WorkOrderSnapshotHasher.MatchesStoredSnapshotHash(reloaded));
+        reloaded.PlannedQty += 1m;
+        Assert.False(WorkOrderSnapshotHasher.MatchesStoredSnapshotHash(reloaded));
     }
 
     [Fact]

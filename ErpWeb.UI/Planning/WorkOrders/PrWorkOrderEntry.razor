@@ -116,7 +116,7 @@
                                                   Click="@OpenChangeDefinitionAsync"
                                                   Visible="@CanChangeDefinition"
                                                   Enabled="@CanChangeDefinition" />
-                            <DxDropDownButtonItem Text="REFRESH DEFINITION"
+                            <DxDropDownButtonItem Text="UPDATE FROM PRODUCT DEFINITION"
                                                   IconCssClass="fa-solid fa-rotate"
                                                   Click="@OpenRefreshAsync"
                                                   Visible="@CanRefreshDefinition"
@@ -173,7 +173,7 @@
                         <i class="fa-solid @(InputsExpanded ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i>
                         <span>
                             <strong>Order and definition inputs</strong>
-                            <small>Save applies required recalculation. Use More → Calculate Preview to inspect the calculated route, materials and schedule before saving.</small>
+                            <small>Save Draft or Release applies required quantity and schedule recalculation automatically. Calculate Preview is optional.</small>
                         </span>
                     </button>
                     <span class="pwo-snapshot-state">@SnapshotState</span>
@@ -187,7 +187,7 @@
                         <IvStockMasterPicker ICode="@Request.ProductCode"
                                              ICodeChanged="OnProductCodeChanged"
                                              Selected="OnProductSelectedAsync"
-                                             Enabled="@CanEditInputs"
+                                             Enabled="@CanEditProduct"
                                              InputCssClass="required-field code-style" />
                         @FieldError("ProductCode")
                     </div>
@@ -262,7 +262,7 @@
                                     TextFieldName="@nameof(Option.Name)"
                                     ValueFieldName="@nameof(Option.Key)"
                                     @bind-Value="@Request.SourceType"
-                                    Enabled="@CanEditInputs" />
+                                    Enabled="@CanEditSourceType" />
                     </div>
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Source reference</label>
@@ -597,10 +597,10 @@
                         <ol>
                             <li>Set product, Product Definition, planned quantity, and scheduling direction/date.</li>
                             <li>Optional: More → Calculate Preview to inspect the calculated route, materials, and schedule without saving.</li>
-                            <li>Save Draft to create or update the Work Order.</li>
-                            <li>After the Draft is saved, adjust machine selection or material alternatives if required.</li>
-                            <li>Save any header changes before Release.</li>
-                            <li>Release the Work Order when it is ready for execution, or Cancel Draft if the Work Order should no longer proceed.</li>
+                            <li>Release to create the Work Order and release it for execution in one step.</li>
+                            <li>Save Draft only when the Work Order is not ready to release. A saved Draft can be released later, including when quantity, schedule, reference, or remark still have unsaved changes.</li>
+                            <li>After the Draft is saved, adjust machine selection or material alternatives if required, then Release.</li>
+                            <li>Cancel Draft if the Work Order should no longer proceed.</li>
                         </ol>
                     </section>
 
@@ -608,21 +608,21 @@
                         <h3>3. Buttons</h3>
                         <dl class="pwo-help__actions">
                             <dt>Save Draft</dt>
-                            <dd>Creates a new Draft from the selected Product Definition, or updates header fields on a current-format Draft. Older format Drafts must Refresh first.</dd>
+                            <dd>Saves the Work Order without releasing it for production. Use this when the Work Order is not ready. Older format Drafts must be updated from the Product Definition first.</dd>
                             <dt>Release</dt>
-                            <dd>Approves the Draft for execution and makes its production snapshot read-only. Release does not post inventory. Hidden while inputs are unsaved or the snapshot format is outdated.</dd>
+                            <dd>Creates and releases a new Work Order, or saves current Draft header changes and releases the Draft in one operation. Release does not post inventory. A legacy snapshot must be updated from the Product Definition before Release.</dd>
                             <dt>Cancel Draft</dt>
                             <dd>Marks the Draft as Cancelled. A cancellation reason is required. Does not delete the Work Order.</dd>
                             <dt>Reopen for Edit</dt>
                             <dd>Returns a Released Work Order to Draft when no production activity has started. Requires EDIT and REOPEN. A reason is required. Does not reverse inventory or rewrite history. Does not upgrade legacy snapshots — Refresh Definition may still be required before structural editing or re-release.</dd>
                             <dt>More → Calculate Preview</dt>
-                            <dd>Calculates route, materials, quantities, and schedule for inspection without saving.</dd>
+                            <dd>Calculates the route, materials and schedule for inspection without saving. It is not required before Release.</dd>
                             <dt>More → Recalculate Schedule</dt>
                             <dd>Re-runs scheduling for a saved current-snapshot Draft.</dd>
                             <dt>More → Change Definition</dt>
                             <dd>Preview and confirm switching the Draft to another ACTIVE Product Definition for the same product.</dd>
-                            <dt>More → Refresh Definition</dt>
-                            <dd>Rebuilds the Draft from the current ACTIVE revision of its Product Definition, resets machine/material overrides to definition defaults, preserves the scheduling anchor, and recalculates the schedule.</dd>
+                            <dt>More → Update from Product Definition</dt>
+                            <dd>Use only when you intentionally want an existing Draft to adopt the current Product Definition. This can change routing, materials, machines and schedule. It is also required before editing or releasing an older snapshot format.</dd>
                         </dl>
                     </section>
 
@@ -630,8 +630,8 @@
                         <h3>4. Tips</h3>
                         <ul>
                             <li>On a new Work Order, choose the Product Definition from ACTIVE definitions. After save, the definition is read-only until you use Change Definition.</li>
-                            <li>Unsaved input changes hide Release and disable Recalculate Schedule / Refresh / Change Definition until the Draft is saved.</li>
-                            <li>Calculate Preview is inspection-only. Save Draft persists the Work Order and applies any required recalculation.</li>
+                            <li>Save Draft or Release applies required quantity and schedule recalculation automatically. Calculate Preview is optional.</li>
+                            <li>Unsaved header changes can be released directly. Recalculate Schedule, Change Definition, and Update from Product Definition stay disabled until those changes are saved or released.</li>
                             <li>Release freezes the Work Order for production execution. Before any production activity begins, an authorized user may use Reopen for Edit to return it to Draft. Once material issue or production activity exists, direct reopening is blocked and controlled production-change/correction processing is required.</li>
                             <li>Reopen does not reverse inventory, does not delete history, and requires a reason. Legacy Released snapshots reopen without upgrade; Refresh Definition may still be required before structural editing or re-release.</li>
                         </ul>
@@ -651,11 +651,11 @@
                  Width="460px"
                  CssClass="common-popup">
             <Content>
-                <p class="iv-confirm__copy">Release @CurrentWorkOrderNo for execution?</p>
-                <p class="text-muted small mb-0">The product, Product Definition, schedule and snapshot lines become read-only. This action does not post inventory.</p>
+                <p class="iv-confirm__copy">@ReleaseConfirmHeading</p>
+                <p class="text-muted small mb-0">@ReleaseConfirmDetail</p>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => ReleaseConfirmVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="@ReleaseConfirmDismissText" Click="@(() => ReleaseConfirmVisible = false)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Release" Click="@ReleaseAsync" Enabled="@(!IsSubmitting)" />
                     </div>
                 </div>

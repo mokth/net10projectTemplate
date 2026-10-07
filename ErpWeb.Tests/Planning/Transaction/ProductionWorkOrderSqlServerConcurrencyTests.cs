@@ -110,6 +110,14 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
         Assert.Contains(checks, x => x.Value == "CK_PrWorkOrderLabour_ExclusiveOwner");
         Assert.Contains(checks, x => x.Value == "CK_PrWorkOrderMaterial_InternalWipProducer");
 
+        var formatCheck = await db.Database.SqlQueryRaw<NameRow>("""
+            SELECT definition AS Value
+            FROM sys.check_constraints
+            WHERE parent_object_id = OBJECT_ID(N'dbo.PrWorkOrder')
+              AND name = N'CK_PrWorkOrder_SnapshotFormat'
+            """).SingleAsync();
+        Assert.Contains("3", formatCheck.Value, StringComparison.Ordinal);
+
         var indexes = await db.Database.SqlQueryRaw<NameRow>("""
             SELECT name AS Value
             FROM sys.indexes
@@ -447,6 +455,95 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
         Assert.Equal(detail.SnapshotHash, entity.SnapshotHash);
         Assert.Equal(entity.SnapshotHash, WorkOrderSnapshotHasher.ComputeSnapshotHash(entity));
         Assert.All(entity.Materials, m => Assert.NotNull(m.WorkOrderOperation));
+    }
+
+    [Fact]
+    public async Task New_current_snapshot_can_create_and_release_without_definition_refresh()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var released = await host.CreateService().CreateAndReleaseAsync(host.DraftRequest());
+        Assert.True(released.Succeeded, released.Message);
+        var detail = released.Data!;
+
+        Assert.Equal(ProductionWorkOrderStatuses.Released, detail.Status);
+        Assert.Equal(ProductionSnapshotFormatVersions.Current, detail.SnapshotFormatVersion);
+        Assert.False(detail.IsLegacySnapshot);
+        Assert.NotNull(detail.SourceProductDefinitionRevisionId);
+        Assert.False(string.IsNullOrWhiteSpace(detail.DefinitionSourceHash));
+        Assert.NotEmpty(detail.RouteSteps);
+        Assert.NotEmpty(detail.Operations);
+        Assert.NotEmpty(detail.Materials);
+        Assert.NotNull(detail.ReleasedDate);
+        Assert.Equal(1, detail.AuditEvents.Count(x => x.EventType == ProductionAuditEventTypes.Created));
+        Assert.Equal(1, detail.AuditEvents.Count(x => x.EventType == ProductionAuditEventTypes.Released));
+        Assert.DoesNotContain(detail.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Refreshed);
+
+        await using var db = await host.Factory.CreateDbContextAsync();
+        var stored = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == detail.WorkOrderNo);
+        Assert.Equal(ProductionSnapshotHashVersions.Current, stored.SnapshotHashVersion);
+    }
+
+    [Fact]
+    public async Task Create_and_release_failure_does_not_leave_a_sql_server_work_order()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var released = await host.CreateService(releaseEnabled: false).CreateAndReleaseAsync(host.DraftRequest());
+        Assert.False(released.Succeeded);
+        Assert.Contains(ProductionReadinessErrorCodes.ReleaseDisabled, released.Message, StringComparison.Ordinal);
+
+        await using var db = await host.Factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync(x => x.ProductCode == host.ProductCode));
+    }
+
+    [Fact]
+    public async Task Update_and_release_with_stale_tokens_never_partially_updates_or_releases()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var created = await host.CreateDraftAsync();
+        Assert.True(created.Succeeded, created.Message);
+        var detail = created.Data!;
+        var staleVersion = detail.RowVersion.ToArray();
+        staleVersion[0] ^= 0xFF;
+
+        var raced = await host.CreateService().UpdateAndReleaseAsync(new ProductionWorkOrderUpdateAndReleaseRequest
+        {
+            WorkOrderNo = detail.WorkOrderNo,
+            PlannedQty = detail.PlannedQty + 5m,
+            SchedulingDirection = detail.SchedulingDirection,
+            ScheduleAnchorDateTime = detail.ScheduleAnchorDateTime,
+            Remark = "stale update and release",
+            RowVersion = staleVersion,
+            SnapshotRevision = detail.SnapshotRevision,
+            SnapshotHash = detail.SnapshotHash,
+            SourceProductDefinitionRevisionId = detail.SourceProductDefinitionRevisionId
+        });
+
+        Assert.False(raced.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, raced.ErrorCode);
+        var reload = await host.CreateService().GetAsync(detail.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reload.Data!.Status);
+        Assert.Equal(detail.PlannedQty, reload.Data.PlannedQty);
+        Assert.Equal(detail.Remark, reload.Data.Remark);
+        Assert.Equal(detail.SnapshotRevision, reload.Data.SnapshotRevision);
+        Assert.Equal(detail.SnapshotHash, reload.Data.SnapshotHash);
     }
 
     [Fact]
@@ -1130,7 +1227,19 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
             return new Host(factory, productCode, bomHdrId);
         }
 
-        public ProductionWorkOrderService CreateService()
+        public ProductionWorkOrderDraftRequest DraftRequest() => new()
+        {
+            ProductCode = ProductCode,
+            PlannedQty = 10m,
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            PlannedStartDate = new DateTime(2026, 10, 1, 8, 0, 0),
+            PlannedCompletionDate = new DateTime(2026, 10, 3, 17, 0, 0),
+            SchedulingDirection = ProductionSchedulingDirections.Forward,
+            SourceType = ProductionSourceTypes.Manual,
+            Remark = "SQL Server concurrency"
+        };
+
+        public ProductionWorkOrderService CreateService(bool releaseEnabled = true)
         {
             var access = new Mock<IAccessRightService>();
             access.Setup(x => x.CanAsync(
@@ -1159,21 +1268,11 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
                 quantities,
                 new WorkOrderScheduleCalculator(new AlwaysOpenWorkOrderCalendarProvider()),
                 new WorkOrderReadinessValidator(),
-                Options.Create(new ProductionWorkOrderOptions()));
+                Options.Create(new ProductionWorkOrderOptions { ReleaseEnabled = releaseEnabled }));
         }
 
         public Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftAsync() =>
-            CreateService().CreateDraftAsync(new ProductionWorkOrderDraftRequest
-            {
-                ProductCode = ProductCode,
-                PlannedQty = 10m,
-                DefinitionCode = PrProductDefinitionCodes.Standard,
-                PlannedStartDate = new DateTime(2026, 10, 1, 8, 0, 0),
-                PlannedCompletionDate = new DateTime(2026, 10, 3, 17, 0, 0),
-                SchedulingDirection = ProductionSchedulingDirections.Forward,
-                SourceType = ProductionSourceTypes.Manual,
-                Remark = "SQL Server concurrency"
-            });
+            CreateService().CreateDraftAsync(DraftRequest());
 
         public async Task<HierarchyIds> SeedHierarchyAsync(bool includeMachine, bool includeOperationLabour)
         {

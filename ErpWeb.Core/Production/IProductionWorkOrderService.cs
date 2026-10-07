@@ -430,6 +430,24 @@ public sealed class ProductionWorkOrderReleaseRequest
 }
 
 /// <summary>
+/// Applies permitted header edits to a saved current-format Draft and releases it
+/// in one transaction. Product, definition, and source type stay immutable.
+/// </summary>
+public sealed class ProductionWorkOrderUpdateAndReleaseRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public decimal PlannedQty { get; set; }
+    public string SchedulingDirection { get; set; } = ProductionSchedulingDirections.Forward;
+    public DateTime? ScheduleAnchorDateTime { get; set; }
+    public string? SourceReference { get; set; }
+    public string? Remark { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public int SnapshotRevision { get; set; }
+    public string SnapshotHash { get; set; } = string.Empty;
+    public long? SourceProductDefinitionRevisionId { get; set; }
+}
+
+/// <summary>
 /// Lifecycle-only reopen of a Released Work Order back to Draft.
 /// Status, release metadata and snapshot identity are read from the locked server entity.
 /// </summary>
@@ -542,6 +560,22 @@ public interface IProductionWorkOrderService
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(
         ProductionWorkOrderReleaseRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Builds the current snapshot, persists the Work Order, and releases it in one transaction.
+    /// Requires ADD and APPROVE. A failed release leaves no Draft.
+    /// </summary>
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateAndReleaseAsync(
+        ProductionWorkOrderDraftRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies saved-Draft header changes and releases in one transaction.
+    /// Requires EDIT and APPROVE. Does not refresh the Product Definition.
+    /// </summary>
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> UpdateAndReleaseAsync(
+        ProductionWorkOrderUpdateAndReleaseRequest request,
         CancellationToken cancellationToken = default);
 
     /// <summary>

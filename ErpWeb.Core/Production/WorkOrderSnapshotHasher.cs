@@ -6,6 +6,47 @@ using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
 
+/// <summary>How a snapshot timestamp's <see cref="DateTime.Kind"/> is written into the hash.</summary>
+public enum TimestampHashKind
+{
+    /// <summary>Clock time only. Local and Unspecified values with the same ticks hash alike.</summary>
+    Unspecified = 0,
+
+    /// <summary>Write the value's current kind. Reproduces hashes saved before kind was stripped.</summary>
+    AsStored = 1,
+
+    /// <summary>Treat the value as <see cref="DateTimeKind.Local"/> before writing it.</summary>
+    AsLocal = 2
+}
+
+/// <summary>
+/// Which timestamps keep a local offset. A Draft saved from <see cref="DateTime.Today"/> hashed
+/// the planner anchor as local and calendar rows (loaded from SQL) as unspecified. SQL reloads
+/// every datetime2 as unspecified, so release recognizes those older hashes before rewriting them.
+/// </summary>
+public readonly record struct TimestampHashRules(TimestampHashKind Anchor, TimestampHashKind Planned, TimestampHashKind Calendar)
+{
+    public static TimestampHashRules Canonical { get; } = new(TimestampHashKind.Unspecified, TimestampHashKind.Unspecified, TimestampHashKind.Unspecified);
+
+    public static TimestampHashRules AsStored { get; } = new(TimestampHashKind.AsStored, TimestampHashKind.AsStored, TimestampHashKind.AsStored);
+
+    /// <summary>Only the planner anchor was local. Typical when the anchor is midnight, before the shift.</summary>
+    public static TimestampHashRules AnchorLocal { get; } = new(TimestampHashKind.AsLocal, TimestampHashKind.Unspecified, TimestampHashKind.Unspecified);
+
+    /// <summary>Anchor and planned start/completion were local. Calendar rows stayed unspecified.</summary>
+    public static TimestampHashRules PlannedLocal { get; } = new(TimestampHashKind.AsLocal, TimestampHashKind.AsLocal, TimestampHashKind.Unspecified);
+
+    public static TimestampHashRules AllLocal { get; } = new(TimestampHashKind.AsLocal, TimestampHashKind.AsLocal, TimestampHashKind.AsLocal);
+
+    public static IReadOnlyList<TimestampHashRules> StoredHashRecognition { get; } =
+    [
+        Canonical,
+        AnchorLocal,
+        PlannedLocal,
+        AllLocal
+    ];
+}
+
 /// <summary>
 /// A single canonicalized value in a snapshot/source hasher payload. Values are normalized by
 /// <see cref="CanonicalHashWriter"/>, so callers pass raw domain values and never pre-format.
@@ -43,10 +84,38 @@ public sealed class CanonicalHashWriter
 
     public void AddDate(DateTime? value) => Append(value?.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
 
-    /// <summary>Timestamps hash on the round-trip instant because plant-local time-of-day matters.</summary>
-    public void AddTimestamp(DateTime value) => Append(value.ToString("O", CultureInfo.InvariantCulture));
+    /// <summary>
+    /// How <see cref="DateTime.Kind"/> is written. The default drops it because SQL datetime2
+    /// reloads every value as <see cref="DateTimeKind.Unspecified"/>.
+    /// </summary>
+    public TimestampHashRules TimestampRules { get; init; } = TimestampHashRules.Canonical;
 
-    public void AddTimestamp(DateTime? value) => Append(value?.ToString("O", CultureInfo.InvariantCulture));
+    /// <summary>
+    /// Timestamps hash on clock time. Kind is omitted because a Local value saved from the
+    /// screen reloads as Unspecified and must not look like a different snapshot.
+    /// </summary>
+    public void AddTimestamp(DateTime value) => Append(FormatTimestamp(value, TimestampHashKind.Unspecified));
+
+    public void AddTimestamp(DateTime? value) => Append(value is null ? null : FormatTimestamp(value.Value, TimestampHashKind.Unspecified));
+
+    public void AddAnchorTimestamp(DateTime? value) => Append(value is null ? null : FormatTimestamp(value.Value, TimestampRules.Anchor));
+
+    public void AddPlannedTimestamp(DateTime value) => Append(FormatTimestamp(value, TimestampRules.Planned));
+
+    public void AddPlannedTimestamp(DateTime? value) => Append(value is null ? null : FormatTimestamp(value.Value, TimestampRules.Planned));
+
+    public void AddCalendarTimestamp(DateTime? value) => Append(value is null ? null : FormatTimestamp(value.Value, TimestampRules.Calendar));
+
+    private static string FormatTimestamp(DateTime value, TimestampHashKind kind)
+    {
+        var stamp = kind switch
+        {
+            TimestampHashKind.AsStored => value,
+            TimestampHashKind.AsLocal => DateTime.SpecifyKind(value, DateTimeKind.Local),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Unspecified)
+        };
+        return stamp.ToString("O", CultureInfo.InvariantCulture);
+    }
 
     /// <summary>Starts a new ordered section; the marker cannot be produced by a value.</summary>
     public void Section(string name)
@@ -95,18 +164,63 @@ public static class WorkOrderSnapshotHasher
     /// Hash of the complete manufacturing snapshot plus its planned schedule, using the algorithm
     /// named by <see cref="ProductionWorkOrder.SnapshotHashVersion"/>.
     /// </summary>
-    public static string ComputeSnapshotHash(ProductionWorkOrder workOrder)
+    public static string ComputeSnapshotHash(ProductionWorkOrder workOrder) =>
+        ComputeSnapshotHash(workOrder, TimestampHashRules.Canonical);
+
+    /// <summary>
+    /// Hash using an explicit kind rule. <see cref="TimestampHashRules.AsStored"/> reproduces a
+    /// hash saved before kind was stripped.
+    /// </summary>
+    internal static string ComputeSnapshotHash(ProductionWorkOrder workOrder, TimestampHashRules rules)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
 
         return workOrder.SnapshotHashVersion switch
         {
-            ProductionSnapshotHashVersions.V1 => ComputeSnapshotHashV1(workOrder),
-            ProductionSnapshotHashVersions.DefinitionIdentityV2 => ComputeSnapshotHashV2(workOrder),
-            ProductionSnapshotHashVersions.RouteOutputContractV3 => ComputeSnapshotHashV3(workOrder),
+            ProductionSnapshotHashVersions.V1 => ComputeSnapshotHashV1(workOrder, rules),
+            ProductionSnapshotHashVersions.DefinitionIdentityV2 => ComputeSnapshotHashV2(workOrder, rules),
+            ProductionSnapshotHashVersions.RouteOutputContractV3 => ComputeSnapshotHashV3(workOrder, rules),
             _ => throw new InvalidOperationException(
                 $"Unsupported SnapshotHashVersion {workOrder.SnapshotHashVersion}."),
         };
+    }
+
+    /// <summary>
+    /// True when the stored hash matches the canonical payload, or the same clock times under a
+    /// kind pattern produced by the screen before kind was stripped.
+    /// </summary>
+    public static bool MatchesStoredSnapshotHash(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+        var stored = workOrder.SnapshotHash;
+        foreach (var rules in TimestampHashRules.StoredHashRecognition)
+        {
+            if (string.Equals(ComputeSnapshotHash(workOrder, rules), stored, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Replaces a kind-sensitive stored hash with the canonical hash when the payload is unchanged.
+    /// A tampered snapshot is left untouched.
+    /// </summary>
+    public static void CanonicalizeStoredTimestampKindHash(ProductionWorkOrder workOrder)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+        var canonical = ComputeSnapshotHash(workOrder);
+        if (string.Equals(canonical, workOrder.SnapshotHash, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (MatchesStoredSnapshotHash(workOrder))
+        {
+            workOrder.SnapshotHash = canonical;
+        }
     }
 
     /// <summary>
@@ -114,11 +228,11 @@ public static class WorkOrderSnapshotHasher
     /// <see cref="ProductionWorkOrder.DefinitionEffectiveDate"/> and
     /// <see cref="ProductionWorkOrder.SourceEffectiveFrom"/>.
     /// </summary>
-    public static string ComputeSnapshotHashV1(ProductionWorkOrder workOrder)
+    public static string ComputeSnapshotHashV1(ProductionWorkOrder workOrder, TimestampHashRules timestampRules = default)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
 
-        var w = new CanonicalHashWriter();
+        var w = new CanonicalHashWriter { TimestampRules = timestampRules == default ? TimestampHashRules.Canonical : timestampRules };
         WriteSnapshotHeaderCommon(w, workOrder);
         w.AddDate(workOrder.DefinitionEffectiveDate);
         w.AddDate(workOrder.SourceEffectiveFrom);
@@ -132,11 +246,11 @@ public static class WorkOrderSnapshotHasher
     /// <see cref="ProductionWorkOrder.SourceProductDefinitionRevisionId"/>; omits date-selection
     /// fields; includes material <see cref="ProductionWorkOrderMaterial.ComponentDefinitionCode"/>.
     /// </summary>
-    public static string ComputeSnapshotHashV2(ProductionWorkOrder workOrder)
+    public static string ComputeSnapshotHashV2(ProductionWorkOrder workOrder, TimestampHashRules timestampRules = default)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
 
-        var w = new CanonicalHashWriter();
+        var w = new CanonicalHashWriter { TimestampRules = timestampRules == default ? TimestampHashRules.Canonical : timestampRules };
         WriteSnapshotHeaderCommon(w, workOrder);
         w.Add(workOrder.SourceDefinitionCode);
         w.Add(workOrder.SourceProductDefinitionRevisionId);
@@ -148,11 +262,11 @@ public static class WorkOrderSnapshotHasher
     /// Hash-version 3: V2 body plus route OutputType, YieldPercent, OutputBaseUom,
     /// OutputConversionFactorToBase.
     /// </summary>
-    public static string ComputeSnapshotHashV3(ProductionWorkOrder workOrder)
+    public static string ComputeSnapshotHashV3(ProductionWorkOrder workOrder, TimestampHashRules timestampRules = default)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
 
-        var w = new CanonicalHashWriter();
+        var w = new CanonicalHashWriter { TimestampRules = timestampRules == default ? TimestampHashRules.Canonical : timestampRules };
         WriteSnapshotHeaderCommon(w, workOrder);
         w.Add(workOrder.SourceDefinitionCode);
         w.Add(workOrder.SourceProductDefinitionRevisionId);
@@ -183,9 +297,9 @@ public static class WorkOrderSnapshotHasher
         bool includeComponentDefinitionCode,
         bool includeRouteOutputContract)
     {
-        w.AddTimestamp(workOrder.ScheduleAnchorDateTime);
-        w.AddTimestamp(workOrder.PlannedStartDateTime);
-        w.AddTimestamp(workOrder.PlannedCompletionDateTime);
+        w.AddAnchorTimestamp(workOrder.ScheduleAnchorDateTime);
+        w.AddPlannedTimestamp(workOrder.PlannedStartDateTime);
+        w.AddPlannedTimestamp(workOrder.PlannedCompletionDateTime);
         w.Add(workOrder.SchedulingDirection);
         w.Add(workOrder.SourceType);
         w.Add(workOrder.SourceReference);
@@ -217,8 +331,8 @@ public static class WorkOrderSnapshotHasher
                 w.Add(step.OutputBaseUom);
                 w.Add(step.OutputConversionFactorToBase);
             }
-            w.AddTimestamp(step.PlannedStartDateTime);
-            w.AddTimestamp(step.PlannedCompletionDateTime);
+            w.AddPlannedTimestamp(step.PlannedStartDateTime);
+            w.AddPlannedTimestamp(step.PlannedCompletionDateTime);
 
             var operations = step.Operations
                 .OrderBy(x => x.ProcessSequence)
@@ -306,12 +420,12 @@ public static class WorkOrderSnapshotHasher
         w.Add(operation.PlannedOutputUom);
         w.Add(operation.CalendarSourceType);
         w.Add(operation.CalendarSourceId);
-        w.AddTimestamp(operation.CalendarSourceLastModified);
+        w.AddCalendarTimestamp(operation.CalendarSourceLastModified);
         w.Add(operation.ScheduleSourceHash);
-        w.AddTimestamp(operation.CalendarHorizonStart);
-        w.AddTimestamp(operation.CalendarHorizonEnd);
-        w.AddTimestamp(operation.PlannedStartDateTime);
-        w.AddTimestamp(operation.PlannedCompletionDateTime);
+        w.AddCalendarTimestamp(operation.CalendarHorizonStart);
+        w.AddCalendarTimestamp(operation.CalendarHorizonEnd);
+        w.AddPlannedTimestamp(operation.PlannedStartDateTime);
+        w.AddPlannedTimestamp(operation.PlannedCompletionDateTime);
 
         var machines = operation.Machines
             .OrderBy(x => x.Priority)
@@ -344,14 +458,14 @@ public static class WorkOrderSnapshotHasher
             w.Add(machine.PlannedCycleCount);
             w.Add(machine.PlannedCycleSlots);
             w.Add(machine.PlannedRunMinutes);
-            w.AddTimestamp(machine.PlannedStartDateTime);
-            w.AddTimestamp(machine.PlannedCompletionDateTime);
+            w.AddPlannedTimestamp(machine.PlannedStartDateTime);
+            w.AddPlannedTimestamp(machine.PlannedCompletionDateTime);
             w.Add(machine.MachineRatePerHour);
             w.Add(machine.CalendarSourceId);
-            w.AddTimestamp(machine.CalendarSourceLastModified);
+            w.AddCalendarTimestamp(machine.CalendarSourceLastModified);
             w.Add(machine.ScheduleSourceHash);
-            w.AddTimestamp(machine.CalendarHorizonStart);
-            w.AddTimestamp(machine.CalendarHorizonEnd);
+            w.AddCalendarTimestamp(machine.CalendarHorizonStart);
+            w.AddCalendarTimestamp(machine.CalendarHorizonEnd);
 
             var machineLabours = machine.Labours
                 .OrderBy(x => x.LabourCode, StringComparer.Ordinal)
