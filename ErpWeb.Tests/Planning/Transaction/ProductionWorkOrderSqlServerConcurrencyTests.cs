@@ -1020,6 +1020,85 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
         Assert.True(await verify.ProductionWorkOrders.AnyAsync(x => x.Uid == graph.WorkOrderId));
     }
 
+    [Fact]
+    public async Task DeleteDraft_removes_a_sql_server_snapshot_graph_without_inventory_side_effects()
+    {
+        // Delete reuses the WorkOrder-first lifecycle lock used by Reopen and Material Issue.
+        // A separate delete-vs-post race needs deterministic SQL transaction orchestration; the
+        // existing race tests in this fixture cover that lock-order contract.
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var graph = await host.SeedHierarchyAsync(includeMachine: true, includeOperationLabour: true);
+
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            db.ProductionWorkOrderMaterials.Add(
+                ValidMaterial(graph, PrMaterialSupplySources.Purchased, producingRouteStepId: null));
+            db.ProductionWorkOrderLabours.Add(new ProductionWorkOrderLabour
+            {
+                MachineId = graph.MachineId!.Value,
+                LabourCode = "MACHLAB",
+                RateBasis = ProductionLabourRateBases.PerOutputUnit,
+                Rate = 1m,
+                ContributesToPlan = true,
+                PlannedAmount = 1m
+            });
+            db.ProductionWorkOrderResources.Add(new ProductionWorkOrderResource
+            {
+                OperationId = graph.OperationId,
+                SequenceNo = 1,
+                ResourceType = "MACHINE",
+                ResourceCode = "MC01"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        string workOrderNo;
+        byte[] rowVersion;
+        int inventoryBatchCount;
+        int inventoryHistoryCount;
+        int stockPostingCount;
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.Uid == graph.WorkOrderId);
+            workOrderNo = order.WorkOrderNo;
+            rowVersion = order.RowVersion.ToArray();
+            inventoryBatchCount = await db.IvTrxBatches.CountAsync();
+            inventoryHistoryCount = await db.IvTrxHistories.CountAsync();
+            stockPostingCount = await db.StockPostings.CountAsync();
+        }
+
+        var deleted = await host.CreateService().DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = workOrderNo,
+            RowVersion = rowVersion
+        });
+
+        Assert.True(deleted.Succeeded, deleted.Message);
+        Assert.Equal(workOrderNo, deleted.Data);
+
+        await using var verify = await host.Factory.CreateDbContextAsync();
+        Assert.False(await verify.ProductionWorkOrders.AnyAsync(x => x.Uid == graph.WorkOrderId));
+        Assert.False(await verify.ProductionWorkOrderRouteSteps.AnyAsync(x => x.Uid == graph.RouteStepId));
+        Assert.False(await verify.ProductionWorkOrderOperations.AnyAsync(x => x.Uid == graph.OperationId));
+        Assert.False(await verify.ProductionWorkOrderMaterials.AnyAsync(x => x.WorkOrderId == graph.WorkOrderId));
+        Assert.False(await verify.ProductionWorkOrderMachines.AnyAsync(x => x.Uid == graph.MachineId));
+        Assert.False(await verify.ProductionWorkOrderLabours.AnyAsync(
+            x => x.OperationId == graph.OperationId || x.MachineId == graph.MachineId));
+        Assert.False(await verify.ProductionWorkOrderResources.AnyAsync(x => x.OperationId == graph.OperationId));
+        Assert.False(await verify.ProductionAuditEvents.AnyAsync(x => x.WorkOrderId == graph.WorkOrderId));
+        Assert.False(await verify.ProductionMaterialMovements.AnyAsync(x => x.WorkOrderId == graph.WorkOrderId));
+        Assert.False(await verify.ProductionFinishedGoodLotOriginRows.AnyAsync(x => x.WorkOrderId == graph.WorkOrderId));
+        Assert.Equal(inventoryBatchCount, await verify.IvTrxBatches.CountAsync());
+        Assert.Equal(inventoryHistoryCount, await verify.IvTrxHistories.CountAsync());
+        Assert.Equal(stockPostingCount, await verify.StockPostings.CountAsync());
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
 
     private static ProductionWorkOrderMaterial ValidMaterial(

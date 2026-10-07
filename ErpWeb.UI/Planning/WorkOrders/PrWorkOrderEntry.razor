@@ -148,6 +148,14 @@
                               Click="@OpenCancelPopup"
                               Enabled="@(!IsSubmitting)" />
                 }
+                @if (CanDeleteAction)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="DELETE DRAFT"
+                              IconCssClass="fa-regular fa-trash-can"
+                              Click="@OpenDeletePopup"
+                              Enabled="@(!IsSubmitting)" />
+                }
             </div>
         </section>
 
@@ -600,7 +608,7 @@
                             <li>Release to create the Work Order and release it for execution in one step.</li>
                             <li>Save Draft only when the Work Order is not ready to release. A saved Draft can be released later, including when quantity, schedule, reference, or remark still have unsaved changes.</li>
                             <li>After the Draft is saved, adjust machine selection or material alternatives if required, then Release.</li>
-                            <li>Cancel Draft if the Work Order should no longer proceed.</li>
+                            <li>Delete Draft when an accidental, duplicate, test, or otherwise unwanted never-released Draft should be permanently removed. Cancel Draft when a legitimate business Work Order should remain in history.</li>
                         </ol>
                     </section>
 
@@ -611,8 +619,10 @@
                             <dd>Saves the Work Order without releasing it for production. Use this when the Work Order is not ready. Older format Drafts must be updated from the Product Definition first.</dd>
                             <dt>Release</dt>
                             <dd>Creates and releases a new Work Order, or saves current Draft header changes and releases the Draft in one operation. Release does not post inventory. A legacy snapshot must be updated from the Product Definition before Release.</dd>
+                            <dt>Delete Draft</dt>
+                            <dd>Permanently removes an eligible never-released, never-executed Draft and its planning snapshot. Use this for an accidental, duplicate, test, or otherwise unwanted Draft. The action is available only with DELETE permission and is not reversible.</dd>
                             <dt>Cancel Draft</dt>
-                            <dd>Marks the Draft as Cancelled. A cancellation reason is required. Does not delete the Work Order.</dd>
+                            <dd>Marks a legitimate Draft as Cancelled so it remains in history. A cancellation reason is required. It does not delete the Work Order.</dd>
                             <dt>Reopen for Edit</dt>
                             <dd>Returns a Released Work Order to Draft when no production activity has started. Requires EDIT and REOPEN. A reason is required. Does not reverse inventory or rewrite history. Does not upgrade legacy snapshots — Refresh Definition may still be required before structural editing or re-release.</dd>
                             <dt>More → Calculate Preview</dt>
@@ -678,6 +688,31 @@
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep Draft" Click="@(() => CancelConfirmVisible = false)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Draft" Click="@CancelDraftAsync" Enabled="@(!IsSubmitting)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Delete Draft Work Order"
+                 @bind-Visible="@DeleteConfirmVisible"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup">
+            <Content>
+                <p class="iv-confirm__copy">
+                    Delete @CurrentWorkOrderNo? This permanently removes this never-executed Draft and its planning snapshot.
+                    Use Cancel Draft instead when the Work Order is a valid business record that should remain in history.
+                </p>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="KEEP DRAFT"
+                                  Click="@(() => DeleteConfirmVisible = false)"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                  Text="DELETE DRAFT"
+                                  Click="@DeleteDraftAsync"
+                                  Enabled="@(!IsSubmitting)" />
                     </div>
                 </div>
             </Content>

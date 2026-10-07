@@ -28,11 +28,15 @@ public partial class PrWorkOrderList : PageBase, IDisposable
     protected int TotalCount;
     protected bool CanAdd;
     protected bool CanEdit;
+    protected bool CanDelete;
     protected bool CanReopen;
     protected bool ReopenConfirmVisible;
     protected bool IsReopening;
     protected string ReopenReason = string.Empty;
     protected ProductionWorkOrderDetail? ReopenTarget;
+    protected bool DeleteConfirmVisible;
+    protected bool IsDeleting;
+    protected ProductionWorkOrderDetail? DeleteTarget;
     protected List<ProductionWorkOrderListRow> CompactRows { get; set; } = [];
     protected ProductionWorkOrderGridDataSource DataSource { get; private set; } = default!;
 
@@ -98,6 +102,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         DataSource = new ProductionWorkOrderGridDataSource(LoadPageAsync);
         CanAdd = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Add);
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Edit);
+        CanDelete = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Delete);
         CanReopen = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Reopen);
         Buttons =
         [
@@ -113,6 +118,14 @@ public partial class PrWorkOrderList : PageBase, IDisposable
                 Style = "primary",
                 ToolTip = "Edit Draft, or reopen Released for edit",
                 Enabled = CanEdit
+            },
+            new()
+            {
+                Text = "DELETE",
+                IConClass = "fa-regular fa-trash-can",
+                Style = "danger",
+                ToolTip = "Delete Draft Work Order",
+                Enabled = CanDelete
             }
         ];
 
@@ -153,6 +166,12 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         if (action == "VIEW")
         {
             OpenView(row.WorkOrderNo);
+            return;
+        }
+
+        if (action == "DELETE")
+        {
+            await BeginDeleteAsync(row);
             return;
         }
 
@@ -243,6 +262,85 @@ public partial class PrWorkOrderList : PageBase, IDisposable
         ReopenConfirmVisible = false;
         ReopenTarget = null;
         ReopenReason = string.Empty;
+    }
+
+    private async Task BeginDeleteAsync(ProductionWorkOrderListRow row)
+    {
+        if (!CanDelete)
+        {
+            StatusMessage = "Access denied.";
+            return;
+        }
+
+        if (!string.Equals(row.Status, ProductionWorkOrderStatuses.Draft, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "Only Draft Work Orders can be deleted.";
+            return;
+        }
+
+        StatusMessage = null;
+        ErrorMessage = null;
+        var latest = await WorkOrders.GetAsync(row.WorkOrderNo);
+        if (!latest.Succeeded || latest.Data is null)
+        {
+            ErrorMessage = latest.Message ?? "Unable to load the Work Order for deletion.";
+            return;
+        }
+
+        if (!string.Equals(latest.Data.Status, ProductionWorkOrderStatuses.Draft, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = $"Only Draft Work Orders can be deleted. This Work Order is currently {latest.Data.Status}.";
+            return;
+        }
+
+        DeleteTarget = latest.Data;
+        DeleteConfirmVisible = true;
+    }
+
+    protected void CloseDeletePopup()
+    {
+        if (IsDeleting)
+        {
+            return;
+        }
+
+        DeleteConfirmVisible = false;
+        DeleteTarget = null;
+    }
+
+    protected async Task ConfirmDeleteAsync()
+    {
+        if (DeleteTarget is null || IsDeleting)
+        {
+            return;
+        }
+
+        IsDeleting = true;
+        ErrorMessage = null;
+        StatusMessage = null;
+        try
+        {
+            var deletedNo = DeleteTarget.WorkOrderNo;
+            var result = await WorkOrders.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+            {
+                WorkOrderNo = deletedNo,
+                RowVersion = DeleteTarget.RowVersion
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to delete the Draft Work Order.";
+                return;
+            }
+
+            DeleteConfirmVisible = false;
+            DeleteTarget = null;
+            await ReloadGridAsync();
+            StatusMessage = $"Draft Work Order {result.Data} deleted.";
+        }
+        finally
+        {
+            IsDeleting = false;
+        }
     }
 
     protected async Task ReopenForEditAsync()

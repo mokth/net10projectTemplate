@@ -32,6 +32,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsSubmitting;
     protected bool ReleaseConfirmVisible;
     protected bool CancelConfirmVisible;
+    protected bool DeleteConfirmVisible;
     protected bool ReopenConfirmVisible;
     protected bool HelpVisible;
     protected bool RefreshVisible;
@@ -53,6 +54,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanEdit;
     protected bool CanRelease;
     protected bool CanCancel;
+    protected bool CanDelete;
     protected bool CanReopen;
     protected bool CanAccessMaterialIssue;
     protected bool CanAddMaterialIssue;
@@ -110,6 +112,10 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsCurrentSnapshot =>
         DetailModel?.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current;
     protected bool CanCancelAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft } && CanCancel;
+    protected bool CanDeleteAction =>
+        DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
+        && CanDelete
+        && !IsSubmitting;
     protected bool CanIssueMaterials => DetailModel is not null
         && DetailModel.Status is ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress
         && CanAccessMaterialIssue;
@@ -366,6 +372,7 @@ public partial class PrWorkOrderEntry : PageBase
         CanEdit = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Edit);
         CanRelease = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, ProductionPermissionCodes.Release);
         CanCancel = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Cancel);
+        CanDelete = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Delete);
         CanReopen = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Reopen);
         CanAccessMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access);
         CanAddMaterialIssue = await AccessRights.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Add);
@@ -1047,6 +1054,14 @@ public partial class PrWorkOrderEntry : PageBase
         CancelConfirmVisible = true;
     }
 
+    protected void OpenDeletePopup()
+    {
+        if (CanDeleteAction)
+        {
+            DeleteConfirmVisible = true;
+        }
+    }
+
     protected void OpenReopenPopup()
     {
         ReopenReason = string.Empty;
@@ -1115,6 +1130,37 @@ public partial class PrWorkOrderEntry : PageBase
             CancelConfirmVisible = false;
             StatusMessage = $"Draft {result.Data.WorkOrderNo} cancelled.";
             SwitchToViewRoute(result.Data.WorkOrderNo);
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task DeleteDraftAsync()
+    {
+        if (DetailModel is null || !CanDeleteAction)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearFeedback();
+        try
+        {
+            var result = await WorkOrders.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+            {
+                WorkOrderNo = DetailModel.WorkOrderNo,
+                RowVersion = DetailModel.RowVersion
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                ApplyFailure(result);
+                return;
+            }
+
+            DeleteConfirmVisible = false;
+            Navigation.NavigateTo("/planning/work-orders");
         }
         finally
         {

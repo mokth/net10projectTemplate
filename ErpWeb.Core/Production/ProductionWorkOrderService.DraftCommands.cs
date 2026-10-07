@@ -1349,29 +1349,7 @@ public sealed partial class ProductionWorkOrderService
 
     private static void ReplaceSnapshot(AppDbContext db, ProductionWorkOrder target, ProductionWorkOrder source)
     {
-        db.ProductionWorkOrderLabours.RemoveRange(target.Operations.SelectMany(o => o.Labours));
-        db.ProductionWorkOrderLabours.RemoveRange(target.Operations.SelectMany(o => o.Machines).SelectMany(m => m.Labours));
-        db.ProductionWorkOrderMaterials.RemoveRange(target.Materials);
-        db.ProductionWorkOrderMachines.RemoveRange(target.Operations.SelectMany(o => o.Machines));
-        db.ProductionWorkOrderResources.RemoveRange(target.Operations.SelectMany(o => o.Resources));
-        db.ProductionWorkOrderOperations.RemoveRange(target.Operations);
-        db.ProductionWorkOrderRouteSteps.RemoveRange(target.RouteSteps);
-        foreach (var operation in target.Operations)
-        {
-            operation.Labours.Clear();
-            foreach (var machine in operation.Machines)
-            {
-                machine.Labours.Clear();
-            }
-
-            operation.Machines.Clear();
-            operation.Materials.Clear();
-            operation.Resources.Clear();
-        }
-
-        target.RouteSteps.Clear();
-        target.Operations.Clear();
-        target.Materials.Clear();
+        RemoveSnapshotGraph(db, target);
 
         target.ProductCode = source.ProductCode;
         target.ProductDescription = source.ProductDescription;
@@ -1414,6 +1392,67 @@ public sealed partial class ProductionWorkOrderService
         {
             target.Materials.Add(material);
         }
+    }
+
+    private static void RemoveSnapshotGraph(AppDbContext db, ProductionWorkOrder target)
+    {
+        var operations = target.Operations
+            .Concat(target.RouteSteps.SelectMany(x => x.Operations))
+            .Distinct()
+            .ToList();
+        var machines = operations
+            .SelectMany(x => x.Machines)
+            .Distinct()
+            .ToList();
+        var directLabours = operations
+            .SelectMany(x => x.Labours)
+            .Distinct()
+            .ToList();
+        var machineLabours = machines
+            .SelectMany(x => x.Labours)
+            .Distinct()
+            .ToList();
+        var materials = target.Materials
+            .Concat(operations.SelectMany(x => x.Materials))
+            .Distinct()
+            .ToList();
+        var resources = operations
+            .SelectMany(x => x.Resources)
+            .Distinct()
+            .ToList();
+
+        // Several aggregate relationships intentionally use NoAction. Keep this order aligned
+        // with the SQL Server FK graph: operation labours, machine labours, materials, machines,
+        // resources, operations, then route steps.
+        db.ProductionWorkOrderLabours.RemoveRange(directLabours);
+        db.ProductionWorkOrderLabours.RemoveRange(machineLabours);
+        db.ProductionWorkOrderMaterials.RemoveRange(materials);
+        db.ProductionWorkOrderMachines.RemoveRange(machines);
+        db.ProductionWorkOrderResources.RemoveRange(resources);
+        db.ProductionWorkOrderOperations.RemoveRange(operations);
+        db.ProductionWorkOrderRouteSteps.RemoveRange(target.RouteSteps);
+
+        foreach (var operation in operations)
+        {
+            operation.Labours.Clear();
+            foreach (var machine in operation.Machines)
+            {
+                machine.Labours.Clear();
+            }
+
+            operation.Machines.Clear();
+            operation.Materials.Clear();
+            operation.Resources.Clear();
+        }
+
+        foreach (var routeStep in target.RouteSteps)
+        {
+            routeStep.Operations.Clear();
+        }
+
+        target.RouteSteps.Clear();
+        target.Operations.Clear();
+        target.Materials.Clear();
     }
 
     private static (IReadOnlyList<string> Added, IReadOnlyList<string> Removed, IReadOnlyList<string> Changed) DiffSnapshot(

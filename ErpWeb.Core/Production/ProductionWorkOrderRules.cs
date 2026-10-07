@@ -14,6 +14,7 @@ public static class ProductionWorkOrderRules
     public static bool CanEdit(string? status) => status == ProductionWorkOrderStatuses.Draft;
     public static bool CanRelease(string? status) => status == ProductionWorkOrderStatuses.Draft;
     public static bool CanCancelDraft(string? status) => status == ProductionWorkOrderStatuses.Draft;
+    public static bool CanDeleteDraft(string? status) => status == ProductionWorkOrderStatuses.Draft;
     public static bool CanReopen(string? status) => status == ProductionWorkOrderStatuses.Released;
     public static bool RequiresChangeOrder(string? status) => status is
         ProductionWorkOrderStatuses.Released or

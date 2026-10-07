@@ -90,7 +90,7 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.InUse, preflightBlocker);
             }
 
-            var order = await LockWorkOrderForReopenAsync(
+            var order = await LockWorkOrderForLifecycleAsync(
                 db, scope.CompanyCode, scope.BranchCode!, number, cancellationToken);
             if (order is null
                 || !string.Equals(order.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
@@ -200,7 +200,7 @@ public sealed partial class ProductionWorkOrderService
         return null;
     }
 
-    private static async Task<ProductionWorkOrder?> LockWorkOrderForReopenAsync(
+    private static async Task<ProductionWorkOrder?> LockWorkOrderForLifecycleAsync(
         AppDbContext db,
         string company,
         string branch,
@@ -235,17 +235,36 @@ public sealed partial class ProductionWorkOrderService
             return postingBlocker;
         }
 
-        var hasMovement = await db.ProductionMaterialMovements
-            .AsNoTracking()
-            .AnyAsync(x => x.WorkOrderId == order.Uid, cancellationToken);
-        if (hasMovement)
+        if (await HasWorkOrderExecutionProjectionAsync(db, order, cancellationToken))
         {
             return "This Work Order has production execution history and cannot be reopened as Draft. Use the controlled Change Order/correction process.";
         }
 
-        if (HasHeaderExecutionProjection(order))
+        var hasOpenChangeOrder = await db.ProductionChangeOrders
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.WorkOrderId == order.Uid
+                    && ReopenBlockingChangeOrderStatuses.Contains(x.Status),
+                cancellationToken);
+        if (hasOpenChangeOrder)
         {
-            return "This Work Order has production execution history and cannot be reopened as Draft. Use the controlled Change Order/correction process.";
+            return "An active or applied Change Order exists for this Work Order. Resolve it before reopening as Draft.";
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> HasWorkOrderExecutionProjectionAsync(
+        AppDbContext db,
+        ProductionWorkOrder order,
+        CancellationToken cancellationToken)
+    {
+        var hasMovement = await db.ProductionMaterialMovements
+            .AsNoTracking()
+            .AnyAsync(x => x.WorkOrderId == order.Uid, cancellationToken);
+        if (hasMovement || HasHeaderExecutionProjection(order))
+        {
+            return true;
         }
 
         var operations = await db.ProductionWorkOrderOperations
@@ -263,12 +282,11 @@ public sealed partial class ProductionWorkOrderService
                 x.TransferredQty
             })
             .ToListAsync(cancellationToken);
-        if (operations.Any(op =>
-                HasExecutionProjection(
-                    op.InputQty, op.ProcessedQty, op.GoodQty, op.ScrapQty,
-                    op.RejectQty, op.HoldQty, op.ReworkQty, op.TransferredQty)))
+        if (operations.Any(x => HasExecutionProjection(
+                x.InputQty, x.ProcessedQty, x.GoodQty, x.ScrapQty,
+                x.RejectQty, x.HoldQty, x.ReworkQty, x.TransferredQty)))
         {
-            return "This Work Order has production execution history and cannot be reopened as Draft. Use the controlled Change Order/correction process.";
+            return true;
         }
 
         var materials = await db.ProductionWorkOrderMaterials
@@ -284,26 +302,9 @@ public sealed partial class ProductionWorkOrderService
                 x.VarianceQty
             })
             .ToListAsync(cancellationToken);
-        if (materials.Any(m =>
-                HasExecutionProjection(
-                    m.ReservedQty, m.PickedQty, m.IssuedQty,
-                    m.ReturnedQty, m.ConsumedQty, m.VarianceQty)))
-        {
-            return "This Work Order has production execution history and cannot be reopened as Draft. Use the controlled Change Order/correction process.";
-        }
-
-        var hasOpenChangeOrder = await db.ProductionChangeOrders
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.WorkOrderId == order.Uid
-                    && ReopenBlockingChangeOrderStatuses.Contains(x.Status),
-                cancellationToken);
-        if (hasOpenChangeOrder)
-        {
-            return "An active or applied Change Order exists for this Work Order. Resolve it before reopening as Draft.";
-        }
-
-        return null;
+        return materials.Any(x => HasExecutionProjection(
+            x.ReservedQty, x.PickedQty, x.IssuedQty,
+            x.ReturnedQty, x.ConsumedQty, x.VarianceQty));
     }
 
     private static bool HasHeaderExecutionProjection(ProductionWorkOrder order) =>

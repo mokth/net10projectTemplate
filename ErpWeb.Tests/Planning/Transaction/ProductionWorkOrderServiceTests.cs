@@ -641,6 +641,608 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Virgin_draft_can_be_hard_deleted_and_returns_its_number()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        var deleted = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = save.Data!.WorkOrderNo,
+            RowVersion = save.Data.RowVersion
+        });
+
+        Assert.True(deleted.Succeeded, deleted.Message);
+        Assert.Equal(save.Data.WorkOrderNo, deleted.Data);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.ProductionWorkOrders.AnyAsync(x => x.WorkOrderNo == save.Data.WorkOrderNo));
+    }
+
+    [Fact]
+    public async Task Hard_delete_removes_the_complete_snapshot_graph_in_explicit_order()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        long workOrderId;
+        long routeStepId;
+        long operationId;
+        long machineId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.RouteSteps).ThenInclude(x => x.Operations)
+                .Include(x => x.Operations)
+                .SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            var operation = order.Operations.Single();
+            var machine = new ProductionWorkOrderMachine
+            {
+                OperationId = operation.Uid,
+                MachineCode = "MC01",
+                Priority = 1,
+                IsDefault = true,
+                IsSelected = true,
+                ParallelMachineCount = 1,
+                CycleQuantityMode = ProductionMachineCycleQuantityModes.Discrete,
+                OutputPerCycle = 1m
+            };
+            db.ProductionWorkOrderMachines.Add(machine);
+            db.ProductionWorkOrderLabours.AddRange(
+                new ProductionWorkOrderLabour
+                {
+                    OperationId = operation.Uid,
+                    LabourCode = "OPLAB",
+                    RateBasis = ProductionLabourRateBases.PerOutputUnit,
+                    Rate = 1m,
+                    ContributesToPlan = true,
+                    PlannedAmount = 1m
+                },
+                new ProductionWorkOrderLabour
+                {
+                    Machine = machine,
+                    LabourCode = "MACHLAB",
+                    RateBasis = ProductionLabourRateBases.PerOutputUnit,
+                    Rate = 1m,
+                    ContributesToPlan = true,
+                    PlannedAmount = 1m
+                });
+            db.ProductionWorkOrderResources.Add(new ProductionWorkOrderResource
+            {
+                OperationId = operation.Uid,
+                SequenceNo = 1,
+                ResourceType = "MACHINE",
+                ResourceCode = "MC01"
+            });
+            await db.SaveChangesAsync();
+
+            workOrderId = order.Uid;
+            routeStepId = order.RouteSteps.Single().Uid;
+            operationId = operation.Uid;
+            machineId = machine.Uid;
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var deleted = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.True(deleted.Succeeded, deleted.Message);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.False(await verify.ProductionWorkOrders.AnyAsync(x => x.Uid == workOrderId));
+        Assert.False(await verify.ProductionWorkOrderRouteSteps.AnyAsync(x => x.Uid == routeStepId));
+        Assert.False(await verify.ProductionWorkOrderOperations.AnyAsync(x => x.Uid == operationId));
+        Assert.False(await verify.ProductionWorkOrderMaterials.AnyAsync(x => x.WorkOrderId == workOrderId));
+        Assert.False(await verify.ProductionWorkOrderMachines.AnyAsync(x => x.Uid == machineId));
+        Assert.False(await verify.ProductionWorkOrderLabours.AnyAsync(
+            x => x.OperationId == operationId || x.MachineId == machineId));
+        Assert.False(await verify.ProductionWorkOrderResources.AnyAsync(x => x.OperationId == operationId));
+        Assert.False(await verify.ProductionAuditEvents.AnyAsync(x => x.WorkOrderId == workOrderId));
+    }
+
+    [Fact]
+    public async Task Hard_delete_does_not_reuse_the_running_work_order_number()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var first = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(first.Succeeded, first.Message);
+
+        var deleted = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = first.Data!.WorkOrderNo,
+            RowVersion = first.Data.RowVersion
+        });
+        Assert.True(deleted.Succeeded, deleted.Message);
+
+        var second = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(second.Succeeded, second.Message);
+        Assert.Equal("WO00000002", second.Data!.WorkOrderNo);
+        Assert.NotEqual(first.Data.WorkOrderNo, second.Data.WorkOrderNo);
+    }
+
+    [Fact]
+    public async Task Hard_delete_requires_delete_permission_server_side()
+    {
+        await SeedManualCurrentRouteAsync();
+        var creator = CreateSut();
+        var save = await creator.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        var denied = CreateSut(deniedPermission: PermissionCodes.Delete);
+        var result = await denied.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = save.Data!.WorkOrderNo,
+            RowVersion = save.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.AccessDenied, result.ErrorCode);
+        var reload = await creator.GetAsync(save.Data.WorkOrderNo);
+        Assert.True(reload.Succeeded, reload.Message);
+    }
+
+    [Fact]
+    public async Task Hard_delete_rejects_a_stale_row_version_without_removing_children()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+        var stale = save.Data!.RowVersion.ToArray();
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == save.Data.WorkOrderNo);
+            order.Remark = "Changed by another user";
+            order.RowVersion = Guid.NewGuid().ToByteArray();
+            await db.SaveChangesAsync();
+        }
+
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = save.Data.WorkOrderNo,
+            RowVersion = stale
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, result.ErrorCode);
+        var reload = await sut.GetAsync(save.Data.WorkOrderNo);
+        Assert.True(reload.Succeeded, reload.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reload.Data!.Status);
+    }
+
+    [Theory]
+    [InlineData(ProductionWorkOrderStatuses.Released)]
+    [InlineData(ProductionWorkOrderStatuses.InProgress)]
+    [InlineData(ProductionWorkOrderStatuses.Completed)]
+    [InlineData(ProductionWorkOrderStatuses.Closed)]
+    [InlineData(ProductionWorkOrderStatuses.Cancelled)]
+    public async Task Hard_delete_rejects_non_draft_statuses(string status)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            order.Status = status;
+            order.RowVersion = Guid.NewGuid().ToByteArray();
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True((await sut.GetAsync(save.Data.WorkOrderNo)).Succeeded);
+    }
+
+    [Fact]
+    public async Task Released_then_reopened_draft_cannot_be_hard_deleted()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Correct a customer quantity"
+        });
+        Assert.True(reopened.Succeeded, reopened.Message);
+
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = reopened.Data!.WorkOrderNo,
+            RowVersion = reopened.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+        Assert.Contains("previously released", result.Message, StringComparison.OrdinalIgnoreCase);
+        var reload = await sut.GetAsync(reopened.Data.WorkOrderNo);
+        Assert.True(reload.Succeeded, reload.Message);
+        Assert.Contains(reload.Data!.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
+        Assert.Contains(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.ReopenedForEdit);
+    }
+
+    [Theory]
+    [InlineData("header")]
+    [InlineData("operation")]
+    [InlineData("material")]
+    public async Task Hard_delete_blocks_nonzero_execution_projections(string projection)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.Operations)
+                .Include(x => x.Materials)
+                .SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            switch (projection)
+            {
+                case "header":
+                    order.GoodQty = 1m;
+                    break;
+                case "operation":
+                    order.Operations.Single().ProcessedQty = 1m;
+                    break;
+                case "material":
+                    order.Materials.Single().IssuedQty = 1m;
+                    break;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_any_change_order_history()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionChangeOrders.Add(new ProductionChangeOrder
+            {
+                WorkOrderId = order.Uid,
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                ChangeOrderNo = "CO-DELETE-TEST",
+                SourceSnapshotRevision = order.SnapshotRevision,
+                ProposedSnapshotRevision = order.SnapshotRevision + 1,
+                Status = ProductionChangeOrderStatuses.Rejected,
+                Reason = "Historical delete blocker",
+                RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(ProductionPostingLinkStatuses.Draft)]
+    [InlineData(ProductionPostingLinkStatuses.Pending)]
+    [InlineData(ProductionPostingLinkStatuses.Succeeded)]
+    public async Task Hard_delete_blocks_posting_link_history(string status)
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+        await SeedPostingLinkAsync(save.Data!.WorkOrderNo, status);
+
+        var latest = await sut.GetAsync(save.Data.WorkOrderNo);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_material_issue_line_history()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.Operations)
+                .Include(x => x.Materials)
+                .SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionMaterialIssueLines.Add(new ProductionMaterialIssueLine
+            {
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                PostingLinkId = 90001,
+                InventoryBatchId = 90001,
+                InventoryBatchDetailId = 90001,
+                InventoryBatchNo = 90001,
+                DocumentRevision = 1,
+                InventoryTrxLineNo = 1,
+                WorkOrderId = order.Uid,
+                WorkOrderOperationId = order.Operations.Single().Uid,
+                WorkOrderMaterialId = order.Materials.Single().Uid,
+                IssueQty = 1m,
+                BaseQty = 1m,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_material_movement_history_even_when_reversed()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await SeedIssueAndReversalMovementsAsync(save.Data!.WorkOrderNo);
+
+        var latest = await sut.GetAsync(save.Data.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_production_output_history()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.RouteSteps)
+                .Include(x => x.Operations)
+                .SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionOutputs.Add(new ProductionOutput
+            {
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                DocumentNo = "OUT-DELETE-TEST",
+                Status = ProductionOutputStatuses.New,
+                WorkOrderId = order.Uid,
+                RouteStepId = order.RouteSteps.Single().Uid,
+                WorkOrderOperationId = order.Operations.Single().Uid,
+                ProductionDate = DateTime.UtcNow,
+                GoodQty = 0m,
+                ScrapQty = 0m,
+                RejectQty = 0m,
+                HoldQty = 0m,
+                OutputUom = "PCS",
+                OutputItemCode = "FG001",
+                OutputLotNo = "",
+                SnapshotRevision = order.SnapshotRevision,
+                SnapshotHash = order.SnapshotHash,
+                PostingRequestId = "POST-DELETE-TEST",
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester",
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_production_balance_lot_history()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionBalLots.Add(new ProductionBalLot
+            {
+                CompanyCode = order.CompanyCode,
+                BranchCode = order.BranchCode,
+                Kind = "WIP",
+                ItemCode = "FG001",
+                Description = "Delete blocker",
+                Qty = 1m,
+                Uom = "PCS",
+                BaseQty = 1m,
+                BaseUom = "PCS",
+                ConversionFactorToBase = 1m,
+                TotalCost = 1m,
+                AverageUnitCost = 1m,
+                WorkOrderId = order.Uid,
+                WorkOrderNo = order.WorkOrderNo,
+                WarehouseCode = "WH01",
+                LocationCode = "SITE",
+                LotNo = "LOT-DELETE-TEST"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_production_balance_movement_history_without_direct_fk()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
+            {
+                ProductionBalLotId = 90002,
+                MovementType = "PRODUCE",
+                Qty = 1m,
+                Uom = "PCS",
+                BaseQty = 1m,
+                BaseUom = "PCS",
+                UnitCost = 1m,
+                TotalCost = 1m,
+                WorkOrderId = order.Uid,
+                PostingLinkId = 90002,
+                DocumentType = "TEST",
+                DocumentNo = "BAL-DELETE-TEST",
+                MovementDate = DateTime.UtcNow,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Hard_delete_blocks_finished_good_lot_lineage()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var save = await sut.SaveDraftAsync(Request(10m));
+        Assert.True(save.Succeeded, save.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.RouteSteps)
+                .Include(x => x.Operations)
+                .SingleAsync(x => x.WorkOrderNo == save.Data!.WorkOrderNo);
+            db.ProductionFinishedGoodLotOriginRows.Add(new ProductionFinishedGoodLotOrigin
+            {
+                LotId = 90003,
+                CompanyCode = order.CompanyCode,
+                OriginatingBranch = order.BranchCode,
+                WorkOrderId = order.Uid,
+                RouteStepId = order.RouteSteps.Single().Uid,
+                OperationId = order.Operations.Single().Uid,
+                PhysicalLotNo = "FG-DELETE-TEST"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var latest = await sut.GetAsync(save.Data!.WorkOrderNo);
+        Assert.True(latest.Succeeded, latest.Message);
+        var result = await sut.DeleteDraftAsync(new ProductionWorkOrderDeleteRequest
+        {
+            WorkOrderNo = latest.Data!.WorkOrderNo,
+            RowVersion = latest.Data.RowVersion
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, result.ErrorCode);
+    }
+
+    [Fact]
     public async Task Stale_row_version_is_rejected()
     {
         var sut = CreateSut();

@@ -213,6 +213,43 @@
                 </div>
             </FooterContentTemplate>
         </DxPopup>
+
+        <DxPopup HeaderText="Delete Draft Work Order"
+                 CloseOnOutsideClick="false"
+                 Width="560px"
+                 CssClass="common-popup"
+                 ShowFooter="true"
+                 @bind-Visible="@DeleteConfirmVisible">
+            <Content>
+                @if (DeleteTarget is not null)
+                {
+                    <div class="iv-popup-body">
+                        <p class="iv-confirm__copy">
+                            Delete @DeleteTarget.WorkOrderNo? This permanently removes this never-executed Draft and its planning snapshot.
+                            Use Cancel Draft instead when the Work Order is a valid business record that should remain in history.
+                        </p>
+                        <dl class="iv-confirm__meta">
+                            <div><dt>Work Order</dt><dd class="code-style">@DeleteTarget.WorkOrderNo</dd></div>
+                            <div><dt>Product</dt><dd>@DeleteTarget.ProductCode · @DeleteTarget.ProductDescription</dd></div>
+                            <div><dt>Current status</dt><dd>@DeleteTarget.Status</dd></div>
+                            <div><dt>Planned Qty</dt><dd>@DeleteTarget.PlannedQty.ToString("n4") @DeleteTarget.OutputUom</dd></div>
+                        </dl>
+                    </div>
+                }
+            </Content>
+            <FooterContentTemplate>
+                <div class="d-flex gap-2 justify-content-end w-100">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="KEEP DRAFT"
+                              Click="@CloseDeletePopup"
+                              Enabled="@(!IsDeleting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                              Text="DELETE DRAFT"
+                              Click="@ConfirmDeleteAsync"
+                              Enabled="@(!IsDeleting && DeleteTarget is not null)" />
+                </div>
+            </FooterContentTemplate>
+        </DxPopup>
     </div>
 </MenuAuthorize>
 

@@ -366,6 +366,12 @@ public sealed class ProductionWorkOrderHeaderUpdate
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class ProductionWorkOrderDeleteRequest
+{
+    public string WorkOrderNo { get; set; } = string.Empty;
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class ProductionWorkOrderRecalculateRequest
 {
     public string WorkOrderNo { get; set; } = string.Empty;
@@ -527,6 +533,10 @@ public interface IProductionWorkOrderService
         string workOrderNo,
         byte[] rowVersion,
         string reason,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<string>> DeleteDraftAsync(
+        ProductionWorkOrderDeleteRequest request,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftAsync(
