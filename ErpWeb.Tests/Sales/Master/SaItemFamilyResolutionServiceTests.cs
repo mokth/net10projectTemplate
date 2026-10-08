@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
@@ -13,7 +14,7 @@ using Moq;
 namespace ErpWeb.Tests.Sales.Master;
 /// <summary>
 /// Resolution over the real database (plan §7/§8/§8.5/§24): the service entry points load the customer's
-/// own <c>PriceMethod</c>/<c>CustPriceCode</c>, the candidate rows, and the legacy <c>float</c> columns,
+/// legacy metadata and active <c>CustPriceCode</c>, the candidate rows, and the legacy <c>float</c> columns,
 /// then delegate to the pure rules. This file is what proves the wiring, the tenant scope and the
 /// legacy-type scaling that the pure contract tests cannot reach.
 /// </summary>
@@ -188,7 +189,184 @@ public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PriceResolution_RetiredPriceList_IsTolerated_AndFallsThrough()
+    public async Task PriceResolution_UsesTheCustomerGroupPriceList_WhenNoOwnListExists()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaCustGroups.Add(new SaCustGroup
+            {
+                CompanyCode = "DEMO",
+                CustGroupCode = "G1",
+                CustGroupDesc = "Group one",
+                CustPriceCode = "PLG",
+                RowVersion = [0, 0, 0, 0, 0, 0, 0, 17]
+            });
+            db.IvCustPriceGroups.Add(new IvCustPriceGroup
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLG",
+                CustPriceDesc = "GROUP LIST",
+                IsActive = true,
+                RowVersion = [0, 0, 0, 0, 0, 0, 0, 18]
+            });
+            db.IvCustPrices.Add(new IvCustPrice
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLG",
+                ICode = "I1",
+                UOM = "PCS",
+                SellingPrice = 11m
+            });
+            var customer = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST1");
+            customer.CustGroupCode = "G1";
+            await db.SaveChangesAsync();
+        }
+
+        var result = await CreateSut().ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(11m, result.Data!.UnitPrice);
+        Assert.Equal(SaPriceSource.CustomerGroupPriceList, result.Data.PricingSource);
+        Assert.Equal("PLG", result.Data.PricingRef);
+    }
+
+    [Fact]
+    public async Task PriceResolution_UsesTheCompanyPricePriority_AndIgnoresCustomerItemDataWhenExcluded()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Companies.Add(new Company
+            {
+                CompanyCode = "DEMO",
+                CompanyName = "Demo company",
+                CurrencyCode = "MYR",
+                SalesPriceMethod = SaCompanyPriceMethod.ItemDefaultOnly
+            });
+            db.SaItemCusts.Add(new SaItemCust
+            {
+                CompanyCode = "DEMO",
+                CustCode = "CUST1",
+                ICode = "I1",
+                SellingUOM = "PCS",
+                MOQ = 0,
+                CustICode = "CUST-I1",
+                UnitPrice = 1d,
+                Status = "NEW",
+                RowVersion = [0, 0, 0, 0, 0, 0, 0, 19]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await CreateSut().ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(14m, result.Data!.UnitPrice);
+        Assert.Equal(SaPriceSource.ItemDefault, result.Data.PricingSource);
+    }
+
+    [Fact]
+    public async Task PriceResolution_CurrencyMismatchFromAnEligibleList_FailsClosed()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvCustPriceGroups.Add(new IvCustPriceGroup
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLC",
+                CustPriceDesc = "USD LIST",
+                IsActive = true,
+                RowVersion = [0, 0, 0, 0, 0, 0, 0, 20]
+            });
+            db.IvCustPrices.Add(new IvCustPrice
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLC",
+                ICode = "I1",
+                UOM = "PCS",
+                SellingPrice = 3m,
+                CurrencyCode = "USD"
+            });
+            var customer = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST1");
+            customer.CustPriceCode = "PLC";
+            await db.SaveChangesAsync();
+        }
+
+        var result = await CreateSut().ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.Contains("Conversion is not implicit", result.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PriceResolution_UsesTheSameBaseContextAsLiveLinePricing()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvCustPriceGroups.Add(new IvCustPriceGroup
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLB",
+                CustPriceDesc = "BANDED LIST",
+                IsActive = true,
+                RowVersion = [0, 0, 0, 0, 0, 0, 0, 21]
+            });
+            db.IvCustPrices.Add(new IvCustPrice
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLB",
+                ICode = "I1",
+                UOM = "PCS",
+                SellingPrice = 12m,
+                MinQty = 1m,
+                MaxQty = 9m,
+                ValidFrom = FixedToday
+            });
+            db.IvCustPrices.Add(new IvCustPrice
+            {
+                CompanyCode = "DEMO",
+                CustPriceCode = "PLB",
+                ICode = "I1",
+                UOM = "PCS",
+                SellingPrice = 10m,
+                MinQty = 10m,
+                ValidFrom = FixedToday
+            });
+            var customer = await db.SaCusts.SingleAsync(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST1");
+            customer.CustPriceCode = "PLB";
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var baseResult = await sut.ResolveItemPriceAsync(new SaItemFamilyPriceRequest
+        {
+            CustCode = "CUST1",
+            ICode = "I1",
+            UOM = "PCS",
+            Qty = 25m,
+            DocDate = FixedToday,
+            DocumentCurrency = "MYR"
+        });
+        var lineResult = await sut.ResolveLinePricingAsync(new SaLinePricingRequest
+        {
+            CustCode = "CUST1",
+            ICode = "I1",
+            UOM = "PCS",
+            Qty = 25m,
+            DocDate = FixedToday,
+            DocumentCurrency = "MYR"
+        });
+
+        Assert.True(baseResult.Succeeded, baseResult.Message);
+        Assert.True(lineResult.Succeeded, lineResult.Message);
+        Assert.Equal(10m, baseResult.Data!.UnitPrice);
+        Assert.Equal(baseResult.Data.UnitPrice, lineResult.Data!.BaseUnitPrice);
+        Assert.Equal(baseResult.Data.PricingSource, lineResult.Data.PricingSource);
+        Assert.Equal(baseResult.Data.PricingRef, lineResult.Data.PricingRef);
+    }
+
+    [Fact]
+    public async Task PriceResolution_RetiredPriceList_IsIgnored_AndFallsThroughToItemDefault()
     {
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -213,26 +391,26 @@ public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        // A retired list is no longer offered for assignment, but a customer still pointing at it must not
-        // be blocked from selling (D-6 clause 3).
+        // A retired list is no longer offered for assignment. A customer still pointing at it falls through
+        // to the item's default price because inactive headers do not contribute candidates.
         var sut = CreateSut();
         var result = await sut.ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
 
         Assert.True(result.Succeeded, result.Message);
-        Assert.Equal(9m, result.Data!.UnitPrice);
-        Assert.Equal(SaItemFamilyPriceSources.PriceList, result.Data.Source);
+        Assert.Equal(14m, result.Data!.UnitPrice);
+        Assert.Equal(SaItemFamilyPriceSources.ItemSellingPrice, result.Data.Source);
     }
 
     [Fact]
-    public async Task PriceResolution_DealerCustomer_FailsClosed_FromTheStoredPriceMethod()
+    public async Task PriceResolution_LegacyDealerMetadata_DoesNotBlock()
     {
         var sut = CreateSut();
 
         var result = await sut.ResolveItemPriceAsync(PriceRequest("DEALER1", "I1", "PCS"));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
-        Assert.Contains("Dealer pricing is not supported", result.Message!);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(SaItemFamilyPriceSources.ItemSellingPrice, result.Data!.Source);
+        Assert.Equal(14m, result.Data.UnitPrice);
     }
 
     [Fact]

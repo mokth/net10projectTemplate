@@ -94,6 +94,14 @@ public class SaCompanyPriceMethodTests
     public void IsEligible_MatchesTheModeChain(string method, SaPriceSource source, bool expected) =>
         Assert.Equal(expected, SaCompanyPriceMethod.IsEligible(method, source));
 
+    [Theory]
+    [InlineData(null, "Customer special -> customer price list -> group price list -> item selling price")]
+    [InlineData(SaCompanyPriceMethod.CustomerItemOnly, "Customer special -> item selling price")]
+    [InlineData(SaCompanyPriceMethod.PriceListOnly, "Customer price list -> group price list -> item selling price")]
+    [InlineData(SaCompanyPriceMethod.ItemDefaultOnly, "Item selling price only")]
+    public void Describe_UsesTheOperatorFacingPricePriorityLabels(string? method, string expected) =>
+        Assert.Equal(expected, SaCompanyPriceMethod.Describe(method));
+
     // ═════════════════════════════ mode drives the walk ═════════════════════════════
 
     [Fact]

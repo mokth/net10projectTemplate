@@ -199,7 +199,6 @@
                                         @Detail("Currency", Model.Currency)
                                         @Detail("Group discount", FormatGroupDiscount())
                                         @Detail("Discount method", Model.DiscountMethod)
-                                        @Detail("Price method", Model.PriceMethod)
                                         @Detail("Aging type", Model.AgingType)
                                     </div>
                                 </div>
@@ -671,25 +670,6 @@
                                                     </label>
                                                 </div>
                                             </div>
-                                            <div class="sa-cust-pay-field sa-cust-pay-field--top">
-                                                <label class="iv-field__label">Price method</label>
-                                                <div class="sa-cust-radio-box" role="radiogroup" aria-label="Price method">
-                                                    <label class="sa-cust-radio">
-                                                        <input type="radio"
-                                                               name="sa-cust-price-method"
-                                                               checked="@IsPriceSelling"
-                                                               @onchange="@(() => SetPriceMethod(SaCustPaymentOptions.PriceSelling))" />
-                                                        FOLLOW SELLING PRICE X DISCOUNT
-                                                    </label>
-                                                    <label class="sa-cust-radio">
-                                                        <input type="radio"
-                                                               name="sa-cust-price-method"
-                                                               checked="@IsPriceDealer"
-                                                               @onchange="@(() => SetPriceMethod(SaCustPaymentOptions.PriceDealer))" />
-                                                        FOLLOW DEFAULT DEALER PRICE
-                                                    </label>
-                                                </div>
-                                            </div>
                                             <div class="sa-cust-pay-field">
                                                 <label class="iv-field__label">Aging type</label>
                                                 <div class="sa-cust-radios" role="radiogroup" aria-label="Aging type">
@@ -754,6 +734,7 @@
                                                 <IvCodeComboBox Data="@PriceGroups"
                                                                 @bind-Value="@Model.CustPriceCode"
                                                                 NullText="Select price group" />
+                                                <small>Optional customer price list. When allowed by the company's Sales Price Priority, it is checked before the customer's group price list and item selling price.</small>
                                             </div>
                                         </div>
                                     </div>

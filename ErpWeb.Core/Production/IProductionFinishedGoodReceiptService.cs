@@ -9,6 +9,8 @@ public interface IProductionFinishedGoodReceiptService
     Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodSourceFilterOptions>> GetSourceFilterOptionsAsync(long workOrderId, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> GetAsync(int id, CancellationToken ct = default);
+    Task<IvMasterOperationResult<FinishedGoodCostTrace>> GetCostTraceAsync(
+        int receiptId, long sourceId, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveAsync(FinishedGoodReceiptSaveRequest request, CancellationToken ct = default);
     Task<IvMasterOperationResult<bool>> DeleteAsync(int id, byte[] expectedVersion, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> PostAsync(FinishedGoodReceiptCommand request, CancellationToken ct = default);
@@ -138,3 +140,62 @@ public sealed class FinishedGoodReceiptLineInput
     public DateTime? ExpiryDate { get; set; }
 }
 public sealed record FinishedGoodReceiptCommand(int Id, byte[] ExpectedVersion, Guid RequestId, string? Reason = null);
+
+public sealed class FinishedGoodCostTrace
+{
+    public int ReceiptId { get; init; }
+    public int BatchNo { get; init; }
+    public long SourceId { get; init; }
+    public long ProductionBalLotId { get; init; }
+    public string DocumentStatus { get; init; } = "";
+    public string TraceStatus { get; init; } = "";
+    public string BreakdownBasis { get; init; } = "DERIVED_POOLED_COMPONENT_TRACE";
+    public string WorkOrderNo { get; init; } = "";
+    public string ItemCode { get; init; } = "";
+    public string SourceLot { get; init; } = "";
+    public decimal SourceQty { get; init; }
+    public string SourceUom { get; init; } = "";
+    public decimal BaseQty { get; init; }
+    public decimal DestinationQty { get; init; }
+    public string DestinationUom { get; init; } = "";
+    public decimal ExactPostedValue { get; init; }
+    public decimal EffectiveLineUnitCost { get; init; }
+    public decimal? DestinationPostedUnitPrice { get; init; }
+    public int ValuationGeneration { get; init; }
+    public decimal PoolBaseQtyBeforePosting { get; init; }
+    public decimal PoolValueBeforePosting { get; init; }
+    public long OriginalPostingId { get; init; }
+    public long ProductionMovementId { get; init; }
+    public long? ReversalPostingId { get; init; }
+    public IReadOnlyList<FinishedGoodCostTraceComponent> Components { get; init; } = [];
+    public IReadOnlyList<FinishedGoodCostTraceDetail> Details { get; init; } = [];
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+}
+
+public sealed class FinishedGoodCostTraceComponent
+{
+    public string ComponentType { get; init; } = "";
+    public string Label { get; init; } = "";
+    public decimal Amount { get; init; }
+}
+
+public sealed record FinishedGoodCostTraceDetail
+{
+    public string ComponentType { get; init; } = "";
+    public string SourceKind { get; init; } = "";
+    public long? SourceFactId { get; init; }
+    public long? SourceMovementId { get; init; }
+    public string SourceDocumentType { get; init; } = "";
+    public string SourceDocumentNo { get; init; } = "";
+    public string? OriginDocumentType { get; init; }
+    public string? OriginDocumentNo { get; init; }
+    public string? ProductionOutputNo { get; init; }
+    public string ItemCode { get; init; } = "";
+    public string? Lot { get; init; }
+    public decimal? Quantity { get; init; }
+    public string? Uom { get; init; }
+    public decimal? Rate { get; init; }
+    public string? CostMethod { get; init; }
+    public string ValuationSource { get; init; } = "";
+    public decimal Amount { get; init; }
+}

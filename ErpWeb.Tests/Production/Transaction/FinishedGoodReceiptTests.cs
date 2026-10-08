@@ -132,6 +132,37 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
+    public async Task Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var saved = await f.Service.SaveAsync(f.Draft(6)); Assert.True(saved.Succeeded, saved.Message);
+        var posted = await f.Service.PostAsync(new(saved.Data!.Id, saved.Data.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        var sourceId = posted.Data!.Lines.Single().SourceId;
+        var trace = await f.Service.GetCostTraceAsync(saved.Data.Id, sourceId);
+        Assert.True(trace.Succeeded, trace.Message);
+        Assert.Equal("VERIFIED_WITH_UNCLASSIFIED", trace.Data!.TraceStatus);
+        Assert.Equal(72, trace.Data.ExactPostedValue);
+        Assert.Equal(10, trace.Data.PoolBaseQtyBeforePosting);
+        Assert.Equal(120, trace.Data.PoolValueBeforePosting);
+        Assert.Equal(72, trace.Data.Components.Sum(x => x.Amount));
+        Assert.Equal(3, trace.Data.Details.Count);
+
+        f.CanViewCost = false;
+        var denied = await f.Service.GetCostTraceAsync(saved.Data.Id, sourceId);
+        Assert.False(denied.Succeeded);
+        f.CanViewCost = true;
+
+        var reversed = await f.Service.RollbackAsync(new(posted.Data.Id, posted.Data.RowVersion, Guid.NewGuid(), "Trace test"));
+        Assert.True(reversed.Succeeded, reversed.Message);
+        var reversedTrace = await f.Service.GetCostTraceAsync(saved.Data.Id, sourceId);
+        Assert.True(reversedTrace.Succeeded, reversedTrace.Message);
+        Assert.Equal(72, reversedTrace.Data!.ExactPostedValue);
+        Assert.Equal(reversed.Data.ReversalPostingId, reversedTrace.Data.ReversalPostingId);
+    }
+
+    [Fact]
     public async Task All_draft_edits_invalidate_stale_clients_and_restrict_costs()
     {
         var f = await CreateAsync(); if (f is null) return;

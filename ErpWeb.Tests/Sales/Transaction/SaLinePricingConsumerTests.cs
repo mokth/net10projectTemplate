@@ -86,7 +86,7 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         db.SaCusts.Add(Customer("DEMO", "CUST10", "Base plus explicit currency", rv: 20, custPriceCode: "PLU"));
         db.SaCusts.Add(Customer("DEMO", "CUST11", "Single day window", rv: 21, custPriceCode: "PLD"));
         db.SaCusts.Add(Customer("DEMO", "CUST12", "Past window customer", rv: 22, custPriceCode: "PLW"));
-        db.SaCusts.Add(Customer("DEMO", "DEALER1", "Dealer customer", rv: 13, priceMethod: SaCustPaymentOptions.PriceDealer));
+        db.SaCusts.Add(Customer("DEMO", "DEALER1", "Dealer customer", rv: 13, custPriceCode: "PL1", priceMethod: SaCustPaymentOptions.PriceDealer));
         db.SaCusts.Add(Customer("OTHER", "CUST1", "Other company customer", rv: 14));
 
         // Customer special price: wins over EVERYTHING for CUST4.
@@ -374,12 +374,14 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DealerCustomer_FailsClosed_EvenThoughAnItemPriceExists()
+    public async Task LegacyDealerCustomer_UsesNormalCompanyPricingPriority()
     {
         var result = await CreateSut().ResolveLinePricingAsync(Request("DEALER1", "I1"));
 
-        Assert.False(result.Succeeded);
-        Assert.Contains("Dealer pricing is not supported", result.Message!);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(13.75m, result.Data!.UnitPrice);
+        Assert.Equal(SaPriceSource.CustomerPriceList, result.Data.PricingSource);
+        Assert.Equal("PL1", result.Data.PricingRef);
     }
 
     [Fact]
@@ -861,7 +863,8 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
     [InlineData("CUST4", "I1")]   // negotiated customer-item price
     [InlineData("CUST5", "I1")]   // group default price list (Phase 5)
     [InlineData("CUST6", "I1")]   // own list beats the group
-    public async Task Explain_AgressWithTheResolvedPrice(string custCode, string iCode)
+    [InlineData("DEALER1", "I1")] // legacy customer metadata does not alter the company chain
+    public async Task Explain_AgreesWithTheResolvedPrice(string custCode, string iCode)
     {
         var sut = CreateSut();
 
@@ -895,18 +898,24 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         Assert.All(explanation.Levels, x => Assert.False(string.IsNullOrWhiteSpace(x.Reason)));
     }
 
-    /// <summary>The ladder is never blocked by pricing; a block is REPORTED as the outcome.</summary>
+    /// <summary>Price Inquiry uses the same normal source walk for legacy dealer metadata.</summary>
     [Fact]
-    public async Task Explain_ReportsABlockAsTheOutcome()
+    public async Task Explain_LegacyDealerCustomer_AgreesWithResolvedPrice()
     {
-        var result = await CreateSut().ExplainLinePriceAsync(Request("DEALER1", "I1"));
+        var sut = CreateSut();
+        var resolved = await sut.ResolveLinePricingAsync(Request("DEALER1", "I1"));
+        var result = await sut.ExplainLinePriceAsync(Request("DEALER1", "I1"));
 
         Assert.True(result.Succeeded, result.Message);
         var explanation = result.Data!;
 
-        Assert.False(explanation.Found);
-        Assert.False(string.IsNullOrWhiteSpace(explanation.Describe()));
-        Assert.All(explanation.Levels, x => Assert.False(x.Applied));
+        Assert.True(resolved.Succeeded, resolved.Message);
+        Assert.True(explanation.Found);
+        Assert.Equal(resolved.Data!.BaseUnitPrice, explanation.UnitPrice);
+        Assert.Equal(resolved.Data.PricingSource, explanation.WinningSource);
+        Assert.Equal(4, explanation.Levels.Count);
+        Assert.All(explanation.Levels, x =>
+            Assert.DoesNotContain("dealer", x.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase));
     }
 
     // ═════════════════════════════ helpers ═════════════════════════════

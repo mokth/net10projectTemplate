@@ -372,13 +372,13 @@ public partial class AdminCompany : PageBase
 
     protected sealed record FiscalMonthOption(byte? Value, string Name);
 
-    /// <summary>Options for the per-company sales pricing method combo (plan 1.9).</summary>
+    /// <summary>Options for the per-company sales price priority combo.</summary>
     protected static IReadOnlyList<PriceMethodOption> SalesPriceMethods { get; } =
     [
-        new(SaCompanyPriceMethod.CustomerItemAndList, "Customer item, price list, then item default (recommended)"),
-        new(SaCompanyPriceMethod.CustomerItemOnly, "Customer item, then item default"),
-        new(SaCompanyPriceMethod.PriceListOnly, "Customer / group price list, then item default"),
-        new(SaCompanyPriceMethod.ItemDefaultOnly, "Item default selling price only")
+        new(SaCompanyPriceMethod.CustomerItemAndList, "Standard — Customer special, customer/group price list, then item price (recommended)"),
+        new(SaCompanyPriceMethod.CustomerItemOnly, "Customer special, then item price"),
+        new(SaCompanyPriceMethod.PriceListOnly, "Customer/group price list, then item price"),
+        new(SaCompanyPriceMethod.ItemDefaultOnly, "Item selling price only")
     ];
 
     protected sealed record PriceMethodOption(string Value, string Name);

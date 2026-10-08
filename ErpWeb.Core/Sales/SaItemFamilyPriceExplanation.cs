@@ -105,7 +105,6 @@ public static class SaItemFamilyPriceExplainer
 
         var mode = SaCompanyPriceMethod.Normalize(request.CompanyPriceMethod);
         var eligible = SaCompanyPriceMethod.ResolveSources(mode);
-        var dealer = SaItemFamilyPriceResolver.IsDealerPriceMethod(request.PriceMethod);
 
         var levels = new List<SaPriceExplanationLevel>(AllLevels.Count);
         SaPriceSource? winner = null;
@@ -116,12 +115,6 @@ public static class SaItemFamilyPriceExplainer
 
         foreach (var source in AllLevels)
         {
-            if (dealer)
-            {
-                levels.Add(NotApplicable(source, eligible: false, "Not consulted: this customer is set to dealer pricing, which has no price source."));
-                continue;
-            }
-
             if (!eligible.Contains(source))
             {
                 levels.Add(NotApplicable(source, eligible: false, $"Not consulted: excluded by this company's pricing method ({mode})."));

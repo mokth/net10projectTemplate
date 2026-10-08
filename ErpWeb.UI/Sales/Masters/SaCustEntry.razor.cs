@@ -424,13 +424,6 @@ public partial class SaCustEntry : PageBase
 
     protected bool IsDiscountJoin => MatchesOption(Model.DiscountMethod, SaCustPaymentOptions.DiscountJoin);
     protected bool IsDiscountSplit => MatchesOption(Model.DiscountMethod, SaCustPaymentOptions.DiscountSplit);
-    protected bool IsPriceDealer =>
-        MatchesOption(Model.PriceMethod, SaCustPaymentOptions.PriceDealer)
-        || ContainsToken(Model.PriceMethod, "DEALER");
-    protected bool IsPriceSelling =>
-        !IsPriceDealer
-        && (MatchesOption(Model.PriceMethod, SaCustPaymentOptions.PriceSelling)
-            || ContainsToken(Model.PriceMethod, "SELLING"));
     protected bool IsAgingDue =>
         MatchesOption(Model.AgingType, SaCustPaymentOptions.AgingDue)
         || ContainsToken(Model.AgingType, "DUE");
@@ -440,7 +433,6 @@ public partial class SaCustEntry : PageBase
             || ContainsToken(Model.AgingType, "INVOICE"));
 
     protected void SetDiscountMethod(string value) => Model.DiscountMethod = value;
-    protected void SetPriceMethod(string value) => Model.PriceMethod = value;
     protected void SetAgingType(string value) => Model.AgingType = value;
     protected void RefreshOutstanding() => OutstandingAmount = 0m;
 
@@ -512,6 +504,7 @@ public partial class SaCustEntry : PageBase
                     {
                         Model = Clone(copyResult.Data);
                         Model.CustCode = string.Empty;
+                        Model.PriceMethod = null;
                         Model.RowVersion = null;
                         Model.CreatedBy = null;
                         Model.CreatedDate = null;
@@ -622,7 +615,6 @@ public partial class SaCustEntry : PageBase
         {
             IsActive = true,
             DiscountMethod = SaCustPaymentOptions.DiscountJoin,
-            PriceMethod = SaCustPaymentOptions.PriceSelling,
             AgingType = SaCustPaymentOptions.AgingInvoice,
             CreditTerm = SaCustPaymentOptions.CreditLimit,
             AppShip = true,

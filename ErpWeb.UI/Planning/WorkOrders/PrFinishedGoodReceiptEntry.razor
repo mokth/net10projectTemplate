@@ -261,7 +261,18 @@
                                         @{
                                             var line = (FinishedGoodReceiptLine)context.DataItem;
                                         }
-                                        <span>@(line.TotalValue?.ToString("n4") ?? "Unverified")</span>
+                                         <div class="pr-dp-value-cell">
+                                             <span class="pr-dp-value-number">@(line.TotalValue?.ToString("n4") ?? "Unverified")</span>
+                                             @if (line.TotalValue.HasValue && CanTraceCost)
+                                             {
+                                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                           RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                           IconCssClass="fa-solid fa-calculator"
+                                                           title="Trace posted cost"
+                                                           Click="@(() => OpenCostTraceAsync(line))"
+                                                           Enabled="@(!IsCostTraceLoading)" />
+                                             }
+                                         </div>
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                             }
@@ -749,6 +760,197 @@
         <FooterContentTemplate>
             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => ChangeWorkOrderVisible = false)" Enabled="@(!IsSubmitting)" />
             <DxButton Text="Change" RenderStyle="ButtonRenderStyle.Warning" Click="@ChangeWorkOrderAsync" Enabled="@(!IsSubmitting)" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup Visible="@CostTraceVisible"
+             HeaderText="Posted cost trace"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             ShowFooter="true"
+             Width="95vw"
+             MaxWidth="1180px"
+             MaxHeight="90vh"
+             CssClass="common-popup pr-dp-cost-trace-dialog"
+             Closed="@CloseCostTrace">
+        <BodyContentTemplate>
+            <div class="pr-dp-cost-trace">
+                @if (IsCostTraceLoading)
+                {
+                    <div class="pr-dp-trace-state" role="status" aria-live="polite">
+                        <span class="pr-dp-trace-state__icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                        <strong>Reconstructing posted cost trace…</strong>
+                        <p>Reading the immutable posting, valuation evidence, and historical pool movements.</p>
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(CostTraceError))
+                {
+                    <div class="pr-dp-trace-state pr-dp-trace-state--error" role="alert">
+                        <span class="pr-dp-trace-state__icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                        <strong>Cost trace unavailable</strong>
+                        <p>@CostTraceError</p>
+                    </div>
+                }
+                else if (CostTrace is { } trace)
+                {
+                    <div class="pr-dp-trace-summary">
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Trace status</span>
+                            <strong class="pr-dp-pill">@trace.TraceStatus</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Receipt</span>
+                            <strong class="code-style">FG @trace.BatchNo</strong>
+                            <small>@trace.DocumentStatus</small>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Work Order</span>
+                            <strong class="code-style">@trace.WorkOrderNo</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Item / Source Lot</span>
+                            <strong>@trace.ItemCode</strong>
+                            <small>@(string.IsNullOrWhiteSpace(trace.SourceLot) ? "—" : trace.SourceLot)</small>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Source quantity</span>
+                            <strong>@trace.SourceQty.ToString("n4") @trace.SourceUom</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Destination quantity</span>
+                            <strong>@trace.DestinationQty.ToString("n4") @trace.DestinationUom</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item pr-dp-trace-summary__item--emphasis">
+                            <span class="iv-field__label">Exact posted company-base value</span>
+                            <strong>@trace.ExactPostedValue.ToString("n6")</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item pr-dp-trace-summary__item--emphasis">
+                            <span class="iv-field__label">Effective line unit cost</span>
+                            <strong>@trace.EffectiveLineUnitCost.ToString("n6")</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Posted destination price</span>
+                            <strong>@(trace.DestinationPostedUnitPrice?.ToString("n4") ?? "—")</strong>
+                        </div>
+                        <div class="pr-dp-trace-summary__item">
+                            <span class="iv-field__label">Valuation generation</span>
+                            <strong>@trace.ValuationGeneration</strong>
+                            <small>@trace.BreakdownBasis</small>
+                        </div>
+                    </div>
+
+                    <div class="pr-dp-trace-note" role="note">
+                        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                        Posted value is authoritative. Component amounts are a reconciled trace derived from frozen posting evidence.
+                    </div>
+
+                    @if (string.Equals(trace.DocumentStatus, "REVERSED", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="pr-dp-trace-note" role="status">
+                            <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+                            Showing the original posted cost. The reversal posting is linked to the original posting and does not replace its cost evidence.
+                        </div>
+                    }
+
+                    @if (string.Equals(trace.TraceStatus, "INCONSISTENT", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div class="pr-dp-trace-warning" role="alert">
+                            <strong>Evidence consistency check failed.</strong>
+                            <span>The exact frozen FG value remains authoritative; the component breakdown is intentionally withheld.</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <section class="pr-dp-trace-section" aria-labelledby="pr-dp-trace-components">
+                            <div class="pr-dp-trace-section__head">
+                                <div>
+                                    <p class="iv-eyebrow">Breakdown</p>
+                                    <h3 id="pr-dp-trace-components">Pooled cost components</h3>
+                                </div>
+                                <span class="pr-dp-count">Company-base amount · 6 decimals</span>
+                            </div>
+                            <div class="pr-dp-trace-table-wrap">
+                                <table class="pr-dp-trace-table">
+                                    <thead>
+                                        <tr><th>Component</th><th class="pr-dp-trace-table__amount">Amount</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var component in trace.Components)
+                                        {
+                                            <tr>
+                                                <td>@component.Label</td>
+                                                <td class="pr-dp-trace-table__amount">@component.Amount.ToString("n6")</td>
+                                            </tr>
+                                        }
+                                        <tr class="pr-dp-trace-table__total">
+                                            <td><strong>Total</strong></td>
+                                            <td class="pr-dp-trace-table__amount"><strong>@trace.ExactPostedValue.ToString("n6")</strong></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="pr-dp-trace-section" aria-labelledby="pr-dp-trace-details">
+                            <div class="pr-dp-trace-section__head">
+                                <div>
+                                    <p class="iv-eyebrow">Evidence</p>
+                                    <h3 id="pr-dp-trace-details">Source detail</h3>
+                                </div>
+                                <span class="pr-dp-count">Historical posting order · read only</span>
+                            </div>
+                            <div class="pr-dp-trace-table-wrap pr-dp-trace-table-wrap--details">
+                                <table class="pr-dp-trace-table pr-dp-trace-table--details">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th><th>Source</th><th>Origin</th><th>Item / Lot</th>
+                                            <th class="pr-dp-trace-table__amount">Qty</th><th class="pr-dp-trace-table__amount">Rate</th>
+                                            <th class="pr-dp-trace-table__amount">Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var detail in trace.Details)
+                                        {
+                                            <tr>
+                                                <td><strong>@detail.ComponentType</strong><small>@detail.ValuationSource</small></td>
+                                                <td><span class="code-style">@detail.SourceDocumentType</span><small>@detail.SourceDocumentNo</small></td>
+                                                <td><span>@(detail.OriginDocumentType ?? "—")</span><small>@(detail.OriginDocumentNo ?? "")</small></td>
+                                                <td><span>@(string.IsNullOrWhiteSpace(detail.ItemCode) ? "—" : detail.ItemCode)</span><small>@(detail.Lot ?? "")</small></td>
+                                                <td class="pr-dp-trace-table__amount">@(detail.Quantity?.ToString("n4") ?? "—")<small>@(detail.Uom ?? "")</small></td>
+                                                <td class="pr-dp-trace-table__amount">@(detail.Rate?.ToString("n6") ?? "—")</td>
+                                                <td class="pr-dp-trace-table__amount">@detail.Amount.ToString("n6")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    }
+
+                    <section class="pr-dp-trace-evidence" aria-label="Posting identities">
+                        <div><span class="iv-field__label">Original posting</span><strong class="code-style">@trace.OriginalPostingId</strong></div>
+                        <div><span class="iv-field__label">Production movement</span><strong class="code-style">@trace.ProductionMovementId</strong></div>
+                        <div><span class="iv-field__label">Reversal posting</span><strong class="code-style">@(trace.ReversalPostingId?.ToString() ?? "—")</strong></div>
+                        <div><span class="iv-field__label">Pool before posting</span><strong>@trace.PoolBaseQtyBeforePosting.ToString("n4") / @trace.PoolValueBeforePosting.ToString("n6")</strong></div>
+                    </section>
+
+                    @if (trace.Warnings.Count > 0)
+                    {
+                        <div class="pr-dp-trace-warning pr-dp-trace-warning--muted">
+                            <strong>Trace notes</strong>
+                            <ul>
+                                @foreach (var warning in trace.Warnings)
+                                {
+                                    <li>@warning</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                }
+            </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="@CloseCostTrace" />
         </FooterContentTemplate>
     </DxPopup>
 </MenuAuthorize>

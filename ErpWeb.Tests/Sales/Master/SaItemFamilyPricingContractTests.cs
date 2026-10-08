@@ -16,7 +16,7 @@ public class SaItemFamilyPricingContractTests
 {
     private static readonly DateTime DocDate = new(2026, 9, 15);
 
-    // ═════════════════════════════ §7 step 0 — dealer mode ═════════════════════════════
+    // ═════════════════════════════ legacy customer metadata ═════════════════════════════
 
     [Theory]
     [InlineData("FOLLOW DEFAULT DEALER PRICE", true)]
@@ -28,7 +28,7 @@ public class SaItemFamilyPricingContractTests
         Assert.Equal(expected, SaItemFamilyPriceResolver.IsDealerPriceMethod(priceMethod));
 
     [Fact]
-    public void E6_DealerCustomer_FailsClosed_AndDoesNotFallBackToSellingPrice()
+    public void LegacyDealerPriceMethod_DoesNotAffectCompanySourceWalk()
     {
         var resolution = Resolve(
             Request(priceMethod: "FOLLOW DEFAULT DEALER PRICE"),
@@ -38,9 +38,10 @@ public class SaItemFamilyPricingContractTests
                 Items = [Item("I1", price: 14m)]
             });
 
-        Assert.False(resolution.Found);
-        Assert.Null(resolution.UnitPrice);
-        Assert.Contains("Dealer pricing is not supported", resolution.Message!);
+        Assert.True(resolution.Found);
+        Assert.Equal(SaPriceSource.CustomerItem, resolution.PricingSource);
+        Assert.Equal(12.50m, resolution.UnitPrice);
+        Assert.DoesNotContain("Dealer pricing is not supported", resolution.Message ?? string.Empty);
     }
 
     // ═════════════════════════════ §7.2 worked examples ═════════════════════════════

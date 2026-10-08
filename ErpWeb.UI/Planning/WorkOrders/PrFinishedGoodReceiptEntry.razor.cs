@@ -25,6 +25,8 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     private string? _loadedKey;
     private bool _navigating;
     private FinishedGoodReceiptCommand? _pending;
+    private CancellationTokenSource? _costTraceCts;
+    private long _costTraceRequestVersion;
 
     protected FinishedGoodReceiptDocument Document = new();
     protected List<ReceiptLineEditor> Editors { get; set; } = [];
@@ -57,6 +59,10 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected bool DeleteConfirmationVisible;
     protected bool RollbackConfirmVisible;
     protected bool ChangeWorkOrderVisible;
+    protected bool CostTraceVisible;
+    protected bool IsCostTraceLoading;
+    protected string? CostTraceError;
+    protected FinishedGoodCostTrace? CostTrace;
     protected bool CanAdd;
     protected bool CanEdit;
     protected bool CanDeleteAccess;
@@ -157,6 +163,11 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected string PermissionDeniedCopy => IsNewMode
         ? "You do not have permission to create a finished good receipt."
         : "You do not have permission to edit this finished good receipt.";
+    protected bool CanTraceCost =>
+        IsViewMode
+        && Document.CanViewCost
+        && (string.Equals(Document.Status, "POSTED", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Document.Status, "REVERSED", StringComparison.OrdinalIgnoreCase));
 
     protected override async Task OnParametersSetAsync()
     {
@@ -171,6 +182,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         _pending = null;
         MoreFiltersVisible = false;
         SourcePickerVisible = false;
+        CloseCostTrace();
 
         CanAdd = await Access.CanAsync(MenuCodes.PlanningFinishedGoodReceipt, PermissionCodes.Add);
         CanEdit = await Access.CanAsync(MenuCodes.PlanningFinishedGoodReceipt, PermissionCodes.Edit);
@@ -510,13 +522,77 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 
+    protected async Task OpenCostTraceAsync(FinishedGoodReceiptLine line)
+    {
+        if (!CanTraceCost || line.TotalValue is null || line.SourceId <= 0)
+            return;
+
+        var requestVersion = ++_costTraceRequestVersion;
+        CancelCostTrace();
+        var cts = new CancellationTokenSource();
+        _costTraceCts = cts;
+        CostTraceVisible = true;
+        IsCostTraceLoading = true;
+        CostTraceError = null;
+        CostTrace = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await Receipts.GetCostTraceAsync(Document.Id, line.SourceId, cts.Token);
+            if (requestVersion != _costTraceRequestVersion || cts.IsCancellationRequested)
+                return;
+
+            if (result.Succeeded && result.Data is not null)
+                CostTrace = result.Data;
+            else
+                CostTraceError = result.Message ?? "Unable to load the posted cost trace.";
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (requestVersion == _costTraceRequestVersion)
+                CostTraceError = ex.Message;
+        }
+        finally
+        {
+            if (requestVersion == _costTraceRequestVersion)
+            {
+                IsCostTraceLoading = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    protected void CloseCostTrace()
+    {
+        ++_costTraceRequestVersion;
+        CancelCostTrace();
+        CostTraceVisible = false;
+        IsCostTraceLoading = false;
+        CostTraceError = null;
+        CostTrace = null;
+    }
+
+    private void CancelCostTrace()
+    {
+        if (_costTraceCts is null)
+            return;
+
+        _costTraceCts.Cancel();
+        _costTraceCts.Dispose();
+        _costTraceCts = null;
+    }
+
     protected async Task BeforeNavigate(LocationChangingContext context)
     {
         if (!_navigating && Dirty && !await Js.InvokeAsync<bool>("confirm", "Discard unsaved receipt changes?"))
             context.PreventNavigation();
     }
 
-    public void Dispose() { }
+    public void Dispose() => CloseCostTrace();
 
     private async Task ApplyCommandAsync(string action, string? reason = null)
     {

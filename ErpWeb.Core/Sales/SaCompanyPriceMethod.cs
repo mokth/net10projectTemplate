@@ -96,9 +96,9 @@ public static class SaCompanyPriceMethod
     /// <summary>Human label for the admin combo and the price-inquiry ladder.</summary>
     public static string Describe(string? method) => Normalize(method) switch
     {
-        CustomerItemOnly => "Customer item price, then item default",
-        PriceListOnly => "Customer / group price list, then item default",
-        ItemDefaultOnly => "Item default selling price only",
-        _ => "Customer item price, then price list, then item default"
+        CustomerItemOnly => "Customer special -> item selling price",
+        PriceListOnly => "Customer price list -> group price list -> item selling price",
+        ItemDefaultOnly => "Item selling price only",
+        _ => "Customer special -> customer price list -> group price list -> item selling price"
     };
 }

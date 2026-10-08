@@ -223,7 +223,6 @@ public sealed partial class SaSalesRefService
             UOM = uom,
             Qty = request.Qty,
             DocDate = request.DocDate,
-            PriceMethod = customer.PriceMethod,
             CustPriceCode = NormalizeOptionalCode(customer.CustPriceCode),
             GroupPriceCode = groupPriceCode,
             DocumentCurrency = request.DocumentCurrency,

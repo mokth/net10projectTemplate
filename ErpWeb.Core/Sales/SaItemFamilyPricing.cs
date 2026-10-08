@@ -82,7 +82,11 @@ public sealed class SaItemFamilyPriceRequest
     /// <summary>Part of the §7 key; the customer-level group discount is excluded (§8.2).</summary>
     public string? PayCode { get; init; }
 
-    /// <summary><c>SaCust.PriceMethod</c>, verbatim legacy string. A value containing DEALER fails closed.</summary>
+    /// <summary>
+    /// <c>SaCust.PriceMethod</c>, verbatim legacy metadata. Active pricing resolution ignores this
+    /// property; it remains in the request only for public-contract compatibility during the cleanup
+    /// of the obsolete customer-level authority.
+    /// </summary>
     public string? PriceMethod { get; init; }
 
     /// <summary><c>SaCust.CustPriceCode</c> — the price-list assignment (§11.2).</summary>
@@ -303,7 +307,10 @@ public sealed class SaPriceSourceResult
 /// </summary>
 public static class SaItemFamilyPriceResolver
 {
-    /// <summary>A dealer-mode customer has no price source in v2 (D6) — fail closed, never map to selling.</summary>
+    /// <summary>
+    /// Detects the legacy customer metadata value. Kept for compatibility with callers and tests; active
+    /// pricing resolution deliberately does not use this helper.
+    /// </summary>
     public static bool IsDealerPriceMethod(string? priceMethod) =>
         !string.IsNullOrWhiteSpace(priceMethod) &&
         priceMethod.Contains("DEALER", StringComparison.OrdinalIgnoreCase);
@@ -329,15 +336,7 @@ public static class SaItemFamilyPriceResolver
         var iCode = Normalize(request.ICode);
         var uom = Normalize(request.UOM);
 
-        // Step 0 — the customer's PriceMethod decides the baseline source set.
-        if (IsDealerPriceMethod(request.PriceMethod))
-        {
-            return SaItemFamilyPriceResolution.Blocked(
-                "Dealer pricing is not supported for this customer. Point the customer at a price list, "
-                + "or store a customer-item price, before using this item.");
-        }
-
-        // Step 1 — walk ONLY the sources the company pricing method makes eligible, in the fixed
+        // Step 0 — walk ONLY the sources the company pricing method makes eligible, in the fixed
         // specificity order. The method can remove a source; it can never reorder them.
         foreach (var source in SaCompanyPriceMethod.ResolveSources(request.CompanyPriceMethod))
         {

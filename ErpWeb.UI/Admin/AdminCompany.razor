@@ -314,15 +314,15 @@
                                                     ReadOnly="@(!CanMutate)" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Sales Pricing Method" ColSpanMd="12">
+                                <DxFormLayoutItem Caption="Sales Price Priority" ColSpanMd="12">
                                     <Template>
                                         <DxComboBox Data="@SalesPriceMethods"
                                                     @bind-Value="@EditModel.SalesPriceMethod"
                                                     TextFieldName="@nameof(PriceMethodOption.Name)"
                                                     ValueFieldName="@nameof(PriceMethodOption.Value)"
-                                                    NullText="Customer item, price list, then item default (recommended)"
+                                                    NullText="Standard — Customer special, customer/group price list, then item price (recommended)"
                                                     ReadOnly="@(!CanMutate)" />
-                                        <small>Selects WHICH price sources may apply to a sales line. The evaluation order is fixed by specificity and is not configurable here.</small>
+                                        <small>Controls which price sources may apply. The order is fixed from the most specific customer price to the general item price. Standard is recommended for most companies.</small>
                                     </Template>
                                 </DxFormLayoutItem>
                             </Items>
