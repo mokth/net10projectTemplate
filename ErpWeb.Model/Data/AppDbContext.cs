@@ -36,7 +36,8 @@ public class AppDbContext : DbContext
                     or PurchaseReceiptCostSettlement or PurchaseCostAdjustment
                     or SalesReturnCostAllocation or SalesReturnStandardCostVariance
                     or StockFifoLayerConsumption
-                    or ProductionStandardCostVariance))
+                    or ProductionStandardCostVariance
+                    or ProductionConversionCostFact))
                 throw new InvalidOperationException("Valuation facts, financial snapshots, and costing evidence are immutable; append a linked reversal or a new revision.");
             if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
                 or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
@@ -61,6 +62,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionValuationEvidence> ProductionValuationEvidenceRows => Set<ProductionValuationEvidence>();
     public DbSet<ProductionPoolDependency> ProductionPoolDependencyRows => Set<ProductionPoolDependency>();
     public DbSet<ProductionStandardCostVariance> ProductionStandardCostVariances => Set<ProductionStandardCostVariance>();
+    public DbSet<ProductionConversionCostFact> ProductionConversionCostFacts => Set<ProductionConversionCostFact>();
 
     public DbSet<UserLogin> UserLogins => Set<UserLogin>();
     public DbSet<Menu> Menus => Set<Menu>();

@@ -1764,6 +1764,26 @@ public partial class PrProductDefEntry : PageBase
         return Task.CompletedTask;
     }
 
+    protected Task OnMachineCodeChanged(string? machineCode)
+    {
+        var normalized = machineCode?.Trim() ?? string.Empty;
+        var changedFromSavedMachine = SelectedMachine is null
+            || !string.Equals(SelectedMachine.MachineCode, normalized, StringComparison.OrdinalIgnoreCase);
+        MachineEdit.MachineCode = normalized;
+        if (changedFromSavedMachine)
+        {
+            var master = AvailableMachines.FirstOrDefault(x =>
+                string.Equals(x.MachineCd, normalized, StringComparison.OrdinalIgnoreCase));
+            if (master is not null)
+            {
+                MachineEdit.MachineRatePerHour = decimal.Round(
+                    master.HourlyCost, 6, MidpointRounding.AwayFromZero);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     protected void BeginAddOperation()
     {
         if (!SelectedCentreKey.HasValue && PendingCentre is null)
@@ -2218,6 +2238,8 @@ public partial class PrProductDefEntry : PageBase
         RouteStepKey = x.RouteStepKey,
         SetupLossQty = x.SetupLossQty,
         OperationLossQty = x.OperationLossQty,
+        UtilitiesOverheadCostPerOutputUnit = x.UtilitiesOverheadCostPerOutputUnit,
+        OtherCostPerOutputUnit = x.OtherCostPerOutputUnit,
         IsFinalOperation = x.IsFinalOperation,
         Remark = x.Remark,
         Machines = x.Machines.Select(CloneMachine).ToList()
@@ -2276,6 +2298,8 @@ public partial class PrProductDefEntry : PageBase
             x.StandardDurationMinutes,
             x.SetupLossQty,
             x.OperationLossQty,
+            x.UtilitiesOverheadCostPerOutputUnit,
+            x.OtherCostPerOutputUnit,
             x.IsFinalOperation,
             x.Remark
         });
@@ -2356,6 +2380,8 @@ public partial class PrProductDefEntry : PageBase
                 x.StandardDurationMinutes,
                 x.SetupLossQty,
                 x.OperationLossQty,
+                x.UtilitiesOverheadCostPerOutputUnit,
+                x.OtherCostPerOutputUnit,
                 x.IsFinalOperation,
                 x.Remark,
                 Machines = x.Machines.Select(m => new

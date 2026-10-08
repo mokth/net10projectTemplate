@@ -157,6 +157,8 @@ public sealed class PrProductDefOperationVm
 
     public decimal SetupLossQty { get; set; }
     public decimal OperationLossQty { get; set; }
+    public decimal UtilitiesOverheadCostPerOutputUnit { get; set; }
+    public decimal OtherCostPerOutputUnit { get; set; }
     public bool IsFinalOperation { get; set; }
     public string? Remark { get; set; }
     public List<PrProductDefMachineVm> Machines { get; set; } = [];

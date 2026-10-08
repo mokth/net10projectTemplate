@@ -91,6 +91,8 @@ public class ProductionWorkOrderOperation
 
     public decimal SetupLossQty { get; set; }
     public decimal OperationLossQty { get; set; }
+    public decimal UtilitiesOverheadCostPerOutputUnit { get; set; }
+    public decimal OtherCostPerOutputUnit { get; set; }
 
     /// <summary>Plant-local planned start (plan §6.5).</summary>
     public DateTime? PlannedStartDateTime { get; set; }

@@ -134,6 +134,8 @@ public sealed class ProductionWorkOrderOperationVm
     public decimal PlannedQty { get; init; }
     public decimal SetupLossQty { get; init; }
     public decimal OperationLossQty { get; init; }
+    public decimal UtilitiesOverheadCostPerOutputUnit { get; init; }
+    public decimal OtherCostPerOutputUnit { get; init; }
     public int ProcessSequence { get; init; }
     public string ProcessType { get; init; } = string.Empty;
     public decimal StandardDurationMinutes { get; init; }
@@ -235,6 +237,7 @@ public sealed class ProductionWorkOrderDetail
     public string? ModifiedBy { get; init; }
     public byte[] RowVersion { get; init; } = [];
     public int SnapshotFormatVersion { get; init; }
+    public int SnapshotHashVersion { get; init; }
     public bool IsLegacySnapshot { get; init; }
     public long? SourceProductDefinitionRevisionId { get; init; }
     public string? DefinitionSourceHash { get; init; }
@@ -334,6 +337,9 @@ public sealed class ProductionWorkOrderMachineVm
     public decimal SetupSeconds { get; init; }
     public decimal ConversionSeconds { get; init; }
     public decimal QueueSeconds { get; init; }
+    public decimal MachineRatePerHour { get; init; }
+    public decimal PlannedCostAmount { get; init; }
+    public decimal CostPerOutputUnit { get; init; }
     public DateTime? PlannedStartDateTime { get; init; }
     public DateTime? PlannedCompletionDateTime { get; init; }
     public string? ScheduleSourceHash { get; init; }

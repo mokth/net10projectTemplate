@@ -69,16 +69,14 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
                 || workOrder.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current))
         {
             report.Add(ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired,
-                "This Work Order uses an older snapshot format. Refresh the Product Definition "
-                + "before releasing or structurally editing.");
+                "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
 
         if (context.RequireCurrentSnapshotFormat
             && workOrder.SnapshotHashVersion < ProductionSnapshotHashVersions.Current)
         {
             report.Add(ProductionReadinessErrorCodes.SnapshotHashVersionStale,
-                "This Work Order snapshot hash version is below the current route-output contract. "
-                + "Refresh the Product Definition before releasing.");
+                "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
 
         if (!string.IsNullOrWhiteSpace(context.CurrentSnapshotHash)

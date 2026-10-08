@@ -176,6 +176,26 @@ public sealed class WorkOrderQuantityCalculatorTests
         Assert.Equal(0.3333m, order.RouteSteps.Single().PlannedQty);
     }
 
+    [Fact]
+    public async Task Machine_absorbed_cost_uses_cycle_count_and_excludes_queue()
+    {
+        var order = BuildOrder();
+        var machine = AddMachine(order, outputPerCycle: 3m, parallelCount: 2, cycleSeconds: 30m);
+        machine.SetupSeconds = 60m;
+        machine.ConversionSeconds = 120m;
+        machine.QueueSeconds = 999m;
+        machine.MachineRatePerHour = 7.123456m;
+
+        var result = await CreateSut(new FakeUomConversionService()).CalculateAsync(order);
+
+        Assert.True(result.Succeeded, result.Summary);
+        Assert.Equal(4m, machine.PlannedCycleCount);
+        Assert.Equal(2m, machine.PlannedCycleSlots);
+        Assert.Equal(1m, machine.PlannedRunMinutes);
+        Assert.Equal(0.593621m, machine.PlannedCostAmount);
+        Assert.Equal(0.059362m, machine.CostPerOutputUnit);
+    }
+
     // ── Graph builders ────────────────────────────────────────────────────────────────────────
 
     private static ProductionWorkOrder BuildOrder()

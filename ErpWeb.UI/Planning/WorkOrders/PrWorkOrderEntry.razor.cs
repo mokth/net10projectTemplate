@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
@@ -35,6 +36,7 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool DeleteConfirmVisible;
     protected bool ReopenConfirmVisible;
     protected bool HelpVisible;
+    protected bool CostingInfoVisible;
     protected bool RefreshVisible;
     protected bool ChangeDefinitionVisible;
     protected bool MaterialChangeVisible;
@@ -110,7 +112,9 @@ public partial class PrWorkOrderEntry : PageBase
                 && (!HasUnsavedInputChanges || CanEdit))
         );
     protected bool IsCurrentSnapshot =>
-        DetailModel?.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current;
+        DetailModel is not null
+        && DetailModel.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.Current
+        && DetailModel.SnapshotHashVersion >= ProductionSnapshotHashVersions.Current;
     protected bool CanCancelAction => DetailModel is { Status: ProductionWorkOrderStatuses.Draft } && CanCancel;
     protected bool CanDeleteAction =>
         DetailModel is { Status: ProductionWorkOrderStatuses.Draft }
@@ -199,7 +203,7 @@ public partial class PrWorkOrderEntry : PageBase
         ?? string.Empty;
     protected string SnapshotState => PreviewModel is not null
         ? IsPreviewCurrent ? "Unsaved processed preview" : "Preview out of date"
-        : NeedsDefinitionUpgrade ? "Refresh required (older snapshot format)"
+        : NeedsDefinitionUpgrade ? "Refresh required (snapshot/costing contract)"
         : HasUnsavedInputChanges ? "Changes not processed"
         : DetailModel is not null ? "Saved server snapshot"
         : "Not processed";
@@ -211,7 +215,7 @@ public partial class PrWorkOrderEntry : PageBase
             {
                 return
                 [
-                    $"This Draft uses snapshot format v{DetailModel!.SnapshotFormatVersion}. Use Refresh Definition to upgrade to the current format before editing structure, changing definition, or releasing."
+                    "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing."
                 ];
             }
 
@@ -302,7 +306,57 @@ public partial class PrWorkOrderEntry : PageBase
         ? "—"
         : DetailModel.IsLegacySnapshot
             ? $"Legacy v{DetailModel.SnapshotFormatVersion}"
-            : $"v{DetailModel.SnapshotFormatVersion}";
+            : $"v{DetailModel.SnapshotFormatVersion} / hash v{DetailModel.SnapshotHashVersion}";
+    protected bool UsesAbsorbedConversionCost => DetailModel is not null
+        && ProductionSnapshotHashVersions.UsesAbsorbedConversionCost(DetailModel.SnapshotHashVersion);
+    protected bool IsLegacyV3Snapshot => DetailModel is not null
+        && DetailModel.SnapshotHashVersion == ProductionSnapshotHashVersions.RouteOutputContractV3;
+    protected bool IsLegacyV3Executable => IsLegacyV3Snapshot
+        && DetailModel!.Status is ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress;
+    protected IReadOnlyList<CostingRow> CostingRows => OperationRows.Select(operation =>
+    {
+        var selectedMachine = operation.Machines.FirstOrDefault(x => x.IsSelected);
+        var labourPerOutput = operation.Labours
+            .Concat(selectedMachine?.Labours ?? [])
+            .Where(x => x.ContributesToPlan
+                && string.Equals(x.RateBasis, ProductionLabourRateBases.PerOutputUnit, StringComparison.Ordinal))
+            .Sum(x => StockLedgerPrecision.Money(x.Rate));
+        labourPerOutput = StockLedgerPrecision.Money(labourPerOutput);
+        var machinePerOutput = StockLedgerPrecision.Money(selectedMachine?.CostPerOutputUnit ?? 0m);
+        var utilities = StockLedgerPrecision.Money(operation.UtilitiesOverheadCostPerOutputUnit);
+        var other = StockLedgerPrecision.Money(operation.OtherCostPerOutputUnit);
+        var plannedLabour = StockLedgerPrecision.Money(labourPerOutput * operation.PlannedOutputQty);
+        var plannedMachine = StockLedgerPrecision.Money(selectedMachine?.PlannedCostAmount ?? 0m);
+        var plannedUtilities = StockLedgerPrecision.Money(utilities * operation.PlannedOutputQty);
+        var plannedOther = StockLedgerPrecision.Money(other * operation.PlannedOutputQty);
+        var plannedConversion = StockLedgerPrecision.Money(
+            plannedLabour + plannedMachine + plannedUtilities + plannedOther);
+        return new CostingRow(
+            operation.OperationCode,
+            operation.ProcessType,
+            operation.PlannedOutputQty,
+            operation.PlannedOutputUom,
+            labourPerOutput,
+            machinePerOutput,
+            plannedMachine,
+            utilities,
+            other,
+            StockLedgerPrecision.Money(labourPerOutput + machinePerOutput + utilities + other),
+            plannedConversion);
+    }).ToList();
+
+    protected sealed record CostingRow(
+        string OperationCode,
+        string ProcessType,
+        decimal PlannedOutputQty,
+        string? OutputUom,
+        decimal LabourPerOutputUnit,
+        decimal MachinePerOutputUnit,
+        decimal SelectedMachinePlannedCost,
+        decimal UtilitiesOverheadPerOutputUnit,
+        decimal OtherPerOutputUnit,
+        decimal TotalPerOutputUnit,
+        decimal PlannedConversionCost);
     protected string DirectionLabel => IsBackwardSchedule ? "From end" : "From start";
 
     protected void OnRouteFocused(GridFocusedRowChangedEventArgs args)
@@ -520,7 +574,7 @@ public partial class PrWorkOrderEntry : PageBase
             if (NeedsDefinitionUpgrade)
             {
                 ErrorMessage =
-                    "This Draft uses an older snapshot format. Refresh Definition before saving or making structural edits.";
+                    "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.";
                 return;
             }
 
@@ -547,7 +601,7 @@ public partial class PrWorkOrderEntry : PageBase
             else
             {
                 ErrorMessage =
-                    "This Draft uses an older snapshot format. Refresh Definition before saving or making structural edits.";
+                    "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.";
                 return;
             }
 
@@ -942,7 +996,7 @@ public partial class PrWorkOrderEntry : PageBase
         if (!IsCurrentSnapshot)
         {
             ReleaseConfirmVisible = false;
-            ErrorMessage = "This Draft uses an older snapshot format. Refresh Definition before releasing.";
+            ErrorMessage = "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.";
             return;
         }
 

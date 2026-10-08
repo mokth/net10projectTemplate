@@ -8,7 +8,12 @@ public sealed class PrBomOperationConfiguration : IEntityTypeConfiguration<PrBom
 {
     public void Configure(EntityTypeBuilder<PrBomOperation> builder)
     {
-        builder.ToTable("PrBomOperation");
+        builder.ToTable("PrBomOperation", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_PrBomOperation_AbsorbedCost",
+                "[UtilitiesOverheadCostPerOutputUnit] >= 0 AND [OtherCostPerOutputUnit] >= 0");
+        });
         builder.HasKey(x => x.Uid);
         builder.HasIndex(x => new { x.BomHdrId, x.OperationKey }).IsUnique();
         builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
@@ -24,6 +29,10 @@ public sealed class PrBomOperationConfiguration : IEntityTypeConfiguration<PrBom
         builder.Property(x => x.StandardDurationMinutes).HasPrecision(18, 4);
         builder.Property(x => x.SetupLossQty).HasPrecision(18, 4);
         builder.Property(x => x.OperationLossQty).HasPrecision(18, 4);
+        builder.Property(x => x.UtilitiesOverheadCostPerOutputUnit)
+            .HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(x => x.OtherCostPerOutputUnit)
+            .HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
         builder.Property(x => x.Remark).HasMaxLength(500);
         builder.Property(x => x.CreatedBy).HasMaxLength(10);
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);
@@ -55,7 +64,12 @@ public sealed class PrBomMachineOptionConfiguration : IEntityTypeConfiguration<P
 {
     public void Configure(EntityTypeBuilder<PrBomMachineOption> builder)
     {
-        builder.ToTable("PrBomMachineOption");
+        builder.ToTable("PrBomMachineOption", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_PrBomMachineOption_Cost",
+                "[MachineRatePerHour] >= 0");
+        });
         builder.HasKey(x => x.Uid);
         builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
         builder.Property(x => x.OperationId).HasColumnName("OperationID");
@@ -67,7 +81,7 @@ public sealed class PrBomMachineOptionConfiguration : IEntityTypeConfiguration<P
         builder.Property(x => x.ConversionSeconds).HasPrecision(18, 4);
         builder.Property(x => x.SetupSeconds).HasPrecision(18, 4);
         builder.Property(x => x.QueueSeconds).HasPrecision(18, 4);
-        builder.Property(x => x.MachineRatePerHour).HasPrecision(18, 6);
+        builder.Property(x => x.MachineRatePerHour).HasPrecision(19, 6);
         builder.Ignore(x => x.IsDefault);
         builder.Property(x => x.CreatedBy).HasMaxLength(10);
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);
@@ -99,7 +113,7 @@ public sealed class PrBomLabourStandardConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.MachineOptionId).HasColumnName("MachineOptionID");
         builder.Property(x => x.LabourCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.LabourDescription).HasMaxLength(200);
-        builder.Property(x => x.CostPerOutputUnit).HasPrecision(18, 6);
+        builder.Property(x => x.CostPerOutputUnit).HasPrecision(19, 6);
         builder.Property(x => x.CreatedBy).HasMaxLength(10);
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);
         builder.Property(x => x.RowVersion).IsRowVersion();

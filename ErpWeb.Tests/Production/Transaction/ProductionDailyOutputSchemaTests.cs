@@ -103,9 +103,26 @@ public sealed class ProductionDailyOutputSchemaTests
     }
 
     [Fact]
-    public void Snapshot_hash_current_is_v3()
+    public void Absorbed_conversion_fact_schema_and_snapshot_contract_are_mapped()
     {
-        Assert.Equal(3, ProductionSnapshotHashVersions.Current);
+        var entity = Model.FindEntityType(typeof(ProductionConversionCostFact))
+            ?? throw new InvalidOperationException("ProductionConversionCostFact is not mapped.");
+        Assert.Equal("PrProductionConversionCostFact", entity.GetTableName());
+        var basisQty = entity.FindProperty(nameof(ProductionConversionCostFact.BasisQty));
+        Assert.NotNull(basisQty);
+        Assert.Equal(18, basisQty!.GetPrecision());
+        Assert.Equal(4, basisQty.GetScale());
+        AssertMoneyPrecision<ProductionConversionCostFact>(nameof(ProductionConversionCostFact.RatePerOutputUnit));
+        AssertMoneyPrecision<ProductionConversionCostFact>(nameof(ProductionConversionCostFact.CostAmount));
+        var indexes = entity.GetIndexes().Select(x => x.GetDatabaseName()).ToHashSet();
+        Assert.Contains("UQ_PrProductionConversionCostFact_Movement_Source", indexes);
+        Assert.Contains("UQ_PrProductionConversionCostFact_Reversal", indexes);
+
+        Assert.Equal(4, ProductionSnapshotHashVersions.Current);
+        Assert.Equal(4, ProductionSnapshotHashVersions.AbsorbedConversionCostV4);
         Assert.Equal(3, ProductionSnapshotHashVersions.RouteOutputContractV3);
+        Assert.True(ProductionSnapshotHashVersions.SupportsDailyProduction(3));
+        Assert.False(ProductionSnapshotHashVersions.UsesAbsorbedConversionCost(3));
+        Assert.True(ProductionSnapshotHashVersions.UsesAbsorbedConversionCost(4));
     }
 }

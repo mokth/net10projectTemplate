@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Transactions;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
@@ -133,6 +134,12 @@ public sealed partial class ProductionOutputService
             var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
             if (ledger.Error is not null)
                 return Fail(ledger.Error.Message);
+            if (!ledger.LedgerEnabled && await db.ProductionConversionCostFacts.AnyAsync(
+                    x => x.ProductionOutputId == output.Uid && x.ReversesFactId == null,
+                    cancellationToken))
+            {
+                return Fail("Rollback of absorbed conversion costing requires an active V2 stock ledger.");
+            }
             ledgerContext = ledger.Context;
 
             // Prefix-balance guard for PRODUCE before mutating.
@@ -142,6 +149,14 @@ public sealed partial class ProductionOutputService
                     && x.PostingLinkId == postLink.Uid)
                 .OrderBy(x => x.Uid)
                 .ToListAsync(cancellationToken);
+            var originalConversionFacts = await db.ProductionConversionCostFacts
+                .Where(x => x.ProductionOutputId == output.Uid
+                    && produceMovements.Select(m => m.Uid).Contains(x.ProductionMovementId)
+                    && x.ReversesFactId == null)
+                .OrderBy(x => x.Id)
+                .ToListAsync(cancellationToken);
+            if (originalConversionFacts.Count > 0 && ledgerContext is null)
+                return Fail("Rollback of absorbed conversion costing requires an active V2 stock ledger.");
 
             if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, produceMovements.Select(x => x.Uid).ToArray(), cancellationToken))
                 return Fail("Rollback is blocked by an active pooled-value dependency. Reverse downstream production/FG receipts first.");
@@ -386,6 +401,48 @@ public sealed partial class ProductionOutputService
             // total with the full pending list double-counts reversals flushed by earlier loops.
             await db.SaveChangesAsync(cancellationToken);
 
+            if (originalConversionFacts.Count > 0)
+            {
+                var reversalMovements = await db.ProductionBalLotMovements
+                    .Where(x => x.ProductionOutputId == output.Uid
+                        && x.PostingLinkId == rollbackLink.Uid
+                        && x.MovementType == ProductionBalLotMovementTypes.ProduceReversal
+                        && x.OriginalMovementId != null)
+                    .ToListAsync(cancellationToken);
+                foreach (var fact in originalConversionFacts)
+                {
+                    var reversalMovement = reversalMovements.SingleOrDefault(
+                        x => x.OriginalMovementId == fact.ProductionMovementId);
+                    if (reversalMovement is null)
+                        return Fail($"Rollback reversal movement for conversion fact {fact.Id} was not found.");
+
+                    db.ProductionConversionCostFacts.Add(new ProductionConversionCostFact
+                    {
+                        CompanyCode = scope.CompanyCode,
+                        BranchCode = scope.BranchCode!,
+                        StockPostingId = ledgerContext!.Posting.Id,
+                        ProductionOutputId = fact.ProductionOutputId,
+                        ProductionMovementId = reversalMovement.Uid,
+                        WorkOrderId = fact.WorkOrderId,
+                        RouteStepId = fact.RouteStepId,
+                        WorkOrderOperationId = fact.WorkOrderOperationId,
+                        CostType = fact.CostType,
+                        SourceLineKey = fact.SourceLineKey,
+                        WorkOrderLabourId = fact.WorkOrderLabourId,
+                        WorkOrderMachineId = fact.WorkOrderMachineId,
+                        BasisQty = fact.BasisQty,
+                        BasisUom = fact.BasisUom,
+                        RatePerOutputUnit = fact.RatePerOutputUnit,
+                        CostAmount = fact.CostAmount,
+                        ReversesFactId = fact.Id,
+                        CreatedAtUtc = ledgerContext.Posting.PostedAtUtc,
+                        CreatedBy = user
+                    });
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
             await RebuildWorkOrderMaterialExecutionProjectionAsync(
                 db, materials.Select(x => x.Uid).ToList(), output.Uid,
                 ProductionOutputProjectionTransition.ExcludeCurrentRollback, cancellationToken);
@@ -417,6 +474,8 @@ public sealed partial class ProductionOutputService
             {
                 await StampOutputLedgerFactsAsync(
                     ledgerContext, output.Uid, rollbackLink.Uid, order.WorkOrderNo, cancellationToken);
+                await ProductionPostingInvariant.AssertOutputRollbackVerifiedAsync(
+                    ledgerContext, output.Uid, postLink.Uid, rollbackLink.Uid, cancellationToken);
                 await _stockCoordinator.CompleteInTransactionAsync(ledgerContext, cancellationToken);
             }
             await tx.CommitAsync(cancellationToken);
@@ -427,6 +486,16 @@ public sealed partial class ProductionOutputService
             await tx.RollbackAsync(cancellationToken);
             return Fail("Rollback conflicted with another change; retry with the same PostingRequestId.",
                 IvMasterErrorCode.Concurrency);
+        }
+        catch (ProductionPostingInvariantException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Message);
+        }
+        catch (StockLedgerException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Error.Message);
         }
     }
 

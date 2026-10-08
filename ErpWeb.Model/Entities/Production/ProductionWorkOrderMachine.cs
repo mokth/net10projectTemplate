@@ -69,6 +69,8 @@ public class ProductionWorkOrderMachine
     public decimal SetupSeconds { get; set; }
     public decimal QueueSeconds { get; set; }
     public decimal MachineRatePerHour { get; set; }
+    public decimal PlannedCostAmount { get; set; }
+    public decimal CostPerOutputUnit { get; set; }
 
     // ── Scheduling provenance ─────────────────────────────────────────────────────────────────
 

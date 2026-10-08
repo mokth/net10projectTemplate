@@ -422,6 +422,8 @@ public sealed class WorkOrderSnapshotBuilder : IWorkOrderSnapshotBuilder
             StandardDurationMinutes = source.StandardDurationMinutes,
             SetupLossQty = source.SetupLossQty,
             OperationLossQty = source.OperationLossQty,
+            UtilitiesOverheadCostPerOutputUnit = source.UtilitiesOverheadCostPerOutputUnit,
+            OtherCostPerOutputUnit = source.OtherCostPerOutputUnit,
 
             // The operation consumes and produces the full owning route-step quantity in the
             // definition's own UOMs; the calculator converts it into the route-step quantity.

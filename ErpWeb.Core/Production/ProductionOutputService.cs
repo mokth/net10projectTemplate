@@ -22,6 +22,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly IRunningNumberService _runningNumbers;
     private readonly IStockPostingCoordinator _stockCoordinator;
     private readonly IProductionOperationEligibilityService _operationEligibility;
+    private readonly ProductionAbsorbedCostCalculator _absorbedCostCalculator = new();
 
     public ProductionOutputService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -92,11 +93,11 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress))
             return Fail("Work Order must be RELEASED or IN_PROGRESS.");
         if (string.IsNullOrWhiteSpace(routeStep.OutputType))
-            return Fail("Route step OutputType is missing; refresh and release the Work Order snapshot (hash V3).");
+            return Fail("Route step OutputType is missing; refresh and release the Work Order snapshot.");
         if (routeStep.YieldPercent is not null and not 100m)
             return Fail("Non-100% yield is not supported in this milestone.");
-        if (order.SnapshotHashVersion < ProductionSnapshotHashVersions.Current)
-            return Fail("Work Order snapshot hash version must be refreshed to V3 before Daily Production.");
+        if (!ProductionSnapshotHashVersions.SupportsDailyProduction(order.SnapshotHashVersion))
+            return Fail("Work Order snapshot must be refreshed to the current production costing contract before Daily Production.");
         if (IvQty.Round(operation.PlannedOutputQty - operation.GoodQty) <= 0m)
             return Fail("The Work Order operation has no remaining Good quantity.");
 
@@ -389,6 +390,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             .Include(x => x.RouteStep)
             .Include(x => x.Materials)
             .Include(x => x.Machines)
+                .ThenInclude(x => x.Labours)
+            .Include(x => x.Labours)
             .SingleOrDefaultAsync(x => x.Uid == operationId
                 && x.WorkOrder != null
                 && x.WorkOrder.CompanyCode == scope.CompanyCode

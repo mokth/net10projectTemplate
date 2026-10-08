@@ -19,7 +19,8 @@ public sealed class ProductionWorkOrderMachineConfiguration : IEntityTypeConfigu
             table.HasCheckConstraint(
                 "CK_PrWorkOrderMachine_Times",
                 "[CycleSeconds] >= 0 AND [ConversionSeconds] >= 0 AND [SetupSeconds] >= 0 "
-                + "AND [QueueSeconds] >= 0 AND [MachineRatePerHour] >= 0");
+                + "AND [QueueSeconds] >= 0 AND [MachineRatePerHour] >= 0 "
+                + "AND [PlannedCostAmount] >= 0 AND [CostPerOutputUnit] >= 0");
         });
 
         builder.HasKey(x => x.Uid);
@@ -45,6 +46,8 @@ public sealed class ProductionWorkOrderMachineConfiguration : IEntityTypeConfigu
         ConfigureQty(builder.Property(x => x.SetupSeconds));
         ConfigureQty(builder.Property(x => x.QueueSeconds));
         builder.Property(x => x.MachineRatePerHour).HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(x => x.PlannedCostAmount).HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(x => x.CostPerOutputUnit).HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
 
         builder.Property(x => x.CalendarSourceId).HasColumnName("CalendarSourceID");
         builder.Property(x => x.CalendarSourceLastModified).HasColumnType("datetime2");

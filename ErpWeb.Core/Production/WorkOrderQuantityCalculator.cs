@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
@@ -326,6 +327,14 @@ public sealed class WorkOrderQuantityCalculator : IWorkOrderQuantityCalculator
         machine.PlannedCycleCount = cycleCount;
         machine.PlannedCycleSlots = Math.Ceiling(cycleCount / machine.ParallelMachineCount);
         machine.PlannedRunMinutes = Round4(machine.PlannedCycleSlots * machine.CycleSeconds / 60m);
+        var costableMachineSeconds = machine.SetupSeconds
+                                     + machine.ConversionSeconds
+                                     + machine.PlannedCycleCount * machine.CycleSeconds;
+        machine.PlannedCostAmount = StockLedgerPrecision.Money(
+            costableMachineSeconds / 3600m * machine.MachineRatePerHour);
+        machine.CostPerOutputUnit = operation.PlannedOutputQty > 0m
+            ? StockLedgerPrecision.Money(machine.PlannedCostAmount / operation.PlannedOutputQty)
+            : 0m;
     }
 
     /// <summary>
@@ -340,8 +349,7 @@ public sealed class WorkOrderQuantityCalculator : IWorkOrderQuantityCalculator
             return;
         }
 
-        labour.PlannedAmount = decimal.Round(
-            labour.Rate * operation.PlannedOutputQty, IvQty.Scale, MidpointRounding.AwayFromZero);
+        labour.PlannedAmount = StockLedgerPrecision.Money(labour.Rate * operation.PlannedOutputQty);
     }
 
     private async Task<decimal?> ConvertAsync(

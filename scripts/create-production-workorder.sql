@@ -426,6 +426,8 @@ BEGIN
         PlannedQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_Planned DEFAULT (0),
         SetupLossQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_SetupLoss DEFAULT (0),
         OperationLossQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_OperationLoss DEFAULT (0),
+        UtilitiesOverheadCostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_UtilitiesOverhead DEFAULT (0),
+        OtherCostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_OtherCost DEFAULT (0),
         InputQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_Input DEFAULT (0),
         ProcessedQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_Processed DEFAULT (0),
         GoodQty decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderOperation_Good DEFAULT (0),
@@ -446,7 +448,8 @@ BEGIN
         CONSTRAINT FK_PrWorkOrderOperation_PrWorkOrderRouteStep
             FOREIGN KEY (RouteStepID) REFERENCES dbo.PrWorkOrderRouteStep (UID) ON DELETE CASCADE,
         CONSTRAINT CK_PrWorkOrderOperation_ProcessSeq CHECK (ProcessSequence >= 0),
-        CONSTRAINT CK_PrWorkOrderOperation_StdDuration CHECK (StandardDurationMinutes >= 0)
+        CONSTRAINT CK_PrWorkOrderOperation_StdDuration CHECK (StandardDurationMinutes >= 0),
+        CONSTRAINT CK_PrWorkOrderOperation_AbsorbedCost CHECK (UtilitiesOverheadCostPerOutputUnit >= 0 AND OtherCostPerOutputUnit >= 0)
     );
 
     -- Stable source identity inside a route step.
@@ -727,6 +730,8 @@ BEGIN
         SetupSeconds decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderMachine_Setup DEFAULT (0),
         QueueSeconds decimal(18,4) NOT NULL CONSTRAINT DF_PrWorkOrderMachine_Queue DEFAULT (0),
         MachineRatePerHour decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderMachine_Rate DEFAULT (0),
+        PlannedCostAmount decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderMachine_PlannedCost DEFAULT (0),
+        CostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderMachine_CostPerOutput DEFAULT (0),
         CalendarSourceID bigint NULL,
         CalendarSourceLastModified datetime2 NULL,
         ScheduleSourceHash char(64) NULL,
@@ -745,7 +750,8 @@ BEGIN
         CONSTRAINT CK_PrWorkOrderMachine_OutputPerCycle CHECK (OutputPerCycle > 0),
         CONSTRAINT CK_PrWorkOrderMachine_Times CHECK
             (CycleSeconds >= 0 AND ConversionSeconds >= 0 AND SetupSeconds >= 0
-             AND QueueSeconds >= 0 AND MachineRatePerHour >= 0)
+             AND QueueSeconds >= 0 AND MachineRatePerHour >= 0
+             AND PlannedCostAmount >= 0 AND CostPerOutputUnit >= 0)
     );
 
     CREATE UNIQUE INDEX UQ_PrWorkOrderMachine_Operation_SourceKey
@@ -780,7 +786,7 @@ BEGIN
         RateBasis nvarchar(20) NOT NULL CONSTRAINT DF_PrWorkOrderLabour_RateBasis DEFAULT (N'PER_OUTPUT_UNIT'),
         Rate decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderLabour_Rate DEFAULT (0),
         ContributesToPlan bit NOT NULL CONSTRAINT DF_PrWorkOrderLabour_Contributes DEFAULT (1),
-        PlannedAmount decimal(19,4) NOT NULL CONSTRAINT DF_PrWorkOrderLabour_Amount DEFAULT (0),
+        PlannedAmount decimal(19,6) NOT NULL CONSTRAINT DF_PrWorkOrderLabour_Amount DEFAULT (0),
         CreatedDate datetime2 NULL,
         CreatedBy nvarchar(10) NULL,
         ModifiedDate datetime2 NULL,

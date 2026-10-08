@@ -260,6 +260,7 @@
                             <div class="iv-field">
                                 <label class="iv-field__label">Lot control</label>
                                 <DxCheckBox Checked="@Model.LotControl"
+                                            CheckedExpression="() => Model.LotControl" 
                                             CheckedChanged="@((bool value) => OnLotControlChanged(value))"
                                             AllowIndeterminateState="false" />
                             </div>
@@ -268,6 +269,7 @@
                                 <DxComboBox Data="@ExpiryControlOptions"
                                             TData="IvExpiryControlOption"
                                             TValue="string"
+                                            ValueExpression="() => Model.ExpiryControl"
                                             TextFieldName="@nameof(IvExpiryControlOption.Label)"
                                             ValueFieldName="@nameof(IvExpiryControlOption.Code)"
                                             Value="@Model.ExpiryControl"

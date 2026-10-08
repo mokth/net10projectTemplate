@@ -370,6 +370,37 @@ public sealed class WorkOrderSnapshotHasherTests
     }
 
     [Fact]
+    public void V3_hash_writer_does_not_include_v4_costing_fields()
+    {
+        var workOrder = FullGraph();
+        var expected = WorkOrderSnapshotHasher.ComputeSnapshotHashV3(workOrder);
+        var operation = workOrder.RouteSteps.First().Operations.First();
+        operation.UtilitiesOverheadCostPerOutputUnit = 12.345678m;
+        operation.OtherCostPerOutputUnit = 3.456789m;
+        operation.Machines.First().PlannedCostAmount = 99.123456m;
+        operation.Machines.First().CostPerOutputUnit = 1.234567m;
+
+        Assert.Equal(expected, WorkOrderSnapshotHasher.ComputeSnapshotHashV3(workOrder));
+    }
+
+    [Fact]
+    public void V4_hash_includes_authored_and_derived_costing_fields()
+    {
+        var workOrder = FullGraph();
+        workOrder.SnapshotHashVersion = ProductionSnapshotHashVersions.AbsorbedConversionCostV4;
+        var operation = workOrder.RouteSteps.First().Operations.First();
+        var expected = WorkOrderSnapshotHasher.ComputeSnapshotHash(workOrder);
+
+        operation.UtilitiesOverheadCostPerOutputUnit = 12.345678m;
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeSnapshotHash(workOrder));
+
+        var machineCostVariant = FullGraph();
+        machineCostVariant.SnapshotHashVersion = ProductionSnapshotHashVersions.AbsorbedConversionCostV4;
+        machineCostVariant.RouteSteps.First().Operations.First().Machines.First().PlannedCostAmount = 1m;
+        Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeSnapshotHash(machineCostVariant));
+    }
+
+    [Fact]
     public void Parallel_route_step_order_does_not_change_the_hash()
     {
         var workOrder = Header();
@@ -556,6 +587,19 @@ public sealed class WorkOrderSnapshotHasherTests
         mutated.Operations.First().Machines.First().OutputPerCycle = 12m;
 
         Assert.NotEqual(expected, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV1(mutated));
+    }
+
+    [Fact]
+    public void Definition_source_v2_excludes_v3_authored_costing_fields_but_v3_includes_them()
+    {
+        var revision = Revision();
+        var expectedV2 = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV2(revision);
+        var expectedV3 = WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV3(revision);
+        revision.Operations.First().UtilitiesOverheadCostPerOutputUnit = 4.123456m;
+        revision.Operations.First().OtherCostPerOutputUnit = 2.654321m;
+
+        Assert.Equal(expectedV2, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV2(revision));
+        Assert.NotEqual(expectedV3, WorkOrderSnapshotHasher.ComputeDefinitionSourceHashV3(revision));
     }
 
     [Fact]

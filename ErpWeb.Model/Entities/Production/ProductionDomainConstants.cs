@@ -203,6 +203,17 @@ public static class ProductionLabourRateBases
     public static bool IsKnown(string? value) => value is PerOutputUnit;
 }
 
+/// <summary>Immutable source kinds for absorbed conversion-cost facts.</summary>
+public static class ProductionConversionCostTypes
+{
+    public const string Labour = "LABOUR";
+    public const string Machine = "MACHINE";
+    public const string UtilitiesOverhead = "UTILITIES_OVERHEAD";
+    public const string Other = "OTHER";
+
+    public static bool IsKnown(string? value) => value is Labour or Machine or UtilitiesOverhead or Other;
+}
+
 /// <summary>Which calendar drove a scheduled snapshot row (plan §6.9).</summary>
 public static class ProductionCalendarSourceTypes
 {
@@ -235,6 +246,9 @@ public static class ProductionSnapshotFormatVersions
     /// </summary>
     public static bool IsFullHierarchy(int snapshotFormatVersion) =>
         snapshotFormatVersion >= FullHierarchyV2;
+
+    public static bool IsCurrentForDraft(int snapshotFormatVersion, int snapshotHashVersion) =>
+        snapshotFormatVersion >= Current && snapshotHashVersion >= ProductionSnapshotHashVersions.Current;
 }
 
 /// <summary>
@@ -247,7 +261,13 @@ public static class ProductionSnapshotHashVersions
     public const int DefinitionIdentityV2 = 2;
     /// <summary>Adds route OutputType, YieldPercent, OutputBaseUom, OutputConversionFactorToBase.</summary>
     public const int RouteOutputContractV3 = 3;
-    public const int Current = RouteOutputContractV3;
+    /// <summary>Adds frozen absorbed-conversion-cost inputs and derived machine costing.</summary>
+    public const int AbsorbedConversionCostV4 = 4;
+    public const int Current = AbsorbedConversionCostV4;
+
+    public static bool SupportsDailyProduction(int version) => version >= RouteOutputContractV3;
+
+    public static bool UsesAbsorbedConversionCost(int version) => version >= AbsorbedConversionCostV4;
 }
 
 /// <summary>
@@ -258,6 +278,8 @@ public static class ProductionDefinitionSourceHashVersions
 {
     public const int V1 = 1;
     public const int DefinitionIdentityV2 = 2;
-    public const int Current = DefinitionIdentityV2;
+    /// <summary>Adds authored utilities/overhead and other per-output-unit rates.</summary>
+    public const int AbsorbedConversionCostV3 = 3;
+    public const int Current = AbsorbedConversionCostV3;
 }
 

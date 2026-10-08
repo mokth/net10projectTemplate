@@ -459,6 +459,20 @@
                                                 <label class="iv-field__label">Operation loss</label>
                                                 <DxSpinEdit @bind-Value="@OperationEdit.OperationLossQty" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
                                             </div>
+                                            <div class="pdf-inline-costing">
+                                                <span class="pdf-inline-costing__label">Optional standard conversion cost / good output</span>
+                                                <div class="pdf-inline-costing__fields">
+                                                    <div class="iv-field pdf-field-qty">
+                                                        <label class="iv-field__label">Utilities / OH</label>
+                                                        <DxSpinEdit @bind-Value="@OperationEdit.UtilitiesOverheadCostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" />
+                                                    </div>
+                                                    <div class="iv-field pdf-field-qty">
+                                                        <label class="iv-field__label">Other</label>
+                                                        <DxSpinEdit @bind-Value="@OperationEdit.OtherCostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" />
+                                                    </div>
+                                                </div>
+                                                <small>Optional standard conversion cost in company base currency. Applied per good output unit. Leave 0 when not used.</small>
+                                            </div>
                                             <div class="iv-field pdf-field-check">
                                                 <label class="iv-field__label">Final process</label>
                                                 <DxCheckBox @bind-Checked="@OperationEdit.IsFinalOperation" AllowIndeterminateState="false" />
@@ -777,7 +791,7 @@
                                                     @Detail("Priority", SelectedMachine.Priority.ToString())
                                                     @Detail("Primary", SelectedMachine.IsPrimary ? "Yes" : "No")
                                                     @Detail("Output / cycle", SelectedMachine.OutputPerCycle.ToString("n4"))
-                                                    @Detail("Rate / hour", SelectedMachine.MachineRatePerHour.ToString("n4"))
+                                                    @Detail("Rate / hour", SelectedMachine.MachineRatePerHour.ToString("n6"))
                                                     @Detail("Cycle", $"{SelectedMachine.CycleSeconds:n4} s")
                                                     @Detail("Setup", $"{SelectedMachine.SetupSeconds:n4} s")
                                                     @Detail("Conversion", $"{SelectedMachine.ConversionSeconds:n4} s")
@@ -789,12 +803,12 @@
                                         else
                                         {
                                             <div class="pdf-machine-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Machine</label><DxComboBox Data="@AvailableMachines" @bind-Value="@MachineEdit.MachineCode" TextFieldName="@nameof(PrMachine.MachineCd)" ValueFieldName="@nameof(PrMachine.MachineCd)" SearchMode="ListSearchMode.AutoSearch" NullText="Select machine" InputCssClass="required-field code-style" /></div>
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Machine</label><DxComboBox Data="@AvailableMachines" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(PrMachine.MachineCd)" ValueFieldName="@nameof(PrMachine.MachineCd)" SearchMode="ListSearchMode.AutoSearch" NullText="Select machine" InputCssClass="required-field code-style" /></div>
                                                 <div class="iv-field pdf-field-seq"><label class="iv-field__label">Sequence</label><DxSpinEdit @bind-Value="@MachineEdit.ResourceSequence" MinValue="1" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-seq"><label class="iv-field__label">Priority</label><DxSpinEdit @bind-Value="@MachineEdit.Priority" MinValue="1" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-check"><label class="iv-field__label">Primary</label><DxCheckBox @bind-Checked="@MachineEdit.IsPrimary" AllowIndeterminateState="false" /></div>
                                                 <div class="iv-field pdf-field-qty"><label class="iv-field__label">Output / cycle</label><DxSpinEdit @bind-Value="@MachineEdit.OutputPerCycle" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label">Rate / hour</label><DxSpinEdit @bind-Value="@MachineEdit.MachineRatePerHour" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
+                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label">Rate / hour</label><DxSpinEdit @bind-Value="@MachineEdit.MachineRatePerHour" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-time"><label class="iv-field__label">Cycle (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.CycleSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-time"><label class="iv-field__label">Setup (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.SetupSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-time"><label class="iv-field__label">Conversion (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.ConversionSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>

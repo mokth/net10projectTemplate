@@ -47,8 +47,9 @@ public sealed partial class ProductionOutputService
             if (order.SnapshotRevision != output.SnapshotRevision
                 || !string.Equals(order.SnapshotHash, output.SnapshotHash, StringComparison.Ordinal))
                 return Fail("Work Order snapshot changed; recreate the Daily Production draft.");
-            if (order.SnapshotHashVersion < ProductionSnapshotHashVersions.Current)
-                return Fail("Work Order snapshot hash version must be refreshed to V3 before Daily Production.");
+            if (!ProductionSnapshotHashVersions.SupportsDailyProduction(order.SnapshotHashVersion))
+                return Fail("Work Order snapshot must be refreshed to the current production costing contract before Daily Production.");
+            var absorbedCostEnabled = ProductionSnapshotHashVersions.UsesAbsorbedConversionCost(order.SnapshotHashVersion);
 
             var routeStep = await LockRouteStepAsync(db, output.RouteStepId, cancellationToken);
             var operation = await LockOperationAsync(db, output.WorkOrderOperationId, cancellationToken);
@@ -58,6 +59,11 @@ public sealed partial class ProductionOutputService
                 return Fail("Route OutputType is null; refresh the Work Order.");
             if (routeStep.YieldPercent is not null and not 100m)
                 return Fail("YieldPercent must be 100 for this milestone.");
+
+            await db.Entry(operation).Collection(x => x.Machines).LoadAsync(cancellationToken);
+            await db.Entry(operation).Collection(x => x.Labours).LoadAsync(cancellationToken);
+            foreach (var machine in operation.Machines)
+                await db.Entry(machine).Collection(x => x.Labours).LoadAsync(cancellationToken);
 
             // The Work Order lock serializes Daily Production posts and rollbacks for this order.
             // Lock the complete execution graph in deterministic routing order before evaluating it,
@@ -282,8 +288,20 @@ public sealed partial class ProductionOutputService
                 || (operation.IsFinalOperation
                     && output.GoodQty > 0m
                     && routeStep.OutputType is PrRouteOutputTypes.WipStocked or PrRouteOutputTypes.FinishedGoods);
-            if (willProducePool && consumedLots.Count == 0)
-                return Fail("Daily Production has Good Qty but no verified consumed cost basis. Posting would create an UNVALUED production pool.");
+
+            var absorbedCost = ProductionAbsorbedCostResult.Success([]);
+            if (absorbedCostEnabled && willProducePool && output.GoodQty > 0m)
+            {
+                absorbedCost = _absorbedCostCalculator.Calculate(operation, output.GoodQty, output.OutputUom);
+                if (!absorbedCost.Succeeded)
+                    return Fail(absorbedCost.FailureMessage!);
+            }
+
+            var conversionCost = absorbedCost.TotalCost;
+            var hasCostAuthority = consumedLots.Count > 0 || conversionCost > 0m;
+            if (willProducePool
+                && ((!absorbedCostEnabled && consumedLots.Count == 0) || (absorbedCostEnabled && !hasCostAuthority)))
+                return Fail("Daily Production has Good Qty but no verified consumed or absorbed conversion cost basis. Posting would create an UNVALUED production pool.");
 
             link.Status = ProductionPostingLinkStatuses.Pending;
             await db.SaveChangesAsync(cancellationToken);
@@ -401,13 +419,15 @@ public sealed partial class ProductionOutputService
                 });
             }
 
+            var producedCost = StockLedgerPrecision.Money(totalConsumedCost + conversionCost);
+
             if (producesHandoff && output.GoodQty > 0m && producerContract is not null)
             {
                 var produceBase = ProductionProcessHandoff.ToBaseQty(
                     output.GoodQty, producerContract.ConversionFactorToBase);
                 var createdOrUpdated = await LockOrCreateHandoffLotAsync(
                     db, scope, order, routeStep, operation, output, producerContract, produceBase,
-                    totalConsumedCost, cancellationToken);
+                    producedCost, cancellationToken);
                 if (createdOrUpdated.Error is not null)
                     return Fail(createdOrUpdated.Error);
 
@@ -419,8 +439,8 @@ public sealed partial class ProductionOutputService
                     Uom = producerContract.Uom,
                     BaseQty = produceBase,
                     BaseUom = producerContract.BaseUom,
-                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(totalConsumedCost / produceBase) : 0m,
-                    TotalCost = totalConsumedCost,
+                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(producedCost / produceBase) : 0m,
+                    TotalCost = producedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -442,7 +462,7 @@ public sealed partial class ProductionOutputService
                 var factor = routeStep.OutputConversionFactorToBase ?? 1m;
                 var produceBase = IvQty.Round(output.GoodQty * factor);
                 var wipLot = await LockOrCreateWipLotAsync(
-                    db, scope, order, routeStep, operation, output, produceBase, totalConsumedCost, now, user, cancellationToken);
+                    db, scope, order, routeStep, operation, output, produceBase, producedCost, now, user, cancellationToken);
                 var produceMov = new ProductionBalLotMovement
                 {
                     ProductionBalLotId = wipLot.Uid,
@@ -451,8 +471,8 @@ public sealed partial class ProductionOutputService
                     Uom = output.OutputUom,
                     BaseQty = produceBase,
                     BaseUom = routeStep.OutputBaseUom ?? output.OutputUom,
-                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(totalConsumedCost / produceBase) : 0m,
-                    TotalCost = totalConsumedCost,
+                    UnitCost = produceBase > 0m ? StockLedgerPrecision.Money(producedCost / produceBase) : 0m,
+                    TotalCost = producedCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -470,6 +490,47 @@ public sealed partial class ProductionOutputService
             // Material and balance movement facts must form one complete persisted set before
             // execution aggregates are projected from the database.
             await db.SaveChangesAsync(cancellationToken);
+
+            if (absorbedCost.Lines.Count > 0)
+            {
+                var produceMovements = await db.ProductionBalLotMovements
+                    .Where(x => x.ProductionOutputId == output.Uid
+                        && x.PostingLinkId == link.Uid
+                        && x.MovementType == ProductionBalLotMovementTypes.Produce
+                        && x.OriginalMovementId == null)
+                    .OrderBy(x => x.Uid)
+                    .ToListAsync(cancellationToken);
+                if (produceMovements.Count != 1)
+                    return Fail("Absorbed conversion cost requires exactly one current forward PRODUCE movement.");
+
+                var produceMovement = produceMovements[0];
+                foreach (var line in absorbedCost.Lines)
+                {
+                    db.ProductionConversionCostFacts.Add(new ProductionConversionCostFact
+                    {
+                        CompanyCode = scope.CompanyCode,
+                        BranchCode = scope.BranchCode!,
+                        StockPostingId = ledgerContext.Posting.Id,
+                        ProductionOutputId = output.Uid,
+                        ProductionMovementId = produceMovement.Uid,
+                        WorkOrderId = order.Uid,
+                        RouteStepId = routeStep.Uid,
+                        WorkOrderOperationId = operation.Uid,
+                        CostType = line.CostType,
+                        SourceLineKey = line.SourceLineKey,
+                        WorkOrderLabourId = line.WorkOrderLabourId,
+                        WorkOrderMachineId = line.WorkOrderMachineId,
+                        BasisQty = line.BasisQty,
+                        BasisUom = line.BasisUom,
+                        RatePerOutputUnit = line.RatePerOutputUnit,
+                        CostAmount = line.CostAmount,
+                        CreatedAtUtc = ledgerContext.Posting.PostedAtUtc,
+                        CreatedBy = user
+                    });
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+            }
 
             operation.GoodQty = IvQty.Round(operation.GoodQty + output.GoodQty);
             operation.ScrapQty = IvQty.Round(operation.ScrapQty + output.ScrapQty);

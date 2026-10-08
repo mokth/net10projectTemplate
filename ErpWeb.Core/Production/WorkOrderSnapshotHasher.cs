@@ -180,6 +180,7 @@ public static class WorkOrderSnapshotHasher
             ProductionSnapshotHashVersions.V1 => ComputeSnapshotHashV1(workOrder, rules),
             ProductionSnapshotHashVersions.DefinitionIdentityV2 => ComputeSnapshotHashV2(workOrder, rules),
             ProductionSnapshotHashVersions.RouteOutputContractV3 => ComputeSnapshotHashV3(workOrder, rules),
+            ProductionSnapshotHashVersions.AbsorbedConversionCostV4 => ComputeSnapshotHashV4(workOrder, rules),
             _ => throw new InvalidOperationException(
                 $"Unsupported SnapshotHashVersion {workOrder.SnapshotHashVersion}."),
         };
@@ -274,6 +275,26 @@ public static class WorkOrderSnapshotHasher
         return w.ComputeHash();
     }
 
+    /// <summary>
+    /// Hash-version 4: V3 body plus frozen authored conversion rates and derived machine costing.
+    /// </summary>
+    public static string ComputeSnapshotHashV4(ProductionWorkOrder workOrder, TimestampHashRules timestampRules = default)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+
+        var w = new CanonicalHashWriter { TimestampRules = timestampRules == default ? TimestampHashRules.Canonical : timestampRules };
+        WriteSnapshotHeaderCommon(w, workOrder);
+        w.Add(workOrder.SourceDefinitionCode);
+        w.Add(workOrder.SourceProductDefinitionRevisionId);
+        WriteSnapshotScheduleAndBody(
+            w,
+            workOrder,
+            includeComponentDefinitionCode: true,
+            includeRouteOutputContract: true,
+            includeAbsorbedConversionCost: true);
+        return w.ComputeHash();
+    }
+
     private static void WriteSnapshotHeaderCommon(CanonicalHashWriter w, ProductionWorkOrder workOrder)
     {
         w.Section("HEADER");
@@ -295,7 +316,8 @@ public static class WorkOrderSnapshotHasher
         CanonicalHashWriter w,
         ProductionWorkOrder workOrder,
         bool includeComponentDefinitionCode,
-        bool includeRouteOutputContract)
+        bool includeRouteOutputContract,
+        bool includeAbsorbedConversionCost = false)
     {
         w.AddAnchorTimestamp(workOrder.ScheduleAnchorDateTime);
         w.AddPlannedTimestamp(workOrder.PlannedStartDateTime);
@@ -342,7 +364,7 @@ public static class WorkOrderSnapshotHasher
 
             foreach (var operation in operations)
             {
-                AddOperation(w, operation);
+                AddOperation(w, operation, includeAbsorbedConversionCost);
             }
         }
 
@@ -404,7 +426,10 @@ public static class WorkOrderSnapshotHasher
         }
     }
 
-    private static void AddOperation(CanonicalHashWriter w, ProductionWorkOrderOperation operation)
+    private static void AddOperation(
+        CanonicalHashWriter w,
+        ProductionWorkOrderOperation operation,
+        bool includeAbsorbedConversionCost = false)
     {
         w.Add(operation.SourceOperationId);
         w.Add(operation.SourceOperationKey);
@@ -418,6 +443,11 @@ public static class WorkOrderSnapshotHasher
         w.Add(operation.PlannedInputUom);
         w.Add(operation.PlannedOutputQty);
         w.Add(operation.PlannedOutputUom);
+        if (includeAbsorbedConversionCost)
+        {
+            w.Add(operation.UtilitiesOverheadCostPerOutputUnit);
+            w.Add(operation.OtherCostPerOutputUnit);
+        }
         w.Add(operation.CalendarSourceType);
         w.Add(operation.CalendarSourceId);
         w.AddCalendarTimestamp(operation.CalendarSourceLastModified);
@@ -461,6 +491,11 @@ public static class WorkOrderSnapshotHasher
             w.AddPlannedTimestamp(machine.PlannedStartDateTime);
             w.AddPlannedTimestamp(machine.PlannedCompletionDateTime);
             w.Add(machine.MachineRatePerHour);
+            if (includeAbsorbedConversionCost)
+            {
+                w.Add(machine.PlannedCostAmount);
+                w.Add(machine.CostPerOutputUnit);
+            }
             w.Add(machine.CalendarSourceId);
             w.AddCalendarTimestamp(machine.CalendarSourceLastModified);
             w.Add(machine.ScheduleSourceHash);
@@ -531,6 +566,7 @@ public static class WorkOrderSnapshotHasher
         {
             ProductionDefinitionSourceHashVersions.V1 => ComputeDefinitionSourceHashV1(revision),
             ProductionDefinitionSourceHashVersions.DefinitionIdentityV2 => ComputeDefinitionSourceHashV2(revision),
+            ProductionDefinitionSourceHashVersions.AbsorbedConversionCostV3 => ComputeDefinitionSourceHashV3(revision),
             _ => throw new InvalidOperationException(
                 $"Unsupported DefinitionSourceHashVersion {version}."),
         };
@@ -576,10 +612,32 @@ public static class WorkOrderSnapshotHasher
         return w.ComputeHash();
     }
 
+    /// <summary>Source-hash V3: V2 plus authored absorbed conversion-cost rates.</summary>
+    public static string ComputeDefinitionSourceHashV3(PrBomHdr revision)
+    {
+        ArgumentNullException.ThrowIfNull(revision);
+
+        var w = new CanonicalHashWriter();
+        w.Section("REVISION");
+
+        w.Add(revision.CompanyCode);
+        w.Add(revision.ProdCode);
+        w.Add(revision.DefinitionCode);
+        w.Add(revision.Version);
+        w.Add(revision.Status);
+        WriteDefinitionSourceBody(
+            w,
+            revision,
+            includeComponentDefinitionCode: true,
+            includeAbsorbedConversionCost: true);
+        return w.ComputeHash();
+    }
+
     private static void WriteDefinitionSourceBody(
         CanonicalHashWriter w,
         PrBomHdr revision,
-        bool includeComponentDefinitionCode)
+        bool includeComponentDefinitionCode,
+        bool includeAbsorbedConversionCost = false)
     {
         w.Add(revision.BaseQty);
         w.Add(revision.BaseUom);
@@ -615,7 +673,7 @@ public static class WorkOrderSnapshotHasher
 
             foreach (var operation in operations)
             {
-                AddDefinitionOperation(w, operation, includeComponentDefinitionCode);
+                AddDefinitionOperation(w, operation, includeComponentDefinitionCode, includeAbsorbedConversionCost);
             }
         }
 
@@ -630,7 +688,7 @@ public static class WorkOrderSnapshotHasher
         w.Count(unownedOperations.Count);
         foreach (var operation in unownedOperations)
         {
-            AddDefinitionOperation(w, operation, includeComponentDefinitionCode);
+            AddDefinitionOperation(w, operation, includeComponentDefinitionCode, includeAbsorbedConversionCost);
         }
 
         // Lines that are not owned by an operation still reach the snapshot, so they must still
@@ -651,7 +709,8 @@ public static class WorkOrderSnapshotHasher
     private static void AddDefinitionOperation(
         CanonicalHashWriter w,
         PrBomOperation operation,
-        bool includeComponentDefinitionCode)
+        bool includeComponentDefinitionCode,
+        bool includeAbsorbedConversionCost = false)
     {
         w.Add(operation.OperationKey);
         w.Add(operation.OperationCode);
@@ -665,6 +724,11 @@ public static class WorkOrderSnapshotHasher
         w.Add(operation.OutputUom);
         w.Add(operation.SetupLossQty);
         w.Add(operation.OperationLossQty);
+        if (includeAbsorbedConversionCost)
+        {
+            w.Add(operation.UtilitiesOverheadCostPerOutputUnit);
+            w.Add(operation.OtherCostPerOutputUnit);
+        }
 
         var machines = operation.Machines
             .OrderBy(x => x.Priority)

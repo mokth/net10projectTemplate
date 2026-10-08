@@ -44,7 +44,7 @@ public sealed class ProductionWorkOrderLabourConfiguration : IEntityTypeConfigur
         builder.Property(x => x.RateBasis).HasMaxLength(20).IsRequired();
         builder.Property(x => x.Rate).HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
         builder.Property(x => x.ContributesToPlan).HasDefaultValue(true).ValueGeneratedNever();
-        builder.Property(x => x.PlannedAmount).HasPrecision(19, 4).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(x => x.PlannedAmount).HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
         builder.Property(x => x.CreatedBy).HasMaxLength(10);
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);
         builder.Property(x => x.RowVersion).IsRowVersion();

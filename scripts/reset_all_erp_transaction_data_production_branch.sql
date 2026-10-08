@@ -57,6 +57,7 @@ INSERT INTO @Targets (DeleteOrder, ModuleName, SchemaName, TableName, ResetIdent
 -- Production execution: IP / Daily / WIP / WO
 INSERT INTO @Targets (DeleteOrder, ModuleName, SchemaName, TableName, ResetIdentity) VALUES
 ( 300, N'PRODUCTION', N'dbo', N'PrProductionMovementAllocation',         1),
+( 305, N'PRODUCTION', N'dbo', N'PrProductionConversionCostFact',          1),
 ( 310, N'PRODUCTION', N'dbo', N'PrMaterialIssueLine',                    1),
 ( 320, N'PRODUCTION', N'dbo', N'PrMaterialMovement',                     1),
 ( 330, N'PRODUCTION', N'dbo', N'PrProductionBalLotMovement',             1),

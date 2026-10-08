@@ -50,8 +50,29 @@ public static class ProductionPoolValuationService
             if (original is not null) { status = original.Status; basis = "REVERSAL"; }
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
             {
-                status = inputStatuses.Count > 0 && inputStatuses.All(x => x == Verified) ? Verified : Unvalued;
-                basis = "CONSUMED_INPUTS";
+                var conversionFacts = movement.OriginalMovementId is null
+                    ? await db.ProductionConversionCostFacts
+                        .Where(x => x.ProductionMovementId == movement.Uid && x.ReversesFactId == null)
+                        .ToListAsync(ct)
+                    : new List<ProductionConversionCostFact>();
+                var consumedValue = StockLedgerPrecision.Money(
+                    movements.Where(x => x.MovementType == ProductionBalLotMovementTypes.Consume)
+                        .Sum(x => x.TotalCost));
+                var conversionValue = StockLedgerPrecision.Money(conversionFacts.Sum(x => x.CostAmount));
+                var hasConsumedInputs = inputStatuses.Count > 0;
+                var hasConversion = conversionValue > 0m;
+                var hasAuthority = hasConsumedInputs || hasConversion;
+                var expectedProduceValue = StockLedgerPrecision.Money(consumedValue + conversionValue);
+                if (movement.OriginalMovementId is null && movement.TotalCost != expectedProduceValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Production PRODUCE movement {movement.Uid} does not reconcile to consumed inputs plus absorbed conversion facts.");
+                }
+
+                status = inputStatuses.All(x => x == Verified) && hasAuthority ? Verified : Unvalued;
+                basis = hasConsumedInputs && hasConversion
+                    ? "CONSUMED_INPUTS+ABSORBED_CONVERSION"
+                    : hasConversion ? "ABSORBED_CONVERSION" : "CONSUMED_INPUTS";
             }
             var history = movement.InventoryHistoryId is int historyId
                 ? await db.IvTrxHistories.SingleOrDefaultAsync(x => x.Id == historyId, ct) : null;

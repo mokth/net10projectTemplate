@@ -50,6 +50,7 @@ public static class ProductionPostingInvariant
                     || x.MovementType == ProductionBalLotMovementTypes.Produce))
             .OrderBy(x => x.Uid)
             .ToListAsync(ct);
+        await AssertForwardConversionFactsAsync(context, outputId, postingLinkId, movements, ct);
         if (movements.Count == 0)
             return;
 
@@ -62,6 +63,261 @@ public static class ProductionPostingInvariant
         ArgumentNullException.ThrowIfNull(context);
         if (context.Posting.SealedAtUtc is null)
             throw new ProductionPostingInvariantException("The V2 StockPosting was not sealed.");
+    }
+
+    private static async Task AssertForwardConversionFactsAsync(
+        StockPostingContext context,
+        long outputId,
+        long postingLinkId,
+        IReadOnlyList<ProductionBalLotMovement> movements,
+        CancellationToken ct)
+    {
+        var allFacts = await context.Db.ProductionConversionCostFacts
+            .Where(x => x.ProductionOutputId == outputId && x.ReversesFactId == null)
+            .OrderBy(x => x.Id)
+            .ToListAsync(ct);
+        if (allFacts.Count == 0)
+            return;
+
+        var produceMovements = movements
+            .Where(x => x.MovementType == ProductionBalLotMovementTypes.Produce && x.OriginalMovementId == null)
+            .ToList();
+        if (produceMovements.Count != 1)
+            throw new ProductionPostingInvariantException(
+                "Absorbed conversion facts require exactly one current forward PRODUCE movement.");
+
+        var produceMovement = produceMovements[0];
+        var movementIds = movements.Select(x => x.Uid).ToHashSet();
+        if (allFacts.Any(x => x.StockPostingId != context.Posting.Id
+            || x.ProductionMovementId != produceMovement.Uid
+            || !movementIds.Contains(x.ProductionMovementId)
+            || x.CompanyCode != context.CompanyCode
+            || x.BranchCode != context.BranchCode))
+        {
+            throw new ProductionPostingInvariantException(
+                "Absorbed conversion facts are orphaned or belong to a different posting lineage.");
+        }
+
+        var output = await context.Db.ProductionOutputs
+            .SingleOrDefaultAsync(x => x.Uid == outputId, ct)
+            ?? throw new ProductionPostingInvariantException("Absorbed conversion facts point to a missing Production Output.");
+        var operation = await context.Db.ProductionWorkOrderOperations
+            .Include(x => x.Machines).ThenInclude(x => x.Labours)
+            .Include(x => x.Labours)
+            .SingleOrDefaultAsync(x => x.Uid == output.WorkOrderOperationId, ct)
+            ?? throw new ProductionPostingInvariantException("Absorbed conversion facts point to a missing Work Order operation.");
+        var order = await context.Db.ProductionWorkOrders
+            .SingleOrDefaultAsync(x => x.Uid == output.WorkOrderId, ct)
+            ?? throw new ProductionPostingInvariantException("Absorbed conversion facts point to a missing Work Order.");
+        if (!ProductionSnapshotHashVersions.UsesAbsorbedConversionCost(order.SnapshotHashVersion))
+            throw new ProductionPostingInvariantException("Absorbed conversion facts are not allowed for this snapshot hash version.");
+
+        var expectedUom = Normalize(operation.PlannedOutputUom);
+        if (expectedUom is null || !string.Equals(expectedUom, Normalize(output.OutputUom), StringComparison.Ordinal))
+            throw new ProductionPostingInvariantException("Absorbed conversion facts use an invalid output UOM.");
+
+        if (allFacts.Select(x => x.SourceLineKey).Distinct(StringComparer.Ordinal).Count() != allFacts.Count)
+            throw new ProductionPostingInvariantException("Absorbed conversion facts contain duplicate source lines.");
+
+        foreach (var fact in allFacts)
+        {
+            if (!ProductionConversionCostTypes.IsKnown(fact.CostType)
+                || fact.BasisQty <= 0m
+                || fact.RatePerOutputUnit <= 0m
+                || fact.CostAmount <= 0m
+                || fact.BasisQty != output.GoodQty
+                || !string.Equals(Normalize(fact.BasisUom), expectedUom, StringComparison.Ordinal)
+                || fact.WorkOrderId != order.Uid
+                || fact.RouteStepId != output.RouteStepId
+                || fact.WorkOrderOperationId != operation.Uid
+                || fact.ProductionOutputId != output.Uid
+                || fact.ProductionMovementId != produceMovement.Uid)
+            {
+                throw new ProductionPostingInvariantException(
+                    $"Absorbed conversion fact {fact.Id} has incomplete or mismatched lineage.");
+            }
+
+            var expectedRate = fact.CostType switch
+            {
+                ProductionConversionCostTypes.Labour => ResolveLabourRate(operation, fact),
+                ProductionConversionCostTypes.Machine => ResolveMachineRate(operation, fact),
+                ProductionConversionCostTypes.UtilitiesOverhead =>
+                    fact.WorkOrderLabourId is null && fact.WorkOrderMachineId is null
+                        && fact.SourceLineKey == $"UTILITIES_OVERHEAD:{operation.Uid}"
+                        ? operation.UtilitiesOverheadCostPerOutputUnit
+                        : null,
+                ProductionConversionCostTypes.Other =>
+                    fact.WorkOrderLabourId is null && fact.WorkOrderMachineId is null
+                        && fact.SourceLineKey == $"OTHER:{operation.Uid}"
+                        ? operation.OtherCostPerOutputUnit
+                        : null,
+                _ => null
+            };
+            if (expectedRate is null || expectedRate <= 0m
+                || StockLedgerPrecision.Money(expectedRate.Value) != fact.RatePerOutputUnit
+                || StockLedgerPrecision.Money(fact.BasisQty * fact.RatePerOutputUnit) != fact.CostAmount)
+            {
+                throw new ProductionPostingInvariantException(
+                    $"Absorbed conversion fact {fact.Id} does not match the frozen Work Order rate.");
+            }
+        }
+
+        var consumedValue = StockLedgerPrecision.Money(
+            movements.Where(x => x.MovementType == ProductionBalLotMovementTypes.Consume)
+                .Sum(x => x.TotalCost));
+        var expectedProduceValue = StockLedgerPrecision.Money(consumedValue + allFacts.Sum(x => x.CostAmount));
+        if (produceMovement.TotalCost != expectedProduceValue)
+            throw new ProductionPostingInvariantException(
+                "Forward PRODUCE value does not equal consumed input value plus absorbed conversion facts.");
+
+        static decimal? ResolveLabourRate(ProductionWorkOrderOperation operation, ProductionConversionCostFact fact)
+        {
+            if (fact.WorkOrderLabourId is not long labourId
+                || fact.WorkOrderMachineId is not null
+                || fact.SourceLineKey != $"LABOUR:{labourId}")
+                return null;
+
+            var direct = operation.Labours.SingleOrDefault(x => x.Uid == labourId);
+            if (direct is not null)
+                return direct.ContributesToPlan
+                    && direct.RateBasis == ProductionLabourRateBases.PerOutputUnit
+                    ? direct.Rate
+                    : null;
+
+            var machineLabour = operation.Machines
+                .Where(x => x.IsSelected)
+                .SelectMany(x => x.Labours)
+                .SingleOrDefault(x => x.Uid == labourId);
+            return machineLabour is not null
+                && machineLabour.ContributesToPlan
+                && machineLabour.RateBasis == ProductionLabourRateBases.PerOutputUnit
+                ? machineLabour.Rate
+                : null;
+        }
+
+        static decimal? ResolveMachineRate(ProductionWorkOrderOperation operation, ProductionConversionCostFact fact)
+        {
+            if (fact.WorkOrderMachineId is not long machineId
+                || fact.WorkOrderLabourId is not null
+                || fact.SourceLineKey != $"MACHINE:{machineId}")
+                return null;
+            var machine = operation.Machines.SingleOrDefault(x => x.Uid == machineId);
+            return machine is { IsSelected: true } ? machine.CostPerOutputUnit : null;
+        }
+    }
+
+    public static async Task AssertOutputRollbackVerifiedAsync(
+        StockPostingContext context,
+        long outputId,
+        long originalPostingLinkId,
+        long rollbackPostingLinkId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var original = await context.Db.ProductionBalLotMovements
+            .Where(x => x.ProductionOutputId == outputId && x.PostingLinkId == originalPostingLinkId
+                && (x.MovementType == ProductionBalLotMovementTypes.Consume
+                    || x.MovementType == ProductionBalLotMovementTypes.Produce))
+            .OrderBy(x => x.Uid).ToListAsync(ct);
+        var reversals = await context.Db.ProductionBalLotMovements
+            .Where(x => x.ProductionOutputId == outputId && x.PostingLinkId == rollbackPostingLinkId
+                && (x.MovementType == ProductionBalLotMovementTypes.ConsumeReversal
+                    || x.MovementType == ProductionBalLotMovementTypes.ProduceReversal))
+            .OrderBy(x => x.Uid).ToListAsync(ct);
+        if (original.Count != reversals.Count)
+            throw new ProductionPostingInvariantException("Rollback movement count does not match the original output.");
+        if (reversals.Any(x => x.OriginalMovementId is null
+                || !original.Any(source => source.Uid == x.OriginalMovementId.Value)))
+            throw new ProductionPostingInvariantException("Rollback contains an orphaned movement reversal.");
+
+        foreach (var source in original)
+        {
+            var matches = reversals.Where(x => x.OriginalMovementId == source.Uid).ToList();
+            if (matches.Count != 1)
+                throw new ProductionPostingInvariantException($"Movement {source.Uid} does not have exactly one rollback reversal.");
+            var reversal = matches[0];
+            var expectedType = source.MovementType == ProductionBalLotMovementTypes.Consume
+                ? ProductionBalLotMovementTypes.ConsumeReversal
+                : ProductionBalLotMovementTypes.ProduceReversal;
+            if (reversal.MovementType != expectedType
+                || reversal.PostingLinkId != rollbackPostingLinkId
+                || reversal.StockPostingId != context.Posting.Id
+                || reversal.CompanyCode != context.CompanyCode
+                || reversal.BranchCode != context.BranchCode
+                || reversal.ProductionBalLotId != source.ProductionBalLotId
+                || reversal.Qty != source.Qty
+                || reversal.Uom != source.Uom
+                || reversal.BaseQty != source.BaseQty
+                || reversal.BaseUom != source.BaseUom
+                || reversal.TotalCost != source.TotalCost
+                || reversal.UnitCost != source.UnitCost
+                || reversal.WorkOrderId != source.WorkOrderId
+                || reversal.WorkOrderOperationId != source.WorkOrderOperationId
+                || reversal.RouteStepId != source.RouteStepId
+                || reversal.ProductionOutputId != outputId)
+            {
+                throw new ProductionPostingInvariantException($"Rollback reversal for movement {source.Uid} is not exact.");
+            }
+        }
+
+        var originalFacts = await context.Db.ProductionConversionCostFacts
+            .Where(x => x.ProductionOutputId == outputId && x.ReversesFactId == null)
+            .ToListAsync(ct);
+        var reversalFacts = await context.Db.ProductionConversionCostFacts
+            .Where(x => x.ProductionOutputId == outputId && x.ReversesFactId != null)
+            .ToListAsync(ct);
+        if (reversalFacts.Count != originalFacts.Count)
+            throw new ProductionPostingInvariantException("Rollback conversion-fact count does not match the original output.");
+        if (reversalFacts.Any(x => x.ReversesFactId is null)
+            || reversalFacts.Select(x => x.ReversesFactId!.Value).Distinct().Count() != reversalFacts.Count)
+            throw new ProductionPostingInvariantException("Rollback conversion facts do not have unique source-fact lineage.");
+        foreach (var source in originalFacts)
+        {
+            var matches = reversalFacts.Where(x => x.ReversesFactId == source.Id).ToList();
+            if (matches.Count != 1)
+                throw new ProductionPostingInvariantException($"Conversion fact {source.Id} does not have exactly one rollback reversal.");
+            var reversal = matches[0];
+            var originalProduce = original.SingleOrDefault(x =>
+                x.Uid == source.ProductionMovementId
+                && x.MovementType == ProductionBalLotMovementTypes.Produce);
+            if (originalProduce is null)
+                throw new ProductionPostingInvariantException($"Conversion fact {source.Id} is not linked to an original PRODUCE movement.");
+            var produceReversal = reversals.SingleOrDefault(x =>
+                x.OriginalMovementId == originalProduce.Uid
+                && x.MovementType == ProductionBalLotMovementTypes.ProduceReversal);
+            if (produceReversal is null)
+                throw new ProductionPostingInvariantException($"Conversion fact {source.Id} is not linked to exactly one PRODUCE rollback reversal.");
+            if (reversal.StockPostingId != context.Posting.Id
+                || reversal.CompanyCode != context.CompanyCode
+                || reversal.BranchCode != context.BranchCode
+                || reversal.ProductionOutputId != outputId
+                || reversal.ProductionMovementId != produceReversal.Uid
+                || reversal.WorkOrderId != source.WorkOrderId
+                || reversal.RouteStepId != source.RouteStepId
+                || reversal.WorkOrderOperationId != source.WorkOrderOperationId
+                || reversal.CostType != source.CostType
+                || reversal.SourceLineKey != source.SourceLineKey
+                || reversal.WorkOrderLabourId != source.WorkOrderLabourId
+                || reversal.WorkOrderMachineId != source.WorkOrderMachineId
+                || reversal.BasisQty != source.BasisQty
+                || reversal.BasisUom != source.BasisUom
+                || reversal.RatePerOutputUnit != source.RatePerOutputUnit
+                || reversal.CostAmount != source.CostAmount
+                || reversal.CreatedAtUtc != context.Posting.PostedAtUtc
+                || reversal.CreatedBy != (context.UserId.Length > 10 ? context.UserId[..10] : context.UserId))
+            {
+                throw new ProductionPostingInvariantException($"Rollback conversion fact for {source.Id} is not an exact linked reversal.");
+            }
+        }
+
+        await AssertMovementsAsync(context, reversals, requireIssueHistory: false, ct);
+        await AssertTouchedPoolsAsync(context, reversals, ct);
+    }
+
+    private static string? Normalize(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToUpperInvariant();
+        return normalized.Length == 0 ? null : normalized;
     }
 
     private static async Task AssertMovementsAsync(

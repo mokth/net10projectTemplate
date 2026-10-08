@@ -8,7 +8,9 @@ public sealed class ProductionWorkOrderOperationConfiguration : IEntityTypeConfi
 {
     public void Configure(EntityTypeBuilder<ProductionWorkOrderOperation> builder)
     {
-        builder.ToTable("PrWorkOrderOperation");
+        builder.ToTable("PrWorkOrderOperation", table => table.HasCheckConstraint(
+            "CK_PrWorkOrderOperation_AbsorbedCost",
+            "[UtilitiesOverheadCostPerOutputUnit] >= 0 AND [OtherCostPerOutputUnit] >= 0"));
         builder.HasKey(x => x.Uid);
         builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
@@ -32,6 +34,10 @@ public sealed class ProductionWorkOrderOperationConfiguration : IEntityTypeConfi
         ConfigureQty(builder.Property(x => x.PlannedQty));
         ConfigureQty(builder.Property(x => x.SetupLossQty));
         ConfigureQty(builder.Property(x => x.OperationLossQty));
+        builder.Property(x => x.UtilitiesOverheadCostPerOutputUnit)
+            .HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
+        builder.Property(x => x.OtherCostPerOutputUnit)
+            .HasPrecision(19, 6).HasDefaultValue(0m).ValueGeneratedNever();
         ConfigureQty(builder.Property(x => x.InputQty));
         ConfigureQty(builder.Property(x => x.ProcessedQty));
         ConfigureQty(builder.Property(x => x.GoodQty));

@@ -486,12 +486,13 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can change its Product Definition.");
         }
 
-        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
         {
             return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
 
         if (string.Equals(entity.SourceDefinitionCode, targetCode, StringComparison.Ordinal))
@@ -557,12 +558,13 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
-            if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+            if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                    entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
             {
                 throw new WorkOrderCommandException(
                     IvMasterErrorCode.Validation,
                     ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                    + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
             }
 
             var oldDefinitionCode = entity.SourceDefinitionCode;
@@ -819,12 +821,13 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can change materials.");
         }
 
-        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
         {
             return IvMasterOperationResult<IReadOnlyList<ProductionWorkOrderMaterialAlternateVm>>.Fail(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
 
         var material = entity.Materials.FirstOrDefault(m => m.Uid == workOrderMaterialId);
@@ -1525,12 +1528,13 @@ public sealed partial class ProductionWorkOrderService
 
     private static void RequireCurrentSnapshot(ProductionWorkOrder entity)
     {
-        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
         {
             throw new WorkOrderCommandException(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
     }
 

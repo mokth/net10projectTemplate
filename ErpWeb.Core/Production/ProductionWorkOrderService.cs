@@ -241,12 +241,13 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                     "Only Draft Work Orders can be reprocessed. Use a Change Order after release.");
             }
 
-            if (existing.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+            if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                    existing.SnapshotFormatVersion, existing.SnapshotHashVersion))
             {
                 return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(
                     IvMasterErrorCode.Validation,
                     ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                    + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
             }
         }
 
@@ -318,12 +319,13 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 "Only Draft Work Orders can be edited. Use a Change Order after release.");
         }
 
-        if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+        if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
         {
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
                 IvMasterErrorCode.Validation,
                 ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
         }
 
         return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
@@ -373,12 +375,13 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                     IvMasterErrorCode.Validation, "Only a Draft Work Order can be released.");
             }
 
-            if (entity.SnapshotFormatVersion < ProductionSnapshotFormatVersions.Current)
+            if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
+                    entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
             {
                 throw new WorkOrderCommandException(
                     IvMasterErrorCode.Validation,
                     ProductionReadinessErrorCodes.LegacySnapshotRefreshRequired
-                    + ": This Work Order uses an older snapshot format. Refresh before releasing or structurally editing.");
+                    + ": Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.");
             }
 
             db.Entry(entity).Property(x => x.RowVersion).OriginalValue = rowVersion;
@@ -943,6 +946,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         ModifiedBy = entity.ModifiedBy,
         RowVersion = entity.RowVersion.ToArray(),
         SnapshotFormatVersion = entity.SnapshotFormatVersion,
+        SnapshotHashVersion = entity.SnapshotHashVersion,
         IsLegacySnapshot = entity.IsLegacySnapshot,
         SourceProductDefinitionRevisionId = entity.SourceProductDefinitionRevisionId,
         DefinitionSourceHash = entity.DefinitionSourceHash,
@@ -1033,6 +1037,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         PlannedQty = row.PlannedQty,
         SetupLossQty = row.SetupLossQty,
         OperationLossQty = row.OperationLossQty,
+        UtilitiesOverheadCostPerOutputUnit = row.UtilitiesOverheadCostPerOutputUnit,
+        OtherCostPerOutputUnit = row.OtherCostPerOutputUnit,
         ProcessSequence = row.ProcessSequence,
         ProcessType = row.ProcessType,
         StandardDurationMinutes = row.StandardDurationMinutes,
@@ -1117,6 +1123,9 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         SetupSeconds = row.SetupSeconds,
         ConversionSeconds = row.ConversionSeconds,
         QueueSeconds = row.QueueSeconds,
+        MachineRatePerHour = row.MachineRatePerHour,
+        PlannedCostAmount = row.PlannedCostAmount,
+        CostPerOutputUnit = row.CostPerOutputUnit,
         PlannedStartDateTime = row.PlannedStartDateTime,
         PlannedCompletionDateTime = row.PlannedCompletionDateTime,
         ScheduleSourceHash = row.ScheduleSourceHash,

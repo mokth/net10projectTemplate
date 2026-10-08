@@ -1145,6 +1145,8 @@ public sealed class PrProductDefService : IPrProductDefService
             x.StandardDurationMinutes,
             x.SetupLossQty,
             x.OperationLossQty,
+            x.UtilitiesOverheadCostPerOutputUnit,
+            x.OtherCostPerOutputUnit,
             x.IsFinalOperation,
             x.Remark,
             x.Machines.Select(m => new NormalizedMachine(
@@ -1974,6 +1976,12 @@ public sealed class PrProductDefService : IPrProductDefService
             var standardDuration = IvQty.Round(source.StandardDurationMinutes);
             if (standardDuration < 0m)
                 errors[$"{prefix}.StandardDurationMinutes"] = $"Route {i + 1}: standard duration cannot be negative.";
+            if (source.UtilitiesOverheadCostPerOutputUnit < 0m)
+                errors[$"{prefix}.UtilitiesOverheadCostPerOutputUnit"] =
+                    $"Route {i + 1}: utilities/overhead cost per output unit cannot be negative.";
+            if (source.OtherCostPerOutputUnit < 0m)
+                errors[$"{prefix}.OtherCostPerOutputUnit"] =
+                    $"Route {i + 1}: other cost per output unit cannot be negative.";
 
             var durationBased = PrProcessTypes.IsDurationBased(processType);
             var machineCapable = PrProcessTypes.SupportsMachine(processType);
@@ -2065,7 +2073,7 @@ public sealed class PrProductDefService : IPrProductDefService
                     IvQty.Round(machine.ConversionSeconds),
                     IvQty.Round(machine.SetupSeconds),
                     IvQty.Round(machine.QueueSeconds),
-                    IvQty.Round(machine.MachineRatePerHour),
+                    MoneyRate(machine.MachineRatePerHour),
                     machine.ParallelMachineCount,
                     labours));
             }
@@ -2104,6 +2112,8 @@ public sealed class PrProductDefService : IPrProductDefService
                 standardDuration,
                 IvQty.Round(source.SetupLossQty),
                 IvQty.Round(source.OperationLossQty),
+                MoneyRate(source.UtilitiesOverheadCostPerOutputUnit),
+                MoneyRate(source.OtherCostPerOutputUnit),
                 source.IsFinalOperation,
                 Truncate(source.Remark, 500),
                 machines));
@@ -2211,6 +2221,8 @@ public sealed class PrProductDefService : IPrProductDefService
                 StandardDurationMinutes = source.StandardDurationMinutes,
                 SetupLossQty = source.SetupLossQty,
                 OperationLossQty = source.OperationLossQty,
+                UtilitiesOverheadCostPerOutputUnit = source.UtilitiesOverheadCostPerOutputUnit,
+                OtherCostPerOutputUnit = source.OtherCostPerOutputUnit,
                 IsFinalOperation = source.IsFinalOperation,
                 Remark = source.Remark,
                 CreatedDate = now,
@@ -2291,6 +2303,8 @@ public sealed class PrProductDefService : IPrProductDefService
         decimal StandardDurationMinutes,
         decimal SetupLossQty,
         decimal OperationLossQty,
+        decimal UtilitiesOverheadCostPerOutputUnit,
+        decimal OtherCostPerOutputUnit,
         bool IsFinalOperation,
         string? Remark,
         IReadOnlyList<NormalizedMachine> Machines);
@@ -2382,6 +2396,8 @@ public sealed class PrProductDefService : IPrProductDefService
                 StandardDurationMinutes = x.StandardDurationMinutes,
                 SetupLossQty = x.SetupLossQty,
                 OperationLossQty = x.OperationLossQty,
+                UtilitiesOverheadCostPerOutputUnit = x.UtilitiesOverheadCostPerOutputUnit,
+                OtherCostPerOutputUnit = x.OtherCostPerOutputUnit,
                 IsFinalOperation = x.IsFinalOperation,
                 Remark = x.Remark,
                 RouteStepKey = x.RouteStepId is { } routeStepId
@@ -2478,6 +2494,9 @@ public sealed class PrProductDefService : IPrProductDefService
 
         return IvMasterOperationResult<PrProductDefEditVm>.Fail(code, message, errors);
     }
+
+    private static decimal MoneyRate(decimal value) =>
+        decimal.Round(value, 6, MidpointRounding.AwayFromZero);
 
     private static string NormalizeCode(string? value) =>
         (value ?? string.Empty).Trim().ToUpperInvariant();

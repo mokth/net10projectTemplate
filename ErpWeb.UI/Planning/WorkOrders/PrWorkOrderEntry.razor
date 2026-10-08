@@ -238,7 +238,7 @@
                         }
                         else if (NeedsDefinitionUpgrade)
                         {
-                            <small class="pwo-section-note">Older snapshot format — Refresh Definition before editing.</small>
+                            <small class="pwo-section-note">Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing.</small>
                         }
                         else if (!IsNewMode && IsDraft && IsCurrentSnapshot && CanChangeDefinition)
                         {
@@ -547,6 +547,70 @@
                             </DxGrid>
                         }
                     </DxTabPage>
+                    <DxTabPage Text="COSTING">
+                        <div class="pwo-costing-head">
+                            <div>
+                                <strong>How to read the costing</strong>
+                                <span>Labour is the people cost. Machine is the equipment-use cost.</span>
+                            </div>
+                            <DxButton RenderStyle="ButtonRenderStyle.Info"
+                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                      Text="Explain costs"
+                                      IconCssClass="fa-solid fa-circle-info"
+                                      Click="@(() => CostingInfoVisible = true)" />
+                        </div>
+                        @if (DetailModel is null)
+                        {
+                            <p class="pwo-empty">Save the Work Order Draft to inspect its frozen costing snapshot.</p>
+                        }
+                        else
+                        {
+                            <div class="pwo-snapshot-banner @(UsesAbsorbedConversionCost ? "is-current" : "is-legacy")">
+                                @if (UsesAbsorbedConversionCost)
+                                {
+                                    <strong>V4 absorbed conversion costing</strong>
+                                    <span>Frozen standards are shown in company base currency per good output unit.</span>
+                                }
+                                else if (IsLegacyV3Executable)
+                                {
+                                    <strong>Legacy V3 · material/WIP-only production costing</strong>
+                                    <span>This Work Order keeps its original costing contract. It is not silently upgraded.</span>
+                                }
+                                else if (IsLegacyV3Snapshot)
+                                {
+                                    <strong>Refresh Definition required before re-release</strong>
+                                    <span>This V3 snapshot does not carry absorbed conversion-cost facts.</span>
+                                }
+                                else
+                                {
+                                    <strong>Legacy snapshot requires refresh</strong>
+                                    <span>This snapshot does not carry the current production costing contract.</span>
+                                }
+                            </div>
+                            @if (CostingRows.Count == 0)
+                            {
+                                <p class="pwo-empty">No frozen operation costing rows are present.</p>
+                            }
+                            else
+                            {
+                                <DxGrid Data="@CostingRows" PageSize="25" TextWrapEnabled="false" CssClass="w-100">
+                                    <Columns>
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.OperationCode)" Caption="Operation" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.ProcessType)" Caption="Type" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.PlannedOutputQty)" Caption="Planned good qty" DisplayFormat="n4" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.OutputUom)" Caption="Output UOM" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.LabourPerOutputUnit)" Caption="Labour / unit" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.MachinePerOutputUnit)" Caption="Machine / unit" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.SelectedMachinePlannedCost)" Caption="Machine planned" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.UtilitiesOverheadPerOutputUnit)" Caption="Utilities / OH" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.OtherPerOutputUnit)" Caption="Other" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.TotalPerOutputUnit)" Caption="Total / good unit" DisplayFormat="n6" />
+                                        <DxGridDataColumn FieldName="@nameof(CostingRow.PlannedConversionCost)" Caption="Planned conversion" DisplayFormat="n6" />
+                                    </Columns>
+                                </DxGrid>
+                            }
+                        }
+                    </DxTabPage>
                     <DxTabPage Text="EXECUTION GATE">
                         <div class="pwo-gate-grid">
                             @Gate("Reservation / allocation", "Pending approved competition and priority policy")
@@ -632,7 +696,7 @@
                             <dt>More → Change Definition</dt>
                             <dd>Preview and confirm switching the Draft to another ACTIVE Product Definition for the same product.</dd>
                             <dt>More → Update from Product Definition</dt>
-                            <dd>Use only when you intentionally want an existing Draft to adopt the current Product Definition. This can change routing, materials, machines and schedule. It is also required before editing or releasing an older snapshot format.</dd>
+                            <dd>Use only when you intentionally want an existing Draft to adopt the current Product Definition. This can change routing, materials, machines, schedule and frozen costing. It is also required before editing or re-releasing an older snapshot/costing contract.</dd>
                         </dl>
                     </section>
 
@@ -650,6 +714,69 @@
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Close" Click="@(() => HelpVisible = false)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Labour and machine costs explained"
+                 @bind-Visible="@CostingInfoVisible"
+                 CloseOnOutsideClick="true"
+                 Width="620px"
+                 CssClass="common-popup">
+            <Content>
+                <div class="pwo-help pwo-costing-help">
+                    <p class="pwo-help__intro">
+                        A machine and its operator are two different costs. They may be linked because the operator uses that machine, but they are counted separately.
+                    </p>
+
+                    <section>
+                        <h3>Labour / unit</h3>
+                        <p>
+                            This is the operator or worker cost for one good finished unit. If an operator is assigned to the selected machine, the operator still remains Labour cost and appears in the Labour grid.
+                        </p>
+                    </section>
+
+                    <section>
+                        <h3>Machine / unit</h3>
+                        <p>
+                            This is the cost of using the selected machine to make one good finished unit. It is separate from the operator's wage.
+                        </p>
+                    </section>
+
+                    <section class="pwo-costing-example">
+                        <h3>Simple example: 100 pieces</h3>
+                        <div class="pwo-costing-example__rows">
+                            <div class="pwo-costing-example__row">
+                                <span>Operator labour</span>
+                                <strong>RM0.30 × 100 = RM30</strong>
+                            </div>
+                            <div class="pwo-costing-example__row">
+                                <span>Machine usage</span>
+                                <strong>RM1.00 × 100 = RM100</strong>
+                            </div>
+                            <div class="pwo-costing-example__row is-total">
+                                <span>Total conversion cost</span>
+                                <strong>RM30 + RM100 = RM130</strong>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section>
+                        <h3>Remember</h3>
+                        <ul>
+                            <li>Operator or worker cost goes to <strong>Labour</strong>.</li>
+                            <li>Equipment-use cost goes to <strong>Machine</strong>.</li>
+                            <li>Linking an operator to a machine does not turn the operator cost into Machine cost.</li>
+                            <li>These are planned conversion costs. Material and WIP cost are handled during Daily Production posting.</li>
+                        </ul>
+                    </section>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Close"
+                                  Click="@(() => CostingInfoVisible = false)" />
                     </div>
                 </div>
             </Content>

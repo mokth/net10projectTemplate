@@ -21,6 +21,8 @@ BEGIN
         ProcessSequence int NOT NULL,
         SetupLossQty decimal(18,4) NOT NULL CONSTRAINT DF_PrBomOperation_SetupLoss DEFAULT (0),
         OperationLossQty decimal(18,4) NOT NULL CONSTRAINT DF_PrBomOperation_OperationLoss DEFAULT (0),
+        UtilitiesOverheadCostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrBomOperation_UtilitiesOverhead DEFAULT (0),
+        OtherCostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrBomOperation_OtherCost DEFAULT (0),
         IsFinalOperation bit NOT NULL CONSTRAINT DF_PrBomOperation_Final DEFAULT (0),
         Remark nvarchar(500) NULL,
         CreatedDate datetime2 NULL,
@@ -33,7 +35,8 @@ BEGIN
         CONSTRAINT UQ_PrBomOperation_Header_Route UNIQUE (BomHdrID, WorkCentreCode, OutputItemCode, OperationCode),
         CONSTRAINT CK_PrBomOperation_Sequences CHECK (CentralSequence > 0 AND ProcessSequence > 0),
         CONSTRAINT CK_PrBomOperation_OutputQty CHECK (OutputBaseQty > 0),
-        CONSTRAINT CK_PrBomOperation_Loss CHECK (SetupLossQty >= 0 AND OperationLossQty >= 0)
+        CONSTRAINT CK_PrBomOperation_Loss CHECK (SetupLossQty >= 0 AND OperationLossQty >= 0),
+        CONSTRAINT CK_PrBomOperation_AbsorbedCost CHECK (UtilitiesOverheadCostPerOutputUnit >= 0 AND OtherCostPerOutputUnit >= 0)
     );
     CREATE INDEX IX_PrBomOperation_Company_WorkCentre
         ON dbo.PrBomOperation (CompanyCode, WorkCentreCode);
@@ -53,6 +56,7 @@ BEGIN
         ConversionSeconds decimal(18,4) NOT NULL CONSTRAINT DF_PrBomMachineOption_Conversion DEFAULT (0),
         SetupSeconds decimal(18,4) NOT NULL CONSTRAINT DF_PrBomMachineOption_Setup DEFAULT (0),
         QueueSeconds decimal(18,4) NOT NULL CONSTRAINT DF_PrBomMachineOption_Queue DEFAULT (0),
+        MachineRatePerHour decimal(19,6) NOT NULL CONSTRAINT DF_PrBomMachineOption_Rate DEFAULT (0),
         ParallelMachineCount int NOT NULL CONSTRAINT DF_PrBomMachineOption_Parallel DEFAULT (1),
         CreatedDate datetime2 NULL,
         CreatedBy nvarchar(10) NULL,
@@ -63,7 +67,7 @@ BEGIN
         CONSTRAINT FK_PrBomMachineOption_Operation FOREIGN KEY (OperationID) REFERENCES dbo.PrBomOperation (UID) ON DELETE CASCADE,
         CONSTRAINT UQ_PrBomMachineOption_Operation_Machine UNIQUE (OperationID, MachineCode),
         CONSTRAINT CK_PrBomMachineOption_Sequence CHECK (ResourceSequence > 0),
-        CONSTRAINT CK_PrBomMachineOption_Times CHECK (CycleSeconds >= 0 AND ConversionSeconds >= 0 AND SetupSeconds >= 0 AND QueueSeconds >= 0),
+        CONSTRAINT CK_PrBomMachineOption_Times CHECK (CycleSeconds >= 0 AND ConversionSeconds >= 0 AND SetupSeconds >= 0 AND QueueSeconds >= 0 AND MachineRatePerHour >= 0),
         CONSTRAINT CK_PrBomMachineOption_Parallel CHECK (ParallelMachineCount > 0)
     );
 END
@@ -76,7 +80,7 @@ BEGIN
         MachineOptionID bigint NOT NULL,
         LabourCode nvarchar(20) NOT NULL,
         LabourDescription nvarchar(200) NULL,
-        CostPerOutputUnit decimal(18,6) NOT NULL CONSTRAINT DF_PrBomLabourStandard_Cost DEFAULT (0),
+        CostPerOutputUnit decimal(19,6) NOT NULL CONSTRAINT DF_PrBomLabourStandard_Cost DEFAULT (0),
         CreatedDate datetime2 NULL,
         CreatedBy nvarchar(10) NULL,
         ModifiedDate datetime2 NULL,

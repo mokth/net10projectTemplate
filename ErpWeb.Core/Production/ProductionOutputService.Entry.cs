@@ -287,7 +287,7 @@ public sealed partial class ProductionOutputService
                 && x.RouteStep.OutputType != null
                 && x.RouteStep.OutputType.Trim() != ""
                 && (x.RouteStep.YieldPercent == null || x.RouteStep.YieldPercent == 100m)
-                && x.WorkOrder.SnapshotHashVersion >= ProductionSnapshotHashVersions.Current
+                && x.WorkOrder.SnapshotHashVersion >= ProductionSnapshotHashVersions.RouteOutputContractV3
                 && x.WorkOrder.CompanyCode == scope.CompanyCode
                 && x.WorkOrder.BranchCode == scope.BranchCode
                 && (x.WorkOrder.Status == ProductionWorkOrderStatuses.Released
@@ -376,7 +376,7 @@ public sealed partial class ProductionOutputService
         operation?.WorkOrder is not null
         && operation.RouteStep is not null
         && (operation.WorkOrder.Status is ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress)
-        && operation.WorkOrder.SnapshotHashVersion >= ProductionSnapshotHashVersions.Current
+        && ProductionSnapshotHashVersions.SupportsDailyProduction(operation.WorkOrder.SnapshotHashVersion)
         && !string.IsNullOrWhiteSpace(operation.RouteStep.OutputType)
         && (operation.RouteStep.YieldPercent is null || operation.RouteStep.YieldPercent == 100m)
         && operation.RouteStep.StageSequence > 0
