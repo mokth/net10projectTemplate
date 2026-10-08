@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -16,7 +17,6 @@ public partial class IvGoodsReceipt : PageBase
 
     [Inject] private IIvGoodsReceiptService GoodsReceipt { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
-    [Inject] private ICurrentDateService Dates { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     protected string? StatusMessage;
@@ -34,7 +34,13 @@ public partial class IvGoodsReceipt : PageBase
     protected string TrxTypeDisplay = IvTrxTypes.GoodsReceive;
     protected bool LocationsLoading;
     protected bool CanEditPermission;
-    protected DateTime AppToday => Dates.Today;
+    protected DateTime ExpiryMinimumDate => Header.TrxDate.Date;
+    protected bool LineExpiryEnabled =>
+        LinePopup.LotControl
+        && !string.Equals(LinePopup.ExpiryControl, IvExpiryControlModes.None, StringComparison.OrdinalIgnoreCase);
+    protected bool LineExpiryRequired =>
+        LineExpiryEnabled
+        && string.Equals(LinePopup.ExpiryControl, IvExpiryControlModes.Required, StringComparison.OrdinalIgnoreCase);
 
     private int _locationLoadVersion;
     private int _poSearchVersion;
@@ -194,9 +200,10 @@ public partial class IvGoodsReceipt : PageBase
             PackSz = x.PackSz,
             IStatus = x.IStatus,
             UnitPrice = x.UnitPrice,
-            ExpiryDate = x.ExpiryDate,
+            ExpiryDate = IsExpiryEnabled(x.LotControl, x.ExpiryControl) ? x.ExpiryDate : null,
             Remarks = x.Remarks,
-            LotControl = x.LotControl
+            LotControl = x.LotControl,
+            ExpiryControl = CanonicalExpiryControl(x.ExpiryControl)
         }).ToList();
     }
 
@@ -414,6 +421,7 @@ public partial class IvGoodsReceipt : PageBase
                 ToLotNo = lotNo,
                 IStatus = DefaultItemStatus(),
                 LotControl = row.LotControl,
+                ExpiryControl = CanonicalExpiryControl(row.ExpiryControl),
                 DefLocation = row.DefLocation
             });
             added++;
@@ -458,9 +466,10 @@ public partial class IvGoodsReceipt : PageBase
             ToLocation = line.ToLocation,
             ToLotNo = line.ToLotNo,
             IStatus = line.IStatus,
-            ExpiryDate = line.ExpiryDate,
+            ExpiryDate = IsExpiryEnabled(line.LotControl, line.ExpiryControl) ? line.ExpiryDate : null,
             Remarks = line.Remarks,
             LotControl = line.LotControl,
+            ExpiryControl = line.ExpiryControl,
             Uom = line.Uom
         };
         _pendingDefLocation = string.IsNullOrWhiteSpace(line.ToLocation) ? line.DefLocation : line.ToLocation;
@@ -576,6 +585,7 @@ public partial class IvGoodsReceipt : PageBase
             LinePopup.IStatus,
             LinePopup.ExpiryDate,
             LinePopup.LotControl,
+            LinePopup.ExpiryControl,
             locationsLoaded: true,
             locationOptions: Locations);
         if (LinePopupError is not null || _editingLine is null)
@@ -646,6 +656,7 @@ public partial class IvGoodsReceipt : PageBase
                 line.IStatus,
                 line.ExpiryDate,
                 line.LotControl,
+                line.ExpiryControl,
                 locationsLoaded: false,
                 locationOptions: null);
             if (error is not null)
@@ -786,6 +797,7 @@ public partial class IvGoodsReceipt : PageBase
         string? iStatus,
         DateTime? expiryDate,
         bool lotControl,
+        string? expiryControl,
         bool locationsLoaded,
         IReadOnlyList<IvCodeLookupRow>? locationOptions)
     {
@@ -832,16 +844,18 @@ public partial class IvGoodsReceipt : PageBase
             return "Lot number must be at most 50 characters.";
         }
 
-        if (lotControl)
+        var policy = CanonicalExpiryControl(expiryControl);
+        if (lotControl && !string.Equals(policy, IvExpiryControlModes.None, StringComparison.Ordinal))
         {
-            if (expiryDate is null)
+            if (string.Equals(policy, IvExpiryControlModes.Required, StringComparison.Ordinal)
+                && expiryDate is null)
             {
                 return "Expiry date is required for this item.";
             }
 
-            if (expiryDate.Value.Date < AppToday.Date)
+            if (expiryDate is not null && expiryDate.Value.Date < Header.TrxDate.Date)
             {
-                return "Expiry date cannot be earlier than today.";
+                return "Expiry date cannot be earlier than the receipt transaction date.";
             }
         }
 
@@ -855,7 +869,9 @@ public partial class IvGoodsReceipt : PageBase
         line.ToLocation = (LinePopup.ToLocation ?? string.Empty).Trim();
         line.ToLotNo = LinePopup.LotControl ? (LinePopup.ToLotNo ?? string.Empty).Trim() : string.Empty;
         line.IStatus = (LinePopup.IStatus ?? IvItemStatuses.Active).Trim().ToUpperInvariant();
-        line.ExpiryDate = LinePopup.LotControl ? LinePopup.ExpiryDate : null;
+        line.ExpiryDate = IsExpiryEnabled(LinePopup.LotControl, LinePopup.ExpiryControl)
+            ? LinePopup.ExpiryDate
+            : null;
         line.Remarks = string.IsNullOrWhiteSpace(LinePopup.Remarks) ? null : LinePopup.Remarks.Trim();
     }
 
@@ -915,6 +931,18 @@ public partial class IvGoodsReceipt : PageBase
             ? IvTrxTypes.NonStockGoodsReceive
             : IvTrxTypes.GoodsReceive;
 
+    internal static string CanonicalExpiryControl(string? value) =>
+        IvExpiryControlModes.TryNormalize(value, out var normalized)
+            ? normalized
+            : IvExpiryControlModes.None;
+
+    private static bool IsExpiryEnabled(bool lotControl, string? expiryControl) =>
+        lotControl
+        && !string.Equals(
+            CanonicalExpiryControl(expiryControl),
+            IvExpiryControlModes.None,
+            StringComparison.Ordinal);
+
     private static IvGoodsReceiptHeaderVm CreateHeader() =>
         new()
         {
@@ -955,6 +983,7 @@ public sealed class IvGoodsReceiptLineVm
     public DateTime? ExpiryDate { get; set; }
     public string? Remarks { get; set; }
     public bool LotControl { get; set; }
+    public string ExpiryControl { get; set; } = IvExpiryControlModes.None;
     public string? DefLocation { get; set; }
 
     public string LineKey => BuildLineKey(PoNo, PoRelNo, PoLineNo);
@@ -981,6 +1010,7 @@ public sealed class IvGoodsReceiptLinePopupVm
     public DateTime? ExpiryDate { get; set; }
     public string? Remarks { get; set; }
     public bool LotControl { get; set; }
+    public string ExpiryControl { get; set; } = IvExpiryControlModes.None;
     public string Uom { get; set; } = string.Empty;
 }
 
@@ -1005,6 +1035,7 @@ public sealed class IvGoodsReceiptPoPickerRow
     public string? DefWarehouse { get; init; }
     public string? DefLocation { get; init; }
     public bool LotControl { get; init; }
+    public string ExpiryControl { get; init; } = IvExpiryControlModes.None;
 
     public static IvGoodsReceiptPoPickerRow FromLookup(IvGoodsReceiptPoLineLookupRow row) =>
         new()
@@ -1027,6 +1058,7 @@ public sealed class IvGoodsReceiptPoPickerRow
             ToWarehouse = row.ToWarehouse,
             DefWarehouse = row.DefWarehouse,
             DefLocation = row.DefLocation,
-            LotControl = row.LotControl
+            LotControl = row.LotControl,
+            ExpiryControl = IvGoodsReceipt.CanonicalExpiryControl(row.ExpiryControl)
         };
 }

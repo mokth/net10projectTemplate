@@ -166,6 +166,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 StdUom = "KG",
                 StockControl = true,
                 LotControl = true,
+                ExpiryControl = IvExpiryControlModes.Required,
                 IsActive = true,
                 SellingGlCode = "GLSALE",
                 Classification = "002",
@@ -386,6 +387,88 @@ public class IvStockMasterServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SaveNew_LotControl_NoneExpiryControl_Succeeds()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E520");
+        model.LotControl = true;
+        model.ExpiryControl = IvExpiryControlModes.None;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(IvExpiryControlModes.None, result.Data!.ExpiryControl);
+    }
+
+    [Fact]
+    public async Task SaveNew_LotControl_OptionalExpiryControl_Succeeds()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E521");
+        model.LotControl = true;
+        model.ExpiryControl = " optional ";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(IvExpiryControlModes.Optional, result.Data!.ExpiryControl);
+    }
+
+    [Fact]
+    public async Task SaveNew_LotControl_RequiredExpiryControl_Succeeds()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E522");
+        model.LotControl = true;
+        model.ExpiryControl = IvExpiryControlModes.Required;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(IvExpiryControlModes.Required, result.Data!.ExpiryControl);
+    }
+
+    [Theory]
+    [InlineData(IvExpiryControlModes.Optional)]
+    [InlineData(IvExpiryControlModes.Required)]
+    public async Task SaveNew_NonLot_WithActiveExpiryControl_Fails(string expiryControl)
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E523" + expiryControl[0]);
+        model.ExpiryControl = expiryControl;
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.ValidationErrors.ContainsKey("ExpiryControl"));
+    }
+
+    [Fact]
+    public async Task SaveNew_InvalidExpiryControl_Fails()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E524");
+        model.LotControl = true;
+        model.ExpiryControl = "INVALID";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.ValidationErrors.ContainsKey("ExpiryControl"));
+    }
+
+    [Fact]
+    public async Task Get_ReturnsExpiryControl()
+    {
+        var sut = CreateSut();
+
+        var result = await sut.GetAsync("B200");
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(IvExpiryControlModes.Required, result.Data!.ExpiryControl);
+    }
+
+    [Fact]
     public async Task MinGreaterThanMax_Fails()
     {
         var sut = CreateSut();
@@ -572,6 +655,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             PurUom = source.PurUom,
             StockControl = source.StockControl,
             LotControl = source.LotControl,
+            ExpiryControl = source.ExpiryControl,
             DefWarehouse = source.DefWarehouse,
             DefLocation = source.DefLocation,
             MinStock = source.MinStock,
@@ -591,6 +675,12 @@ public class IvStockMasterServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         Assert.True(await db.IvStockMasters.AnyAsync(x => x.CompanyCode == "DEMO" && x.ICode == "COPY1"));
         Assert.True(await db.IvStockMasters.AnyAsync(x => x.CompanyCode == "DEMO" && x.ICode == "A100"));
+        Assert.Equal(
+            IvExpiryControlModes.None,
+            await db.IvStockMasters
+                .Where(x => x.CompanyCode == "DEMO" && x.ICode == "COPY1")
+                .Select(x => x.ExpiryControl)
+                .SingleAsync());
     }
 
     [Fact]

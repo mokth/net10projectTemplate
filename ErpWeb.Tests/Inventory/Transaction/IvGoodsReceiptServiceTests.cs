@@ -655,10 +655,10 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SaveNew_requires_expiry_for_lot_controlled_item()
+    public async Task SaveNew_Lot_None_AllowsBlankExpiry()
     {
-        await EnsureLotItemAsync("LOT4");
-        var po = await CreatePoForItemAsync("LOT4", qty: 3m);
+        await EnsureLotItemAsync("LOT4_NONE", IvExpiryControlModes.None);
+        var po = await CreatePoForItemAsync("LOT4_NONE", qty: 3m);
         var sut = CreateGrSut();
         var save = await sut.SaveNewAsync(new IvGoodsReceiptSaveRequest
         {
@@ -678,8 +678,166 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 }
             ]
         });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single((await sut.GetAsync(save.BatchNo)).Document!.Lines);
+        Assert.False(string.IsNullOrWhiteSpace(line.ToLotNo));
+        Assert.Null(line.ExpiryDate);
+        Assert.Equal(IvExpiryControlModes.None, line.ExpiryControl);
+    }
+
+    [Fact]
+    public async Task SaveNew_Lot_Optional_AllowsBlankExpiry()
+    {
+        await EnsureLotItemAsync("LOT4_OPTIONAL", IvExpiryControlModes.Optional);
+        var po = await CreatePoForItemAsync("LOT4_OPTIONAL", qty: 3m);
+        var sut = CreateGrSut();
+
+        var save = await sut.SaveNewAsync(GrRequest(po, recvQty: 1m));
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single((await sut.GetAsync(save.BatchNo)).Document!.Lines);
+        Assert.Null(line.ExpiryDate);
+        Assert.Equal(IvExpiryControlModes.Optional, line.ExpiryControl);
+    }
+
+    [Fact]
+    public async Task SaveNew_Lot_Optional_PersistsEnteredExpiry()
+    {
+        await EnsureLotItemAsync("LOT4_OPTIONAL_DATE", IvExpiryControlModes.Optional);
+        var po = await CreatePoForItemAsync("LOT4_OPTIONAL_DATE", qty: 3m);
+        var sut = CreateGrSut();
+        var expiry = FixedToday.AddDays(10);
+
+        var save = await sut.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive,
+            TrxDate = FixedToday,
+            Lines =
+            [
+                new IvGoodsReceiptLineRequest
+                {
+                    PoNo = po.PoNo,
+                    PoRelNo = po.PoRelNo,
+                    PoLineNo = po.PoLineNo,
+                    ToWarehouse = "MAIN",
+                    ToLocation = "BIN1",
+                    ToRecvQty = 1m,
+                    ExpiryDate = expiry,
+                    IStatus = IvItemStatuses.Active
+                }
+            ]
+        });
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single((await sut.GetAsync(save.BatchNo)).Document!.Lines);
+        Assert.Equal(expiry, line.ExpiryDate);
+        Assert.Equal(IvExpiryControlModes.Optional, line.ExpiryControl);
+    }
+
+    [Fact]
+    public async Task SaveNew_Lot_Required_RejectsBlankExpiry()
+    {
+        await EnsureLotItemAsync("LOT4_REQUIRED", IvExpiryControlModes.Required);
+        var po = await CreatePoForItemAsync("LOT4_REQUIRED", qty: 3m);
+        var sut = CreateGrSut();
+
+        var save = await sut.SaveNewAsync(GrRequest(po, recvQty: 1m));
+
         Assert.False(save.Succeeded);
         Assert.Contains("expiry date is required", save.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SaveNew_Lot_Required_AcceptsValidExpiry()
+    {
+        await EnsureLotItemAsync("LOT4_REQUIRED_DATE", IvExpiryControlModes.Required);
+        var po = await CreatePoForItemAsync("LOT4_REQUIRED_DATE", qty: 3m);
+        var sut = CreateGrSut();
+
+        var save = await sut.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive,
+            TrxDate = FixedToday,
+            Lines =
+            [
+                new IvGoodsReceiptLineRequest
+                {
+                    PoNo = po.PoNo,
+                    PoRelNo = po.PoRelNo,
+                    PoLineNo = po.PoLineNo,
+                    ToWarehouse = "MAIN",
+                    ToLocation = "BIN1",
+                    ToRecvQty = 1m,
+                    ExpiryDate = FixedToday.AddDays(1),
+                    IStatus = IvItemStatuses.Active
+                }
+            ]
+        });
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task SaveNew_EnteredExpiryBeforeTransactionDate_Fails()
+    {
+        await EnsureLotItemAsync("LOT4_BEFORE", IvExpiryControlModes.Optional);
+        var po = await CreatePoForItemAsync("LOT4_BEFORE", qty: 3m);
+        var sut = CreateGrSut();
+
+        var save = await sut.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive,
+            TrxDate = FixedToday,
+            Lines =
+            [
+                new IvGoodsReceiptLineRequest
+                {
+                    PoNo = po.PoNo,
+                    PoRelNo = po.PoRelNo,
+                    PoLineNo = po.PoLineNo,
+                    ToWarehouse = "MAIN",
+                    ToLocation = "BIN1",
+                    ToRecvQty = 1m,
+                    ExpiryDate = FixedToday.AddDays(-1),
+                    IStatus = IvItemStatuses.Active
+                }
+            ]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Contains("transaction date", save.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SaveNew_BackdatedReceipt_ExpiryAfterReceiptButBeforeToday_Succeeds()
+    {
+        await EnsureLotItemAsync("LOT4_BACKDATED", IvExpiryControlModes.Required);
+        var po = await CreatePoForItemAsync("LOT4_BACKDATED", qty: 3m);
+        var sut = CreateGrSut();
+        var receiptDate = FixedToday.AddDays(-7);
+        var expiry = FixedToday.AddDays(-2);
+
+        var save = await sut.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive,
+            TrxDate = receiptDate,
+            Lines =
+            [
+                new IvGoodsReceiptLineRequest
+                {
+                    PoNo = po.PoNo,
+                    PoRelNo = po.PoRelNo,
+                    PoLineNo = po.PoLineNo,
+                    ToWarehouse = "MAIN",
+                    ToLocation = "BIN1",
+                    ToRecvQty = 1m,
+                    ExpiryDate = expiry,
+                    IStatus = IvItemStatuses.Active
+                }
+            ]
+        });
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
     }
 
     [Fact]
@@ -728,6 +886,21 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SearchPoLines_includes_expiry_control()
+    {
+        await EnsureLotItemAsync("LOT4_LOOKUP", IvExpiryControlModes.Optional);
+        var po = await CreatePoForItemAsync("LOT4_LOOKUP", qty: 2m);
+        var sut = CreateGrSut();
+
+        var rows = await sut.SearchPoLinesAsync(IvTrxTypes.GoodsReceive, po.PoNo);
+
+        Assert.True(rows.Succeeded, rows.ErrorMessage);
+        var row = Assert.Single(rows.PoLines);
+        Assert.True(row.LotControl);
+        Assert.Equal(IvExpiryControlModes.Optional, row.ExpiryControl);
+    }
+
+    [Fact]
     public async Task SearchPoLines_includes_po_unit_price()
     {
         var po = await CreatePoAsync(qty: 2m, unitPrice: 3.50m);
@@ -738,7 +911,9 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         Assert.Equal(3.50m, row.UnitPrice);
     }
 
-    private async Task EnsureLotItemAsync(string iCode)
+    private async Task EnsureLotItemAsync(
+        string iCode,
+        string expiryControl = IvExpiryControlModes.Required)
     {
         await using var db = await _factory.CreateDbContextAsync();
         if (await db.IvStockMasters.AnyAsync(x => x.CompanyCode == "DEMO" && x.ICode == iCode))
@@ -759,6 +934,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             PurchaseTaxGroup = "SR",
             StockControl = true,
             LotControl = true,
+            ExpiryControl = expiryControl,
             IsActive = true,
             DefWarehouse = "MAIN",
             DefLocation = "BIN1"

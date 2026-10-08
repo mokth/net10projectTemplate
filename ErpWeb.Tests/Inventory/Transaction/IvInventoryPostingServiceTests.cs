@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -79,6 +80,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
                 StdUom = "EA",
                 StockControl = true,
                 LotControl = true,
+                ExpiryControl = IvExpiryControlModes.Required,
                 IsActive = true
             },
             new IvStockMaster
@@ -325,6 +327,88 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PostGoodsReceipt_LotNone_BlankExpiry_Succeeds()
+    {
+        await SetLot1ExpiryControlAsync(IvExpiryControlModes.None);
+        var batchNo = await CreateGoodsReceiptDraftAsync(expiry: null);
+
+        var result = await CreatePosting().PostAsync(IvTrxTypes.GoodsReceive, [batchNo]);
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        await using var db = await _factory.CreateDbContextAsync();
+        var lot = Assert.Single(await db.IvLots.ToListAsync());
+        Assert.Null(lot.ExpiryDate);
+        Assert.Equal(3m, await db.IvBalLocs.Select(x => x.StdQty).SingleAsync());
+    }
+
+    [Fact]
+    public async Task PostGoodsReceipt_LotOptional_BlankExpiry_Succeeds()
+    {
+        await SetLot1ExpiryControlAsync(IvExpiryControlModes.Optional);
+        var batchNo = await CreateGoodsReceiptDraftAsync(expiry: null);
+
+        var result = await CreatePosting().PostAsync(IvTrxTypes.GoodsReceive, [batchNo]);
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        await using var db = await _factory.CreateDbContextAsync();
+        var lot = Assert.Single(await db.IvLots.ToListAsync());
+        Assert.Null(lot.ExpiryDate);
+        Assert.Equal(3m, await db.IvBalLocs.Select(x => x.StdQty).SingleAsync());
+    }
+
+    [Fact]
+    public async Task PostGoodsReceipt_LotRequired_BlankExpiry_FailsClosed()
+    {
+        await SetLot1ExpiryControlAsync(IvExpiryControlModes.Required);
+        var batchNo = await CreateGoodsReceiptDraftAsync(expiry: null);
+
+        var result = await CreatePosting().PostAsync(IvTrxTypes.GoodsReceive, [batchNo]);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("expiry date is required", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.IvLots.ToListAsync());
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PostGoodsReceipt_EnteredExpiryBeforeBatchDate_FailsClosed()
+    {
+        await SetLot1ExpiryControlAsync(IvExpiryControlModes.Optional);
+        var batchNo = await CreateGoodsReceiptDraftAsync(expiry: FixedToday.AddDays(-1));
+
+        var result = await CreatePosting().PostAsync(IvTrxTypes.GoodsReceive, [batchNo]);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("transaction date", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.IvLots.ToListAsync());
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task RollbackGoodsReceipt_WithNullLotExpiry_Succeeds()
+    {
+        await SetLot1ExpiryControlAsync(IvExpiryControlModes.None);
+        var batchNo = await CreateGoodsReceiptDraftAsync(expiry: null);
+        var posting = CreatePosting();
+
+        Assert.True((await posting.PostAsync(IvTrxTypes.GoodsReceive, [batchNo])).Succeeded);
+        var rollback = await posting.RollbackAsync(IvTrxTypes.GoodsReceive, [batchNo]);
+
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(IvBatchStatuses.New, await db.IvTrxBatches
+            .Where(x => x.BatchNo == batchNo)
+            .Select(x => x.BatchStatus)
+            .SingleAsync());
+        Assert.Equal(0m, await db.IvBalLocs.Select(x => x.StdQty).SingleAsync());
+        Assert.Equal(0m, await db.PoOrderDetails.Select(x => x.RecvQty).SingleAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Null((await db.IvLots.SingleAsync()).ExpiryDate);
+    }
+
+    [Fact]
     public async Task Max_selection_rejected()
     {
         var mr = CreateMr();
@@ -417,6 +501,109 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             PriceConfirmed = true,
             Reason = "ADJ"
         };
+
+    private async Task SetLot1ExpiryControlAsync(string expiryControl)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "LOT1");
+        item.ExpiryControl = expiryControl;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<int> CreateGoodsReceiptDraftAsync(DateTime? expiry)
+    {
+        const int batchNo = 7001;
+        const string poNo = "PO-POST-7001";
+
+        await using var db = await _factory.CreateDbContextAsync();
+        db.PoOrders.Add(new PoOrder
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            PoNo = poNo,
+            PoRelNo = 0,
+            PoDate = FixedToday,
+            VendCode = "SUP01",
+            VendName = "Alpha Supplier",
+            CurCode = "MYR",
+            Status = PoOrderStatuses.New,
+            RowVersion = Guid.NewGuid().ToByteArray(),
+            Details =
+            [
+                new PoOrderDetail
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    PoNo = poNo,
+                    PoRelNo = 0,
+                    Line = 1,
+                    ICode = "LOT1",
+                    IDesc = "Lot item",
+                    PoUnitPrice = 1m,
+                    PoQty = 3m,
+                    PoPurQty = 3m,
+                    WtQty = 3m,
+                    Amount = 3m,
+                    RecvQty = 0m,
+                    ReturnQty = 0m,
+                    BalanceQty = 3m,
+                    OverRecvQty = 0m,
+                    InvoicedQty = 0m,
+                    PackSz = 1m,
+                    StdUom = "EA",
+                    PurchaseUom = "EA",
+                    CurCode = "MYR",
+                    ToWarehouse = "MAIN",
+                    OneTime = false
+                }
+            ]
+        });
+        db.IvTrxBatches.Add(new IvTrxBatch
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            BatchNo = batchNo,
+            TrxDtTime = FixedToday,
+            TrxType = IvTrxTypes.GoodsReceive,
+            BatchStatus = IvBatchStatuses.New,
+            RefNo = "GR-POST-7001",
+            VendCode = "SUP01",
+            LocationCode = "SITE",
+            Details =
+            [
+                new IvTrxBatchDetail
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    BatchNo = batchNo,
+                    TrxLineNo = 1,
+                    TrxType = IvTrxTypes.GoodsReceive,
+                    ICode = "LOT1",
+                    IDesc = "Lot item",
+                    ToWarehouse = "MAIN",
+                    ToLocation = "BIN1",
+                    ToLotNo = "POST-LOT-1",
+                    ToStdQty = 3m,
+                    ToStdUom = "EA",
+                    ToPurQty = 3m,
+                    ToPurUom = "EA",
+                    IStatus = "ACTIVE",
+                    IClassCode = "RAW",
+                    ExpiryDate = expiry,
+                    PoNo = poNo,
+                    PoRelNo = 0,
+                    PoLineNo = 1,
+                    UnitPrice = 1m,
+                    CostPrice = 1m,
+                    BaseUnitPrices = 1m,
+                    PriceEvidence = "PO_PROVISIONAL|TEST",
+                    Currency = "MYR"
+                }
+            ]
+        });
+        await db.SaveChangesAsync();
+        return batchNo;
+    }
 
     private IvMiscReceiptService CreateMr(bool canPost = true, bool canRollback = true)
     {

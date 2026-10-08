@@ -373,10 +373,14 @@
                                 {
                                     <span class="pr-issue-cell__warn">@op.SequenceBlockingReason</span>
                                 }
+                                else if (op.RemainingBasisQty <= 0m)
+                                {
+                                    <span class="pr-issue-cell__warn">No remaining basis quantity</span>
+                                }
                                 <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                          Text="@(op.IsSequenceEligible ? "SELECT" : "BLOCKED")"
+                                          Text="@(op.IsSequenceEligible ? (op.RemainingBasisQty > 0m ? "SELECT" : "FULL") : "BLOCKED")"
                                           Click="@(() => ApplyOperationAsync(op))"
-                                          Enabled="@(op.IsSequenceEligible && !IsSubmitting)" />
+                                          Enabled="@(op.IsSequenceEligible && op.RemainingBasisQty > 0m && !IsSubmitting)" />
                             </article>
                         }
                     </div>
@@ -455,13 +459,20 @@
                     <div class="pr-issue-desired__field">
                         <span class="iv-field__label">Material Requirement Basis Qty</span>
                         <div class="pr-issue-desired__input">
-                            <DxSpinEdit @bind-Value="@DesiredOutputInput"
-                                        MinValue="0.0001m"
-                                        MaxValue="@(SelectedOperationRow?.RemainingBasisQty ?? 0m)"
-                                        Increment="0.0001m"
-                                        DisplayFormat="n4"
-                                        ShowSpinButtons="false"
-                                        Enabled="@(!IsSubmitting)" />
+                            @if (SelectedOperationRow is { } selectedOperation && selectedOperation.RemainingBasisQty > 0m)
+                            {
+                                <DxSpinEdit @bind-Value="@DesiredOutputInput"
+                                            MinValue="0m"
+                                            MaxValue="@selectedOperation.RemainingBasisQty"
+                                            Increment="0.0001m"
+                                            DisplayFormat="n4"
+                                            ShowSpinButtons="false"
+                                            Enabled="@(!IsSubmitting)" />
+                            }
+                            else
+                            {
+                                <span class="pr-issue-desired__unavailable">No remaining basis quantity</span>
+                            }
                             <span>@SelectedOperationRow?.PlannedOutputUom</span>
                         </div>
                         <small>Used only to calculate this issue’s BOM requirement — not recorded production output. Posted @SelectedOperationRow?.PostedBasisQty.ToString("n4") · Open drafts @SelectedOperationRow?.OpenDraftBasisQty.ToString("n4")</small>
@@ -517,17 +528,27 @@
                             <CellDisplayTemplate>
                                 @{
                                     var editLine = (MaterialLineVm)context.DataItem;
+                                    var maxIssueQty = editLine.MaxIssueQty > 0m
+                                        ? editLine.MaxIssueQty
+                                        : editLine.Material.AvailableToDraft + editLine.OriginalIssueQty;
                                 }
                                 <div class="pr-issue-qty">
-                                    <DxSpinEdit @bind-Value="@editLine.IssueQty"
-                                                @bind-Value:after="OnIssueQtyEdited"
-                                                MinValue="0m"
-                                                MaxValue="@(editLine.MaxIssueQty > 0m ? editLine.MaxIssueQty : editLine.Material.AvailableToDraft + editLine.OriginalIssueQty)"
-                                                Increment="0.0001m"
-                                                DisplayFormat="n4"
-                                                ShowSpinButtons="false"
-                                                Enabled="@(editLine.Material.CanManualIssue && !IsSubmitting)"
-                                                CssClass="pr-issue-qty__input" />
+                                    @if (maxIssueQty > 0m)
+                                    {
+                                        <DxSpinEdit @bind-Value="@editLine.IssueQty"
+                                                    @bind-Value:after="OnIssueQtyEdited"
+                                                    MinValue="0m"
+                                                    MaxValue="@maxIssueQty"
+                                                    Increment="0.0001m"
+                                                    DisplayFormat="n4"
+                                                    ShowSpinButtons="false"
+                                                    Enabled="@(editLine.Material.CanManualIssue && !IsSubmitting)"
+                                                    CssClass="pr-issue-qty__input" />
+                                    }
+                                    else
+                                    {
+                                        <span class="pr-issue-qty__unavailable">@editLine.IssueQty.ToString("n4")</span>
+                                    }
                                     <span>@editLine.Material.RequiredUom</span>
                                 </div>
                             </CellDisplayTemplate>

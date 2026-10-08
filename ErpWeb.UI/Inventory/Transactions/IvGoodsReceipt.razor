@@ -445,12 +445,13 @@
                                         </div>
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="@(LineExpiryRequired ? "Expiry date *" : "Expiry date")" ColSpanMd="6">
                                     <Template>
                                         <DxDateEdit @bind-Date="@LinePopup.ExpiryDate"
                                                     DisplayFormat="dd/MM/yyyy"
-                                                    MinDate="@AppToday"
-                                                    Enabled="@LinePopup.LotControl"
+                                                    MinDate="@ExpiryMinimumDate"
+                                                    Enabled="@LineExpiryEnabled"
+                                                    CssClass="@(LineExpiryRequired ? "w-100 required-field" : "w-100")"
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                     </Template>
                                 </DxFormLayoutItem>

@@ -2,6 +2,7 @@ using System.Text.Json;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 
@@ -43,6 +44,13 @@ public partial class IvStockMasterEntry : PageBase
     protected IReadOnlyList<IvCodeLookupRow> Uoms { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Warehouses { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Locations { get; set; } = [];
+
+    protected IReadOnlyList<IvExpiryControlOption> ExpiryControlOptions { get; } =
+    [
+        new(IvExpiryControlModes.None, "None"),
+        new(IvExpiryControlModes.Optional, "Optional"),
+        new(IvExpiryControlModes.Required, "Required")
+    ];
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -114,6 +122,18 @@ public partial class IvStockMasterEntry : PageBase
         _pendingLocation = null;
         await LoadLocationsAsync(Model.DefWarehouse);
     }
+
+    protected void OnLotControlChanged(bool value)
+    {
+        Model.LotControl = value;
+        if (!value)
+        {
+            Model.ExpiryControl = IvExpiryControlModes.None;
+        }
+    }
+
+    protected void OnExpiryControlChanged(string? value) =>
+        Model.ExpiryControl = value ?? IvExpiryControlModes.None;
 
     protected async Task OnSaveAsync()
     {
@@ -256,6 +276,14 @@ public partial class IvStockMasterEntry : PageBase
 
     protected static string FormatDec(decimal? value, string format = "n4") =>
         value.HasValue ? value.Value.ToString(format) : "—";
+
+    protected static string ExpiryControlLabel(string? value) =>
+        value switch
+        {
+            IvExpiryControlModes.Optional => "Optional",
+            IvExpiryControlModes.Required => "Required",
+            _ => "None"
+        };
 
     private async Task LoadPageAsync()
     {
@@ -427,7 +455,8 @@ public partial class IvStockMasterEntry : PageBase
         new()
         {
             IsActive = true,
-            StockControl = true
+            StockControl = true,
+            ExpiryControl = IvExpiryControlModes.None
         };
 
     private static IvStockMasterEditVm Clone(IvStockMasterEditVm source) =>
@@ -446,6 +475,7 @@ public partial class IvStockMasterEntry : PageBase
             PurUom = source.PurUom,
             StockControl = source.StockControl,
             LotControl = source.LotControl,
+            ExpiryControl = source.ExpiryControl,
             DefWarehouse = source.DefWarehouse,
             DefLocation = source.DefLocation,
             MinStock = source.MinStock,
@@ -468,3 +498,5 @@ public partial class IvStockMasterEntry : PageBase
             ModifiedBy = source.ModifiedBy
         };
 }
+
+public sealed record IvExpiryControlOption(string Code, string Label);

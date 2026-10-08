@@ -1,5 +1,7 @@
 namespace ErpWeb.Core.Inventory;
 
+using ErpWeb.Model.Entities.Inventory;
+
 public sealed class IvGoodsReceiptOperationResult
 {
     public bool Succeeded { get; init; }
@@ -103,6 +105,7 @@ public sealed class IvGoodsReceiptLineDto
     public DateTime? ExpiryDate { get; init; }
     public string? Remarks { get; init; }
     public bool LotControl { get; init; }
+    public string ExpiryControl { get; init; } = IvExpiryControlModes.None;
 }
 
 public sealed class IvGoodsReceiptSaveRequest
@@ -150,6 +153,7 @@ public sealed class IvGoodsReceiptPoLineLookupRow
     public string? DefWarehouse { get; init; }
     public string? DefLocation { get; init; }
     public bool LotControl { get; init; }
+    public string ExpiryControl { get; init; } = IvExpiryControlModes.None;
     public bool IsIndirect { get; init; }
     public string DisplayText =>
         $"{PoNo}/{PoRelNo} line {PoLineNo} - {ICode} ({AvailableQty:n4} avail / {BalanceQty:n4} bal {PurchaseUom})";

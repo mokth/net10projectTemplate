@@ -318,6 +318,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     DefWarehouse = x.DefWarehouse,
                     DefLocation = x.DefLocation,
                     LotControl = x.LotControl,
+                    ExpiryControl = x.ExpiryControl,
                     IsIndirect = x.IsIndirect
                 };
             }).ToList();
@@ -326,10 +327,11 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         if (!indirect && rows.Count > 0)
         {
             var codes = rows.Select(x => x.ICode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var masterByCode = await db.IvStockMasters.AsNoTracking()
+            var masterRows = await db.IvStockMasters.AsNoTracking()
                 .Where(x => x.CompanyCode == company && codes.Contains(x.ICode))
-                .Select(x => new { x.ICode, x.LotControl, x.DefWarehouse, x.DefLocation })
-                .ToDictionaryAsync(x => x.ICode, StringComparer.OrdinalIgnoreCase, cancellationToken);
+                .Select(x => new { x.ICode, x.LotControl, x.ExpiryControl, x.DefWarehouse, x.DefLocation })
+                .ToListAsync(cancellationToken);
+            var masterByCode = masterRows.ToDictionary(x => x.ICode, StringComparer.OrdinalIgnoreCase);
             rows = rows.Select(x =>
             {
                 masterByCode.TryGetValue(x.ICode, out var master);
@@ -355,6 +357,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     DefWarehouse = master?.DefWarehouse,
                     DefLocation = master?.DefLocation,
                     LotControl = master?.LotControl ?? false,
+                    ExpiryControl = CanonicalExpiryControl(master?.ExpiryControl),
                     IsIndirect = false
                 };
             }).ToList();
@@ -433,12 +436,18 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             .Where(x => x.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var lotByCode = stockCodes.Count == 0
-            ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
-            : await db.IvStockMasters.AsNoTracking()
+        var policyByCode = new Dictionary<string, (bool LotControl, string ExpiryControl)>(StringComparer.OrdinalIgnoreCase);
+        if (stockCodes.Count > 0)
+        {
+            var masterRows = await db.IvStockMasters.AsNoTracking()
                 .Where(x => x.CompanyCode == context.CompanyCode && stockCodes.Contains(x.ICode))
-                .Select(x => new { x.ICode, x.LotControl })
-                .ToDictionaryAsync(x => x.ICode, x => x.LotControl, StringComparer.OrdinalIgnoreCase, cancellationToken);
+                .Select(x => new { x.ICode, x.LotControl, x.ExpiryControl })
+                .ToListAsync(cancellationToken);
+            foreach (var master in masterRows)
+            {
+                policyByCode[master.ICode] = (master.LotControl, CanonicalExpiryControl(master.ExpiryControl));
+            }
+        }
 
         return IvGoodsReceiptOperationResult.OkDocument(new IvGoodsReceiptDocument
         {
@@ -474,7 +483,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                     UnitPrice = d.UnitPrice ?? 0m,
                     ExpiryDate = d.ExpiryDate,
                     Remarks = d.Remarks,
-                    LotControl = lotByCode.GetValueOrDefault(code)
+                    LotControl = policyByCode.GetValueOrDefault(code).LotControl,
+                    ExpiryControl = policyByCode.GetValueOrDefault(code).ExpiryControl ?? IvExpiryControlModes.None
                 };
             }).ToList()
         });
@@ -501,12 +511,23 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var trxType = NormalizeTrxType(request.TrxType);
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(movementDateError);
+        }
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvGoodsReceiptOperationResult.Fail(periodGuard);
+        }
+
         var validated = await ValidateLinesAsync(
             db,
             request.Lines,
             trxType,
             context.CompanyCode!,
             context.BranchCode!,
+            trxDate,
             excludeBatchNo: null,
             cancellationToken);
         if (validated.ErrorMessage is not null)
@@ -517,15 +538,6 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         var batchNo = await _runningNumbers.GetNextAsync(db, context.CompanyCode!, RunningNumberKeys.IvBatch, cancellationToken);
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
-        if (movementDateError is not null)
-        {
-            return IvGoodsReceiptOperationResult.Fail(movementDateError);
-        }
-        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
-        {
-            return IvGoodsReceiptOperationResult.Fail(periodGuard);
-        }
 
         var batch = new IvTrxBatch
         {
@@ -601,22 +613,6 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         }
 
         var trxType = NormalizeTrxType(request.TrxType);
-        var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
-        var validated = await ValidateLinesAsync(
-            db,
-            request.Lines,
-            trxType,
-            context.CompanyCode!,
-            context.BranchCode!,
-            excludeBatchNo: batch.BatchNo,
-            cancellationToken);
-        if (validated.ErrorMessage is not null)
-        {
-            return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
-        }
-
-        var now = DateTime.UtcNow;
-        var userId = Truncate(context.UserId!, 10);
         var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
         if (movementDateError is not null)
         {
@@ -626,6 +622,24 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         {
             return IvGoodsReceiptOperationResult.Fail(periodGuard);
         }
+
+        var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        var validated = await ValidateLinesAsync(
+            db,
+            request.Lines,
+            trxType,
+            context.CompanyCode!,
+            context.BranchCode!,
+            trxDate,
+            excludeBatchNo: batch.BatchNo,
+            cancellationToken);
+        if (validated.ErrorMessage is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
+        }
+
+        var now = DateTime.UtcNow;
+        var userId = Truncate(context.UserId!, 10);
         batch.TrxType = trxType;
         batch.TrxDtTime = trxDate;
         batch.RefNo = NormalizeRefNo(request.RefNo, batch.BatchNo);
@@ -725,6 +739,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         string trxType,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         int? excludeBatchNo,
         CancellationToken cancellationToken)
     {
@@ -746,6 +761,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 indirect,
                 companyCode,
                 branchCode,
+                trxDate,
                 lineNo,
                 reservedLotsByItem,
                 excludeBatchNo,
@@ -784,6 +800,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         bool indirect,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         short lineNo,
         IReadOnlyDictionary<string, HashSet<string>> reservedLotsByItem,
         int? excludeBatchNo,
@@ -842,6 +859,15 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             }
 
             lotControl = item.LotControl;
+            if (!IvExpiryControlModes.TryNormalize(item.ExpiryControl, out var expiryControl))
+            {
+                return ($"Line {lineNo}: item '{item.ICode}' has an invalid expiry control policy.", null);
+            }
+
+            if (!item.LotControl && !string.Equals(expiryControl, IvExpiryControlModes.None, StringComparison.Ordinal))
+            {
+                return ($"Line {lineNo}: non-lot item '{item.ICode}' cannot have an active expiry control policy.", null);
+            }
 
             var explicitWarehouse = (line.ToWarehouse ?? string.Empty).Trim();
             if (explicitWarehouse.Length > 0)
@@ -939,14 +965,28 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 }
 
                 expiry = line.ExpiryDate?.Date;
-                if (expiry is null)
+                switch (expiryControl)
                 {
-                    return ($"Line {lineNo}: expiry date is required for lot-controlled item '{item.ICode}'.", null);
-                }
+                    case IvExpiryControlModes.None:
+                        expiry = null;
+                        break;
+                    case IvExpiryControlModes.Optional:
+                        if (expiry is not null && expiry.Value < trxDate.Date)
+                        {
+                            return ($"Line {lineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                        }
+                        break;
+                    case IvExpiryControlModes.Required:
+                        if (expiry is null)
+                        {
+                            return ($"Line {lineNo}: expiry date is required for lot-controlled item '{item.ICode}'.", null);
+                        }
 
-                if (expiry.Value < _dates.Today.Date)
-                {
-                    return ($"Line {lineNo}: expiry date cannot be earlier than today.", null);
+                        if (expiry.Value < trxDate.Date)
+                        {
+                            return ($"Line {lineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                        }
+                        break;
                 }
             }
             else
@@ -1301,6 +1341,11 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
     }
 
     private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string CanonicalExpiryControl(string? value) =>
+        IvExpiryControlModes.TryNormalize(value, out var normalized)
+            ? normalized
+            : IvExpiryControlModes.None;
 
     private sealed record ValidatedLine(
         PoOrder Po,

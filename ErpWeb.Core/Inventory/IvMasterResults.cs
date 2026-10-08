@@ -1,5 +1,7 @@
 namespace ErpWeb.Core.Inventory;
 
+using ErpWeb.Model.Entities.Inventory;
+
 public enum IvMasterErrorCode
 {
     None = 0,
@@ -147,6 +149,7 @@ public sealed class IvStockMasterEditVm
     public string? PurUom { get; set; }
     public bool StockControl { get; set; } = true;
     public bool LotControl { get; set; }
+    public string ExpiryControl { get; set; } = IvExpiryControlModes.None;
     public string? DefWarehouse { get; set; }
     public string? DefLocation { get; set; }
     public decimal? MinStock { get; set; }

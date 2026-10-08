@@ -17,6 +17,7 @@ public class IvStockMaster
     public string? SellingUom { get; set; }
     public bool StockControl { get; set; } = true;
     public bool LotControl { get; set; }
+    public string ExpiryControl { get; set; } = IvExpiryControlModes.None;
     public string? DefWarehouse { get; set; }
     public string? DefLocation { get; set; }
     public decimal? MinStock { get; set; }

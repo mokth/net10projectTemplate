@@ -199,6 +199,11 @@ public partial class PrMaterialIssueEntry : PageBase
                 ?? "The selected operation is blocked by the Work Order execution sequence.";
             return;
         }
+        if (refreshedOperation.RemainingBasisQty <= 0m)
+        {
+            ErrorMessage = "The selected operation has no remaining basis quantity for a new material issue.";
+            return;
+        }
 
         SelectedOperationRow = ToOperationRow(result.Data, refreshedOperation);
         Workspace = result.Data; WorkOrderInput = result.Data.WorkOrderNo;
@@ -284,13 +289,17 @@ public partial class PrMaterialIssueEntry : PageBase
         Lines = result.Data.Materials.Select(x => new MaterialLineVm(x)).ToList();
         SelectedWorkCentre = string.Empty;
         var firstEligibleOperation = result.Data.Operations
-            .Where(x => x.IsSequenceEligible)
+            .Where(x => x.IsSequenceEligible && x.RemainingBasisQty > 0m)
             .OrderBy(x => x.StageSequence)
             .ThenBy(x => x.ProcessSequence)
             .FirstOrDefault();
         if (firstEligibleOperation is null)
         {
-            ErrorMessage = "No operation is currently eligible for material issue. Complete the required preceding operations first.";
+            Workspace = null;
+            Lines = [];
+            SelectedOperationId = null;
+            SelectedOperationRow = null;
+            ErrorMessage = "No operation is currently eligible for material issue with remaining basis quantity. Complete the required preceding operations first or use an operation with remaining quantity.";
             ResetDesiredOutputState(0m);
             return;
         }

@@ -91,6 +91,7 @@
                     <div class="iv-detail-grid">
                         @Detail("Stock control", Model.StockControl ? "Yes" : "No")
                         @Detail("Lot control", Model.LotControl ? "Yes" : "No")
+                        @Detail("Expiry control", ExpiryControlLabel(Model.ExpiryControl))
                         @Detail("Default warehouse", Model.DefWarehouse)
                         @Detail("Default location", Model.DefLocation)
                         @Detail("Min stock", FormatDec(Model.MinStock))
@@ -258,7 +259,22 @@
                             </div>
                             <div class="iv-field">
                                 <label class="iv-field__label">Lot control</label>
-                                <DxCheckBox @bind-Checked="@Model.LotControl" AllowIndeterminateState="false" />
+                                <DxCheckBox Checked="@Model.LotControl"
+                                            CheckedChanged="@((bool value) => OnLotControlChanged(value))"
+                                            AllowIndeterminateState="false" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Expiry control</label>
+                                <DxComboBox Data="@ExpiryControlOptions"
+                                            TData="IvExpiryControlOption"
+                                            TValue="string"
+                                            TextFieldName="@nameof(IvExpiryControlOption.Label)"
+                                            ValueFieldName="@nameof(IvExpiryControlOption.Code)"
+                                            Value="@Model.ExpiryControl"
+                                            ValueChanged="@OnExpiryControlChanged"
+                                            Enabled="@Model.LotControl"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
+                                @FieldError(nameof(IvStockMasterEditVm.ExpiryControl))
                             </div>
                             <div class="iv-field">
                                 <label class="iv-field__label">Default warehouse</label>

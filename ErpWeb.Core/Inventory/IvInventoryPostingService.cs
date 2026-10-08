@@ -447,7 +447,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var linePlans = new List<MrLinePlan>(details.Count);
         foreach (var detail in details)
         {
-            var planResult = await BuildMrPostLineAsync(db, companyCode, branchCode, detail, masters, cancellationToken);
+            var planResult = await BuildMrPostLineAsync(
+                db,
+                companyCode,
+                branchCode,
+                batch.TrxDtTime,
+                detail,
+                masters,
+                cancellationToken);
             if (planResult.Error is not null)
             {
                 return IvInventoryPostingBatchResult.Fail(batchNo, planResult.Error);
@@ -3402,6 +3409,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         AppDbContext db,
         string companyCode,
         string branchCode,
+        DateTime batchTrxDate,
         IvTrxBatchDetail detail,
         IReadOnlyDictionary<string, IvStockMaster> masters,
         CancellationToken cancellationToken)
@@ -3415,6 +3423,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (!masters.TryGetValue(iCode, out var item) || !item.IsActive)
         {
             return ($"Line {detail.TrxLineNo}: item '{iCode}' was not found or is inactive.", null);
+        }
+
+        if (!IvExpiryControlModes.TryNormalize(item.ExpiryControl, out var expiryControl))
+        {
+            return ($"Line {detail.TrxLineNo}: item '{iCode}' has an invalid expiry control policy.", null);
+        }
+
+        if (!item.LotControl && !string.Equals(expiryControl, IvExpiryControlModes.None, StringComparison.Ordinal))
+        {
+            return ($"Line {detail.TrxLineNo}: non-lot item '{iCode}' cannot have an active expiry control policy.", null);
         }
 
         var qty = detail.ToStdQty ?? 0m;
@@ -3475,9 +3493,28 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 return ($"Line {detail.TrxLineNo}: lot number is required for lot-controlled item '{iCode}'.", null);
             }
 
-            if (expiry is null)
+            switch (expiryControl)
             {
-                return ($"Line {detail.TrxLineNo}: expiry date is required for lot-controlled item '{iCode}'.", null);
+                case IvExpiryControlModes.None:
+                    expiry = null;
+                    break;
+                case IvExpiryControlModes.Optional:
+                    if (expiry is not null && expiry.Value < batchTrxDate.Date)
+                    {
+                        return ($"Line {detail.TrxLineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                    }
+                    break;
+                case IvExpiryControlModes.Required:
+                    if (expiry is null)
+                    {
+                        return ($"Line {detail.TrxLineNo}: expiry date is required for lot-controlled item '{iCode}'.", null);
+                    }
+
+                    if (expiry.Value < batchTrxDate.Date)
+                    {
+                        return ($"Line {detail.TrxLineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                    }
+                    break;
             }
         }
         else

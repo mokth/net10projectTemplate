@@ -23,6 +23,11 @@ public class IvStockMasterConfiguration : IEntityTypeConfiguration<IvStockMaster
         builder.Property(e => e.SellingUom).HasColumnName("SellingUOM").HasMaxLength(10);
         builder.Property(e => e.StockControl).HasDefaultValue(true).ValueGeneratedNever();
         builder.Property(e => e.LotControl).HasDefaultValue(false).ValueGeneratedNever();
+        builder.Property(e => e.ExpiryControl)
+            .HasMaxLength(10)
+            .IsRequired()
+            .HasDefaultValue(IvExpiryControlModes.None)
+            .ValueGeneratedNever();
         builder.Property(e => e.DefWarehouse).HasMaxLength(20);
         builder.Property(e => e.DefLocation).HasMaxLength(10);
         builder.Property(e => e.MinStock).HasPrecision(18, 4);

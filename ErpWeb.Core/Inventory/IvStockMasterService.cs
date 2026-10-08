@@ -141,6 +141,16 @@ public sealed class IvStockMasterService : IIvStockMasterService
             errors["LotControl"] = "Lot control requires stock control.";
         }
 
+        var expiryControlValid = IvExpiryControlModes.TryNormalize(model.ExpiryControl, out var expiryControl);
+        if (!expiryControlValid)
+        {
+            errors["ExpiryControl"] = $"Expiry control must be one of {string.Join(", ", IvExpiryControlModes.Allowed)}.";
+        }
+        else if (!model.LotControl && !string.Equals(expiryControl, IvExpiryControlModes.None, StringComparison.Ordinal))
+        {
+            errors["ExpiryControl"] = "Expiry control must be None when lot control is disabled.";
+        }
+
         if (model.MinStock is not null && model.MaxStock is not null && model.MinStock > model.MaxStock)
         {
             errors["MinStock"] = "Minimum stock cannot be greater than maximum stock.";
@@ -357,7 +367,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     purUom,
                     defWh,
                     defLoc,
-                    classification);
+                    classification,
+                    expiryControl);
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
                 await db.SaveChangesAsync(cancellationToken);
@@ -417,7 +428,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 purUom,
                 defWh,
                 defLoc,
-                classification);
+                classification,
+                expiryControl);
             // Leftover BranchCode / LocationCode: do not touch on update.
             existing.ModifiedDate = now;
             existing.ModifiedBy = userId;
@@ -802,7 +814,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         string? purUom,
         string? defWh,
         string? defLoc,
-        string? classification)
+        string? classification,
+        string expiryControl)
     {
         entity.IDesc = TruncateOptional(desc, 200);
         entity.Barcode = TruncateOptional(model.Barcode, 50);
@@ -816,6 +829,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         entity.PurUom = TruncateOptional(purUom, 10);
         entity.StockControl = model.StockControl;
         entity.LotControl = model.LotControl;
+        entity.ExpiryControl = expiryControl;
         entity.DefWarehouse = TruncateOptional(defWh, 20);
         entity.DefLocation = TruncateOptional(defLoc, 10);
         entity.MinStock = model.MinStock;
@@ -878,6 +892,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
             PurUom = x.PurUom,
             StockControl = x.StockControl,
             LotControl = x.LotControl,
+            ExpiryControl = CanonicalExpiryControl(x.ExpiryControl),
             DefWarehouse = x.DefWarehouse,
             DefLocation = x.DefLocation,
             MinStock = x.MinStock,
@@ -899,6 +914,11 @@ public sealed class IvStockMasterService : IIvStockMasterService
             ModifiedDate = x.ModifiedDate,
             ModifiedBy = x.ModifiedBy
         };
+
+    private static string CanonicalExpiryControl(string? value) =>
+        IvExpiryControlModes.TryNormalize(value, out var normalized)
+            ? normalized
+            : IvExpiryControlModes.None;
 
     private UserContext ValidateUserContext()
     {
