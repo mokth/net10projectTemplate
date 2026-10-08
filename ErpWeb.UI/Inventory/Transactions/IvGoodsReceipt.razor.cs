@@ -920,7 +920,7 @@ public partial class IvGoodsReceipt : PageBase
         {
             TrxDate = DateTime.Today,
             TrxType = IvTrxTypes.GoodsReceive,
-            RefNo = "AUTO"
+            RefNo = string.Empty
         };
 }
 
@@ -930,7 +930,7 @@ public sealed class IvGoodsReceiptHeaderVm
 {
     public DateTime TrxDate { get; set; } = DateTime.Today;
     public string TrxType { get; set; } = IvTrxTypes.GoodsReceive;
-    public string RefNo { get; set; } = "AUTO";
+    public string RefNo { get; set; } = string.Empty;
     public string? Remark { get; set; }
 }
 

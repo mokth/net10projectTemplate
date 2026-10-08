@@ -527,7 +527,10 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Output lot" ColSpanMd="4">
                         <Template>
-                            <DxTextBox @bind-Text="@OutputLotNo" NullText="Enter output lot" Enabled="@CanEditFields" />
+                            <DxTextBox @bind-Text="@OutputLotNo"
+                                       NullText="Auto-generated if blank"
+                                       maxlength="50"
+                                       Enabled="@CanEditFields" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Output item / UOM" ColSpanMd="4">

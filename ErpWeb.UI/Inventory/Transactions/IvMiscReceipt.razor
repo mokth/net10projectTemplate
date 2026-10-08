@@ -69,7 +69,7 @@
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@Header.RefNo"
-                                       NullText="AUTO"
+                                       NullText="Auto-generated if blank"
                                        maxlength="50"
                                        ReadOnly="@(!CanEditDocument)" />
                         </Template>
@@ -379,8 +379,7 @@
                                     <DxTextBox @bind-Text="@Popup.ToLotNo"
                                                maxlength="50"
                                                Enabled="@Popup.LotControl"
-                                               InputCssClass="@(Popup.LotControl ? "required-field" : null)"
-                                               NullText="@(Popup.LotControl ? "Defaulted — you can change this" : "Not lot-controlled")" />
+                                               NullText="Auto-generated if blank" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">

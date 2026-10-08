@@ -364,6 +364,19 @@ public partial class IvStockReturn : PageBase
 
     protected void OnCommitLine()
     {
+        if (Popup.LotControl && string.IsNullOrWhiteSpace(Popup.ToLotNo))
+        {
+            try
+            {
+                Popup.ToLotNo = NextLotNo();
+            }
+            catch (Exception ex)
+            {
+                PopupError = ex.Message;
+                return;
+            }
+        }
+
         PopupError = ValidatePopup();
         if (PopupError is not null)
         {
@@ -607,11 +620,6 @@ public partial class IvStockReturn : PageBase
 
         if (Popup.LotControl)
         {
-            if (string.IsNullOrWhiteSpace(Popup.ToLotNo))
-            {
-                return "Lot number is required for this item.";
-            }
-
             if (Popup.ExpiryDate is null)
             {
                 return "Expiry date is required for this item.";
@@ -687,14 +695,14 @@ public partial class IvStockReturn : PageBase
         new()
         {
             TrxDate = DateTime.Today,
-            RefNo = "AUTO"
+            RefNo = string.Empty
         };
 }
 
 public sealed class IvStockReturnHeaderVm
 {
     public DateTime TrxDate { get; set; } = DateTime.Today;
-    public string RefNo { get; set; } = "AUTO";
+    public string RefNo { get; set; } = string.Empty;
     public string? Remark { get; set; }
 }
 

@@ -200,7 +200,8 @@ public sealed partial class ProductionOutputService
             || IvQty.Round(existing.RejectQty) != IvQty.Round(request.RejectQty)
             || IvQty.Round(existing.HoldQty) != IvQty.Round(request.HoldQty))
             return false;
-        if (!string.Equals((existing.OutputLotNo ?? string.Empty).Trim(), (request.OutputLotNo ?? string.Empty).Trim(), StringComparison.Ordinal))
+        var incomingOutputLotNo = ResolveOutputLotNo(request.OutputLotNo, existing.DocumentNo);
+        if (!string.Equals((existing.OutputLotNo ?? string.Empty).Trim(), incomingOutputLotNo, StringComparison.Ordinal))
             return false;
 
         var incoming = (request.Materials ?? [])

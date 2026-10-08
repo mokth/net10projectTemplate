@@ -68,7 +68,7 @@
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@Header.RefNo"
-                                       NullText="AUTO"
+                                       NullText="Auto-generated if blank"
                                        maxlength="50"
                                        ReadOnly="@(!CanEditDocument)" />
                         </Template>

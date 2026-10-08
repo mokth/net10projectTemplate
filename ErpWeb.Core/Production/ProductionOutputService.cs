@@ -53,6 +53,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         var scope = WriteScope();
         if (scope is null) return Fail("A company, branch and user scope is required.", IvMasterErrorCode.InvalidScope);
 
+        if ((request.OutputLotNo?.Trim().Length ?? 0) > 50)
+            return Fail("Output lot number is limited to 50 characters.");
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
@@ -112,6 +115,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         var now = _clock.Now;
         var user = TruncateUser(scope.UserId);
         var documentNo = await AllocateDocumentNoAsync(db, scope.CompanyCode, cancellationToken);
+        var outputLotNo = ResolveOutputLotNo(request.OutputLotNo, documentNo);
 
         var output = new ProductionOutput
         {
@@ -134,7 +138,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             OutputUom = routeStep.OutputUom ?? operation.PlannedOutputUom ?? order.OutputUom ?? string.Empty,
             OutputItemCode = routeStep.OutputItemCode,
             OutputType = routeStep.OutputType,
-            OutputLotNo = (request.OutputLotNo ?? string.Empty).Trim(),
+            OutputLotNo = outputLotNo,
             SnapshotRevision = order.SnapshotRevision,
             SnapshotHash = order.SnapshotHash ?? string.Empty,
             PostingRequestId = request.PostingRequestId,
@@ -196,6 +200,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         var scope = WriteScope();
         if (scope is null) return Fail("A company, branch and user scope is required.", IvMasterErrorCode.InvalidScope);
 
+        if ((request.OutputLotNo?.Trim().Length ?? 0) > 50)
+            return Fail("Output lot number is limited to 50 characters.");
+
         var validation = ValidateQuantities(request);
         if (validation is not null) return Fail(validation);
 
@@ -231,7 +238,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         output.ScrapQty = IvQty.Round(request.ScrapQty);
         output.RejectQty = IvQty.Round(request.RejectQty);
         output.HoldQty = IvQty.Round(request.HoldQty);
-        output.OutputLotNo = (request.OutputLotNo ?? string.Empty).Trim();
+        output.OutputLotNo = ResolveOutputLotNo(request.OutputLotNo, output.DocumentNo);
         output.ModifiedDate = _clock.Now;
         output.ModifiedBy = TruncateUser(scope.UserId);
         var materialError = await PersistMaterialFactsAsync(
@@ -498,6 +505,12 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private static string TruncateUser(string userId) => userId.Length > 10 ? userId[..10] : userId;
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string ResolveOutputLotNo(string? requestedLot, string documentNo)
+    {
+        var lot = requestedLot?.Trim();
+        return string.IsNullOrWhiteSpace(lot) ? documentNo : lot;
+    }
 
     private static IvMasterOperationResult<ProductionOutputDetail> Fail(
         string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) =>

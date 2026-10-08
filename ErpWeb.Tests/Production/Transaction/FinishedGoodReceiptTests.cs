@@ -1,3 +1,4 @@
+using System.Globalization;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
@@ -483,6 +484,45 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var detail = await verify.IvTrxBatchDetails.SingleAsync(x => x.BatchId == cleared.Data!.Id);
         Assert.Equal("", detail.ToLotNo);
         Assert.Null(detail.ExpiryDate);
+    }
+
+    [Fact]
+    public async Task Blank_reference_defaults_to_batch_number()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var saved = await f.Service.SaveAsync(f.Draft(1));
+
+        Assert.True(saved.Succeeded, saved.Message);
+        var expected = saved.Data!.BatchNo.ToString(CultureInfo.InvariantCulture);
+        Assert.Equal(expected, saved.Data.RefNo);
+        await using var db = await f.Factory.CreateDbContextAsync();
+        Assert.Equal(expected, (await db.IvTrxBatches.SingleAsync(x => x.Id == saved.Data.Id)).RefNo);
+    }
+
+    [Fact]
+    public async Task Whitespace_reference_defaults_to_batch_number()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var draft = f.Draft(1);
+        draft.RefNo = "   ";
+        var saved = await f.Service.SaveAsync(draft);
+
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.Equal(saved.Data!.BatchNo.ToString(CultureInfo.InvariantCulture), saved.Data.RefNo);
+    }
+
+    [Fact]
+    public async Task Manual_reference_is_trimmed_and_preserved()
+    {
+        var f = await CreateAsync(); if (f is null) return;
+        var draft = f.Draft(1);
+        draft.RefNo = "  MANUAL-REF  ";
+        var saved = await f.Service.SaveAsync(draft);
+
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.Equal("MANUAL-REF", saved.Data!.RefNo);
+        await using var db = await f.Factory.CreateDbContextAsync();
+        Assert.Equal("MANUAL-REF", (await db.IvTrxBatches.SingleAsync(x => x.Id == saved.Data.Id)).RefNo);
     }
 
     [Fact]

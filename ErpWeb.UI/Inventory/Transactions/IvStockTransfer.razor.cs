@@ -413,8 +413,14 @@ public partial class IvStockTransfer : PageBase
         return Task.CompletedTask;
     }
 
-    protected void OnCommitLine()
+    protected async Task OnCommitLine()
     {
+        if (Popup.LotControl && string.IsNullOrWhiteSpace(Popup.ToLotNo)
+            && !await TryAllocateDestinationLotAsync())
+        {
+            return;
+        }
+
         PopupError = ValidatePopup();
         if (PopupError is not null)
         {
@@ -752,12 +758,13 @@ public partial class IvStockTransfer : PageBase
         Locations = result.Rows;
     }
 
-    protected async Task OnGenerateDestLotAsync()
+    private async Task<bool> TryAllocateDestinationLotAsync()
     {
         PopupError = null;
-        if (!Popup.LotControl || string.IsNullOrWhiteSpace(Popup.ICode))
+        if (!Popup.LotControl || !string.IsNullOrWhiteSpace(Popup.ToLotNo)
+            || string.IsNullOrWhiteSpace(Popup.ICode))
         {
-            return;
+            return true;
         }
 
         try
@@ -771,11 +778,24 @@ public partial class IvStockTransfer : PageBase
                 Lines.Where(x => x != _editingLine).Select(x => x.ToLotNo).ToList(),
                 lot => Lookups.LotExistsAsync(Popup.ICode, lot));
             Popup.ToLotNo = lots[0];
+            return true;
         }
         catch (Exception ex)
         {
             PopupError = ex.Message;
+            return false;
         }
+    }
+
+    protected async Task OnGenerateDestLotAsync()
+    {
+        PopupError = null;
+        if (!Popup.LotControl || string.IsNullOrWhiteSpace(Popup.ICode))
+        {
+            return;
+        }
+
+        await TryAllocateDestinationLotAsync();
     }
 
     protected async Task OnSplitProcessAsync()
@@ -902,14 +922,14 @@ public partial class IvStockTransfer : PageBase
         new()
         {
             TrxDate = DateTime.Today,
-            RefNo = "AUTO"
+            RefNo = string.Empty
         };
 }
 
 public sealed class IvStockTransferHeaderVm
 {
     public DateTime TrxDate { get; set; } = DateTime.Today;
-    public string RefNo { get; set; } = "AUTO";
+    public string RefNo { get; set; } = string.Empty;
     public string? Remark { get; set; }
 }
 

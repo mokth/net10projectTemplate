@@ -99,6 +99,125 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Create_blank_output_lot_uses_document_number()
+    {
+        var graph = await SeedGraphAsync("WO-BLANK-LOT");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = string.Empty;
+
+        var created = await sut.CreateAsync(request);
+
+        Assert.True(created.Succeeded, created.Message);
+        Assert.Equal(created.Data!.DocumentNo, created.Data.OutputLotNo);
+        await using var db = await _factory.CreateDbContextAsync();
+        var saved = await db.ProductionOutputs.SingleAsync();
+        Assert.Equal(saved.DocumentNo, saved.OutputLotNo);
+    }
+
+    [Fact]
+    public async Task Create_manual_output_lot_is_preserved()
+    {
+        var graph = await SeedGraphAsync("WO-MANUAL-LOT");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = "  MANUAL-LOT  ";
+
+        var created = await sut.CreateAsync(request);
+
+        Assert.True(created.Succeeded, created.Message);
+        Assert.Equal("MANUAL-LOT", created.Data!.OutputLotNo);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal("MANUAL-LOT", (await db.ProductionOutputs.SingleAsync()).OutputLotNo);
+    }
+
+    [Fact]
+    public async Task Create_blank_output_lot_replay_is_idempotent()
+    {
+        var graph = await SeedGraphAsync("WO-BLANK-REPLAY");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = string.Empty;
+
+        var first = await sut.CreateAsync(request);
+        var replay = await sut.CreateAsync(request);
+
+        Assert.True(first.Succeeded, first.Message);
+        Assert.True(replay.Succeeded, replay.Message);
+        Assert.Equal(first.Data!.Uid, replay.Data!.Uid);
+        Assert.Equal(first.Data.DocumentNo, first.Data.OutputLotNo);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.ProductionOutputs.ToListAsync());
+        Assert.Single(await db.ProductionPostingLinks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Create_manual_output_lot_replay_with_blank_is_rejected()
+    {
+        var graph = await SeedGraphAsync("WO-MANUAL-BLANK-REPLAY");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = "MANUAL-LOT";
+
+        var first = await sut.CreateAsync(request);
+        request.OutputLotNo = string.Empty;
+        var replay = await sut.CreateAsync(request);
+
+        Assert.True(first.Succeeded, first.Message);
+        Assert.False(replay.Succeeded);
+        Assert.Contains("different", replay.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Update_blank_output_lot_uses_existing_document_number()
+    {
+        var graph = await SeedGraphAsync("WO-UPDATE-BLANK-LOT");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = "INITIAL-LOT";
+        var created = await sut.CreateAsync(request);
+        Assert.True(created.Succeeded, created.Message);
+
+        var updated = await sut.UpdateAsync(new ProductionOutputUpdateRequest
+        {
+            OutputId = created.Data!.Uid,
+            WorkOrderOperationId = graph.OperationId,
+            PostingRequestId = request.PostingRequestId,
+            ProductionDate = request.ProductionDate,
+            ShiftCode = request.ShiftCode,
+            ActualMachineCode = request.ActualMachineCode,
+            OperatorCode = request.OperatorCode,
+            GoodQty = request.GoodQty,
+            ScrapQty = request.ScrapQty,
+            RejectQty = request.RejectQty,
+            HoldQty = request.HoldQty,
+            OutputLotNo = string.Empty,
+            RowVersion = created.Data.RowVersion,
+        });
+
+        Assert.True(updated.Succeeded, updated.Message);
+        Assert.Equal(created.Data.DocumentNo, updated.Data!.OutputLotNo);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(created.Data.DocumentNo, (await db.ProductionOutputs.SingleAsync()).OutputLotNo);
+    }
+
+    [Fact]
+    public async Task Output_lot_over_50_chars_is_validation_error()
+    {
+        var graph = await SeedGraphAsync("WO-LOT-LENGTH");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.OutputLotNo = new string('X', 51);
+
+        var result = await sut.CreateAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("50", result.Message, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ProductionOutputs.ToListAsync());
+    }
+
+    [Fact]
     public async Task Reference_validation_rejects_wrong_process_and_inactive_values_but_allows_blanks()
     {
         var graph = await SeedGraphAsync("WO-REFERENCES");

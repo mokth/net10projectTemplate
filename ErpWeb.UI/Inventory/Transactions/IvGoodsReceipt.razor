@@ -81,7 +81,7 @@
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="3">
                         <Template>
                             <DxTextBox @bind-Text="@Header.RefNo"
-                                       NullText="AUTO"
+                                       NullText="Auto-generated if blank"
                                        maxlength="50"
                                        ReadOnly="@(!CanEditDocument)" />
                         </Template>
@@ -434,8 +434,7 @@
                                                        maxlength="50"
                                                        Enabled="@LinePopup.LotControl"
                                                        CssClass="flex-grow-1"
-                                                       InputCssClass="@(LinePopup.LotControl ? "required-field" : null)"
-                                                       NullText="@(LinePopup.LotControl ? "Defaulted — you can change this" : "Not lot-controlled")" />
+                                                       NullText="Auto-generated if blank" />
                                             @if (LinePopup.LotControl)
                                             {
                                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"

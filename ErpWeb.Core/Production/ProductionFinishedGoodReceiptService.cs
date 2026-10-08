@@ -13,6 +13,8 @@ using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+using System.Globalization;
+
 namespace ErpWeb.Core.Production;
 
 public sealed partial class ProductionFinishedGoodReceiptService(
@@ -295,7 +297,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             if (request.Lines.Count == 0 || request.Lines.Count > 200) throw new FgException("Enter between one and 200 source lines.");
             var date = request.EffectiveDate == default ? clock.Now : request.EffectiveDate;
             if (date > clock.Now) throw new FgException("Future receipt dates are not allowed.");
-            if (request.RefNo?.Length > 30 || request.Remarks?.Length > 200) throw new FgException("Reference is limited to 30 and remarks to 200 characters.");
+            var requestedRefNo = request.RefNo?.Trim();
+            if (requestedRefNo?.Length > 30 || request.Remarks?.Length > 200) throw new FgException("Reference is limited to 30 and remarks to 200 characters.");
             await using var db = await factory.CreateDbContextAsync(ct);
             db.FinishedGoodReceiptWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -324,7 +327,10 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 db.IvTrxBatchDetails.RemoveRange(r.Sources.Select(x => x.Detail));
                 r.Sources.Clear(); r.DocumentRevision++;
             }
-            r.WorkOrderId = order.Uid; r.Batch.TrxDtTime = date; r.Batch.RefNo = request.RefNo?.Trim(); r.Batch.Remarks = request.Remarks?.Trim();
+            var resolvedRefNo = string.IsNullOrWhiteSpace(requestedRefNo)
+                ? r.Batch.BatchNo.ToString(CultureInfo.InvariantCulture)
+                : requestedRefNo;
+            r.WorkOrderId = order.Uid; r.Batch.TrxDtTime = date; r.Batch.RefNo = resolvedRefNo; r.Batch.Remarks = request.Remarks?.Trim();
             r.Batch.ModifiedDate = clock.Now; r.Batch.ModifiedBy = User(scope);
             short lineNo = 0;
             var requestedBySource = new Dictionary<long, decimal>();

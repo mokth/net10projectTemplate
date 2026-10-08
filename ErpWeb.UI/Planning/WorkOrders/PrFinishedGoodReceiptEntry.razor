@@ -390,7 +390,7 @@
                     <DxFormLayoutItem Caption="Reference" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@RefNo"
-                                       NullText="Optional reference"
+                                       NullText="Auto-generated from batch if blank"
                                        Enabled="@CanEditFields" />
                         </Template>
                     </DxFormLayoutItem>
@@ -520,7 +520,7 @@
                                     }
                                     @if (editor.Line.LotControl)
                                     {
-                                        <DxTextBox @bind-Text="@editor.Line.LotNo" Enabled="@CanEditFields" NullText="Required lot" />
+                                        <DxTextBox @bind-Text="@editor.Line.LotNo" Enabled="@CanEditFields" NullText="Uses source lot if blank" />
                                     }
                                     else
                                     {

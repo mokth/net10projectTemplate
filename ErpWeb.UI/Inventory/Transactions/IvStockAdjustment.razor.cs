@@ -710,14 +710,14 @@ public partial class IvStockAdjustment : PageBase
         new()
         {
             TrxDate = DateTime.Today,
-            RefNo = "AUTO"
+            RefNo = string.Empty
         };
 }
 
 public sealed class IvStockAdjustmentHeaderVm
 {
     public DateTime TrxDate { get; set; } = DateTime.Today;
-    public string RefNo { get; set; } = "AUTO";
+    public string RefNo { get; set; } = string.Empty;
     public string? Remark { get; set; }
 }
 
