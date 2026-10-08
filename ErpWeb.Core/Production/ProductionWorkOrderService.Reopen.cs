@@ -83,6 +83,8 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.NotFound, "Work Order not found.");
             }
 
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, scope, number, cancellationToken);
             var preflightBlocker = await GetReopenPostingLinkBlockerAsync(db, identity.Uid, cancellationToken);
             if (preflightBlocker is not null)
             {
@@ -153,6 +155,11 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.NotFound,
                     "Work Order was not found after reopening.")
                 : IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(refreshed));
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
         }
         catch (DbUpdateConcurrencyException)
         {

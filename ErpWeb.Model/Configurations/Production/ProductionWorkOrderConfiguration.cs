@@ -113,6 +113,10 @@ public sealed class ProductionWorkOrderConfiguration : IEntityTypeConfiguration<
             .WithOne(x => x.WorkOrder!)
             .HasForeignKey(x => x.WorkOrderId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(x => x.DemandAllocations)
+            .WithOne(x => x.WorkOrder)
+            .HasForeignKey(x => x.WorkOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasMany(x => x.ChangeOrders)
             .WithOne(x => x.WorkOrder!)
             .HasForeignKey(x => x.WorkOrderId)

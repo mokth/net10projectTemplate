@@ -7,6 +7,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Sales;
 using Microsoft.Data.SqlClient;
@@ -366,6 +367,8 @@ public sealed class SaSoService : ISaSoService
                         HasShippedQty = usage.HasShippedQty || stats.HasShippedQty,
                         HasWrittenOffQty = usage.HasWrittenOffQty || stats.HasWrittenOffQty,
                         HasAllocation = usage.HasAllocation,
+                        HasDeliveryRequest = usage.HasDeliveryRequest,
+                        HasReleasedDeliveryRequest = usage.HasReleasedDeliveryRequest,
                         HasDraftDeliveryOrder = usage.HasDraftDeliveryOrder,
                         HasDraftInvoice = usage.HasDraftInvoice,
                         HasDeliveryOrderReference = usage.HasDeliveryOrderReference,
@@ -444,7 +447,9 @@ public sealed class SaSoService : ISaSoService
             no,
             cancellationToken);
 
-        return SaSoOperationResult.OkDocument(MapDocument(salesOrder, revisions));
+        var deliveryRequests = await LoadDeliveryRequestTraceAsync(
+            db, context.CompanyCode!, context.BranchCode!, salesOrder.SoNo, salesOrder.CustRel, cancellationToken);
+        return SaSoOperationResult.OkDocument(MapDocument(salesOrder, revisions, deliveryRequests));
     }
 
     public async Task<SaSoOperationResult> GetAsync(
@@ -489,7 +494,9 @@ public sealed class SaSoService : ISaSoService
             no,
             cancellationToken);
 
-        return SaSoOperationResult.OkDocument(MapDocument(salesOrder, revisions));
+        var deliveryRequests = await LoadDeliveryRequestTraceAsync(
+            db, context.CompanyCode!, context.BranchCode!, salesOrder.SoNo, salesOrder.CustRel, cancellationToken);
+        return SaSoOperationResult.OkDocument(MapDocument(salesOrder, revisions, deliveryRequests));
     }
 
     public async Task<SaSoOperationResult> GetReviseDraftAsync(
@@ -2254,7 +2261,119 @@ public sealed class SaSoService : ISaSoService
         SaSoQty.SetOrderQty(detail, line.OrderQty);
     }
 
-    private static SaSoDocument MapDocument(SaSo salesOrder, IReadOnlyList<SaSo>? revisions = null) =>
+    private static async Task<IReadOnlyList<SaSoDeliveryRequestTrace>> LoadDeliveryRequestTraceAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string soNo,
+        short custRel,
+        CancellationToken cancellationToken)
+    {
+        var sourceRows = await (
+            from source in db.SaDeliveryRequestSources.AsNoTracking()
+            join request in db.SaDeliveryRequests.AsNoTracking()
+                on source.DeliveryRequestId equals request.Uid
+            join detail in db.SaSoDetails.AsNoTracking()
+                on new
+                {
+                    source.CompanyCode,
+                    source.BranchCode,
+                    source.SoNo,
+                    source.CustRel,
+                    SOLine = source.SoLine
+                }
+                equals new
+                {
+                    detail.CompanyCode,
+                    detail.BranchCode,
+                    detail.SoNo,
+                    detail.CustRel,
+                    SOLine = detail.Line
+                }
+            where source.CompanyCode == companyCode
+                && source.BranchCode == branchCode
+                && source.SoNo == soNo
+                && source.CustRel == custRel
+                && request.CompanyCode == companyCode
+                && request.BranchCode == branchCode
+            orderby source.SoLine, request.DeliveryRequestNo
+            select new
+            {
+                source.DeliveryRequestId,
+                request.DeliveryRequestNo,
+                source.CustRel,
+                source.SoLine,
+                source.ProductCode,
+                ProductionDemandQty = detail.StdQty,
+                source.SourceQty,
+                source.AllocatedProductionQty,
+                source.IsActive,
+                RequiredDate = request.RequiredDate,
+                RequestStatus = request.Status
+            }).ToListAsync(cancellationToken);
+
+        if (sourceRows.Count == 0)
+        {
+            return [];
+        }
+
+        var requestIds = sourceRows.Select(x => x.DeliveryRequestId).Distinct().ToList();
+        var allocationRows = await (
+            from allocation in db.PrWorkOrderDemandAllocations.AsNoTracking()
+            join workOrder in db.ProductionWorkOrders.AsNoTracking()
+                on allocation.WorkOrderId equals workOrder.Uid
+            where requestIds.Contains(allocation.DeliveryRequestId)
+                && allocation.CompanyCode == companyCode
+                && allocation.BranchCode == branchCode
+                && workOrder.CompanyCode == companyCode
+                && workOrder.BranchCode == branchCode
+            select new
+            {
+                allocation.DeliveryRequestId,
+                allocation.AllocatedQty,
+                allocation.IsActive,
+                workOrder.Status,
+                workOrder.GoodQty
+            }).ToListAsync(cancellationToken);
+
+        var facts = allocationRows
+            .GroupBy(x => x.DeliveryRequestId)
+            .ToDictionary(
+                g => g.Key,
+                g => new
+                {
+                    AllocatedQty = g.Where(x => x.IsActive).Sum(x => x.AllocatedQty),
+                    ProducedQty = g.Where(x => x.Status != ProductionWorkOrderStatuses.Cancelled).Sum(x => x.GoodQty)
+                });
+
+        return sourceRows.Select(x =>
+        {
+            facts.TryGetValue(x.DeliveryRequestId, out var fact);
+            var allocated = fact?.AllocatedQty ?? 0m;
+            return new SaSoDeliveryRequestTrace
+            {
+                DeliveryRequestId = x.DeliveryRequestId,
+                DeliveryRequestNo = x.DeliveryRequestNo,
+                CustRel = x.CustRel,
+                SoLine = x.SoLine,
+                ProductCode = x.ProductCode,
+                ProductionDemandQty = x.ProductionDemandQty,
+                SourceQty = x.SourceQty,
+                AllocatedProductionQty = x.AllocatedProductionQty,
+                WorkOrderAllocatedQty = allocated,
+                ProducedQty = fact?.ProducedQty ?? 0m,
+                UnplannedQty = Math.Max(x.ProductionDemandQty - allocated, 0m),
+                Status = x.RequestStatus,
+                IsActive = x.IsActive,
+                RequiredDate = x.RequiredDate
+            };
+        }).ToList();
+    }
+
+    private static SaSoDocument MapDocument(
+        SaSo salesOrder,
+        IReadOnlyList<SaSo>? revisions = null,
+        IReadOnlyList<SaSoDeliveryRequestTrace>? deliveryRequests = null) =>
         new()
         {
             SoNo = salesOrder.SoNo,
@@ -2327,7 +2446,8 @@ public sealed class SaSoService : ISaSoService
                     CreatedBy = x.CreatedBy,
                     CreatedDate = x.CreatedDate
                 })
-                .ToList()
+                .ToList(),
+            DeliveryRequests = deliveryRequests ?? []
         };
 
     private static SaSoDocument MapRevisionDraft(SaSoDocument current, short nextCustRel) =>
@@ -2429,7 +2549,8 @@ public sealed class SaSoService : ISaSoService
                     Etd = x.Etd
                 })
                 .ToList(),
-            Revisions = current.Revisions
+            Revisions = current.Revisions,
+            DeliveryRequests = current.DeliveryRequests
         };
 
     private static SaSoLineDto MapLine(
@@ -2670,6 +2791,26 @@ public sealed class SaSoService : ISaSoService
             }
         }
 
+        var deliveryRequestUsage = await (
+            from source in db.SaDeliveryRequestSources.AsNoTracking()
+            join request in db.SaDeliveryRequests.AsNoTracking()
+                on source.DeliveryRequestId equals request.Uid
+            where source.CompanyCode == companyCode
+                && source.BranchCode == branchCode
+                && soNos.Contains(source.SoNo)
+                && custRels.Contains(source.CustRel)
+            select new
+            {
+                source.SoNo,
+                source.CustRel,
+                IsReleased = source.ReleasedDate != null
+                    || request.Status != SaDeliveryRequestStatuses.Draft
+                    || db.PrWorkOrderDemandAllocations.Any(x => x.DeliveryRequestId == request.Uid)
+            }).ToListAsync(cancellationToken);
+        var deliveryRequestKeys = deliveryRequestUsage
+            .Select(x => new { Key = new SaDocSoRevisionKey(x.SoNo, x.CustRel), x.IsReleased })
+            .ToList();
+
         foreach (var key in keys)
         {
             result[key] = new SaSoRevisionUsage
@@ -2682,6 +2823,11 @@ public sealed class SaSoService : ISaSoService
                     || allocated.Any(a =>
                         a.CustRel == key.CustRel
                         && string.Equals(a.SoNo, key.SoNo, StringComparison.OrdinalIgnoreCase)),
+                HasDeliveryRequest = deliveryRequestKeys.Any(x => x.Key.CustRel == key.CustRel
+                    && string.Equals(x.Key.SoNo, key.SoNo, StringComparison.OrdinalIgnoreCase)),
+                HasReleasedDeliveryRequest = deliveryRequestKeys.Any(x => x.Key.CustRel == key.CustRel
+                    && string.Equals(x.Key.SoNo, key.SoNo, StringComparison.OrdinalIgnoreCase)
+                    && x.IsReleased),
                 HasDraftDeliveryOrder = draftDos.Contains(key),
                 HasDraftInvoice = draftInvoices.Contains(key),
                 HasDeliveryOrderReference = doRefs.Contains(key),

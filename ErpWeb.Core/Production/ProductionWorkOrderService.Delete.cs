@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
@@ -44,6 +45,42 @@ public sealed partial class ProductionWorkOrderService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            // A DR-sourced Work Order follows the shared lock order: DR header -> allocation -> WO.
+            // Manual Work Orders have no demand bridge and retain the existing lifecycle path.
+            var orderIdentity = await db.ProductionWorkOrders.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderNo == number)
+                .Select(x => new { x.Uid })
+                .SingleOrDefaultAsync(cancellationToken);
+            if (orderIdentity is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<string>.Fail(IvMasterErrorCode.NotFound, "Work Order not found.");
+            }
+
+            SaDeliveryRequest? deliveryRequest = null;
+            PrWorkOrderDemandAllocation? demandAllocation = null;
+            var allocationIdentity = await db.PrWorkOrderDemandAllocations.AsNoTracking()
+                .Where(x => x.WorkOrderId == orderIdentity.Uid
+                    && x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode)
+                .Select(x => new { x.DeliveryRequestId })
+                .SingleOrDefaultAsync(cancellationToken);
+            if (allocationIdentity is not null)
+            {
+                deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
+                    db, scope, allocationIdentity.DeliveryRequestId, cancellationToken);
+                if (deliveryRequest is null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return IvMasterOperationResult<string>.Fail(IvMasterErrorCode.InUse, "The Work Order demand source could not be loaded.");
+                }
+
+                demandAllocation = (await LockDeliveryRequestAllocationsForWorkOrderAsync(
+                    db, scope, deliveryRequest.Uid, cancellationToken))
+                    .SingleOrDefault(x => x.WorkOrderId == orderIdentity.Uid);
+            }
             var order = await LockWorkOrderForLifecycleAsync(
                 db,
                 scope.CompanyCode,
@@ -124,6 +161,33 @@ public sealed partial class ProductionWorkOrderService
             }
 
             db.Entry(aggregate).Property(x => x.RowVersion).OriginalValue = request.RowVersion;
+            if (allocationIdentity is not null && demandAllocation is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<string>.Fail(
+                    IvMasterErrorCode.InUse,
+                    "The Work Order demand allocation could not be locked.");
+            }
+
+            if (demandAllocation is not null && deliveryRequest is not null)
+            {
+                db.SaDeliveryRequestAuditEvents.Add(new SaDeliveryRequestAuditEvent
+                {
+                    DeliveryRequestId = deliveryRequest.Uid,
+                    EventType = SaDeliveryRequestAuditEventTypes.AllocationDeleted,
+                    WorkOrderId = aggregate.Uid,
+                    DetailsJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        aggregate.WorkOrderNo,
+                        demandAllocation.AllocatedQty
+                    }),
+                    Reason = "Safe never-released Draft Work Order deleted.",
+                    OccurredDate = DateTime.UtcNow,
+                    ActorUserId = scope.UserId
+                });
+                db.PrWorkOrderDemandAllocations.Remove(demandAllocation);
+            }
+
             RemoveSnapshotGraph(db, aggregate);
             db.ProductionWorkOrders.Remove(aggregate);
 

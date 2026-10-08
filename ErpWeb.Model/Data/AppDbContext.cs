@@ -139,6 +139,9 @@ public class AppDbContext : DbContext
     public DbSet<SaDoDetail> SaDoDetails => Set<SaDoDetail>();
     public DbSet<SaSo> SaSos => Set<SaSo>();
     public DbSet<SaSoDetail> SaSoDetails => Set<SaSoDetail>();
+    public DbSet<SaDeliveryRequest> SaDeliveryRequests => Set<SaDeliveryRequest>();
+    public DbSet<SaDeliveryRequestSource> SaDeliveryRequestSources => Set<SaDeliveryRequestSource>();
+    public DbSet<SaDeliveryRequestAuditEvent> SaDeliveryRequestAuditEvents => Set<SaDeliveryRequestAuditEvent>();
     public DbSet<SaQt> SaQts => Set<SaQt>();
     public DbSet<SaQtDetail> SaQtDetails => Set<SaQtDetail>();
     public DbSet<SaEInvoiceLog> SaEInvoiceLogs => Set<SaEInvoiceLog>();
@@ -227,6 +230,7 @@ public class AppDbContext : DbContext
     public DbSet<PrSchWcenter> PrSchWcenters => Set<PrSchWcenter>();
 
     public DbSet<ProductionWorkOrder> ProductionWorkOrders => Set<ProductionWorkOrder>();
+    public DbSet<PrWorkOrderDemandAllocation> PrWorkOrderDemandAllocations => Set<PrWorkOrderDemandAllocation>();
     public DbSet<ProductionWorkOrderRouteStep> ProductionWorkOrderRouteSteps => Set<ProductionWorkOrderRouteStep>();
     public DbSet<ProductionWorkOrderMaterial> ProductionWorkOrderMaterials => Set<ProductionWorkOrderMaterial>();
     public DbSet<ProductionWorkOrderOperation> ProductionWorkOrderOperations => Set<ProductionWorkOrderOperation>();

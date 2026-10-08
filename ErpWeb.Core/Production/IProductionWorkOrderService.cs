@@ -172,6 +172,9 @@ public sealed class ProductionAuditEventVm
 
 public sealed class ProductionWorkOrderPreview
 {
+    public long? DeliveryRequestId { get; init; }
+    public string? DeliveryRequestNo { get; init; }
+    public decimal? DeliveryRequestUnplannedQty { get; init; }
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
     public string? OutputUom { get; init; }
@@ -196,6 +199,10 @@ public sealed class ProductionWorkOrderPreview
 
 public sealed class ProductionWorkOrderDetail
 {
+    public long? DeliveryRequestId { get; init; }
+    public string? DeliveryRequestNo { get; init; }
+    public decimal? DemandAllocatedQty { get; init; }
+    public IReadOnlyList<ProductionWorkOrderDemandSourceVm> DemandSources { get; init; } = [];
     public long Uid { get; init; }
     public string WorkOrderNo { get; init; } = string.Empty;
     public string CompanyCode { get; init; } = string.Empty;
@@ -246,6 +253,23 @@ public sealed class ProductionWorkOrderDetail
     public IReadOnlyList<ProductionWorkOrderMaterialVm> Materials { get; init; } = [];
     public IReadOnlyList<ProductionWorkOrderOperationVm> Operations { get; init; } = [];
     public IReadOnlyList<ProductionAuditEventVm> AuditEvents { get; init; } = [];
+}
+
+public sealed class ProductionWorkOrderDemandSourceVm
+{
+    public long Uid { get; init; }
+    public string SoNo { get; init; } = string.Empty;
+    public short CustRel { get; init; }
+    public short SoLine { get; init; }
+    public string ProductCode { get; init; } = string.Empty;
+    public string SourceUom { get; init; } = string.Empty;
+    public string ProductionUom { get; init; } = string.Empty;
+    public decimal SourceQty { get; init; }
+    public decimal ProductionDemandQty { get; init; }
+    public decimal AllocatedProductionQty { get; init; }
+    public bool IsActive { get; init; }
+    public string? CustomerCode { get; init; }
+    public DateTime? RequestedDeliveryDate { get; init; }
 }
 
 public sealed class ProductionPredicateReason
@@ -441,6 +465,18 @@ public sealed class ProductionWorkOrderReleaseRequest
     public string SnapshotHash { get; set; } = string.Empty;
 }
 
+public sealed class ProductionWorkOrderDeliveryRequestRequest
+{
+    public long DeliveryRequestId { get; set; }
+    public decimal PlannedQty { get; set; }
+    public string? DefinitionCode { get; set; }
+    public DateTime PlannedStartDate { get; set; } = DateTime.UtcNow.Date;
+    public DateTime PlannedCompletionDate { get; set; } = DateTime.UtcNow.Date;
+    public string SchedulingDirection { get; set; } = ProductionSchedulingDirections.Forward;
+    public string? Remark { get; set; }
+    public byte[]? DeliveryRequestRowVersion { get; set; }
+}
+
 /// <summary>
 /// Applies permitted header edits to a saved current-format Draft and releases it
 /// in one transaction. Product, definition, and source type stay immutable.
@@ -547,6 +583,18 @@ public interface IProductionWorkOrderService
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftAsync(
         ProductionWorkOrderDraftRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderPreview>> PreviewFromDeliveryRequestAsync(
+        ProductionWorkOrderDeliveryRequestRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftFromDeliveryRequestAsync(
+        ProductionWorkOrderDeliveryRequestRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateAndReleaseFromDeliveryRequestAsync(
+        ProductionWorkOrderDeliveryRequestRequest request,
         CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> UpdateDraftHeaderAsync(

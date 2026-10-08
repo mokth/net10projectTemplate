@@ -275,7 +275,7 @@
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Source reference</label>
                         <DxTextBox @bind-Text="@Request.SourceReference"
-                                   ReadOnly="@(!CanEditInputs)"
+                                   ReadOnly="@(!CanEditInputs || IsDeliveryRequestSource)"
                                    NullText="Optional manual demand reference" />
                         @FieldError("SourceReference")
                     </div>
@@ -323,6 +323,42 @@
                                     @Detail("Remark", string.IsNullOrWhiteSpace(Request.Remark) ? "—" : Request.Remark)
                                 </div>
                             </section>
+                            @if (DetailModel?.DeliveryRequestId is long deliveryRequestId)
+                            {
+                                <section class="pwo-overview-section pwo-demand-trace">
+                                    <h3>Delivery Request demand source</h3>
+                                    <div class="pwo-overview-grid">
+                                        <div class="pwo-detail"><span>Delivery Request</span><button type="button" class="btn btn-link btn-sm p-0" @onclick="OpenDeliveryRequest">@(DetailModel.DeliveryRequestNo ?? deliveryRequestId.ToString())</button></div>
+                                        @Detail("Allocated quantity", DetailModel.DemandAllocatedQty?.ToString("n4"))
+                                        @Detail("Source type", ProductionSourceTypes.DeliveryRequest)
+                                        @Detail("Traceability", "Read-only relational allocation")
+                                    </div>
+                                    @if (DetailModel.DemandSources.Count > 0)
+                                    {
+                                        <div class="table-responsive mt-3">
+                                            <table class="table table-sm align-middle mb-0">
+                                                <thead>
+                                                    <tr><th>Sales Order</th><th>Line</th><th>Product</th><th>Production demand</th><th>Allocated</th><th>UOM</th><th>Customer</th></tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var source in DetailModel.DemandSources)
+                                                    {
+                                                        <tr class="@(source.IsActive ? string.Empty : "text-muted")">
+                                                            <td><button type="button" class="btn btn-link btn-sm p-0" @onclick="() => OpenDemandSource(source)">@source.SoNo</button></td>
+                                                            <td>Rev @source.CustRel / Line @source.SoLine</td>
+                                                            <td class="code-style">@source.ProductCode</td>
+                                                            <td>@source.ProductionDemandQty.ToString("n4")</td>
+                                                            <td>@source.AllocatedProductionQty.ToString("n4")</td>
+                                                            <td>@source.ProductionUom</td>
+                                                            <td>@(source.CustomerCode ?? "—")</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </section>
+                            }
                             <section class="pwo-overview-section">
                                 <h3>Product Definition / Snapshot</h3>
                                 <div class="pwo-overview-grid">

@@ -1,0 +1,254 @@
+@page "/sales/delivery-requests/{Mode:regex(^(new)$)}"
+@page "/sales/delivery-requests/{Mode:regex(^(edit|view)$)}/{Uid:long}"
+@inherits PageBase
+@using ErpWeb.Model.Entities.Sales
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDeliveryRequest">
+    <div class="iv-page dr-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-packing"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Production demand</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeDisplay</span>
+                    @if (Detail is not null)
+                    {
+                        <span class="iv-chip code-style">@Detail.DeliveryRequestNo</span>
+                        <span class="iv-chip">@Detail.Status</span>
+                    }
+                </div>
+            </div>
+            @if (Detail is not null)
+            {
+                <div class="iv-hero__kpi"><span>Unplanned</span><strong>@Detail.UnplannedQty.ToString("n4") @Detail.ProductionUom</strong></div>
+            }
+        </header>
+
+        <section class="iv-card dr-commandbar">
+            <button type="button" class="btn btn-outline-secondary" @onclick="BackToList">Back</button>
+            @if (CanEdit)
+            {
+                <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@IsSubmitting">Save draft</button>
+            }
+            @if (CanRelease)
+            {
+                <button type="button" class="btn btn-success" @onclick="ReleaseAsync" disabled="@IsSubmitting">Release</button>
+            }
+            @if (CanCancel)
+            {
+                <button type="button" class="btn btn-outline-danger" @onclick="CancelAsync" disabled="@IsSubmitting">Cancel</button>
+            }
+            @if (CanDelete)
+            {
+                <button type="button" class="btn btn-danger" @onclick="DeleteAsync" disabled="@IsSubmitting">Delete draft</button>
+            }
+        </section>
+
+        @if (IsLoading)
+        {
+            <section class="iv-card"><div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section>
+        }
+        else
+        {
+            <section class="dr-kpis" aria-label="Delivery Request progress">
+                @Kpi("Requested", Detail?.RequestedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
+                @Kpi("WO allocated", Detail?.WoAllocatedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
+                @Kpi("Unplanned", Detail?.UnplannedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
+                @Kpi("Produced", Detail?.ProducedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
+            </section>
+
+            <section class="iv-card">
+                <h2 class="iv-card__title">Delivery Request</h2>
+                <div class="dr-form-grid">
+                    <div class="iv-field">
+                        <label class="iv-field__label">Request number</label>
+                        <input class="form-control code-style" value="@(Detail?.DeliveryRequestNo ?? "AUTO")" readonly />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Product</label>
+                        <input class="form-control code-style" value="@ProductCode" readonly />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Production UOM</label>
+                        <input class="form-control code-style" value="@ProductionUom" readonly />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Required date</label>
+                        <InputDate @bind-Value="RequiredDate" class="form-control" disabled="@(!CanEdit)" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Product definition</label>
+                        <InputText @bind-Value="DefinitionCode" class="form-control code-style" disabled="@(!CanEdit)" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Warehouse</label>
+                        <InputText @bind-Value="WarehouseCode" class="form-control code-style" disabled="@(!CanEdit)" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Project</label>
+                        <InputText @bind-Value="ProjectCode" class="form-control" disabled="@(!CanEdit)" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Priority</label>
+                        <InputText @bind-Value="Priority" class="form-control" disabled="@(!CanEdit)" />
+                    </div>
+                    <div class="iv-field dr-form-grid__wide">
+                        <label class="iv-field__label">Remark</label>
+                        <textarea class="form-control" rows="3" @bind="Remark" disabled="@(!CanEdit)"></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <div class="dr-section-heading">
+                    <div>
+                        <h2 class="iv-card__title mb-1">Sales Order demand sources</h2>
+                        <p class="text-muted mb-0">Every row is an exact SO number, revision and line. Quantity is sourced from StdQty / StdUom.</p>
+                    </div>
+                    @if (CanEdit)
+                    {
+                        <button type="button" class="btn btn-outline-primary" @onclick="OpenSourcePickerAsync">Add SO line</button>
+                    }
+                </div>
+
+                @if (SourceRows.Count == 0)
+                {
+                    <p class="text-muted mb-0">Add at least one eligible current Sales Order line.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table align-middle dr-table">
+                            <thead><tr><th>Sales Order</th><th>Product</th><th>Demand</th><th>UOM</th><th class="text-end">Allocated</th><th>Required</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var source in SourceRows)
+                                {
+                                    <tr>
+                                        <td>
+                                            <button type="button" class="dr-link" @onclick="() => OpenSalesOrder(source)">@source.SoNo / Rev @source.CustRel / Line @source.SoLine</button>
+                                        </td>
+                                        <td><span class="code-style">@source.ProductCode</span><small>@source.ProductDescription</small></td>
+                                        <td>@source.SourceQty.ToString("n4")</td>
+                                        <td class="code-style">@source.ProductionUom</td>
+                                        <td class="text-end">
+                                            @if (CanEdit)
+                                            {
+                                                <InputNumber @bind-Value="source.Quantity" class="form-control form-control-sm dr-qty" />
+                                            }
+                                            else
+                                            {
+                                                @source.Quantity.ToString("n4")
+                                            }
+                                        </td>
+                                        <td>@(source.RequestedDeliveryDate?.ToString("dd MMM yyyy") ?? "—")</td>
+                                        <td>
+                                            @if (CanEdit)
+                                            {
+                                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveSource(source)">Remove</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+
+            @if (Detail is not null && (Detail.Status is SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction) && Detail.UnplannedQty > 0.0001m)
+            {
+                <section class="iv-card dr-wo-create">
+                    <div class="dr-section-heading">
+                        <div>
+                            <h2 class="iv-card__title mb-1">Production Work Order</h2>
+                            <p class="text-muted mb-0">Create a Work Order from the remaining Delivery Request quantity. The server builds the normal snapshot and schedule atomically.</p>
+                        </div>
+                        @if (CanCreateWorkOrder)
+                        {
+                            <button type="button" class="btn btn-primary" @onclick="CreateWorkOrderAsync" disabled="@IsSubmitting">Create draft Work Order</button>
+                        }
+                    </div>
+                    @if (CanCreateWorkOrder)
+                    {
+                        <div class="dr-form-grid dr-form-grid--compact">
+                            <div class="iv-field"><label class="iv-field__label">Planned quantity</label><InputNumber @bind-Value="WorkOrderQty" class="form-control" /></div>
+                            <div class="iv-field"><label class="iv-field__label">Start</label><InputDate @bind-Value="WorkOrderStart" class="form-control" /></div>
+                            <div class="iv-field"><label class="iv-field__label">Completion</label><InputDate @bind-Value="WorkOrderCompletion" class="form-control" /></div>
+                        </div>
+                    }
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm align-middle dr-table"><thead><tr><th>Work Order</th><th>Allocated</th><th>Planned</th><th>Good</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var workOrder in Detail.WorkOrders)
+                                {
+                                    <tr>
+                                        <td><button type="button" class="dr-link" @onclick="() => OpenWorkOrder(workOrder.WorkOrderNo)">@workOrder.WorkOrderNo</button></td>
+                                        <td>@workOrder.AllocatedQty.ToString("n4")</td>
+                                        <td>@workOrder.PlannedQty.ToString("n4")</td>
+                                        <td>@workOrder.GoodQty.ToString("n4")</td>
+                                        <td>@workOrder.Status @(workOrder.IsActive ? "" : "(inactive)")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            }
+
+            @if (Detail is not null)
+            {
+                <section class="iv-card">
+                    <h2 class="iv-card__title">Audit trail</h2>
+                    @if (Detail.AuditEvents.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No audit events.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive"><table class="table table-sm dr-table"><thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Reason</th></tr></thead><tbody>
+                            @foreach (var audit in Detail.AuditEvents)
+                            {
+                                <tr><td>@audit.OccurredDate.ToString("dd MMM yyyy HH:mm")</td><td>@audit.EventType</td><td>@audit.ActorUserId</td><td>@audit.Reason</td></tr>
+                            }
+                        </tbody></table></div>
+                    }
+                </section>
+            }
+        }
+
+        @if (SourcePickerVisible)
+        {
+            <div class="dr-picker-backdrop" role="presentation">
+                <section class="dr-picker" role="dialog" aria-modal="true" aria-label="Select Sales Order demand">
+                    <div class="dr-section-heading"><div><h2 class="iv-card__title mb-1">Select current SO demand</h2><p class="text-muted mb-0">Search by SO number, then add an exact revision/line.</p></div><button type="button" class="btn-close" aria-label="Close" @onclick="CloseSourcePicker"></button></div>
+                    <div class="dr-toolbar"><input class="form-control" placeholder="Sales Order number" @bind="SourceSearchSoNo" /><button type="button" class="btn btn-primary" @onclick="LoadEligibleAsync">Search</button></div>
+                    @if (EligibleSources.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No eligible current SO demand loaded.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive dr-picker__table"><table class="table table-sm align-middle dr-table"><thead><tr><th>SO / revision / line</th><th>Product</th><th>Std demand</th><th>Available</th><th></th></tr></thead><tbody>
+                            @foreach (var source in EligibleSources)
+                            {
+                                <tr><td>@source.SoNo / Rev @source.CustRel / Line @source.SoLine</td><td><span class="code-style">@source.ProductCode</span><small>@source.ProductDescription</small></td><td>@source.ProductionDemandQty.ToString("n4") @source.ProductionUom</td><td>@source.AvailableForDr.ToString("n4")</td><td><button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => AddEligibleSource(source)">Add</button></td></tr>
+                            }
+                        </tbody></table></div>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+</MenuAuthorize>

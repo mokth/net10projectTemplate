@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
@@ -160,6 +161,8 @@ public sealed partial class ProductionWorkOrderService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, auth.Scope!, Normalize(request.WorkOrderNo), cancellationToken);
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
             RequireCurrentSnapshot(entity);
             var mutation = await ApplyDraftHeaderChangesAsync(
@@ -223,6 +226,8 @@ public sealed partial class ProductionWorkOrderService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, scope, Normalize(request.WorkOrderNo), cancellationToken);
             var entity = await RequireDraftAsync(db, scope, request.WorkOrderNo, request.RowVersion, cancellationToken);
             RequireCurrentSnapshot(entity);
             if (entity.SnapshotRevision != request.SnapshotRevision
@@ -247,6 +252,9 @@ public sealed partial class ProductionWorkOrderService
                 cancellationToken);
 
             await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
+            await MarkDeliveryRequestWorkOrderReleasedAsync(
+                db, entity, scope, deliveryRequestId: null,
+                "Work Order released from Delivery Request.", cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
@@ -662,6 +670,8 @@ public sealed partial class ProductionWorkOrderService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, scope, Normalize(request.WorkOrderNo), cancellationToken);
             var entity = await LoadAggregateAsync(db, scope, Normalize(request.WorkOrderNo), tracking: true, cancellationToken);
             if (entity is null)
             {
@@ -670,6 +680,9 @@ public sealed partial class ProductionWorkOrderService
 
             ValidateReleaseRequestFingerprint(db, entity, request);
             await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
+            await MarkDeliveryRequestWorkOrderReleasedAsync(
+                db, entity, scope, deliveryRequestId: null,
+                "Work Order released from Delivery Request.", cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
@@ -1200,6 +1213,11 @@ public sealed partial class ProductionWorkOrderService
         entity.ScheduleAnchorDateTime = anchor;
         entity.SourceReference = TrimTo(sourceReference, SourceReferenceMax);
         entity.Remark = TrimTo(remark, RemarkMax);
+
+        if (qtyChanged && entity.SourceType == ProductionSourceTypes.DeliveryRequest)
+        {
+            await AdjustDeliveryRequestAllocationAsync(db, entity, scope, plannedQty, cancellationToken);
+        }
 
         if (qtyChanged)
         {

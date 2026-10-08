@@ -408,6 +408,9 @@ public partial class PrWorkOrderEntry : PageBase
     protected string SourceLabel => string.IsNullOrWhiteSpace(Request.SourceReference)
         ? Request.SourceType
         : $"{Request.SourceType} · {Request.SourceReference}";
+    protected bool IsDeliveryRequestSource =>
+        DetailModel?.DeliveryRequestId is not null
+        || string.Equals(Request.SourceType, ProductionSourceTypes.DeliveryRequest, StringComparison.OrdinalIgnoreCase);
     protected string ShortSnapshotHash
     {
         get
@@ -1261,6 +1264,17 @@ public partial class PrWorkOrderEntry : PageBase
 
         Navigation.NavigateTo($"/planning/material-issues/new/{Uri.EscapeDataString(DetailModel.WorkOrderNo)}");
     }
+
+    protected void OpenDeliveryRequest()
+    {
+        if (DetailModel?.DeliveryRequestId is long deliveryRequestId)
+        {
+            Navigation.NavigateTo($"/sales/delivery-requests/view/{deliveryRequestId}");
+        }
+    }
+
+    protected void OpenDemandSource(ProductionWorkOrderDemandSourceVm source) =>
+        Navigation.NavigateTo($"/sales/sales-orders/view/{Uri.EscapeDataString(source.SoNo)}/{source.CustRel}");
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;

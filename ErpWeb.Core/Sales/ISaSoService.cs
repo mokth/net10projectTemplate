@@ -294,6 +294,26 @@ public sealed class SaSoDocument
     public byte[] RowVersion { get; init; } = [];
     public IReadOnlyList<SaSoLineDto> Lines { get; init; } = [];
     public IReadOnlyList<SaSoRevisionHistoryRow> Revisions { get; init; } = [];
+    public IReadOnlyList<SaSoDeliveryRequestTrace> DeliveryRequests { get; init; } = [];
+}
+
+/// <summary>Read-only exact SO revision/line trace into Delivery Request and Work Order demand.</summary>
+public sealed class SaSoDeliveryRequestTrace
+{
+    public long DeliveryRequestId { get; init; }
+    public string DeliveryRequestNo { get; init; } = string.Empty;
+    public short CustRel { get; init; }
+    public short SoLine { get; init; }
+    public string ProductCode { get; init; } = string.Empty;
+    public decimal ProductionDemandQty { get; init; }
+    public decimal SourceQty { get; init; }
+    public decimal AllocatedProductionQty { get; init; }
+    public decimal WorkOrderAllocatedQty { get; init; }
+    public decimal ProducedQty { get; init; }
+    public decimal UnplannedQty { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public bool IsActive { get; init; }
+    public DateTime? RequiredDate { get; init; }
 }
 
 public sealed class SaSoRevisionHistoryRow

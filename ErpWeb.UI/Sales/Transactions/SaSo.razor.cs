@@ -115,6 +115,7 @@ public partial class SaSo : PageBase, IDisposable
 
     protected List<SaSoLineVm> Lines { get; set; } = [];
     protected List<SaSoRevisionHistoryRow> Revisions { get; set; } = [];
+    protected IReadOnlyList<SaSoDeliveryRequestTrace> DeliveryRequests { get; set; } = [];
     protected List<IvWarehouseLookupRow> Warehouses { get; set; } = [];
     protected List<SaSoTaxGroupLookupRow> TaxGroups { get; set; } = [];
     protected List<IvCodeLookupRow> SalesReps { get; set; } = [];
@@ -315,6 +316,7 @@ public partial class SaSo : PageBase, IDisposable
         ClearShipToState();
         Lines = [];
         Revisions = [];
+        DeliveryRequests = [];
         GrossAmnt = 0m;
         Taxes = 0m;
         TotAmnt = 0m;
@@ -417,6 +419,7 @@ public partial class SaSo : PageBase, IDisposable
         TotAmnt = doc.TotAmnt;
         _rowVersion = doc.RowVersion ?? [];
         Revisions = doc.Revisions.ToList();
+        DeliveryRequests = doc.DeliveryRequests ?? [];
         Lines = doc.Lines.Select(SaSoLineVm.FromDto).ToList();
         // Pack/UOM/stock-control come from the persisted line — do not reload the full item master.
     }
@@ -1084,6 +1087,9 @@ public partial class SaSo : PageBase, IDisposable
     }
 
     protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/sales/sales-orders");
+
+    protected void NavigateDeliveryRequest(long uid) =>
+        Navigation.NavigateTo($"/sales/delivery-requests/view/{uid}");
 
     protected void OnEditFromView() => Navigation.NavigateTo($"/sales/sales-orders/edit/{SoNo}");
 

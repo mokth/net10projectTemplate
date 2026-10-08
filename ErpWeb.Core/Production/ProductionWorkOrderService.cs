@@ -362,6 +362,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, scope, number, cancellationToken);
             var entity = await LoadAggregateAsync(db, scope, number, tracking: true, cancellationToken);
             if (entity is null)
             {
@@ -386,6 +388,9 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
 
             db.Entry(entity).Property(x => x.RowVersion).OriginalValue = rowVersion;
             await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
+            await MarkDeliveryRequestWorkOrderReleasedAsync(
+                db, entity, scope, deliveryRequestId: null,
+                "Work Order released from Delivery Request.", cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
@@ -447,6 +452,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockDemandBridgeBeforeWorkOrderAsync(
+                db, scope, number, cancellationToken);
             var entity = await LoadAggregateAsync(db, scope, number, tracking: true, cancellationToken);
             if (entity is null)
             {
@@ -481,10 +488,18 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 ActorUserId = scope.UserId
             });
 
+            await DeactivateDeliveryRequestAllocationAsync(
+                db, entity, scope, cleanReason, cancellationToken);
+
             TouchSqliteRowVersions(db, entity);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        }
+        catch (WorkOrderCommandException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(ex.Code, ex.Message);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -903,8 +918,39 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
     }
 
-    private static ProductionWorkOrderDetail MapDetail(ProductionWorkOrder entity) => new()
+    private static ProductionWorkOrderDetail MapDetail(ProductionWorkOrder entity)
     {
+        var demandAllocation = entity.DemandAllocations
+            .OrderByDescending(x => x.IsActive)
+            .FirstOrDefault();
+        var deliveryRequest = demandAllocation?.DeliveryRequest;
+
+        return new ProductionWorkOrderDetail
+        {
+        DeliveryRequestId = demandAllocation?.DeliveryRequestId,
+        DeliveryRequestNo = deliveryRequest?.DeliveryRequestNo,
+        DemandAllocatedQty = demandAllocation?.AllocatedQty,
+        DemandSources = deliveryRequest?.Sources
+            .OrderBy(x => x.SoNo)
+            .ThenBy(x => x.CustRel)
+            .ThenBy(x => x.SoLine)
+            .Select(x => new ProductionWorkOrderDemandSourceVm
+            {
+                Uid = x.Uid,
+                SoNo = x.SoNo,
+                CustRel = x.CustRel,
+                SoLine = x.SoLine,
+                ProductCode = x.ProductCode,
+                SourceUom = x.SourceUom,
+                ProductionUom = x.ProductionUom,
+                SourceQty = x.SourceQty,
+                ProductionDemandQty = x.SalesOrderDetail?.StdQty ?? x.SourceQty,
+                AllocatedProductionQty = x.AllocatedProductionQty,
+                IsActive = x.IsActive,
+                CustomerCode = x.CustomerCode,
+                RequestedDeliveryDate = x.RequestedDeliveryDate
+            })
+            .ToList() ?? [],
         Uid = entity.Uid,
         WorkOrderNo = entity.WorkOrderNo,
         CompanyCode = entity.CompanyCode,
@@ -980,7 +1026,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 OccurredDate = x.OccurredDate,
                 ActorUserId = x.ActorUserId
             }).ToList()
-    };
+        };
+    }
 
     private static ProductionWorkOrderMaterialVm MapMaterial(ProductionWorkOrderMaterial row) => new()
     {
@@ -1480,6 +1527,10 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Labours)
             .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Materials)
             .Include(x => x.AuditEvents)
+            .Include(x => x.DemandAllocations)
+                .ThenInclude(x => x.DeliveryRequest)
+                .ThenInclude(x => x.Sources)
+                .ThenInclude(x => x.SalesOrderDetail)
             .AsSplitQuery()
             .Where(x => x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
@@ -1548,6 +1599,12 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
 
         entity.RowVersion = Guid.NewGuid().ToByteArray();
+        foreach (var allocation in db.ChangeTracker.Entries<PrWorkOrderDemandAllocation>()
+            .Where(x => x.State is EntityState.Added or EntityState.Modified)
+            .Select(x => x.Entity))
+        {
+            allocation.RowVersion = Guid.NewGuid().ToByteArray();
+        }
     }
 
     private static bool IsSqlite(AppDbContext db) =>

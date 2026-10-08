@@ -59,6 +59,34 @@
                 </section>
             }
 
+            @if (DeliveryRequests.Count > 0)
+            {
+                <section class="sdoc-master saso-delivery-requests">
+                    <div class="saso-revisions__head">Production demand trace</div>
+                    <p class="text-muted mb-2">This current SO revision is linked to Delivery Requests through exact revision/line source rows.</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead><tr><th>Delivery Request</th><th>Line</th><th>Product</th><th>Production demand</th><th>DR allocated</th><th>WO allocated</th><th>Produced</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var trace in DeliveryRequests)
+                                {
+                                    <tr>
+                                        <td><button type="button" class="btn btn-link btn-sm p-0" @onclick="() => NavigateDeliveryRequest(trace.DeliveryRequestId)">@trace.DeliveryRequestNo</button></td>
+                                        <td>Rev @trace.CustRel / Line @trace.SoLine</td>
+                                        <td class="code-style">@trace.ProductCode</td>
+                                        <td>@trace.ProductionDemandQty.ToString("n4")</td>
+                                        <td>@trace.AllocatedProductionQty.ToString("n4")</td>
+                                        <td>@trace.WorkOrderAllocatedQty.ToString("n4")</td>
+                                        <td>@trace.ProducedQty.ToString("n4")</td>
+                                        <td>@trace.Status @(trace.IsActive ? "" : "(inactive source)")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            }
+
             <section class="sdoc-master">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
                     <DxFormLayoutGroup ColSpanMd="4">

@@ -123,17 +123,19 @@
             Icon="fa-solid fa-file-circle-check" />
       <Menu Code="SA_SO" Name="Sales Order" Route="/sales/sales-orders" SortOrder="2"
             Icon="fa-solid fa-file-lines" />
-      <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="3"
+      <Menu Code="SA_DR" Name="Delivery Request" Route="/sales/delivery-requests" SortOrder="3"
+            Icon="fa-solid fa-boxes-packing" />
+      <Menu Code="SA_INVOICE" Name="Invoice" Route="/sales/invoices" SortOrder="4"
             Icon="fa-solid fa-file-invoice-dollar" />
-      <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="4"
+      <Menu Code="SA_DO" Name="Delivery Order" Route="/sales/delivery-orders" SortOrder="5"
             Icon="fa-solid fa-truck" />
-      <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="5"
+      <Menu Code="SA_CN" Name="Credit Note" Route="/sales/credit-notes" SortOrder="6"
             Icon="fa-solid fa-file-minus" />
-      <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="6"
+      <Menu Code="SA_DN" Name="Debit Note" Route="/sales/debit-notes" SortOrder="7"
             Icon="fa-solid fa-file-plus" />
-      <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="7"
+      <Menu Code="SA_CN_RESERVATIONS" Name="CN Reservations" Route="/sales/cn-reservations" SortOrder="8"
             Icon="fa-solid fa-file-shield" />
-      <Menu Code="SA_EINVOICE_TIN" Name="e-Invoice TIN Tools" Route="/sales/einvoice/tin" SortOrder="8"
+      <Menu Code="SA_EINVOICE_TIN" Name="e-Invoice TIN Tools" Route="/sales/einvoice/tin" SortOrder="9"
             Icon="fa-solid fa-id-card" />
     </Menu>
     <Menu Code="SA_ANALYSIS" Name="Analysis" SortOrder="3" Icon="fa-solid fa-chart-line">

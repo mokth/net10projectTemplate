@@ -120,6 +120,8 @@ public class ProductionWorkOrder
     public ICollection<ProductionWorkOrderMaterial> Materials { get; set; } = new List<ProductionWorkOrderMaterial>();
     public ICollection<ProductionWorkOrderOperation> Operations { get; set; } = new List<ProductionWorkOrderOperation>();
     public ICollection<ProductionAuditEvent> AuditEvents { get; set; } = new List<ProductionAuditEvent>();
+    public ICollection<PrWorkOrderDemandAllocation> DemandAllocations { get; set; } =
+        new List<PrWorkOrderDemandAllocation>();
     public ICollection<ProductionChangeOrder> ChangeOrders { get; set; } = new List<ProductionChangeOrder>();
     public ICollection<ProductionPostingLink> PostingLinks { get; set; } = new List<ProductionPostingLink>();
 }

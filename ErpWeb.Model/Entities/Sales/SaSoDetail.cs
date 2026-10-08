@@ -104,4 +104,8 @@ public class SaSoDetail
     public decimal QtConsumedQty { get; set; }
 
     public SaSo So { get; set; } = null!;
+
+    /// <summary>Exact revision/line references used by Delivery Request demand.</summary>
+    public ICollection<SaDeliveryRequestSource> DeliveryRequestSources { get; set; } =
+        new List<SaDeliveryRequestSource>();
 }

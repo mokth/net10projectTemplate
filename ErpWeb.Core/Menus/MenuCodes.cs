@@ -183,6 +183,7 @@ public static class MenuCodes
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
     public const string SalesOrder = "SA_SO";
+    public const string SalesDeliveryRequest = "SA_DR";
     /// <summary>Sales Quotation — the commercial offer that precedes a Sales Order.</summary>
     public const string SalesQuotation = "SA_QT";
     public const string SalesCreditNote = "SA_CN";

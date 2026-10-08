@@ -38,13 +38,15 @@ BEGIN
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
         VALUES (N'SA_QT', N'Sales Quotation', @saTransactionsId, N'/sales/quotations', 0, 0, 1, SYSUTCDATETIME(), N'SEED');
 
-    -- Keep the reconstructed order in step with menus.xml (QT first, then SO / INV / DO / CN / DN).
-    UPDATE dbo.Menu SET SortOrder = 1, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_SO';
-    UPDATE dbo.Menu SET SortOrder = 2, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_INVOICE';
-    UPDATE dbo.Menu SET SortOrder = 3, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_DO';
-    UPDATE dbo.Menu SET SortOrder = 4, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_CN';
-    UPDATE dbo.Menu SET SortOrder = 5, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_DN';
-    UPDATE dbo.Menu SET SortOrder = 6, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_CN_RESERVATIONS';
+    -- Keep the reconstructed order in step with menus.xml (QT, SO, DR, INV, DO, CN, DN).
+    UPDATE dbo.Menu SET SortOrder = 1, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_QT';
+    UPDATE dbo.Menu SET SortOrder = 2, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_SO';
+    UPDATE dbo.Menu SET SortOrder = 3, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_DR';
+    UPDATE dbo.Menu SET SortOrder = 4, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_INVOICE';
+    UPDATE dbo.Menu SET SortOrder = 5, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_DO';
+    UPDATE dbo.Menu SET SortOrder = 6, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_CN';
+    UPDATE dbo.Menu SET SortOrder = 7, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_DN';
+    UPDATE dbo.Menu SET SortOrder = 8, ModifiedDate = SYSUTCDATETIME(), ModifiedBy = N'SEED' WHERE MenuCode = N'SA_CN_RESERVATIONS';
 END
 GO
 

@@ -3,10 +3,12 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -106,6 +108,112 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 
         await using var db = await _factory.CreateDbContextAsync();
         Assert.False(await db.ProductionWorkOrders.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Delivery_request_creation_uses_snapshot_pipeline_and_persists_one_demand_allocation()
+    {
+        await SeedManualCurrentRouteAsync();
+
+        long deliveryRequestId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var so = new SaSo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = "SO-WO-DR-001",
+                CustRel = 1,
+                IsCurrent = true,
+                LastCustRel = 1,
+                SoDate = new DateTime(2026, 9, 1),
+                Status = SaSoStatuses.New,
+                FulfillmentStatus = "NONE",
+                BillingStatus = "NONE",
+                CustCode = "CUST01",
+                CurrRate = 1m,
+                RowVersion = [1]
+            };
+            so.Details.Add(new SaSoDetail
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = so.SoNo,
+                CustRel = 1,
+                Line = 1,
+                ICode = "FG001",
+                IDesc = "Finished Good",
+                StdQty = 10m,
+                StdUom = "PCS",
+                DeliveryDate = new DateTime(2026, 10, 1)
+            });
+
+            var request = new SaDeliveryRequest
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DeliveryRequestNo = "DR-WO-001",
+                ProductCode = "FG001",
+                ProductDescription = "Finished Good",
+                ProductionUom = "PCS",
+                RequestedQty = 10m,
+                RequiredDate = new DateTime(2026, 10, 1),
+                DefinitionCode = PrProductDefinitionCodes.Standard,
+                Status = SaDeliveryRequestStatuses.Released,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "admin",
+                RowVersion = [1]
+            };
+            request.Sources.Add(new SaDeliveryRequestSource
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = so.SoNo,
+                CustRel = 1,
+                SoLine = 1,
+                ProductCode = "FG001",
+                SourceUom = "PCS",
+                ProductionUom = "PCS",
+                SourceQty = 10m,
+                AllocatedProductionQty = 10m,
+                IsActive = true,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "admin"
+            });
+
+            db.SaSos.Add(so);
+            db.SaDeliveryRequests.Add(request);
+            await db.SaveChangesAsync();
+            deliveryRequestId = request.Uid;
+        }
+
+        var result = await CreateSut().CreateDraftFromDeliveryRequestAsync(
+            new ProductionWorkOrderDeliveryRequestRequest
+            {
+                DeliveryRequestId = deliveryRequestId,
+                PlannedQty = 10m,
+                PlannedStartDate = new DateTime(2026, 10, 1),
+                PlannedCompletionDate = new DateTime(2026, 10, 3),
+                SchedulingDirection = ProductionSchedulingDirections.Forward
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(ProductionSourceTypes.DeliveryRequest, result.Data!.SourceType);
+        Assert.Equal("DR-WO-001", result.Data.DeliveryRequestNo);
+        Assert.Equal(10m, result.Data.DemandAllocatedQty);
+
+        await using var check = await _factory.CreateDbContextAsync();
+        var workOrder = await check.ProductionWorkOrders.SingleAsync();
+        var allocation = await check.PrWorkOrderDemandAllocations.SingleAsync();
+        Assert.Equal(workOrder.Uid, allocation.WorkOrderId);
+        Assert.Equal(deliveryRequestId, allocation.DeliveryRequestId);
+        Assert.True(allocation.IsActive);
+        var auditTypes = await check.SaDeliveryRequestAuditEvents
+            .Where(x => x.DeliveryRequestId == deliveryRequestId)
+            .Select(x => x.EventType)
+            .ToListAsync();
+        Assert.Contains(SaDeliveryRequestAuditEventTypes.WorkOrderCreated, auditTypes);
+        Assert.Contains(SaDeliveryRequestAuditEventTypes.AllocationChanged, auditTypes);
     }
 
     [Fact]

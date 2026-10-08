@@ -1,0 +1,52 @@
+.dr-toolbar {
+    display: flex;
+    gap: .65rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.dr-toolbar .form-control {
+    min-width: 18rem;
+    flex: 1 1 24rem;
+}
+
+.dr-status-filter {
+    width: 11rem;
+}
+
+.dr-table__row {
+    cursor: pointer;
+}
+
+.dr-table td small {
+    display: block;
+    color: var(--bs-secondary-color);
+}
+
+.dr-link {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--bs-link-color);
+    font-weight: 700;
+}
+
+.dr-status {
+    display: inline-flex;
+    border-radius: 999px;
+    padding: .2rem .55rem;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+}
+
+.dr-status.is-draft { background: #fff3cd; color: #664d03; }
+.dr-status.is-released { background: #dbeafe; color: #1e3a8a; }
+.dr-status.is-progress { background: #cff4fc; color: #055160; }
+.dr-status.is-complete { background: #d1e7dd; color: #0f5132; }
+.dr-status.is-cancelled { background: #f8d7da; color: #842029; }
+
+@media (max-width: 760px) {
+    .dr-toolbar { align-items: stretch; flex-direction: column; }
+    .dr-status-filter { width: 100%; }
+}

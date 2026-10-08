@@ -15,6 +15,13 @@ internal sealed class SaSoRevisionUsage
     /// </summary>
     public bool HasWrittenOffQty { get; init; }
     public bool HasAllocation { get; init; }
+    /// <summary>Any Delivery Request source row points at this exact SO revision.</summary>
+    public bool HasDeliveryRequest { get; init; }
+    /// <summary>
+    /// A released source, non-draft DR, or any retained WO allocation protects the revision
+    /// permanently. A never-released Draft DR can be deleted before the revision is changed.
+    /// </summary>
+    public bool HasReleasedDeliveryRequest { get; init; }
     public bool HasDraftDeliveryOrder { get; init; }
     public bool HasDraftInvoice { get; init; }
     public bool HasDeliveryOrderReference { get; init; }
@@ -22,7 +29,7 @@ internal sealed class SaSoRevisionUsage
 
     public bool IsUnused =>
         !(HasDeliveredQty || HasInvoicedQty || HasShippedQty || HasWrittenOffQty
-          || HasAllocation || HasDraftDeliveryOrder || HasDraftInvoice
+          || HasAllocation || HasDeliveryRequest || HasDraftDeliveryOrder || HasDraftInvoice
           || HasDeliveryOrderReference || HasInvoiceReference);
 
     public static SaSoRevisionUsage Empty { get; } = new();
@@ -51,6 +58,13 @@ internal sealed class SaSoRevisionUsage
                 : "This Sales Order cannot be deleted because a draft Delivery Order is holding quantity on the current revision.";
         }
 
+        if (IsDraftDeliveryRequestOnly())
+        {
+            return revise
+                ? "This Sales Order cannot be revised because a Draft Delivery Request is holding production demand. Delete the unused Draft Delivery Request first."
+                : "This Sales Order cannot be deleted because a Draft Delivery Request is holding production demand. Delete the unused Draft Delivery Request first.";
+        }
+
         if (IsDraftInvoiceOnly())
         {
             return revise
@@ -66,6 +80,16 @@ internal sealed class SaSoRevisionUsage
     /// <summary>Short reason fragment for multi-select list UX (no SO number prefix).</summary>
     public string ListBlockReason()
     {
+        if (IsDraftDeliveryRequestOnly())
+        {
+            return "an unused Draft Delivery Request is holding production demand";
+        }
+
+        if (HasReleasedDeliveryRequest)
+        {
+            return "a released Delivery Request or Work Order protects this revision";
+        }
+
         if (IsDraftDeliveryOrderOnly())
         {
             return "a draft Delivery Order is holding quantity";
@@ -86,6 +110,19 @@ internal sealed class SaSoRevisionUsage
         && !HasShippedQty
         && !HasAllocation
         && !HasDraftInvoice
+        && !HasInvoiceReference;
+
+    private bool IsDraftDeliveryRequestOnly() =>
+        HasDeliveryRequest
+        && !HasReleasedDeliveryRequest
+        && !HasDeliveredQty
+        && !HasInvoicedQty
+        && !HasShippedQty
+        && !HasWrittenOffQty
+        && !HasAllocation
+        && !HasDraftDeliveryOrder
+        && !HasDraftInvoice
+        && !HasDeliveryOrderReference
         && !HasInvoiceReference;
 
     private bool IsDraftInvoiceOnly() =>

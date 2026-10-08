@@ -213,6 +213,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<BomExplosionService>();
         services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
+        services.AddScoped<ISaDeliveryRequestService, SaDeliveryRequestService>();
         services.AddScoped<IProductionMaterialAllocationService, ProductionMaterialAllocationService>();
         services.AddSingleton<IProductionOperationEligibilityService, ProductionOperationEligibilityService>();
         services.AddScoped<IProductionMaterialIssueDraftReservationReader, ProductionMaterialIssueDraftReservationReader>();

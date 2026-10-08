@@ -1,0 +1,97 @@
+@page "/sales/delivery-requests"
+@inherits PageBase
+@using ErpWeb.Model.Entities.Sales
+
+<PageTitle>Delivery Requests</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDeliveryRequest">
+    <div class="iv-page dr-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-packing"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Production demand</p>
+                <h1 class="iv-title">Delivery Requests</h1>
+                <div class="iv-chips"><span class="iv-chip">@TotalCountLabel</span></div>
+            </div>
+            <div class="iv-hero__kpi"><span>Unplanned demand</span><strong>@TotalUnplanned.ToString("n4")</strong></div>
+        </header>
+
+        <section class="iv-card">
+            <div class="dr-toolbar">
+                <input class="form-control" placeholder="Search DR no, product, description…"
+                       value="@SearchText" @oninput="OnSearchChanged" />
+                <select class="form-select dr-status-filter" @bind="StatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="DRAFT">Draft</option>
+                    <option value="RELEASED">Released</option>
+                    <option value="IN_PRODUCTION">In production</option>
+                    <option value="COMPLETED">Completed</option>
+                    <option value="CANCELLED">Cancelled</option>
+                </select>
+                <button type="button" class="btn btn-outline-secondary" @onclick="LoadAsync">Refresh</button>
+                @if (CanAdd)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="NewRequest">New Delivery Request</button>
+                }
+            </div>
+
+            @if (IsLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Rows.Count == 0)
+            {
+                <p class="text-muted mb-0">No Delivery Requests match the current filters.</p>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle dr-table">
+                        <thead>
+                            <tr>
+                                <th>Delivery Request</th>
+                                <th>Product</th>
+                                <th>Required</th>
+                                <th class="text-end">Requested</th>
+                                <th class="text-end">WO allocated</th>
+                                <th class="text-end">Unplanned</th>
+                                <th class="text-end">Produced</th>
+                                <th>Status</th>
+                                <th>Sources</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Rows)
+                            {
+                                <tr class="dr-table__row" @onclick="() => Open(row.Uid)">
+                                    <td><button type="button" class="dr-link" @onclick="() => Open(row.Uid)" @onclick:stopPropagation="true">@row.DeliveryRequestNo</button></td>
+                                    <td><span class="code-style">@row.ProductCode</span><small>@row.ProductDescription</small></td>
+                                    <td>@row.RequiredDate.ToString("dd MMM yyyy")</td>
+                                    <td class="text-end">@row.RequestedQty.ToString("n4") @row.ProductionUom</td>
+                                    <td class="text-end">@row.WoAllocatedQty.ToString("n4")</td>
+                                    <td class="text-end">@row.UnplannedQty.ToString("n4")</td>
+                                    <td class="text-end">@row.ProducedQty.ToString("n4")</td>
+                                    <td><span class="dr-status @StatusClass(row.Status)">@row.Status</span></td>
+                                    <td>@row.SourceCount</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    </div>
+</MenuAuthorize>
