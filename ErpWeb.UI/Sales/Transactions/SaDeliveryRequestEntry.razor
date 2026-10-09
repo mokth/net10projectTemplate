@@ -219,6 +219,11 @@
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.SourceQty)" Caption="Demand" DisplayFormat="n4" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.OpenProductionDemandQty)" Caption="Open" DisplayFormat="n4" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ActiveAllocatedProductionQty)" Caption="Active DR" DisplayFormat="n4" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ActiveDrLinkedDoQty)" Caption="Linked DO" DisplayFormat="n4" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ActiveDrOutstandingQty)" Caption="Outstanding" DisplayFormat="n4" Width="105px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.AvailableForDr)" Caption="Available" DisplayFormat="n4" Width="100px" />
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ProductionUom)" Caption="UOM" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.WarehouseCode)" Caption="Warehouse" Width="110px" />
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ProjectCode)" Caption="Project" Width="110px" />

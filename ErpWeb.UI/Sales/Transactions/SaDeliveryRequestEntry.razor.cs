@@ -594,8 +594,11 @@ public partial class SaDeliveryRequestEntry : PageBase
             return;
         }
 
-        DefinitionCode = DefinitionOptions.FirstOrDefault(x => x.IsDefault)?.Code
-            ?? (DefinitionOptions.Count == 1 ? DefinitionOptions[0].Code : DefinitionOptions[0].Code);
+        DefinitionCode = DefinitionOptions.Count == 1
+            ? DefinitionOptions[0].Code
+            : DefinitionOptions.Count(x => x.IsDefault) == 1
+                ? DefinitionOptions.Single(x => x.IsDefault).Code
+                : null;
     }
 
     protected void OnRequiredDateChanged(DateTime value)
@@ -818,6 +821,11 @@ public partial class SaDeliveryRequestEntry : PageBase
         public string? ProductDescription { get; init; }
         public string ProductionUom { get; init; } = string.Empty;
         public decimal SourceQty { get; init; }
+        public decimal OpenProductionDemandQty { get; init; }
+        public decimal ActiveAllocatedProductionQty { get; init; }
+        public decimal ActiveDrLinkedDoQty { get; init; }
+        public decimal ActiveDrOutstandingQty { get; init; }
+        public decimal AvailableForDr { get; init; }
         public decimal Quantity { get; set; }
         public DateTime? RequestedDeliveryDate { get; init; }
         public string? CustomerCode { get; init; }
@@ -832,6 +840,11 @@ public partial class SaDeliveryRequestEntry : PageBase
             ProductCode = source.ProductCode,
             ProductionUom = source.ProductionUom,
             SourceQty = source.ProductionDemandQty,
+            OpenProductionDemandQty = source.OpenProductionDemandQty,
+            ActiveAllocatedProductionQty = source.ActiveAllocatedProductionQty,
+            ActiveDrLinkedDoQty = source.ActiveDrLinkedDoQty,
+            ActiveDrOutstandingQty = source.ActiveDrOutstandingQty,
+            AvailableForDr = source.AvailableForDr,
             Quantity = source.AllocatedProductionQty,
             RequestedDeliveryDate = source.RequestedDeliveryDate,
             CustomerCode = source.CustomerCode,
@@ -848,6 +861,11 @@ public partial class SaDeliveryRequestEntry : PageBase
             ProductDescription = source.ProductDescription,
             ProductionUom = source.ProductionUom,
             SourceQty = source.ProductionDemandQty,
+            OpenProductionDemandQty = source.OpenProductionDemandQty,
+            ActiveAllocatedProductionQty = source.ActiveDrAllocatedQty,
+            ActiveDrLinkedDoQty = source.ActiveDrLinkedDoQty,
+            ActiveDrOutstandingQty = source.ActiveDrOutstandingQty,
+            AvailableForDr = source.AvailableForDr,
             Quantity = source.AvailableForDr,
             RequestedDeliveryDate = source.RequestedDeliveryDate,
             CustomerCode = source.CustomerCode,

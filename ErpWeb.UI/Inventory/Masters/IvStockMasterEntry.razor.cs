@@ -64,6 +64,13 @@ public partial class IvStockMasterEntry : PageBase
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
 
+    protected string SupplyMethodDisplay => (Model.MfgType ?? "BUY").Trim().ToUpperInvariant() switch
+    {
+        "MAKE" => "MAKE — Manufactured",
+        "PHANTOM" => "PHANTOM — Internal / Phantom",
+        _ => "BUY — Purchased / Stock"
+    };
+
     protected string ClassificationDisplay
     {
         get
@@ -309,6 +316,9 @@ public partial class IvStockMasterEntry : PageBase
                     else
                     {
                         Model = Clone(copyResult.Data);
+                        // Product Definitions/BOMs are not copied.  A copied MAKE
+                        // item must therefore start as the normal BUY display state.
+                        Model.MfgType = "BUY";
                         Model.ICode = string.Empty;
                         Model.Barcode = null;
                         Model.RowVersion = null;
@@ -454,6 +464,7 @@ public partial class IvStockMasterEntry : PageBase
     private static IvStockMasterEditVm CreateBlank() =>
         new()
         {
+            MfgType = "BUY",
             IsActive = true,
             StockControl = true,
             ExpiryControl = IvExpiryControlModes.None
@@ -464,6 +475,7 @@ public partial class IvStockMasterEntry : PageBase
         {
             ICode = source.ICode,
             IDesc = source.IDesc,
+            MfgType = string.IsNullOrWhiteSpace(source.MfgType) ? "BUY" : source.MfgType,
             Barcode = source.Barcode,
             Brand = source.Brand,
             IsActive = source.IsActive,

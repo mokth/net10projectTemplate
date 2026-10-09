@@ -173,8 +173,11 @@ public sealed class SaDeliveryRequestSourceTrace
     public string ProductionUom { get; init; } = string.Empty;
     public decimal SourceQty { get; init; }
     public decimal ProductionDemandQty { get; init; }
+    public decimal OpenProductionDemandQty { get; init; }
     public decimal AllocatedProductionQty { get; init; }
     public decimal ActiveAllocatedProductionQty { get; init; }
+    public decimal ActiveDrLinkedDoQty { get; init; }
+    public decimal ActiveDrOutstandingQty { get; init; }
     public decimal AvailableForDr { get; init; }
     public string? CustomerCode { get; init; }
     public DateTime? RequestedDeliveryDate { get; init; }
@@ -310,6 +313,9 @@ public sealed class SaDeliveryRequestEligibleSource
     public string ProductionUom { get; init; } = string.Empty;
     public decimal ProductionDemandQty { get; init; }
     public decimal ActiveDrAllocatedQty { get; init; }
+    public decimal OpenProductionDemandQty { get; init; }
+    public decimal ActiveDrLinkedDoQty { get; init; }
+    public decimal ActiveDrOutstandingQty { get; init; }
     public decimal AvailableForDr { get; init; }
     public string? CustomerCode { get; init; }
     public DateTime? RequestedDeliveryDate { get; init; }

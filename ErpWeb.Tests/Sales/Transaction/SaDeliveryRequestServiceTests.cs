@@ -3,6 +3,8 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
@@ -61,11 +63,45 @@ public sealed class SaDeliveryRequestServiceTests : IAsyncLifetime
             ICode = "FG-DR",
             IDesc = "Delivery Request product",
             StdQty = 10m,
+            StdPsize = 0m,
             StdUom = "EA",
             OrderQty = 12m,
             BalanceQty = 10m,
             DeliveryDate = new DateTime(2026, 9, 15),
             Warehouse = "MAIN"
+        });
+        db.IvStockMasters.Add(new IvStockMaster
+        {
+            CompanyCode = "DEMO",
+            ICode = "FG-DR",
+            IDesc = "Delivery Request product",
+            MfgType = PrMfgTypes.Make,
+            StdUom = "EA",
+            SellingUom = "EA",
+            StdPackSize = 1m,
+            IsActive = true,
+            RowVersion = [1]
+        });
+        db.IvWarehouses.Add(new IvWarehouse
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WarehouseCode = "MAIN",
+            WarehouseDesc = "Main warehouse",
+            IsActive = true,
+            RowVersion = [1]
+        });
+        db.PrBomHdrs.Add(new PrBomHdr
+        {
+            CompanyCode = "DEMO",
+            ProdCode = "FG-DR",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            DefinitionName = PrProductDefinitionCodes.StandardName,
+            IsDefaultDefinition = true,
+            Status = PrBomStatuses.Active,
+            BaseQty = 1m,
+            BaseUom = "EA",
+            RowVersion = [1]
         });
         await db.SaSos.AddAsync(so);
         await db.SaveChangesAsync();

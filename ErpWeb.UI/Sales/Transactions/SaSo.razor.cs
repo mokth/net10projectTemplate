@@ -146,7 +146,9 @@ public partial class SaSo : PageBase, IDisposable
     /// </summary>
     protected bool CanOverridePrice { get; set; }
 
-    protected bool CanEditCustomer => CanEditDocument && !IsShippedStatus;
+    protected bool CanEditCustomer => CanEditDocument && !IsShippedStatus && !HasActiveDeliveryRequest;
+    protected bool HasActiveDeliveryRequest => DeliveryRequests.Any(x => x.IsActive);
+    protected bool CanEditProject => CanEditDocument && !HasActiveDeliveryRequest;
     protected bool CanEditAddresses => CanEditDocument && !string.IsNullOrWhiteSpace(CustCode);
     protected bool CanEditFromView =>
         IsViewMode
@@ -170,14 +172,17 @@ public partial class SaSo : PageBase, IDisposable
         && !string.IsNullOrWhiteSpace(CustPo)
         && (!TaxGroupRequired || !string.IsNullOrWhiteSpace(TaxGrCode));
     protected bool IsEditingLine => _editingLine is not null;
+    protected bool IsPopupDrControlled => IsDeliveryRequestControlled(_editingLine);
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
     protected string PopupPrimaryText => IsEditingLine ? "Update line" : "Add line";
     protected decimal PopupAllocatedFloor =>
         _editingLine is null
             ? 0m
             : Math.Max(
-                _editingLine.DeliveredQty,
-                Math.Max(_editingLine.InvoicedQty, _editingLine.ShippedQty));
+                Math.Max(
+                    _editingLine.DeliveredQty,
+                    Math.Max(_editingLine.InvoicedQty, _editingLine.ShippedQty)),
+                ActiveDrSalesQtyFloor(_editingLine));
     protected bool PopupInclusiveLocked =>
         Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
     protected SaInvoiceLineCalcState PopupCalc => BuildPopupCalc();
@@ -767,14 +772,46 @@ public partial class SaSo : PageBase, IDisposable
         }
 
         Lines.Remove(line);
-        Renumber();
         RecalcDocument();
         MarkDirty();
     }
 
     protected bool CanDeleteLine(SaSoLineVm line) =>
         CanMutateLines
+        && !IsDeliveryRequestControlled(line)
         && !(IsShippedStatus && line.ShippedQty > 0m);
+
+    protected bool IsDeliveryRequestControlled(SaSoLineVm? line) =>
+        line is not null
+        && line.Line > 0
+        && DeliveryRequests.Any(x =>
+            x.IsActive
+            && x.CustRel == line.CustRel
+            && x.SoLine == line.Line);
+
+    private decimal ActiveDrSalesQtyFloor(SaSoLineVm line)
+    {
+        if (!IsDeliveryRequestControlled(line))
+        {
+            return 0m;
+        }
+
+        var productionQty = DeliveryRequests
+            .Where(x => x.IsActive && x.CustRel == line.CustRel && x.SoLine == line.Line)
+            .Sum(x => x.AllocatedProductionQty);
+        if (productionQty <= SaProductionDemandRules.QuantityTolerance)
+        {
+            return 0m;
+        }
+
+        var factor = SaProductionDemandRules.ResolveFrozenStdFactor(
+            line.StdPackSize ?? 0m,
+            line.OrderQty,
+            line.StdQty);
+        return factor is decimal resolved
+            ? SaProductionDemandRules.ToSalesQty(productionQty, resolved)
+            : 0m;
+    }
 
     protected Task OnPopupItemClearedAsync()
     {
@@ -787,7 +824,11 @@ public partial class SaSo : PageBase, IDisposable
         Popup.StdUom = null;
         Popup.SellingUom = null;
         Popup.StdPackSize = null;
+        Popup.StdQty = 0m;
         Popup.Classification = null;
+        Popup.MfgType = "BUY";
+        Popup.ActiveProductionDefinitionCount = 0;
+        Popup.ProductionDemandState = SaProductionDemandRules.StockOrPurchased;
         Popup.PricingSource = null;
         Popup.PricingRef = null;
         Popup.OriginalUnitPrice = null;
@@ -807,8 +848,27 @@ public partial class SaSo : PageBase, IDisposable
         Popup.StdUom = item.StdUom;
         Popup.SellingUom = item.SellingUom;
         Popup.StdPackSize = item.StdPackSize;
+        Popup.StdQty = 0m;
         Popup.StockControl = item.StockControl;
         Popup.Classification = item.Classification;
+        Popup.MfgType = string.IsNullOrWhiteSpace(item.MfgType) ? "BUY" : item.MfgType;
+        Popup.ActiveProductionDefinitionCount = 0;
+        Popup.ProductionDemandState = SaProductionDemandRules.DetermineState(Popup.MfgType, 0);
+
+        if (string.Equals(Popup.MfgType, "MAKE", StringComparison.OrdinalIgnoreCase))
+        {
+            var productionInfo = await Sos.GetProductionDemandInfoAsync(item.ICode, _cts.Token);
+            if (productionInfo.Succeeded && productionInfo.ProductionDemandInfo is not null)
+            {
+                Popup.MfgType = productionInfo.ProductionDemandInfo.MfgType;
+                Popup.ActiveProductionDefinitionCount = productionInfo.ProductionDemandInfo.ActiveDefinitionCount;
+                Popup.ProductionDemandState = productionInfo.ProductionDemandInfo.ProductionDemandState;
+            }
+            else
+            {
+                StatusMessage = "Production setup status could not be loaded; the line may still be saved and will be rechecked by the server.";
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
             && TaxGroups.Any(x => string.Equals(x.TaxGrCode, item.TaxGroup, StringComparison.OrdinalIgnoreCase)))
@@ -832,6 +892,29 @@ public partial class SaSo : PageBase, IDisposable
         // decides it, and a missing price must block rather than become RM 0.00.
         await ResolvePopupPriceAsync(assignDiscountSlots: true);
     }
+
+    protected string ProductionDemandLabel(SaSoLineVm line) => line.ProductionDemandState switch
+    {
+        SaProductionDemandRules.AutoProduction => "Production",
+        SaProductionDemandRules.SetupRequired => "Setup required",
+        SaProductionDemandRules.InternalPhantom => "Internal",
+        _ => "Stock"
+    };
+
+    protected string ProductionDemandHint(SaSoLineVm line)
+    {
+        return line.ProductionDemandState switch
+        {
+            SaProductionDemandRules.AutoProduction => "🏭 Manufactured item — eligible for production planning.",
+            SaProductionDemandRules.SetupRequired => "⚠ Manufacturing setup incomplete — no ACTIVE Product Definition.",
+            SaProductionDemandRules.InternalPhantom => "Internal / phantom item — not direct customer production demand.",
+            _ => "📦 Stock / purchased item"
+        };
+    }
+
+    protected static bool IsMakeWithoutDeliveryDate(SaSoLineVm line) =>
+        string.Equals(line.MfgType, "MAKE", StringComparison.OrdinalIgnoreCase)
+        && line.DeliveryDate is null;
 
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
@@ -1118,7 +1201,6 @@ public partial class SaSo : PageBase, IDisposable
             }
         }
 
-        Renumber();
         RecalcDocument();
         MarkDirty();
         PopupVisible = false;
@@ -1368,14 +1450,6 @@ public partial class SaSo : PageBase, IDisposable
         return match?.Percentage ?? 0m;
     }
 
-    private void Renumber()
-    {
-        for (var i = 0; i < Lines.Count; i++)
-        {
-            Lines[i].Line = i + 1;
-        }
-    }
-
     private void MarkDirty()
     {
         if (CanEditDocument)
@@ -1389,6 +1463,7 @@ public partial class SaSo : PageBase, IDisposable
 
 public sealed class SaSoLineVm
 {
+    public Guid ClientKey { get; set; } = Guid.NewGuid();
     public int Line { get; set; }
     public short CustRel { get; set; } = 1;
     public string ICode { get; set; } = string.Empty;
@@ -1402,6 +1477,7 @@ public sealed class SaSoLineVm
     /// <summary>R3: written off by a DO force-close.</summary>
     public decimal WrittenOffQty { get; set; }
     public decimal? StdPackSize { get; set; }
+    public decimal StdQty { get; set; }
     public string? SellingUom { get; set; }
     public string? StdUom { get; set; }
     public string? Warehouse { get; set; }
@@ -1441,6 +1517,9 @@ public sealed class SaSoLineVm
     public string? OrderType { get; set; }
     public bool StockControl { get; set; } = true;
     public string? Classification { get; set; }
+    public string MfgType { get; set; } = "BUY";
+    public int ActiveProductionDefinitionCount { get; set; }
+    public string ProductionDemandState { get; set; } = SaProductionDemandRules.StockOrPurchased;
     public string? Remarks { get; set; }
     public DateTime? DeliveryDate { get; set; }
     public DateTime? Eta { get; set; }
@@ -1448,6 +1527,7 @@ public sealed class SaSoLineVm
 
     public SaSoLineVm Clone() => new()
     {
+        ClientKey = ClientKey,
         Line = Line,
         CustRel = CustRel,
         ICode = ICode,
@@ -1460,6 +1540,7 @@ public sealed class SaSoLineVm
         InvoicedQty = InvoicedQty,
         WrittenOffQty = WrittenOffQty,
         StdPackSize = StdPackSize,
+        StdQty = StdQty,
         SellingUom = SellingUom,
         StdUom = StdUom,
         Warehouse = Warehouse,
@@ -1484,6 +1565,9 @@ public sealed class SaSoLineVm
         OrderType = OrderType,
         StockControl = StockControl,
         Classification = Classification,
+        MfgType = MfgType,
+        ActiveProductionDefinitionCount = ActiveProductionDefinitionCount,
+        ProductionDemandState = ProductionDemandState,
         Remarks = Remarks,
         DeliveryDate = DeliveryDate,
         Eta = Eta,
@@ -1542,6 +1626,7 @@ public sealed class SaSoLineVm
     public static SaSoLineVm FromDto(SaSoLineDto dto) =>
         new()
         {
+            ClientKey = Guid.NewGuid(),
             Line = dto.Line,
             CustRel = dto.CustRel,
             ICode = dto.ICode,
@@ -1554,6 +1639,7 @@ public sealed class SaSoLineVm
             InvoicedQty = dto.InvoicedQty,
             WrittenOffQty = dto.WrittenOffQty,
             StdPackSize = dto.StdPsize > 0m ? dto.StdPsize : (decimal?)null,
+            StdQty = dto.StdQty,
             SellingUom = dto.SellingUom,
             StdUom = dto.StdUom,
             Warehouse = dto.Warehouse,
@@ -1578,6 +1664,11 @@ public sealed class SaSoLineVm
             OrderType = dto.OrderType,
             StockControl = dto.StockControl,
             Classification = dto.Classification,
+            MfgType = string.IsNullOrWhiteSpace(dto.MfgType) ? "BUY" : dto.MfgType,
+            ActiveProductionDefinitionCount = dto.ActiveProductionDefinitionCount,
+            ProductionDemandState = string.IsNullOrWhiteSpace(dto.ProductionDemandState)
+                ? SaProductionDemandRules.StockOrPurchased
+                : dto.ProductionDemandState,
             Remarks = dto.Remarks,
             DeliveryDate = dto.DeliveryDate,
             Eta = dto.Eta,

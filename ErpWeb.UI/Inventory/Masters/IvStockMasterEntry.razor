@@ -60,6 +60,7 @@
                     <div class="iv-detail-grid">
                         @Detail("Code", Model.ICode)
                         @Detail("Description", Model.IDesc)
+                        @Detail("Supply method", SupplyMethodDisplay)
                         @Detail("Barcode", Model.Barcode)
                         @Detail("Brand", Model.Brand)
                         @Detail("Active", Model.IsActive ? "Yes" : "No")
@@ -175,6 +176,11 @@
                             <div class="iv-field">
                                 <label class="iv-field__label">Active</label>
                                 <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Supply method</label>
+                                <div class="iv-detail-row__value">@SupplyMethodDisplay</div>
+                                <p class="iv-field__hint">Controlled by Production Definition setup.</p>
                             </div>
                         </div>
                     </section>

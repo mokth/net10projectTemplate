@@ -2556,9 +2556,14 @@ public sealed class SaDoService : ISaDoService
                                     equals new { deliveryOrder.CompanyCode, deliveryOrder.BranchCode, deliveryOrder.DoNo }
                                 where detail.DeliveryRequestSourceId == sourceId
                                     && deliveryOrder.DeletedAtUtc == null
+                                    && (deliveryOrder.Status == SaDoStatuses.New
+                                        || deliveryOrder.Status == SaDoStatuses.Posted
+                                        || deliveryOrder.Status == SaDoStatuses.Closed)
                                     && (excludeDoNo == null || deliveryOrder.DoNo != excludeDoNo)
                                 select (decimal?)detail.StdQty).SumAsync(cancellationToken) ?? 0m;
-                            var remaining = Math.Max(source.AllocatedProductionQty - otherDoQty, 0m);
+                            var remaining = SaSoDeliveryRequestCapacity.OutstandingForSource(
+                                source.AllocatedProductionQty,
+                                otherDoQty);
                             if (stdQty <= 0m || stdQty > remaining + QuantityTolerance)
                             {
                                 errors[$"Lines[{lineNo - 1}].Qty"] =
@@ -2707,6 +2712,25 @@ public sealed class SaDoService : ISaDoService
         var sums = await SaSoLineReserve.SumBySoLinesAsync(
             db, companyCode, branchCode, soNos, excludeDo, excludeInv: null, cancellationToken);
 
+        // DR-linked DO lines are checked against their exact source allocation above while
+        // preparing the line. Only direct SO DO lines need the committed-DR subtraction;
+        // applying it to linked lines would count the same allocation twice.
+        var directDoBySoLine = prepared
+            .Where(x => x.DeliveryRequestSourceId is null
+                && !string.IsNullOrWhiteSpace(x.SoNo)
+                && x.SoLine is > 0)
+            .GroupBy(x => (SoNo: x.SoNo.Trim(), CustRel: x.CustRel is > 0 ? x.CustRel.Value : (short)1, SoLine: x.SoLine!.Value), new SoLineGroupComparer())
+            .ToDictionary(g => g.Key, g => SaSoQty.RoundQty(g.Sum(x => x.StdQty)), new SoLineGroupComparer());
+        var committedDrCapacity = directDoBySoLine.Count == 0
+            ? new Dictionary<SaSoDrLineKey, SaSoDrCapacityFacts>()
+            : await SaSoDeliveryRequestCapacity.LoadAsync(
+                db,
+                companyCode,
+                branchCode,
+                directDoBySoLine.Keys.Select(x => new SaSoDrLineKey(x.SoNo, x.CustRel, x.SoLine)).ToList(),
+                SaSoDrCapacityMode.CommittedSources,
+                cancellationToken: cancellationToken);
+
         foreach (var ((soNo, custRel, soLine), thisDoQty) in thisDoBySoLine.OrderBy(x => x.Key.SoNo, SaSoLockOrder.Comparer).ThenBy(x => x.Key.CustRel).ThenBy(x => x.Key.SoLine))
         {
             if (!salesOrdersByNo.TryGetValue(soNo, out var salesOrder))
@@ -2743,6 +2767,44 @@ public sealed class SaDoService : ISaDoService
                     {
                         ["Lines"] = SaSoLineReserve.FormatOverAllocate(eval)
                     });
+            }
+
+            if (directDoBySoLine.TryGetValue((soNo, custRel, soLine), out var directStdQty)
+                && directStdQty > QuantityTolerance)
+            {
+                var committedFacts = committedDrCapacity.GetValueOrDefault(
+                    new SaSoDrLineKey(soNo, custRel, soLine).Normalize(),
+                    new SaSoDrCapacityFacts(0m, 0m, 0m));
+                var frozenFactor = SaProductionDemandRules.ResolveFrozenStdFactor(
+                    soDetail.StdPsize,
+                    soDetail.OrderQty,
+                    soDetail.StdQty);
+                if (frozenFactor is not decimal resolvedFactor)
+                {
+                    if (committedFacts.OutstandingProductionQty > QuantityTolerance)
+                    {
+                        var message = $"Sales Order {soNo} line {soLine}: {SaProductionDemandRules.LegacyConversionUnresolvedMessage}";
+                        return PrepareOutcome.Validation(
+                            message,
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Lines"] = message });
+                    }
+                }
+                else
+                {
+                    var openProductionQty = SaProductionDemandRules.ToProductionQty(
+                        Math.Max(SaSoLineReserve.RemainingForNewDo(eval), 0m),
+                        resolvedFactor);
+                    var availableProductionQty = SaSoQty.RoundQty(Math.Max(
+                        openProductionQty - committedFacts.OutstandingProductionQty,
+                        0m));
+                    if (directStdQty - availableProductionQty > QuantityTolerance)
+                    {
+                        var message = $"Sales Order {soNo} line {soLine} has only {availableProductionQty:N4} direct production quantity available after committed Delivery Requests.";
+                        return PrepareOutcome.Validation(
+                            message,
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Lines"] = message });
+                    }
+                }
             }
         }
 

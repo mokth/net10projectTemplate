@@ -24,6 +24,7 @@ public sealed class SaSoOperationResult
     public bool CurrRateValid { get; init; }
     public SaSoDocument? Document { get; init; }
     public SaSoCustomerDefaults? CustomerDefaults { get; init; }
+    public SaSoProductionDemandInfo? ProductionDemandInfo { get; init; }
     public SaSoListPage? ListPage { get; init; }
     public IReadOnlyList<SaSoLineDto> RemainingLines { get; init; } = [];
     public IReadOnlyList<SaSoItemLookupRow> Items { get; init; } = [];
@@ -75,6 +76,9 @@ public sealed class SaSoOperationResult
 
     public static SaSoOperationResult OkDefaults(SaSoCustomerDefaults defaults) =>
         new() { Succeeded = true, ErrorKind = SaSoErrorKind.None, CustomerDefaults = defaults };
+
+    public static SaSoOperationResult OkProductionDemandInfo(SaSoProductionDemandInfo info) =>
+        new() { Succeeded = true, ErrorKind = SaSoErrorKind.None, ProductionDemandInfo = info };
 
     public static SaSoOperationResult OkRate(decimal rate, bool valid) =>
         new() { Succeeded = true, ErrorKind = SaSoErrorKind.None, CurrRate = rate, CurrRateValid = valid };
@@ -180,6 +184,7 @@ public sealed class SaSoItemLookupRow
 {
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
+    public string MfgType { get; init; } = "BUY";
     public string? SellingUom { get; init; }
     public string? StdUom { get; init; }
     public decimal? StdPackSize { get; init; }
@@ -188,6 +193,14 @@ public sealed class SaSoItemLookupRow
     public bool StockControl { get; init; }
     public string? DefWarehouse { get; init; }
     public string DisplayText => string.IsNullOrWhiteSpace(IDesc) ? ICode : $"{ICode} - {IDesc}";
+}
+
+public sealed class SaSoProductionDemandInfo
+{
+    public string ICode { get; init; } = string.Empty;
+    public string MfgType { get; init; } = "BUY";
+    public int ActiveDefinitionCount { get; init; }
+    public string ProductionDemandState { get; init; } = SaProductionDemandRules.StockOrPurchased;
 }
 
 public sealed class SaSoTaxGroupLookupRow
@@ -386,6 +399,9 @@ public sealed class SaSoLineDto
     public DateTime? DeliveryDate { get; init; }
     public DateTime? Eta { get; init; }
     public DateTime? Etd { get; init; }
+    public string MfgType { get; init; } = "BUY";
+    public int ActiveProductionDefinitionCount { get; init; }
+    public string ProductionDemandState { get; init; } = SaProductionDemandRules.StockOrPurchased;
 }
 
 public sealed class SaSoSaveRequest
@@ -480,6 +496,10 @@ public interface ISaSoService
     Task<SaSoOperationResult> GetCustomerDefaultsAsync(
         string custCode,
         DateTime soDate,
+        CancellationToken cancellationToken = default);
+
+    Task<SaSoOperationResult> GetProductionDemandInfoAsync(
+        string itemCode,
         CancellationToken cancellationToken = default);
 
     Task<SaSoOperationResult> ResolveCurrencyRateAsync(

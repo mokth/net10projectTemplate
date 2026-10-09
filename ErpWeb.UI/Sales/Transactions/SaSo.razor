@@ -203,9 +203,13 @@
                                     <IvCodeComboBox Data="@Projects"
                                                     Value="@ProjId"
                                                     ValueChanged="@(v => { ProjId = v; MarkDirtyOnly(); })"
-                                                    Enabled="@CanEditDocument"
+                                                    Enabled="@CanEditProject"
                                                     NullText="Select project" />
                                     @FieldError("ProjId")
+                                    @if (HasActiveDeliveryRequest)
+                                    {
+                                        <p class="sdoc-field-hint">Customer and project are locked while an active Delivery Request controls this SO revision.</p>
+                                    }
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Revision reason" ColSpanMd="12">
@@ -409,7 +413,7 @@
                 @FieldError("Lines")
 
                 <DxGrid Data="@Lines"
-                        KeyFieldName="@nameof(SaSoLineVm.Line)"
+                        KeyFieldName="@nameof(SaSoLineVm.ClientKey)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
                         ShowSearchBox="false"
@@ -435,12 +439,19 @@
                                                   IconCssClass="fa-solid fa-trash"
                                                   Click="@(() => RemoveLine(line))"
                                                   Enabled="@CanDeleteLine(line)"
-                                                  title="@(CanDeleteLine(line) ? "Delete line" : "Shipped lines cannot be deleted")" />
+                                                  title="@(IsDeliveryRequestControlled(line) ? "Controlled by Delivery Request" : CanDeleteLine(line) ? "Delete line" : "Shipped lines cannot be deleted")" />
                                     </div>
                                 </CellDisplayTemplate>
                             </DxGridCommandColumn>
                         }
-                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Line)" Caption="#" Width="56px" />
+                        <DxGridDataColumn Caption="#" Width="56px">
+                            <CellDisplayTemplate>
+                                @{
+                                    var sequenceRow = (SaSoLineVm)context.DataItem;
+                                }
+                                @(Lines.IndexOf(sequenceRow) + 1)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.ICode)" Caption="Item" Width="170px">
                             <CellDisplayTemplate>
                                 @{
@@ -450,6 +461,11 @@
                                     <span class="sdoc-cell-stack__primary">@itemLine.ICode</span>
                                     <span class="sdoc-cell-stack__secondary">@itemLine.IDesc</span>
                                 </div>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn Caption="Supply" Width="130px">
+                            <CellDisplayTemplate>
+                                @ProductionDemandLabel((SaSoLineVm)context.DataItem)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Warehouse)" Caption="Warehouse" Width="110px" />
@@ -544,7 +560,7 @@
                                 <IvStockMasterPicker ICode="@Popup.ICode"
                                                      Selected="@OnPopupItemSelectedAsync"
                                                      Cleared="@OnPopupItemClearedAsync"
-                                                     Enabled="@CanEditDocument"
+                                                     Enabled="@(CanEditDocument && !IsPopupDrControlled)"
                                                      NullText="Item code"
                                                      InputCssClass="required-field" />
                             </Template>
@@ -554,13 +570,22 @@
                                 <DxTextBox @bind-Text="@Popup.IDesc" ReadOnly="true" />
                             </Template>
                         </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Production" ColSpanMd="4">
+                            <Template>
+                                <p class="sdoc-field-hint">@ProductionDemandHint(Popup)</p>
+                                @if (IsPopupDrControlled)
+                                {
+                                    <p class="sdoc-field-hint">Controlled by Delivery Request — item, warehouse and required date are locked.</p>
+                                }
+                            </Template>
+                        </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
                             <Template>
                                 <DxComboBox Data="@Warehouses"
                                             TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             @bind-Value="@Popup.Warehouse"
-                                            Enabled="@CanEditDocument" />
+                                            Enabled="@(CanEditDocument && !IsPopupDrControlled)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Customer item" ColSpanMd="6">
@@ -591,12 +616,20 @@
                                 </Template>
                             </DxFormLayoutItem>
                         }
+                        @if (IsMakeWithoutDeliveryDate(Popup))
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="12">
+                                <Template>
+                                    <p class="sdoc-field-hint">Required delivery date is recommended for manufactured items.</p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
                         <DxFormLayoutItem Caption="Delivery date" ColSpanMd="4">
                             <Template>
                                 <DxDateEdit T="DateTime?"
                                             @bind-Date="@Popup.DeliveryDate"
                                             DisplayFormat="dd/MM/yyyy"
-                                            Enabled="@CanEditDocument"
+                                            Enabled="@(CanEditDocument && !IsPopupDrControlled)"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>

@@ -852,6 +852,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             ICode = x.ICode,
             IDesc = x.IDesc,
+            MfgType = string.IsNullOrWhiteSpace(x.MfgType) ? "BUY" : x.MfgType,
             Barcode = x.Barcode,
             Brand = x.Brand,
             DefWarehouse = x.DefWarehouse,
@@ -881,6 +882,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             ICode = x.ICode,
             IDesc = x.IDesc,
+            MfgType = string.IsNullOrWhiteSpace(x.MfgType) ? "BUY" : x.MfgType,
             Barcode = x.Barcode,
             Brand = x.Brand,
             IsActive = x.IsActive,

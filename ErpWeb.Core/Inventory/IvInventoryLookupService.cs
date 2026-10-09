@@ -18,6 +18,7 @@ public sealed class IvStockMasterLookupRow
 {
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
+    public string MfgType { get; init; } = "BUY";
     public string? IType { get; init; }
     public string? IClassCode { get; init; }
     public string? StdUom { get; init; }
@@ -585,6 +586,7 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
         {
             ICode = x.ICode,
             IDesc = x.IDesc,
+            MfgType = string.IsNullOrWhiteSpace(x.MfgType) ? "BUY" : x.MfgType,
             IType = x.IType,
             IClassCode = x.IClassCode,
             StdUom = x.StdUom,

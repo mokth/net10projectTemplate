@@ -6,6 +6,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
@@ -601,9 +602,18 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             join detail in db.SaSoDetails.AsNoTracking()
                 on new { header.CompanyCode, header.BranchCode, header.SoNo, header.CustRel }
                 equals new { detail.CompanyCode, detail.BranchCode, detail.SoNo, detail.CustRel }
+            join item in db.IvStockMasters.AsNoTracking()
+                on new { header.CompanyCode, ICode = detail.ICode! }
+                equals new { item.CompanyCode, ICode = item.ICode }
             where header.CompanyCode == scope.CompanyCode
                 && header.BranchCode == scope.BranchCode
                 && header.IsCurrent
+                && (header.Status == SaSoStatuses.New || header.Status == SaSoStatuses.Shipped)
+                && item.IsActive
+                && item.MfgType.ToUpper() == PrMfgTypes.Make
+                && db.PrBomHdrs.Any(definition => definition.CompanyCode == scope.CompanyCode
+                    && definition.ProdCode == item.ICode
+                    && definition.Status == PrBomStatuses.Active)
                 && (query.SoNo == null || header.SoNo == query.SoNo.Trim())
                 && (query.CustRel == null || header.CustRel == query.CustRel)
                 && (query.ProductCode == null || detail.ICode == query.ProductCode.Trim())
@@ -620,11 +630,14 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 header.SoNo,
                 header.CustRel,
                 HeaderRowVersion = header.RowVersion,
+                header.Status,
                 detail.Line,
                 ProductCode = detail.ICode!,
                 detail.IDesc,
                 ProductionUom = detail.StdUom!,
                 ProductionDemandQty = detail.StdQty,
+                detail.OrderQty,
+                detail.StdPsize,
                 detail.DeliveredQty,
                 CustomerCode = header.CustCode,
                 RequestedDeliveryDate = detail.DeliveryDate,
@@ -643,23 +656,52 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             return IvMasterOperationResult<IReadOnlyList<SaDeliveryRequestEligibleSource>>.Ok([]);
         }
 
-        var soNos = detailRows.Select(x => x.SoNo).Distinct().ToList();
-        var custRels = detailRows.Select(x => x.CustRel).Distinct().ToList();
-        var activeAllocations = await db.SaDeliveryRequestSources.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode
-                && x.BranchCode == scope.BranchCode
-                && x.IsActive
-                && soNos.Contains(x.SoNo)
-                && custRels.Contains(x.CustRel))
-            .GroupBy(x => new { x.SoNo, x.CustRel, x.SoLine })
-            .Select(g => new { g.Key.SoNo, g.Key.CustRel, g.Key.SoLine, Qty = g.Sum(x => x.AllocatedProductionQty) })
-            .ToListAsync(cancellationToken);
-        var allocatedByLine = activeAllocations.ToDictionary(
-            x => (x.SoNo.ToUpperInvariant(), x.CustRel, x.SoLine), x => x.Qty);
+        var soNos = detailRows.Select(x => x.SoNo).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var reserveSums = await SaSoLineReserve.SumBySoLinesAsync(
+            db,
+            scope.CompanyCode!,
+            scope.BranchCode!,
+            soNos,
+            cancellationToken: cancellationToken);
+        var capacityKeys = detailRows
+            .Select(x => new SaSoDrLineKey(x.SoNo, x.CustRel, x.Line))
+            .ToList();
+        var drCapacity = await SaSoDeliveryRequestCapacity.LoadAsync(
+            db,
+            scope.CompanyCode!,
+            scope.BranchCode!,
+            capacityKeys,
+            SaSoDrCapacityMode.AllActiveSources,
+            cancellationToken: cancellationToken);
 
         var result = detailRows.Select(x =>
         {
-            var allocated = allocatedByLine.GetValueOrDefault((x.SoNo.ToUpperInvariant(), x.CustRel, x.Line));
+            var key = new SaSoDrLineKey(x.SoNo, x.CustRel, x.Line).Normalize();
+            var sums = SaSoLineReserve.GetSums(
+                reserveSums,
+                x.SoNo,
+                x.CustRel,
+                x.Line);
+            var evaluation = SaSoLineReserve.Evaluate(
+                x.SoNo,
+                x.Line,
+                x.OrderQty,
+                x.DeliveredQty,
+                sums,
+                thisDoQty: 0m,
+                thisSoInvQty: 0m);
+            var remainingSalesQty = Math.Max(SaSoLineReserve.RemainingForNewDo(evaluation), 0m);
+            var factor = SaProductionDemandRules.ResolveFrozenStdFactor(
+                x.StdPsize,
+                x.OrderQty,
+                x.ProductionDemandQty);
+            var openProduction = factor is decimal resolvedFactor
+                ? SaProductionDemandRules.ToProductionQty(remainingSalesQty, resolvedFactor)
+                : 0m;
+            var facts = drCapacity.GetValueOrDefault(
+                key,
+                new SaSoDrCapacityFacts(0m, 0m, 0m));
+            var available = SaSoQty.RoundQty(Math.Max(openProduction - facts.OutstandingProductionQty, 0m));
             return new SaDeliveryRequestEligibleSource
             {
                 CompanyCode = scope.CompanyCode,
@@ -671,8 +713,11 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 ProductDescription = x.IDesc,
                 ProductionUom = x.ProductionUom.Trim(),
                 ProductionDemandQty = x.ProductionDemandQty,
-                ActiveDrAllocatedQty = allocated,
-                AvailableForDr = Unplanned(x.ProductionDemandQty, allocated),
+                ActiveDrAllocatedQty = facts.ActiveAllocatedProductionQty,
+                OpenProductionDemandQty = openProduction,
+                ActiveDrLinkedDoQty = facts.LinkedDoProductionQty,
+                ActiveDrOutstandingQty = facts.OutstandingProductionQty,
+                AvailableForDr = available,
                 CustomerCode = x.CustomerCode,
                 RequestedDeliveryDate = x.RequestedDeliveryDate,
                 WarehouseCode = x.Warehouse,
@@ -795,7 +840,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
     public Task<IvMasterOperationResult<SaDeliveryRequestDetail>> ReleaseAsync(
         SaDeliveryRequestCommandRequest request,
         CancellationToken cancellationToken = default) =>
-        ExecuteLifecycleAsync(request, PermissionCodes.Approve, LifecycleAction.Release, cancellationToken);
+        ExecuteReleaseWithDeadlockRetryAsync(request, cancellationToken);
 
     public Task<IvMasterOperationResult<SaDeliveryRequestDetail>> CancelAsync(
         SaDeliveryRequestCommandRequest request,
@@ -806,6 +851,37 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         SaDeliveryRequestCommandRequest request,
         CancellationToken cancellationToken = default) =>
         ExecuteDeleteAsync(request, cancellationToken);
+
+    private async Task<IvMasterOperationResult<SaDeliveryRequestDetail>> ExecuteReleaseWithDeadlockRetryAsync(
+        SaDeliveryRequestCommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxRetries; attempt++)
+        {
+            try
+            {
+                return await ExecuteLifecycleAsync(
+                    request,
+                    PermissionCodes.Approve,
+                    LifecycleAction.Release,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (IsDeadlock(ex) && attempt < MaxRetries)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(40 * attempt), cancellationToken);
+            }
+            catch (Exception ex) when (IsDeadlock(ex))
+            {
+                return IvMasterOperationResult<SaDeliveryRequestDetail>.Fail(
+                    IvMasterErrorCode.Concurrency,
+                    "The Delivery Request could not be released because another transaction kept the demand locked.");
+            }
+        }
+
+        return IvMasterOperationResult<SaDeliveryRequestDetail>.Fail(
+            IvMasterErrorCode.Concurrency,
+            "The Delivery Request could not be released because another transaction kept the demand locked.");
+    }
 
     private async Task<IvMasterOperationResult<SaDeliveryRequestDetail>> ExecuteWithDeadlockRetryAsync(
         string permission,
@@ -1058,10 +1134,50 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                         throw new DeliveryRequestCommandException(IvMasterErrorCode.Validation, "Only Draft Delivery Requests can be released.");
                     }
 
-                    if (sources.Count == 0 || sources.Sum(x => x.AllocatedProductionQty) <= QuantityTolerance)
+                    var activeSources = sources
+                        .Where(x => x.IsActive && x.AllocatedProductionQty > QuantityTolerance)
+                        .OrderBy(x => x.SoNo, SaSoLockOrder.Comparer)
+                        .ThenBy(x => x.CustRel)
+                        .ThenBy(x => x.SoLine)
+                        .ToList();
+                    if (activeSources.Count == 0)
                     {
                         throw new DeliveryRequestCommandException(IvMasterErrorCode.Validation, "A Delivery Request must contain positive Sales Order demand before release.");
                     }
+
+                    var releaseRequest = new SaDeliveryRequestDraftRequest
+                    {
+                        ProductCode = header.ProductCode,
+                        ProductionUom = header.ProductionUom,
+                        RequestedQty = activeSources.Sum(x => x.AllocatedProductionQty),
+                        RequiredDate = header.RequiredDate,
+                        DefinitionCode = header.DefinitionCode,
+                        WarehouseCode = header.WarehouseCode,
+                        ProjectCode = header.ProjectCode,
+                        Priority = header.Priority,
+                        Remark = header.Remark,
+                        Sources = activeSources.Select(x => new SaDeliveryRequestSourceInput
+                        {
+                            SoNo = x.SoNo,
+                            CustRel = x.CustRel,
+                            SoLine = x.SoLine,
+                            AllocatedProductionQty = x.AllocatedProductionQty
+                        }).ToList()
+                    };
+                    var releaseValidation = await PrepareSourceRowsAsync(
+                        db,
+                        scope,
+                        releaseRequest,
+                        header.Uid,
+                        cancellationToken);
+                    if (releaseValidation.Error is not null)
+                    {
+                        throw releaseValidation.Error;
+                    }
+
+                    // A blank definition may be resolved only after the locked, current source set is
+                    // revalidated. Persist that canonical selection with the DRAFT -> RELEASED change.
+                    header.DefinitionCode = releaseRequest.DefinitionCode;
 
                     header.Status = SaDeliveryRequestStatuses.Released;
                     foreach (var source in sources.Where(x => x.IsActive))
@@ -1260,7 +1376,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 SoLine = x.SoLine,
                 AllocatedProductionQty = x.AllocatedProductionQty
             })
-            .OrderBy(x => x.SoNo, StringComparer.Ordinal)
+            .OrderBy(x => x.SoNo, SaSoLockOrder.Comparer)
             .ThenBy(x => x.CustRel)
             .ThenBy(x => x.SoLine)
             .ToList();
@@ -1275,7 +1391,10 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         }
 
         var currentHeaders = new Dictionary<string, SaSo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var soNo in normalized.Select(x => x.SoNo).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var soNo in normalized
+            .Select(x => x.SoNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, SaSoLockOrder.Comparer))
         {
             var header = await LockCurrentSalesOrderAsync(db, scope, soNo, cancellationToken);
             if (header is null)
@@ -1286,7 +1405,39 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             currentHeaders[soNo] = header;
         }
 
+        var soNos = normalized
+            .Select(x => x.SoNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, SaSoLockOrder.Comparer)
+            .ToList();
+        var reserveSums = await SaSoLineReserve.SumBySoLinesAsync(
+            db,
+            scope.CompanyCode,
+            scope.BranchCode!,
+            soNos,
+            cancellationToken: cancellationToken);
+
+        // Lock every competing source before reading the shared capacity facts. The current draft is
+        // excluded from the capacity calculation, but its source rows must still be locked so another
+        // draft cannot change the same SO-line reservation between validation and commit.
+        foreach (var input in normalized)
+        {
+            await LockActiveSourceAllocationsAsync(
+                db, scope, input, currentDeliveryRequestId, cancellationToken);
+        }
+
+        var capacityFacts = await SaSoDeliveryRequestCapacity.LoadAsync(
+            db,
+            scope.CompanyCode,
+            scope.BranchCode!,
+            normalized.Select(x => new SaSoDrLineKey(x.SoNo, x.CustRel, x.SoLine)).ToList(),
+            SaSoDrCapacityMode.AllActiveSources,
+            currentDeliveryRequestId,
+            cancellationToken);
+
         var rows = new List<SaDeliveryRequestSource>();
+        var activeDefinitionsByProduct = new Dictionary<string, List<PrBomHdr>>(StringComparer.OrdinalIgnoreCase);
+        var itemByProduct = new Dictionary<string, IvStockMaster>(StringComparer.OrdinalIgnoreCase);
         string? productCode = null;
         string? productionUom = null;
         string? productDescription = null;
@@ -1329,6 +1480,54 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     "Sources");
             }
 
+            if (!itemByProduct.TryGetValue(lineProduct, out var item))
+            {
+                item = await db.IvStockMasters.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                        && x.ICode == lineProduct, cancellationToken);
+                if (item is null)
+                {
+                    return PreparedSources.Fail(
+                        $"Sales Order {input.SoNo} line {input.SoLine} item '{lineProduct}' was not found.",
+                        "Sources");
+                }
+
+                itemByProduct[lineProduct] = item;
+            }
+
+            if (!item.IsActive)
+            {
+                return PreparedSources.Fail(
+                    $"Sales Order {input.SoNo} line {input.SoLine} item '{lineProduct}' is inactive.",
+                    "Sources");
+            }
+
+            if (!string.Equals(PrMfgTypes.Normalize(item.MfgType), PrMfgTypes.Make, StringComparison.OrdinalIgnoreCase))
+            {
+                return PreparedSources.Fail(
+                    $"Sales Order {input.SoNo} line {input.SoLine} is not eligible for direct production demand.",
+                    "Sources");
+            }
+
+            if (!activeDefinitionsByProduct.TryGetValue(lineProduct, out var activeDefinitions))
+            {
+                activeDefinitions = await db.PrBomHdrs.AsNoTracking()
+                    .Where(x => x.CompanyCode == scope.CompanyCode
+                        && x.ProdCode == lineProduct
+                        && x.Status == PrBomStatuses.Active)
+                    .OrderByDescending(x => x.IsDefaultDefinition)
+                    .ThenBy(x => x.DefinitionCode)
+                    .ToListAsync(cancellationToken);
+                activeDefinitionsByProduct[lineProduct] = activeDefinitions;
+            }
+
+            if (activeDefinitions.Count == 0)
+            {
+                return PreparedSources.Fail(
+                    $"Sales Order {input.SoNo} line {input.SoLine} has no ACTIVE Product Definition.",
+                    "DefinitionCode");
+            }
+
             if (productCode is null)
             {
                 productCode = lineProduct;
@@ -1362,11 +1561,34 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             warehouseCode ??= lineWarehouse;
             projectCode ??= lineProject;
 
-            var activeSourceRows = await LockActiveSourceAllocationsAsync(
-                db, scope, input, currentDeliveryRequestId, cancellationToken);
-            var existingAllocated = activeSourceRows.Sum(x => x.AllocatedProductionQty);
-            var available = Unplanned(detail.StdQty, existingAllocated);
-            if (input.AllocatedProductionQty - available > QuantityTolerance)
+            var frozenFactor = SaProductionDemandRules.ResolveFrozenStdFactor(
+                detail.StdPsize,
+                detail.OrderQty,
+                detail.StdQty);
+            if (frozenFactor is not decimal resolvedFactor)
+            {
+                return PreparedSources.Fail(
+                    $"Sales Order {input.SoNo} line {input.SoLine}: {SaProductionDemandRules.LegacyConversionUnresolvedMessage}",
+                    "Sources");
+            }
+
+            var reserve = SaSoLineReserve.GetSums(reserveSums, input.SoNo, input.CustRel, input.SoLine);
+            var evaluation = SaSoLineReserve.Evaluate(
+                input.SoNo,
+                input.SoLine,
+                detail.OrderQty,
+                detail.DeliveredQty,
+                reserve,
+                thisDoQty: 0m,
+                thisSoInvQty: 0m);
+            var remainingSalesQty = Math.Max(SaSoLineReserve.RemainingForNewDo(evaluation), 0m);
+            var openProductionQty = SaProductionDemandRules.ToProductionQty(remainingSalesQty, resolvedFactor);
+            var lineCapacity = capacityFacts.GetValueOrDefault(
+                new SaSoDrLineKey(input.SoNo, input.CustRel, input.SoLine).Normalize(),
+                new SaSoDrCapacityFacts(0m, 0m, 0m));
+            var available = SaSoQty.RoundQty(Math.Max(openProductionQty - lineCapacity.OutstandingProductionQty, 0m));
+            var requestedAllocation = SaSoQty.RoundQty(input.AllocatedProductionQty);
+            if (requestedAllocation - available > QuantityTolerance)
             {
                 return PreparedSources.Fail(
                     $"Sales Order {input.SoNo} line {input.SoLine} has only {available:N4} available production quantity.",
@@ -1379,7 +1601,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 earliestRequiredDate = date;
             }
 
-            requestedQty += input.AllocatedProductionQty;
+            requestedQty += requestedAllocation;
             rows.Add(new SaDeliveryRequestSource
             {
                 CompanyCode = scope.CompanyCode,
@@ -1391,7 +1613,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 SourceUom = sourceUom,
                 ProductionUom = lineUom,
                 SourceQty = detail.OrderQty,
-                AllocatedProductionQty = input.AllocatedProductionQty,
+                AllocatedProductionQty = requestedAllocation,
                 CustomerCode = NullIfEmpty(header.CustCode),
                 RequestedDeliveryDate = detail.DeliveryDate,
                 IsActive = true
@@ -1401,6 +1623,32 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         if (productCode is null || productionUom is null)
         {
             return PreparedSources.Fail("A valid production source is required.", "Sources");
+        }
+
+        var definitions = activeDefinitionsByProduct[productCode];
+        var requestedDefinition = PrProductDefinitionCodes.Normalize(request.DefinitionCode);
+        if (requestedDefinition.Length > 0)
+        {
+            var selected = definitions.FirstOrDefault(x =>
+                string.Equals(x.DefinitionCode, requestedDefinition, StringComparison.OrdinalIgnoreCase));
+            if (selected is null)
+            {
+                return PreparedSources.Fail(
+                    $"Product Definition '{requestedDefinition}' is not ACTIVE for product '{productCode}'.",
+                    "DefinitionCode");
+            }
+
+            request.DefinitionCode = selected.DefinitionCode;
+        }
+        else
+        {
+            var defaults = definitions.Where(x => x.IsDefaultDefinition).ToList();
+            var selected = definitions.Count == 1
+                ? definitions[0]
+                : defaults.Count == 1
+                    ? defaults[0]
+                    : null;
+            request.DefinitionCode = selected?.DefinitionCode;
         }
 
         if (warehouseCode is not null
@@ -1573,21 +1821,25 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             .ThenBy(x => x.CustRel)
             .ThenBy(x => x.SoLine)
             .ToListAsync(cancellationToken);
-        var activeSourceAllocations = sources.Count == 0
-            ? []
-            : await db.SaDeliveryRequestSources.AsNoTracking()
-                .Where(x => x.CompanyCode == header.CompanyCode
-                    && x.BranchCode == header.BranchCode
-                    && x.IsActive
-                    && sources.Select(s => s.SoNo).Contains(x.SoNo)
-                    && sources.Select(s => s.CustRel).Contains(x.CustRel))
-                .GroupBy(x => new { x.SoNo, x.CustRel, x.SoLine })
-                .Select(g => new { g.Key.SoNo, g.Key.CustRel, g.Key.SoLine, Qty = g.Sum(x => x.AllocatedProductionQty) })
-                .ToListAsync(cancellationToken);
-        var activeBySource = activeSourceAllocations.ToDictionary(
-            x => (x.SoNo.ToUpperInvariant(), x.CustRel, x.SoLine), x => x.Qty);
-        var productionDemandBySource = sources.Count == 0
-            ? new Dictionary<(string SoNo, short CustRel, short SoLine), decimal>()
+        var sourceKeys = sources
+            .Select(source => new SaSoDrLineKey(source.SoNo, source.CustRel, source.SoLine))
+            .ToList();
+        var capacityFacts = await SaSoDeliveryRequestCapacity.LoadAsync(
+            db,
+            header.CompanyCode,
+            header.BranchCode,
+            sourceKeys,
+            SaSoDrCapacityMode.AllActiveSources,
+            cancellationToken: cancellationToken);
+        var reserveSums = await SaSoLineReserve.SumBySoLinesAsync(
+            db,
+            header.CompanyCode,
+            header.BranchCode,
+            sources.Select(source => source.SoNo).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            cancellationToken: cancellationToken);
+
+        var detailFactsBySource = sources.Count == 0
+            ? new Dictionary<(string SoNo, short CustRel, short SoLine), (decimal StdQty, decimal OrderQty, decimal DeliveredQty, decimal StdPsize)>()
             : await (
                 from source in db.SaDeliveryRequestSources.AsNoTracking()
                 join detail in db.SaSoDetails.AsNoTracking()
@@ -1599,10 +1851,13 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     source.SoNo,
                     source.CustRel,
                     SoLine = source.SoLine,
-                    detail.StdQty
+                    detail.StdQty,
+                    detail.OrderQty,
+                    detail.DeliveredQty,
+                    detail.StdPsize
                 }).ToDictionaryAsync(
                     x => (x.SoNo.ToUpperInvariant(), x.CustRel, x.SoLine),
-                    x => x.StdQty,
+                    x => (x.StdQty, x.OrderQty, x.DeliveredQty, x.StdPsize),
                     cancellationToken);
 
         var allocationRows = await db.PrWorkOrderDemandAllocations.AsNoTracking()
@@ -1771,32 +2026,71 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             ModifiedDate = header.ModifiedDate,
             ModifiedBy = header.ModifiedBy,
             RowVersion = header.RowVersion ?? [],
-            Sources = sources.Select(source => new SaDeliveryRequestSourceTrace
+            Sources = sources.Select(source =>
             {
-                Uid = source.Uid,
-                SoNo = source.SoNo,
-                CustRel = source.CustRel,
-                SoLine = source.SoLine,
-                ProductCode = source.ProductCode,
-                SourceUom = source.SourceUom,
-                ProductionUom = source.ProductionUom,
-                SourceQty = source.SourceQty,
-                ProductionDemandQty = productionDemandBySource.GetValueOrDefault(
-                    (source.SoNo.ToUpperInvariant(), source.CustRel, source.SoLine), source.SourceQty),
-                AllocatedProductionQty = source.AllocatedProductionQty,
-                ActiveAllocatedProductionQty = activeBySource.GetValueOrDefault((source.SoNo.ToUpperInvariant(), source.CustRel, source.SoLine)),
-                AvailableForDr = Unplanned(
-                    productionDemandBySource.GetValueOrDefault(
-                        (source.SoNo.ToUpperInvariant(), source.CustRel, source.SoLine), source.SourceQty),
-                    activeBySource.GetValueOrDefault((source.SoNo.ToUpperInvariant(), source.CustRel, source.SoLine))),
-                CustomerCode = source.CustomerCode,
-                RequestedDeliveryDate = source.RequestedDeliveryDate,
-                WarehouseCode = header.WarehouseCode,
-                ProjectCode = header.ProjectCode,
-                IsActive = source.IsActive,
-                ReleasedDate = source.ReleasedDate,
-                ReleasedBy = source.ReleasedBy,
-                RowVersion = source.RowVersion ?? []
+                var key = new SaSoDrLineKey(source.SoNo, source.CustRel, source.SoLine).Normalize();
+                var tupleKey = (key.SoNo.ToUpperInvariant(), key.CustRel, key.SoLine);
+                var productionDemandQty = detailFactsBySource.GetValueOrDefault(
+                    tupleKey,
+                    (StdQty: source.SourceQty, OrderQty: source.SourceQty, DeliveredQty: 0m, StdPsize: 0m)).StdQty;
+                var openProductionDemandQty = 0m;
+                if (detailFactsBySource.TryGetValue(tupleKey, out var detailFacts))
+                {
+                    var frozenFactor = SaProductionDemandRules.ResolveFrozenStdFactor(
+                        detailFacts.StdPsize,
+                        detailFacts.OrderQty,
+                        detailFacts.StdQty);
+                    if (frozenFactor is decimal resolvedFactor)
+                    {
+                        var evaluation = SaSoLineReserve.Evaluate(
+                            source.SoNo,
+                            source.SoLine,
+                            detailFacts.OrderQty,
+                            detailFacts.DeliveredQty,
+                            SaSoLineReserve.GetSums(reserveSums, source.SoNo, source.CustRel, source.SoLine),
+                            thisDoQty: 0m,
+                            thisSoInvQty: 0m);
+                        if (evaluation.Succeeded)
+                        {
+                            openProductionDemandQty = SaProductionDemandRules.ToProductionQty(
+                                Math.Max(SaSoLineReserve.RemainingForNewDo(evaluation), 0m),
+                                resolvedFactor);
+                        }
+                    }
+                }
+
+                var facts = capacityFacts.GetValueOrDefault(
+                    key,
+                    new SaSoDrCapacityFacts(0m, 0m, 0m));
+                var availableForDr = SaSoQty.RoundQty(Math.Max(
+                    openProductionDemandQty - facts.OutstandingProductionQty,
+                    0m));
+                return new SaDeliveryRequestSourceTrace
+                {
+                    Uid = source.Uid,
+                    SoNo = source.SoNo,
+                    CustRel = source.CustRel,
+                    SoLine = source.SoLine,
+                    ProductCode = source.ProductCode,
+                    SourceUom = source.SourceUom,
+                    ProductionUom = source.ProductionUom,
+                    SourceQty = source.SourceQty,
+                    ProductionDemandQty = productionDemandQty,
+                    OpenProductionDemandQty = openProductionDemandQty,
+                    AllocatedProductionQty = source.AllocatedProductionQty,
+                    ActiveAllocatedProductionQty = facts.ActiveAllocatedProductionQty,
+                    ActiveDrLinkedDoQty = facts.LinkedDoProductionQty,
+                    ActiveDrOutstandingQty = facts.OutstandingProductionQty,
+                    AvailableForDr = availableForDr,
+                    CustomerCode = source.CustomerCode,
+                    RequestedDeliveryDate = source.RequestedDeliveryDate,
+                    WarehouseCode = header.WarehouseCode,
+                    ProjectCode = header.ProjectCode,
+                    IsActive = source.IsActive,
+                    ReleasedDate = source.ReleasedDate,
+                    ReleasedBy = source.ReleasedBy,
+                    RowVersion = source.RowVersion ?? []
+                };
             }).ToList(),
             WorkOrders = allocationRows.Select(x => new SaDeliveryRequestWorkOrderTrace
             {
@@ -2105,9 +2399,6 @@ ORDER BY DeliveryRequestID")
 
         return storedStatus;
     }
-
-    private static decimal Unplanned(decimal requested, decimal allocated) =>
-        Math.Max(requested - allocated, 0m);
 
     private static string Normalize(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant();
 

@@ -96,6 +96,7 @@ public sealed class IvStockMasterListRow
 {
     public string ICode { get; init; } = string.Empty;
     public string? IDesc { get; init; }
+    public string MfgType { get; init; } = "BUY";
     public string? Barcode { get; init; }
     public string? Brand { get; init; }
     public string? DefWarehouse { get; init; }
@@ -138,6 +139,7 @@ public sealed class IvStockMasterEditVm
 {
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
+    public string MfgType { get; set; } = "BUY";
     public string? Barcode { get; set; }
     public string? Brand { get; set; }
     public bool IsActive { get; set; } = true;
