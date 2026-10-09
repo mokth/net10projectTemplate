@@ -1,0 +1,87 @@
+@namespace ErpWeb.UI.Planning.Lookups
+@using ErpWeb.Core.Production
+@using Microsoft.AspNetCore.Components.Web
+
+<DxPopup HeaderCssClass="code-style"
+         HeaderText="SELECT DELIVERY REQUEST"
+         CloseOnOutsideClick="false"
+         Width="90vw"
+         CssClass="common-popup"
+         @bind-Visible="@Visible"
+         Closing="@OnClosing">
+    <Content>
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-warning py-2">@_error</div>
+        }
+
+        <div class="d-flex gap-2 mb-2 align-items-end">
+            <div class="flex-grow-1">
+                <label class="form-label mb-0">Search</label>
+                <DxTextBox @bind-Text="@_searchText"
+                           NullText="DR no / product / SO / customer"
+                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                           @onkeydown="OnSearchKeyDownAsync" />
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="SEARCH"
+                      IconCssClass="fa-solid fa-magnifying-glass"
+                      Click="@SearchAsync" />
+        </div>
+
+        <DxGrid @ref="_grid"
+                Data="@_items"
+                KeyFieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.DeliveryRequestId)"
+                ShowFilterRow="false"
+                ShowGroupPanel="false"
+                PageSize="@_pageSize"
+                TextWrapEnabled="false"
+                FocusedRowEnabled="true"
+                RowDoubleClick="@OnRowDoubleClick"
+                SelectedDataItemChanged="@OnSelectedItemChanged">
+            <Columns>
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.DeliveryRequestNo)" Caption="DR NO" Width="140px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductCode)" Caption="PRODUCT" Width="130px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductDescription)" Caption="DESCRIPTION" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.RequiredDate)" Caption="REQUIRED DATE" DisplayFormat="dd MMM yyyy" Width="125px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.Priority)" Caption="PRIORITY" Width="95px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.RequestedQty)" Caption="REQUESTED" DisplayFormat="n4" Width="115px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.WoAllocatedQty)" Caption="WO ALLOCATED" DisplayFormat="n4" Width="115px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductionUnplannedQty)" Caption="AVAILABLE" DisplayFormat="n4" Width="115px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductionUom)" Caption="UOM" Width="75px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.WarehouseCode)" Caption="WAREHOUSE" Width="105px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProjectCode)" Caption="PROJECT" Width="105px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.PrimarySoNo)" Caption="SO" Width="125px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ActiveSoCount)" Caption="SO COUNT" Width="80px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.PrimaryCustomerCode)" Caption="CUSTOMER" Width="125px" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ActiveCustomerCount)" Caption="CUSTOMER COUNT" Width="105px" />
+            </Columns>
+        </DxGrid>
+
+        <div class="d-flex justify-content-between align-items-center mt-2">
+            <span class="text-muted small">@_totalCount eligible Delivery Request(s)</span>
+            <div class="d-flex gap-2">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="PREV"
+                          Enabled="@(_skip > 0 && !_loading)"
+                          Click="@PrevPageAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="NEXT"
+                          Enabled="@(_skip + _pageSize < _totalCount && !_loading)"
+                          Click="@NextPageAsync" />
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-3" @onkeydown="OnKeyDown">
+            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                      Text="SELECT"
+                      IconCssClass="fa-solid fa-check"
+                      Click="@SelectFocusedAsync"
+                      Enabled="@(_focused is not null && !_loading)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="CANCEL"
+                      IconCssClass="fa-solid fa-xmark"
+                      Click="@CloseAsync" />
+        </div>
+    </Content>
+</DxPopup>

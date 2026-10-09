@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Planning;
@@ -214,6 +215,173 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             .ToListAsync();
         Assert.Contains(SaDeliveryRequestAuditEventTypes.WorkOrderCreated, auditTypes);
         Assert.Contains(SaDeliveryRequestAuditEventTypes.AllocationChanged, auditTypes);
+    }
+
+    [Fact]
+    public async Task Delivery_request_lookup_returns_only_reconciled_eligible_rows_with_source_summary()
+    {
+        var firstId = await SeedDeliveryRequestWithSourceAsync(
+            "DR-WO-LOOKUP-001", "SO-WO-LOOKUP-001", "CUST-LOOKUP-001", requestedQty: 10m);
+        var secondId = await SeedDeliveryRequestWithSourceAsync(
+            "DR-WO-LOOKUP-002", "SO-WO-LOOKUP-002", "CUST-LOOKUP-002", requestedQty: 20m,
+            status: SaDeliveryRequestStatuses.InProduction);
+        var exhaustedId = await SeedDeliveryRequestAsync("DR-WO-LOOKUP-003", 30m);
+        var facts = new Dictionary<long, SaDeliveryRequestFulfilmentFacts>
+        {
+            [firstId] = new()
+            {
+                DeliveryRequestId = firstId,
+                ActiveWoAllocatedQty = 2m,
+                ProductionUnplannedQty = 8m
+            },
+            [secondId] = new()
+            {
+                DeliveryRequestId = secondId,
+                ActiveWoAllocatedQty = 20m,
+                ProductionUnplannedQty = 0m
+            },
+            [exhaustedId] = new()
+            {
+                DeliveryRequestId = exhaustedId,
+                ActiveWoAllocatedQty = 30m,
+                ProductionUnplannedQty = 0m
+            }
+        };
+        var fulfilment = new Mock<ISaDeliveryRequestFulfilmentService>();
+        fulfilment.Setup(x => x.GetFactsBatchAsync(
+                It.IsAny<IReadOnlyCollection<long>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IvMasterOperationResult<IReadOnlyDictionary<long, SaDeliveryRequestFulfilmentFacts>>.Ok(facts));
+
+        var result = await CreateSut(deliveryRequestFulfilment: fulfilment.Object)
+            .SearchEligibleDeliveryRequestsAsync(new LargeLookupSearchRequest { Take = 20 });
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal(1, result.TotalCount);
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(firstId, row.DeliveryRequestId);
+        Assert.Equal("DR-WO-LOOKUP-001", row.DeliveryRequestNo);
+        Assert.Equal(2m, row.WoAllocatedQty);
+        Assert.Equal(8m, row.ProductionUnplannedQty);
+        Assert.Equal("SO-WO-LOOKUP-001", row.PrimarySoNo);
+        Assert.Equal(1, row.ActiveSoCount);
+        Assert.Equal("CUST-LOOKUP-001", row.PrimaryCustomerCode);
+        Assert.Equal(1, row.ActiveCustomerCount);
+    }
+
+    [Fact]
+    public async Task Delivery_request_preview_uses_fresh_reconciled_unplanned_quantity()
+    {
+        await SeedManualCurrentRouteAsync();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-PREVIEW-RECONCILED", 10m);
+        var fulfilment = new Mock<ISaDeliveryRequestFulfilmentService>();
+        fulfilment.Setup(x => x.ReconcileAsync(
+                deliveryRequestId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IvMasterOperationResult<SaDeliveryRequestFulfilmentFacts>.Ok(new()
+            {
+                DeliveryRequestId = deliveryRequestId,
+                ProductionRequiredQty = 4m,
+                ProductionUnplannedQty = 4m
+            }));
+
+        var result = await CreateSut(deliveryRequestFulfilment: fulfilment.Object)
+            .PreviewFromDeliveryRequestAsync(DeliveryRequestRequest(deliveryRequestId, 4m));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(4m, result.Data!.DeliveryRequestUnplannedQty);
+        Assert.Equal(4m, result.Data.PlannedQty);
+    }
+
+    [Fact]
+    public async Task Delivery_request_draft_resize_uses_outstanding_supply_formula()
+    {
+        await SeedManualCurrentRouteAsync();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-RESIZE-FACTS", 20m);
+        var fulfilment = new Mock<ISaDeliveryRequestFulfilmentService>();
+        fulfilment.Setup(x => x.ReconcileInTransactionAsync(
+                It.IsAny<AppDbContext>(),
+                deliveryRequestId,
+                It.IsAny<InventoryTenantScope>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SaDeliveryRequestFulfilmentFacts
+            {
+                DeliveryRequestId = deliveryRequestId,
+                OutstandingWoSupplyQty = 7m,
+                ProductionRequiredQty = 10m,
+                ProductionUnplannedQty = 10m
+            });
+
+        var sut = CreateSut(deliveryRequestFulfilment: fulfilment.Object);
+        var created = await sut.CreateDraftFromDeliveryRequestAsync(
+            DeliveryRequestRequest(deliveryRequestId, 4m));
+        Assert.True(created.Succeeded, created.Message);
+
+        var resized = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = created.Data!.WorkOrderNo,
+            PlannedQty = 8m,
+            SchedulingDirection = created.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = created.Data.ScheduleAnchorDateTime,
+            RowVersion = created.Data.RowVersion
+        });
+
+        Assert.False(resized.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, resized.ErrorCode);
+        Assert.Contains("7.0000", resized.Message, StringComparison.Ordinal);
+        await using var db = await _factory.CreateDbContextAsync();
+        var allocation = await db.PrWorkOrderDemandAllocations.SingleAsync();
+        Assert.Equal(4m, allocation.AllocatedQty);
+    }
+
+    [Fact]
+    public async Task Delivery_request_release_revalidates_current_fulfilment_formula()
+    {
+        await SeedManualCurrentRouteAsync();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-RELEASE-FACTS", 20m);
+        var reconcileCalls = 0;
+        var fulfilment = new Mock<ISaDeliveryRequestFulfilmentService>();
+        fulfilment.Setup(x => x.ReconcileInTransactionAsync(
+                It.IsAny<AppDbContext>(),
+                deliveryRequestId,
+                It.IsAny<InventoryTenantScope>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var maxAllowed = Interlocked.Increment(ref reconcileCalls) == 1 ? 7m : 6m;
+                return new SaDeliveryRequestFulfilmentFacts
+                {
+                    DeliveryRequestId = deliveryRequestId,
+                    OutstandingWoSupplyQty = 10m,
+                    ProductionRequiredQty = maxAllowed + 3m,
+                    ProductionUnplannedQty = maxAllowed + 3m
+                };
+            });
+
+        var sut = CreateSut(deliveryRequestFulfilment: fulfilment.Object);
+        var created = await sut.CreateDraftFromDeliveryRequestAsync(
+            DeliveryRequestRequest(deliveryRequestId, 7m));
+        Assert.True(created.Succeeded, created.Message);
+
+        var released = await sut.UpdateAndReleaseAsync(new ProductionWorkOrderUpdateAndReleaseRequest
+        {
+            WorkOrderNo = created.Data!.WorkOrderNo,
+            PlannedQty = 7m,
+            SchedulingDirection = created.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = created.Data.ScheduleAnchorDateTime,
+            RowVersion = created.Data.RowVersion,
+            SnapshotRevision = created.Data.SnapshotRevision,
+            SnapshotHash = created.Data.SnapshotHash,
+            SourceProductDefinitionRevisionId = created.Data.SourceProductDefinitionRevisionId
+        });
+
+        Assert.False(released.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+        Assert.Contains("6.0000", released.Message, StringComparison.Ordinal);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            ProductionWorkOrderStatuses.Draft,
+            (await db.ProductionWorkOrders.SingleAsync()).Status);
     }
 
     [Fact]
@@ -2520,7 +2688,10 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         return result.Data!;
     }
 
-    private async Task<long> SeedDeliveryRequestAsync(string deliveryRequestNo, decimal requestedQty)
+    private async Task<long> SeedDeliveryRequestAsync(
+        string deliveryRequestNo,
+        decimal requestedQty,
+        string status = SaDeliveryRequestStatuses.Released)
     {
         await using var db = await _factory.CreateDbContextAsync();
         var request = new SaDeliveryRequest
@@ -2534,11 +2705,89 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             RequestedQty = requestedQty,
             RequiredDate = new DateTime(2026, 10, 1),
             DefinitionCode = PrProductDefinitionCodes.Standard,
-            Status = SaDeliveryRequestStatuses.Released,
+            Status = status,
             CreatedDate = DateTime.UtcNow,
             CreatedBy = "admin",
             RowVersion = [1]
         };
+        db.SaDeliveryRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request.Uid;
+    }
+
+    private async Task<long> SeedDeliveryRequestWithSourceAsync(
+        string deliveryRequestNo,
+        string soNo,
+        string customerCode,
+        decimal requestedQty,
+        string status = SaDeliveryRequestStatuses.Released)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var so = new SaSo
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            SoNo = soNo,
+            CustRel = 1,
+            IsCurrent = true,
+            LastCustRel = 1,
+            SoDate = new DateTime(2026, 9, 1),
+            Status = SaSoStatuses.New,
+            FulfillmentStatus = "NONE",
+            BillingStatus = "NONE",
+            CustCode = customerCode,
+            CurrRate = 1m,
+            RowVersion = [1]
+        };
+        so.Details.Add(new SaSoDetail
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            SoNo = soNo,
+            CustRel = 1,
+            Line = 1,
+            ICode = "FG001",
+            IDesc = "Finished Good",
+            StdQty = requestedQty,
+            StdUom = "PCS",
+            DeliveryDate = new DateTime(2026, 10, 1)
+        });
+
+        var request = new SaDeliveryRequest
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            DeliveryRequestNo = deliveryRequestNo,
+            ProductCode = "FG001",
+            ProductDescription = "Finished Good",
+            ProductionUom = "PCS",
+            RequestedQty = requestedQty,
+            RequiredDate = new DateTime(2026, 10, 1),
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            Status = status,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "admin",
+            RowVersion = [1]
+        };
+        request.Sources.Add(new SaDeliveryRequestSource
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            SoNo = soNo,
+            CustRel = 1,
+            SoLine = 1,
+            ProductCode = "FG001",
+            SourceUom = "PCS",
+            ProductionUom = "PCS",
+            SourceQty = requestedQty,
+            AllocatedProductionQty = requestedQty,
+            CustomerCode = customerCode,
+            IsActive = true,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "admin"
+        });
+
+        db.SaSos.Add(so);
         db.SaDeliveryRequests.Add(request);
         await db.SaveChangesAsync();
         return request.Uid;
@@ -2752,7 +3001,8 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         string branch = "HQ",
         string? deniedPermission = null,
         bool releaseEnabled = true,
-        IWorkOrderReadinessValidator? readiness = null)
+        IWorkOrderReadinessValidator? readiness = null,
+        ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(
@@ -2782,7 +3032,8 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             quantities,
             new WorkOrderScheduleCalculator(new AlwaysOpenWorkOrderCalendarProvider()),
             readiness ?? new WorkOrderReadinessValidator(),
-            Microsoft.Extensions.Options.Options.Create(new ProductionWorkOrderOptions { ReleaseEnabled = releaseEnabled }));
+            Microsoft.Extensions.Options.Options.Create(new ProductionWorkOrderOptions { ReleaseEnabled = releaseEnabled }),
+            deliveryRequestFulfilment: deliveryRequestFulfilment);
     }
 
     private async Task SeedManualCurrentRouteAsync(AppDbContext? db = null, PrBomHdr? header = null)

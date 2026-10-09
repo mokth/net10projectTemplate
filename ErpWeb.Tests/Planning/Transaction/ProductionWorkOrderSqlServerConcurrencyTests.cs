@@ -3,10 +3,12 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -505,6 +507,54 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
 
         await using var db = await host.Factory.CreateDbContextAsync();
         Assert.False(await db.ProductionWorkOrders.AnyAsync(x => x.ProductCode == host.ProductCode));
+    }
+
+    [Fact]
+    public async Task Two_delivery_request_draft_creates_with_the_same_demand_leave_one_allocation()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        var seeded = await host.SeedDeliveryRequestAsync();
+        var gate = new ManualResetEventSlim(false);
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateAsync()
+        {
+            gate.Wait();
+            return await host.CreateService().CreateDraftFromDeliveryRequestAsync(
+                new ProductionWorkOrderDeliveryRequestRequest
+                {
+                    DeliveryRequestId = seeded.DeliveryRequestId,
+                    PlannedQty = 10m,
+                    PlannedStartDate = new DateTime(2026, 10, 1),
+                    PlannedCompletionDate = new DateTime(2026, 10, 3),
+                    SchedulingDirection = ProductionSchedulingDirections.Forward,
+                    DeliveryRequestRowVersion = seeded.RowVersion.ToArray()
+                });
+        }
+
+        var taskA = Task.Run(CreateAsync);
+        var taskB = Task.Run(CreateAsync);
+        gate.Set();
+        var results = await Task.WhenAll(taskA, taskB);
+
+        var winners = results.Where(x => x.Succeeded).ToList();
+        var losers = results.Where(x => !x.Succeeded).ToList();
+        Assert.Single(winners);
+        Assert.Single(losers);
+        Assert.Equal(IvMasterErrorCode.Validation, losers[0].ErrorCode);
+
+        await using var db = await host.Factory.CreateDbContextAsync();
+        Assert.Single(await db.ProductionWorkOrders.ToListAsync());
+        var allocations = await db.PrWorkOrderDemandAllocations
+            .Where(x => x.DeliveryRequestId == seeded.DeliveryRequestId && x.IsActive)
+            .ToListAsync();
+        var allocation = Assert.Single(allocations);
+        Assert.Equal(10m, allocation.AllocatedQty);
     }
 
     [Fact]
@@ -1317,6 +1367,79 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
             SourceType = ProductionSourceTypes.Manual,
             Remark = "SQL Server concurrency"
         };
+
+        public async Task<(long DeliveryRequestId, byte[] RowVersion)> SeedDeliveryRequestAsync()
+        {
+            await using var db = await Factory.CreateDbContextAsync();
+            var suffix = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+            var soNo = "SO-DR-" + suffix;
+            var so = new SaSo
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                SoNo = soNo,
+                CustRel = 1,
+                IsCurrent = true,
+                LastCustRel = 1,
+                SoDate = new DateTime(2026, 9, 1),
+                Status = SaSoStatuses.New,
+                FulfillmentStatus = "NONE",
+                BillingStatus = "NONE",
+                CustCode = "CUST-" + suffix,
+                CurrRate = 1m
+            };
+            so.Details.Add(new SaSoDetail
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                SoNo = soNo,
+                CustRel = 1,
+                Line = 1,
+                ICode = ProductCode,
+                IDesc = "WO SQL finished",
+                StdQty = 10m,
+                StdUom = "PCS",
+                DeliveryDate = new DateTime(2026, 10, 1)
+            });
+
+            var request = new SaDeliveryRequest
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                DeliveryRequestNo = "DR-SQL-" + suffix,
+                ProductCode = ProductCode,
+                ProductDescription = "WO SQL finished",
+                ProductionUom = "PCS",
+                RequestedQty = 10m,
+                RequiredDate = new DateTime(2026, 10, 1),
+                DefinitionCode = PrProductDefinitionCodes.Standard,
+                Status = SaDeliveryRequestStatuses.Released,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "sql-test"
+            };
+            request.Sources.Add(new SaDeliveryRequestSource
+            {
+                CompanyCode = Company,
+                BranchCode = Branch,
+                SoNo = soNo,
+                CustRel = 1,
+                SoLine = 1,
+                ProductCode = ProductCode,
+                SourceUom = "PCS",
+                ProductionUom = "PCS",
+                SourceQty = 10m,
+                AllocatedProductionQty = 10m,
+                CustomerCode = so.CustCode,
+                IsActive = true,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "sql-test"
+            });
+
+            db.SaSos.Add(so);
+            db.SaDeliveryRequests.Add(request);
+            await db.SaveChangesAsync();
+            return (request.Uid, request.RowVersion.ToArray());
+        }
 
         public ProductionWorkOrderService CreateService(bool releaseEnabled = true)
         {

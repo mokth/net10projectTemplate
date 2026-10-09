@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
@@ -477,6 +478,29 @@ public sealed class ProductionWorkOrderDeliveryRequestRequest
     public byte[]? DeliveryRequestRowVersion { get; set; }
 }
 
+public sealed class ProductionWorkOrderDeliveryRequestLookupRow
+{
+    public long DeliveryRequestId { get; init; }
+    public string DeliveryRequestNo { get; init; } = string.Empty;
+    public string ProductCode { get; init; } = string.Empty;
+    public string? ProductDescription { get; init; }
+    public string ProductionUom { get; init; } = string.Empty;
+    public decimal RequestedQty { get; init; }
+    public decimal WoAllocatedQty { get; init; }
+    public decimal ProductionUnplannedQty { get; init; }
+    public DateTime RequiredDate { get; init; }
+    public string? DefinitionCode { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? ProjectCode { get; init; }
+    public string? Priority { get; init; }
+    public string? Remark { get; init; }
+    public string? PrimarySoNo { get; init; }
+    public int ActiveSoCount { get; init; }
+    public string? PrimaryCustomerCode { get; init; }
+    public int ActiveCustomerCount { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
 /// <summary>
 /// Applies permitted header edits to a saved current-format Draft and releases it
 /// in one transaction. Product, definition, and source type stay immutable.
@@ -588,6 +612,11 @@ public interface IProductionWorkOrderService
     Task<IvMasterOperationResult<ProductionWorkOrderPreview>> PreviewFromDeliveryRequestAsync(
         ProductionWorkOrderDeliveryRequestRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>>
+        SearchEligibleDeliveryRequestsAsync(
+            LargeLookupSearchRequest request,
+            CancellationToken cancellationToken = default);
 
     Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftFromDeliveryRequestAsync(
         ProductionWorkOrderDeliveryRequestRequest request,

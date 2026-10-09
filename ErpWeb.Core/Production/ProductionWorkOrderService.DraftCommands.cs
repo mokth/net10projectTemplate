@@ -175,13 +175,20 @@ public sealed partial class ProductionWorkOrderService
                 request.SourceReference,
                 request.Remark,
                 cancellationToken);
-            if (!mutation.Changed)
+            if (!mutation.Changed && mutation.DeliveryRequestIdToReconcile is null)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
             }
 
             await db.SaveChangesAsync(cancellationToken);
+            if (mutation.DeliveryRequestIdToReconcile is long deliveryRequestId
+                && _deliveryRequestFulfilment is not null)
+            {
+                await _deliveryRequestFulfilment.ReconcileInTransactionAsync(
+                    db, deliveryRequestId, auth.Scope!, cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+            }
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
         }
@@ -240,7 +247,7 @@ public sealed partial class ProductionWorkOrderService
                     + ": The Draft changed after it was opened. Reload it before release.");
             }
 
-            await ApplyDraftHeaderChangesAsync(
+            var mutation = await ApplyDraftHeaderChangesAsync(
                 db,
                 entity,
                 scope,
@@ -250,6 +257,15 @@ public sealed partial class ProductionWorkOrderService
                 request.SourceReference,
                 request.Remark,
                 cancellationToken);
+
+            if (mutation.DeliveryRequestIdToReconcile is long deliveryRequestId
+                && _deliveryRequestFulfilment is not null)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                await _deliveryRequestFulfilment.ReconcileInTransactionAsync(
+                    db, deliveryRequestId, scope, cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+            }
 
             await ValidateAndApplyCurrentReleaseAsync(db, entity, scope, cancellationToken);
             await MarkDeliveryRequestWorkOrderReleasedAsync(
@@ -1187,7 +1203,9 @@ public sealed partial class ProductionWorkOrderService
         TouchSqliteRowVersions(db, entity);
     }
 
-    private sealed record DraftHeaderMutationResult(bool Changed);
+    private sealed record DraftHeaderMutationResult(
+        bool Changed,
+        long? DeliveryRequestIdToReconcile = null);
 
     /// <summary>
     /// Validates the persisted snapshot, then applies permitted header edits on a tracked Draft.
@@ -1236,16 +1254,22 @@ public sealed partial class ProductionWorkOrderService
                 db, scope.CompanyCode, exclusive: false, cancellationToken);
         }
 
+        plannedQty = IvQty.Round(plannedQty);
         entity.PlannedQty = plannedQty;
         entity.RemainingQty = plannedQty;
         entity.SchedulingDirection = direction;
         entity.ScheduleAnchorDateTime = anchor;
-        entity.SourceReference = TrimTo(sourceReference, SourceReferenceMax);
+        if (!IsDeliveryRequestWorkOrder(entity.SourceType))
+        {
+            entity.SourceReference = TrimTo(sourceReference, SourceReferenceMax);
+        }
         entity.Remark = TrimTo(remark, RemarkMax);
 
-        if (qtyChanged && entity.SourceType == ProductionSourceTypes.DeliveryRequest)
+        long? deliveryRequestIdToReconcile = null;
+        if (qtyChanged && IsDeliveryRequestWorkOrder(entity.SourceType))
         {
-            await AdjustDeliveryRequestAllocationAsync(db, entity, scope, plannedQty, cancellationToken);
+            deliveryRequestIdToReconcile = await AdjustDeliveryRequestAllocationAsync(
+                db, entity, scope, plannedQty, cancellationToken);
         }
 
         if (qtyChanged)
@@ -1270,14 +1294,14 @@ public sealed partial class ProductionWorkOrderService
         var nextHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(entity);
         if (string.Equals(nextHash, entity.SnapshotHash, StringComparison.Ordinal))
         {
-            return new DraftHeaderMutationResult(false);
+            return new DraftHeaderMutationResult(false, deliveryRequestIdToReconcile);
         }
 
         entity.SnapshotHash = nextHash;
         entity.SnapshotRevision += 1;
         StampDraftAudit(entity, scope, ProductionAuditEventTypes.DraftUpdated, "Header updated.");
         TouchSqliteRowVersions(db, entity);
-        return new DraftHeaderMutationResult(true);
+        return new DraftHeaderMutationResult(true, deliveryRequestIdToReconcile);
     }
 
     private sealed class BuiltSnapshot

@@ -1,5 +1,7 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -10,6 +12,192 @@ namespace ErpWeb.Core.Production;
 
 public sealed partial class ProductionWorkOrderService
 {
+    public async Task<LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>>
+        SearchEligibleDeliveryRequestsAsync(
+            LargeLookupSearchRequest request,
+            CancellationToken cancellationToken = default)
+    {
+        request ??= new LargeLookupSearchRequest();
+        var auth = await AuthorizeAsync(PermissionCodes.Add, requireWriteScope: false, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Fail(auth.Error.Value.Message);
+        }
+
+        if (_deliveryRequestFulfilment is null)
+        {
+            return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Fail(
+                "Delivery Request fulfilment facts are unavailable for production selection.");
+        }
+
+        try
+        {
+            var scope = auth.Scope!;
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var candidates = db.SaDeliveryRequests.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && (x.Status == SaDeliveryRequestStatuses.Released
+                        || x.Status == SaDeliveryRequestStatuses.InProduction));
+
+            var term = request.SearchText?.Trim();
+            if (!string.IsNullOrWhiteSpace(term))
+            {
+                candidates = candidates.Where(x =>
+                    x.DeliveryRequestNo.Contains(term)
+                    || x.ProductCode.Contains(term)
+                    || (x.ProductDescription != null && x.ProductDescription.Contains(term))
+                    || db.SaDeliveryRequestSources.Any(source =>
+                        source.DeliveryRequestId == x.Uid
+                        && source.CompanyCode == scope.CompanyCode
+                        && source.BranchCode == scope.BranchCode
+                        && source.IsActive
+                        && (source.SoNo.Contains(term)
+                            || (source.CustomerCode != null && source.CustomerCode.Contains(term)))));
+            }
+
+            var ordered = candidates
+                .OrderBy(x => x.RequiredDate)
+                .ThenBy(x => x.DeliveryRequestNo)
+                .ThenBy(x => x.Uid);
+            const int scanChunkSize = 200;
+            var skip = request.NormalizedSkip;
+            var take = request.NormalizedTake;
+            var eligibleCount = 0;
+            var offset = 0;
+            var selected = new List<(SaDeliveryRequest Header, SaDeliveryRequestFulfilmentFacts Facts)>(take);
+
+            while (true)
+            {
+                var headers = await ordered
+                    .Skip(offset)
+                    .Take(scanChunkSize)
+                    .ToListAsync(cancellationToken);
+                if (headers.Count == 0)
+                {
+                    break;
+                }
+
+                var factsResult = await _deliveryRequestFulfilment.GetFactsBatchAsync(
+                    headers.Select(x => x.Uid).ToArray(), cancellationToken);
+                if (!factsResult.Succeeded || factsResult.Data is null)
+                {
+                    return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Fail(
+                        factsResult.Message ?? "Delivery Request fulfilment facts could not be loaded.");
+                }
+
+                foreach (var header in headers)
+                {
+                    if (!factsResult.Data.TryGetValue(header.Uid, out var facts))
+                    {
+                        return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Fail(
+                            "Delivery Request fulfilment facts were incomplete. Refresh and try again.");
+                    }
+
+                    if (facts.ProductionUnplannedQty <= 0.0001m)
+                    {
+                        continue;
+                    }
+
+                    if (eligibleCount >= skip && selected.Count < take)
+                    {
+                        selected.Add((header, facts));
+                    }
+
+                    eligibleCount++;
+                }
+
+                offset += headers.Count;
+                if (headers.Count < scanChunkSize)
+                {
+                    break;
+                }
+            }
+
+            if (selected.Count == 0)
+            {
+                return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Ok([], eligibleCount);
+            }
+
+            var selectedIds = selected.Select(x => x.Header.Uid).ToArray();
+            var sources = await db.SaDeliveryRequestSources.AsNoTracking()
+                .Where(x => selectedIds.Contains(x.DeliveryRequestId)
+                    && x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.IsActive)
+                .Select(x => new
+                {
+                    x.DeliveryRequestId,
+                    x.SoNo,
+                    x.CustomerCode
+                })
+                .ToListAsync(cancellationToken);
+            var sourceSummaryByRequest = sources
+                .GroupBy(x => x.DeliveryRequestId)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var soNumbers = group
+                            .Select(x => x.SoNo)
+                            .Where(x => !string.IsNullOrWhiteSpace(x))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                        var customers = group
+                            .Select(x => x.CustomerCode)
+                            .Where(x => !string.IsNullOrWhiteSpace(x))
+                            .Select(x => x!)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                        return (SoNumbers: soNumbers, Customers: customers);
+                    });
+
+            var rows = selected.Select(item =>
+            {
+                var header = item.Header;
+                var facts = item.Facts;
+                var summary = sourceSummaryByRequest.TryGetValue(header.Uid, out var foundSummary)
+                    ? foundSummary
+                    : (SoNumbers: new List<string>(), Customers: new List<string>());
+                return new ProductionWorkOrderDeliveryRequestLookupRow
+                {
+                    DeliveryRequestId = header.Uid,
+                    DeliveryRequestNo = header.DeliveryRequestNo,
+                    ProductCode = header.ProductCode,
+                    ProductDescription = header.ProductDescription,
+                    ProductionUom = header.ProductionUom,
+                    RequestedQty = header.RequestedQty,
+                    WoAllocatedQty = facts.ActiveWoAllocatedQty,
+                    ProductionUnplannedQty = facts.ProductionUnplannedQty,
+                    RequiredDate = header.RequiredDate,
+                    DefinitionCode = header.DefinitionCode,
+                    WarehouseCode = header.WarehouseCode,
+                    ProjectCode = header.ProjectCode,
+                    Priority = header.Priority,
+                    Remark = header.Remark,
+                    PrimarySoNo = summary.SoNumbers.FirstOrDefault(),
+                    ActiveSoCount = summary.SoNumbers.Count,
+                    PrimaryCustomerCode = summary.Customers.FirstOrDefault(),
+                    ActiveCustomerCount = summary.Customers.Count,
+                    RowVersion = header.RowVersion.ToArray()
+                };
+            }).ToList();
+
+            return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Ok(rows, eligibleCount);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return LargeLookupPage<ProductionWorkOrderDeliveryRequestLookupRow>.Fail(
+                "Unable to load eligible Delivery Requests.");
+        }
+    }
+
     public async Task<IvMasterOperationResult<ProductionWorkOrderPreview>> PreviewFromDeliveryRequestAsync(
         ProductionWorkOrderDeliveryRequestRequest request,
         CancellationToken cancellationToken = default)
@@ -24,17 +212,26 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            decimal? reconciledUnplannedQty = null;
             if (_deliveryRequestFulfilment is not null)
             {
                 var reconcile = await _deliveryRequestFulfilment.ReconcileAsync(
                     request.DeliveryRequestId, cancellationToken);
-                if (!reconcile.Succeeded)
+                if (!reconcile.Succeeded || reconcile.Data is null)
                 {
                     return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(
-                        reconcile.ErrorCode, reconcile.Message ?? "Delivery Request fulfilment reconciliation failed.");
+                        reconcile.ErrorCode,
+                        reconcile.Message ?? "Delivery Request fulfilment reconciliation failed.");
                 }
+
+                reconciledUnplannedQty = reconcile.Data.ProductionUnplannedQty;
             }
-            var prepared = await BuildDeliveryRequestSnapshotAsync(db, auth.Scope!, request, cancellationToken);
+            var prepared = await BuildDeliveryRequestSnapshotAsync(
+                db,
+                auth.Scope!,
+                request,
+                cancellationToken,
+                reconciledUnplannedQty);
             if (prepared.Error is not null)
             {
                 return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(IvMasterErrorCode.Validation, prepared.Error);
@@ -111,7 +308,7 @@ public sealed partial class ProductionWorkOrderService
             {
                 throw new WorkOrderCommandException(
                     IvMasterErrorCode.Validation,
-                    "Only a Released Delivery Request can create a Work Order.");
+                    "Only a Released or In Production Delivery Request can create a Work Order.");
             }
 
             var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
@@ -266,7 +463,8 @@ public sealed partial class ProductionWorkOrderService
 
         if (deliveryRequest.Status is not (SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction))
         {
-            return DeliveryRequestSnapshotBuild.Fail("Only a Released Delivery Request can create a Work Order.");
+            return DeliveryRequestSnapshotBuild.Fail(
+                "Only a Released or In Production Delivery Request can create a Work Order.");
         }
 
         var allocations = await db.PrWorkOrderDemandAllocations.AsNoTracking()
@@ -389,32 +587,65 @@ public sealed partial class ProductionWorkOrderService
             DeliveryRequestRowVersion = request.DeliveryRequestRowVersion
         };
 
-    private async Task AdjustDeliveryRequestAllocationAsync(
+    private async Task<long> AdjustDeliveryRequestAllocationAsync(
         AppDbContext db,
         ProductionWorkOrder entity,
         InventoryTenantScope scope,
         decimal plannedQty,
         CancellationToken cancellationToken)
     {
-        var allocation = entity.DemandAllocations
-            .OrderByDescending(x => x.IsActive)
-            .FirstOrDefault();
-        if (allocation is null)
+        var relatedAllocations = entity.DemandAllocations
+            .Where(x => x.WorkOrderId == entity.Uid)
+            .ToList();
+        if (relatedAllocations.Count != 1 || !relatedAllocations[0].IsActive)
         {
             throw new WorkOrderCommandException(
                 IvMasterErrorCode.InUse,
-                "This Delivery Request Work Order has no demand allocation and cannot be resized.");
+                "This Delivery Request Work Order must have exactly one active demand allocation and cannot be resized.");
         }
+
+        var allocation = relatedAllocations[0];
 
         var deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
             db, scope, allocation.DeliveryRequestId, cancellationToken)
             ?? throw new WorkOrderCommandException(IvMasterErrorCode.NotFound, "The Delivery Request source was not found.");
         var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
             db, scope, deliveryRequest.Uid, cancellationToken);
-        var otherActive = allocations
-            .Where(x => x.IsActive && x.WorkOrderId != entity.Uid)
-            .Sum(x => x.AllocatedQty);
-        var availableForThisWorkOrder = Math.Max(deliveryRequest.RequestedQty - otherActive, 0m);
+        var currentAllocations = allocations
+            .Where(x => x.WorkOrderId == entity.Uid && x.IsActive)
+            .ToList();
+        if (currentAllocations.Count != 1)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request Work Order must have exactly one active demand allocation.");
+        }
+
+        var currentAllocation = currentAllocations[0];
+
+        decimal availableForThisWorkOrder;
+        if (_deliveryRequestFulfilment is not null)
+        {
+            var facts = await _deliveryRequestFulfilment.ReconcileInTransactionAsync(
+                db, deliveryRequest.Uid, scope, cancellationToken);
+            var otherOutstandingSupply = Math.Max(
+                facts.OutstandingWoSupplyQty - currentAllocation.AllocatedQty,
+                0m);
+            availableForThisWorkOrder = IvQty.Round(Math.Max(
+                facts.ProductionRequiredQty - otherOutstandingSupply,
+                0m));
+        }
+        else
+        {
+            var otherActive = allocations
+                .Where(x => x.IsActive && x.WorkOrderId != entity.Uid)
+                .Sum(x => x.AllocatedQty);
+            availableForThisWorkOrder = IvQty.Round(Math.Max(
+                deliveryRequest.RequestedQty - otherActive,
+                0m));
+        }
+
+        plannedQty = IvQty.Round(plannedQty);
         if (plannedQty - availableForThisWorkOrder > 0.0001m)
         {
             throw new WorkOrderCommandException(
@@ -422,8 +653,8 @@ public sealed partial class ProductionWorkOrderService
                 $"Planned quantity exceeds the Delivery Request quantity available to this Work Order ({availableForThisWorkOrder:N4}).");
         }
 
-        allocation.AllocatedQty = plannedQty;
-        allocation.ReleaseReason = "Work Order Draft quantity changed.";
+        currentAllocation.AllocatedQty = plannedQty;
+        currentAllocation.ReleaseReason = "Work Order Draft quantity changed.";
         db.SaDeliveryRequestAuditEvents.Add(new SaDeliveryRequestAuditEvent
         {
             DeliveryRequestId = deliveryRequest.Uid,
@@ -434,6 +665,7 @@ public sealed partial class ProductionWorkOrderService
             ActorUserId = scope.UserId
         });
         TouchSqliteRowVersions(db, entity);
+        return deliveryRequest.Uid;
     }
 
     /// <summary>
@@ -507,6 +739,24 @@ public sealed partial class ProductionWorkOrderService
 
         var (deliveryRequest, allocation) = await LockRequiredDeliveryRequestAllocationAsync(
             db, entity, scope, deliveryRequestId, cancellationToken);
+
+        if (_deliveryRequestFulfilment is not null)
+        {
+            var facts = await _deliveryRequestFulfilment.ReconcileInTransactionAsync(
+                db, deliveryRequest.Uid, scope, cancellationToken);
+            var otherOutstandingSupply = Math.Max(
+                facts.OutstandingWoSupplyQty - allocation.AllocatedQty,
+                0m);
+            var maxAllowedForThisWorkOrder = IvQty.Round(Math.Max(
+                facts.ProductionRequiredQty - otherOutstandingSupply,
+                0m));
+            if (allocation.AllocatedQty - maxAllowedForThisWorkOrder > 0.0001m)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    $"The Delivery Request demand now supports only {maxAllowedForThisWorkOrder:N4} for this Work Order. Reduce the Draft quantity before release.");
+            }
+        }
 
         var now = entity.ReleasedDate ?? DateTime.UtcNow;
         allocation.IsActive = true;

@@ -40,6 +40,8 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool RefreshVisible;
     protected bool ChangeDefinitionVisible;
     protected bool MaterialChangeVisible;
+    protected bool DeliveryRequestPickerVisible;
+    protected ProductionWorkOrderDeliveryRequestLookupRow? SelectedDeliveryRequest;
     protected string RefreshReason = string.Empty;
     protected string ChangeDefinitionReason = string.Empty;
     protected string? SelectedChangeDefinitionCode;
@@ -93,9 +95,11 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool NeedsDefinitionUpgrade =>
         DetailModel is not null && IsDraft && !IsCurrentSnapshot;
     protected bool CanEditInputs => CanEditFields && !NeedsDefinitionUpgrade;
-    protected bool CanEditDefinition => IsNewMode && CanEditInputs;
-    protected bool CanEditProduct => IsNewMode && CanEditInputs;
+    protected bool IsNewDeliveryRequestMode => IsNewMode && SelectedDeliveryRequest is not null;
+    protected bool CanEditDefinition => IsNewMode && CanEditInputs && !IsNewDeliveryRequestMode;
+    protected bool CanEditProduct => IsNewMode && CanEditInputs && !IsNewDeliveryRequestMode;
     protected bool CanEditSourceType => IsNewMode && CanEditInputs;
+    protected bool ShowPreviewAction => IsNewMode || !IsDeliveryRequestSource;
     protected bool CanOpenEdit => IsViewMode && IsDraft && CanEdit && DetailModel is not null;
     protected bool CanReopenForEdit => IsViewMode
         && DetailModel is { Status: ProductionWorkOrderStatuses.Released }
@@ -411,6 +415,19 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool IsDeliveryRequestSource =>
         DetailModel?.DeliveryRequestId is not null
         || string.Equals(Request.SourceType, ProductionSourceTypes.DeliveryRequest, StringComparison.OrdinalIgnoreCase);
+    protected string DeliveryRequestSoSummary => SelectedDeliveryRequest is null
+        ? "—"
+        : FormatDeliveryRequestSummary(
+            SelectedDeliveryRequest.PrimarySoNo,
+            SelectedDeliveryRequest.ActiveSoCount);
+    protected string DeliveryRequestCustomerSummary => SelectedDeliveryRequest is null
+        ? "—"
+        : FormatDeliveryRequestSummary(
+            SelectedDeliveryRequest.PrimaryCustomerCode,
+            SelectedDeliveryRequest.ActiveCustomerCount);
+    protected decimal DeliveryRequestAvailableQty => PreviewModel?.DeliveryRequestUnplannedQty
+        ?? SelectedDeliveryRequest?.ProductionUnplannedQty
+        ?? 0m;
     protected string ShortSnapshotHash
     {
         get
@@ -422,6 +439,16 @@ public partial class PrWorkOrderEntry : PageBase
     protected string CreatedLabel => AuditLabel(DetailModel?.CreatedDate, DetailModel?.CreatedBy);
     protected string UpdatedLabel => AuditLabel(DetailModel?.ModifiedDate, DetailModel?.ModifiedBy);
     protected string ReleasedLabel => AuditLabel(DetailModel?.ReleasedDate, DetailModel?.ReleasedBy);
+
+    private static string FormatDeliveryRequestSummary(string? primary, int count)
+    {
+        if (string.IsNullOrWhiteSpace(primary))
+        {
+            return count > 0 ? $"{count} source(s)" : "—";
+        }
+
+        return count > 1 ? $"{primary} +{count - 1}" : primary;
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -452,6 +479,8 @@ public partial class PrWorkOrderEntry : PageBase
         ValidationErrors.Clear();
         PreviewModel = null;
         _previewInputFingerprint = null;
+        DeliveryRequestPickerVisible = false;
+        SelectedDeliveryRequest = null;
         try
         {
             if (IsNewMode)
@@ -505,6 +534,86 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
 
+    protected void OpenDeliveryRequestPicker()
+    {
+        if (!IsNewMode || !CanAdd || IsSubmitting)
+        {
+            return;
+        }
+
+        DeliveryRequestPickerVisible = true;
+    }
+
+    protected async Task OnDeliveryRequestSelectedAsync(
+        ProductionWorkOrderDeliveryRequestLookupRow row)
+    {
+        if (!IsNewMode || !CanAdd || IsSubmitting)
+        {
+            return;
+        }
+
+        SelectedDeliveryRequest = row;
+        Request.SourceType = ProductionSourceTypes.DeliveryRequest;
+        Request.SourceReference = row.DeliveryRequestNo;
+        Request.ProductCode = row.ProductCode;
+        Request.DefinitionCode = string.IsNullOrWhiteSpace(row.DefinitionCode)
+            ? PrProductDefinitionCodes.Standard
+            : row.DefinitionCode;
+        Request.PlannedQty = row.ProductionUnplannedQty;
+        Request.PlannedStartDate = row.RequiredDate.Date;
+        Request.PlannedCompletionDate = row.RequiredDate.Date;
+        Request.SchedulingDirection = ProductionSchedulingDirections.Forward;
+        Request.Remark = row.Remark;
+        _selectedProductDescription = row.ProductDescription;
+        _selectedProductUom = row.ProductionUom;
+        PreviewModel = null;
+        _previewInputFingerprint = null;
+        ClearFeedback();
+
+        await LoadDefinitionOptionsAsync(row.ProductCode, selectDefaultWhenEmpty: false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected void ClearSelectedDeliveryRequest()
+    {
+        if (!IsNewMode || IsSubmitting)
+        {
+            return;
+        }
+
+        SelectedDeliveryRequest = null;
+        DeliveryRequestPickerVisible = false;
+        Request = NewRequest();
+        DefinitionOptions = [];
+        ChangeDefinitionOptions = [];
+        _selectedProductDescription = null;
+        _selectedProductUom = null;
+        PreviewModel = null;
+        _previewInputFingerprint = null;
+        _savedInputFingerprint = InputFingerprint();
+        ClearFeedback();
+    }
+
+    private ProductionWorkOrderDeliveryRequestRequest BuildDeliveryRequestWorkOrderRequest()
+    {
+        if (SelectedDeliveryRequest is null)
+        {
+            throw new InvalidOperationException("A Delivery Request must be selected.");
+        }
+
+        return new ProductionWorkOrderDeliveryRequestRequest
+        {
+            DeliveryRequestId = SelectedDeliveryRequest.DeliveryRequestId,
+            PlannedQty = Request.PlannedQty,
+            DefinitionCode = Request.DefinitionCode,
+            PlannedStartDate = Request.PlannedStartDate,
+            PlannedCompletionDate = Request.PlannedCompletionDate,
+            SchedulingDirection = Request.SchedulingDirection,
+            Remark = Request.Remark,
+            DeliveryRequestRowVersion = SelectedDeliveryRequest.RowVersion.ToArray()
+        };
+    }
+
     protected async Task OnProductSelectedAsync(IvStockMasterLookupRow row)
     {
         Request.ProductCode = row.ICode;
@@ -535,6 +644,39 @@ public partial class PrWorkOrderEntry : PageBase
 
     protected async Task ProcessPreviewAsync()
     {
+        if (IsNewDeliveryRequestMode)
+        {
+            IsSubmitting = true;
+            ClearFeedback();
+            try
+            {
+                var result = await WorkOrders.PreviewFromDeliveryRequestAsync(
+                    BuildDeliveryRequestWorkOrderRequest());
+                if (!result.Succeeded || result.Data is null)
+                {
+                    ApplyFailure(result);
+                    return;
+                }
+
+                PreviewModel = result.Data;
+                Request.PlannedQty = result.Data.PlannedQty;
+                Request.PlannedStartDate = result.Data.PlannedStartDate;
+                Request.PlannedCompletionDate = result.Data.PlannedCompletionDate;
+                Request.SchedulingDirection = result.Data.SchedulingDirection;
+                Request.DefinitionCode = result.Data.SourceDefinitionCode;
+                _previewInputFingerprint = InputFingerprint();
+                _selectedProductDescription = result.Data.ProductDescription;
+                _selectedProductUom = result.Data.OutputUom;
+                StatusMessage = $"Preview calculated from Delivery Request {SelectedDeliveryRequest!.DeliveryRequestNo}; available demand is {result.Data.DeliveryRequestUnplannedQty:N4} {result.Data.OutputUom}.";
+                ActiveTabIndex = 1;
+            }
+            finally
+            {
+                IsSubmitting = false;
+            }
+            return;
+        }
+
         if (IsDeliveryRequestSource)
         {
             ClearFeedback();
@@ -591,7 +733,12 @@ public partial class PrWorkOrderEntry : PageBase
             PrepareRequestIdentity();
             var wasNew = IsNewMode;
             IvMasterOperationResult<ProductionWorkOrderDetail> result;
-            if (wasNew)
+            if (wasNew && IsNewDeliveryRequestMode)
+            {
+                result = await WorkOrders.CreateDraftFromDeliveryRequestAsync(
+                    BuildDeliveryRequestWorkOrderRequest());
+            }
+            else if (wasNew)
             {
                 result = await WorkOrders.CreateDraftAsync(Request);
             }
@@ -622,6 +769,8 @@ public partial class PrWorkOrderEntry : PageBase
             }
 
             ApplyDetail(result.Data);
+            SelectedDeliveryRequest = null;
+            DeliveryRequestPickerVisible = false;
             PreviewModel = null;
             StatusMessage = wasNew
                 ? $"Work Order {result.Data.WorkOrderNo} created as Draft."
@@ -983,7 +1132,9 @@ public partial class PrWorkOrderEntry : PageBase
         : $"Release {CurrentWorkOrderNo} for execution?";
 
     protected string ReleaseConfirmDetail => IsNewMode
-        ? "The Work Order will be created from the selected Product Definition, its route/material/schedule snapshot will be validated, and it will be released for execution. No inventory transaction will be posted."
+        ? IsNewDeliveryRequestMode
+            ? $"Delivery Request {SelectedDeliveryRequest!.DeliveryRequestNo} will be allocated {Request.PlannedQty:N4} {SelectedDeliveryRequest.ProductionUom} to the new Work Order and released for execution. No inventory transaction will be posted."
+            : "The Work Order will be created from the selected Product Definition, its route/material/schedule snapshot will be validated, and it will be released for execution. No inventory transaction will be posted."
         : HasUnsavedInputChanges
             ? "Your current quantity, schedule and header changes will be saved as part of Release. No inventory transaction will be posted."
             : "The product, Product Definition, schedule and snapshot lines become read-only. This action does not post inventory.";
@@ -1026,7 +1177,10 @@ public partial class PrWorkOrderEntry : PageBase
         try
         {
             PrepareRequestIdentity();
-            var result = await WorkOrders.CreateAndReleaseAsync(Request);
+            var result = IsNewDeliveryRequestMode
+                ? await WorkOrders.CreateAndReleaseFromDeliveryRequestAsync(
+                    BuildDeliveryRequestWorkOrderRequest())
+                : await WorkOrders.CreateAndReleaseAsync(Request);
             if (!result.Succeeded || result.Data is null)
             {
                 ApplyFailure(result);
@@ -1313,6 +1467,8 @@ public partial class PrWorkOrderEntry : PageBase
     private void ApplyDetail(ProductionWorkOrderDetail detail)
     {
         DetailModel = detail;
+        SelectedDeliveryRequest = null;
+        DeliveryRequestPickerVisible = false;
         Request = new ProductionWorkOrderDraftRequest
         {
             WorkOrderNo = detail.WorkOrderNo,
@@ -1442,7 +1598,11 @@ public partial class PrWorkOrderEntry : PageBase
             .Date.Ticks.ToString(CultureInfo.InvariantCulture),
         (Request.SourceType ?? string.Empty).Trim().ToUpperInvariant(),
         (Request.SourceReference ?? string.Empty).Trim(),
-        (Request.Remark ?? string.Empty).Trim());
+        (Request.Remark ?? string.Empty).Trim(),
+        SelectedDeliveryRequest?.DeliveryRequestId.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+        SelectedDeliveryRequest is null
+            ? string.Empty
+            : Convert.ToBase64String(SelectedDeliveryRequest.RowVersion));
 
     protected sealed record Option(string Key, string Name);
 

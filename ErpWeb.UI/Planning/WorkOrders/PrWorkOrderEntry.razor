@@ -1,6 +1,7 @@
 @page "/planning/work-orders/{Mode:regex(^(new|edit|view)$)}"
 @page "/planning/work-orders/{Mode:regex(^(new|edit|view)$)}/{WorkOrderNo}"
 @inherits PageBase
+@using ErpWeb.UI.Planning.Lookups
 
 <PageTitle>@PageHeading</PageTitle>
 
@@ -105,7 +106,7 @@
                             <DxDropDownButtonItem Text="CALCULATE PREVIEW"
                                                   IconCssClass="fa-solid fa-gears"
                                                   Click="@ProcessPreviewAsync"
-                                                  Visible="@(!IsDeliveryRequestSource)"
+                                                  Visible="@ShowPreviewAction"
                                                   Enabled="@(!IsSubmitting)" />
                             <DxDropDownButtonItem Text="RECALCULATE SCHEDULE"
                                                   IconCssClass="fa-solid fa-calendar-days"
@@ -265,13 +266,62 @@
                         <DxDateEdit @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditInputs || !IsBackwardSchedule)" />
                         @FieldError("PlannedCompletionDate")
                     </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Source type</label>
-                        <DxComboBox Data="@SourceOptions"
-                                    TextFieldName="@nameof(Option.Name)"
-                                    ValueFieldName="@nameof(Option.Key)"
-                                    @bind-Value="@Request.SourceType"
-                                    Enabled="@CanEditSourceType" />
+                    <div class="iv-field pwo-span-2">
+                        <label class="iv-field__label">Demand source</label>
+                        @if (IsNewMode)
+                        {
+                            @if (IsNewDeliveryRequestMode)
+                            {
+                                <div class="pwo-demand-source-card">
+                                    <div class="pwo-demand-source-card__head">
+                                        <strong>Delivery Request</strong>
+                                        <span class="code-style">@SelectedDeliveryRequest!.DeliveryRequestNo</span>
+                                    </div>
+                                    <div class="pwo-demand-source-card__grid">
+                                        @Detail("Product", SelectedDeliveryRequest.ProductCode)
+                                        @Detail("UOM", SelectedDeliveryRequest.ProductionUom)
+                                        @Detail("Required date", SelectedDeliveryRequest.RequiredDate.ToString("dd MMM yyyy"))
+                                        @Detail("Requested", SelectedDeliveryRequest.RequestedQty.ToString("n4"))
+                                        @Detail("WO allocated", SelectedDeliveryRequest.WoAllocatedQty.ToString("n4"))
+                                        @Detail("Available to plan", DeliveryRequestAvailableQty.ToString("n4"))
+                                        @Detail("Priority", SelectedDeliveryRequest.Priority)
+                                        @Detail("Warehouse", SelectedDeliveryRequest.WarehouseCode)
+                                        @Detail("Project", SelectedDeliveryRequest.ProjectCode)
+                                        @Detail("SO summary", DeliveryRequestSoSummary)
+                                        @Detail("Customer summary", DeliveryRequestCustomerSummary)
+                                    </div>
+                                    <div class="pwo-demand-source-card__actions">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="CHANGE DR"
+                                                  Click="@OpenDeliveryRequestPicker"
+                                                  Enabled="@(!IsSubmitting)" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="CLEAR DR"
+                                                  Click="@ClearSelectedDeliveryRequest"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                    <small class="pwo-section-note">Product, UOM and definition come from the selected Delivery Request.</small>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="pwo-demand-source-card pwo-demand-source-card--manual">
+                                    <strong>Manual Work Order</strong>
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="SELECT DELIVERY REQUEST"
+                                              IconCssClass="fa-solid fa-link"
+                                              Click="@OpenDeliveryRequestPicker"
+                                              Enabled="@(!IsSubmitting && CanAdd)" />
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="pwo-demand-source-readonly">
+                                <strong>@(IsDeliveryRequestSource ? "Delivery Request" : "Manual Work Order")</strong>
+                                <span>@(string.IsNullOrWhiteSpace(Request.SourceReference) ? "—" : Request.SourceReference)</span>
+                            </div>
+                        }
                     </div>
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Source reference</label>
@@ -1064,6 +1114,9 @@
                 </div>
             </Content>
         </DxPopup>
+
+        <PrDeliveryRequestSearchPopup @bind-Visible="@DeliveryRequestPickerVisible"
+                                      Selected="@OnDeliveryRequestSelectedAsync" />
     </div>
 </MenuAuthorize>
 
