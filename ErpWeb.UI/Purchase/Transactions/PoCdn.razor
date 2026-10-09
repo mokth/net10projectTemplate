@@ -300,7 +300,7 @@
                 }
                 else
                 {
-                    <DxGrid Data="@Lines"
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Lines"
                             KeyFieldName="@nameof(PoCdnLineVm.ClientKey)"
                             ShowFilterRow="false"
                             ShowGroupPanel="false"
@@ -311,7 +311,7 @@
                         <Columns>
                             @if (CanMutateLines)
                             {
-                                <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                     <CellDisplayTemplate>
                                         @{
                                             var line = (PoCdnLineVm)context.DataItem;
@@ -325,17 +325,17 @@
                                     </CellDisplayTemplate>
                                 </DxGridCommandColumn>
                             }
-                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Line)" Caption="#" Width="56px" />
+                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Line)" Caption="#" Width="56px" MinWidth="50" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.InvLineNo)" Caption="Inv ln" Width="70px" />
-                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.ICode)" Caption="Item" Width="150px" />
-                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.IDesc)" Caption="Description" />
-                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Qty)" Caption="Qty" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135" />
+                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.IDesc)" Caption="Description" Width="280px" MinWidth="210" />
+                            <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Qty)" Caption="Qty" Width="90px" MinWidth="90" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.TaxGroup)" Caption="Tax" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.TaxAmt)" Caption="Tax amt" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(PoCdnLineVm.Amount)" Caption="Gross" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
-                            <DxGridDataColumn Caption="Issues" Width="220px">
+                            <DxGridDataColumn Caption="Issues" Width="220px" MinWidth="210">
                                 <CellDisplayTemplate>
                                     @{
                                         var issuesRow = (PoCdnLineVm)context.DataItem;
@@ -566,7 +566,8 @@
                 }
                 else
                 {
-                    <DxGrid Data="@InvoicePickerRows"
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@InvoicePickerRows"
+                            TextWrapEnabled="false"
                             ShowFilterRow="false"
                             ShowGroupPanel="false"
                             ShowSearchBox="false"
@@ -632,7 +633,8 @@
                 }
                 else
                 {
-                    <DxGrid Data="@InvoiceLineRows"
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@InvoiceLineRows"
+                            TextWrapEnabled="false"
                             ShowFilterRow="false"
                             ShowGroupPanel="false"
                             ShowSearchBox="false"

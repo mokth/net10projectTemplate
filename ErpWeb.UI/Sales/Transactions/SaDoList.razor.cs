@@ -79,15 +79,15 @@ public partial class SaDoList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "DO No.", FieldName = nameof(SaDoListRow.DoNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(SaDoListRow.DoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(SaDoListRow.Status), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "Customer", FieldName = nameof(SaDoListRow.CustCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Name", FieldName = nameof(SaDoListRow.CustName), VisibleIndex = 5 },
-        new() { Caption = "Lines", FieldName = nameof(SaDoListRow.LineCount), Width = "80px", VisibleIndex = 6 },
-        new() { Caption = "Gross (excl. tax)", FieldName = nameof(SaDoListRow.GrossExTax), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Tax", FieldName = nameof(SaDoListRow.Tax), DataType = "decimal", DisplayFormat = "n2", Width = "100px", VisibleIndex = 8 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaDoListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 9 },
+        new() { Caption = "DO No.", FieldName = nameof(SaDoListRow.DoNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(SaDoListRow.DoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(SaDoListRow.Status), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Customer", FieldName = nameof(SaDoListRow.CustCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(SaDoListRow.CustName), VisibleIndex = 5, Size = GridColumnSize.Name },
+        new() { Caption = "Lines", FieldName = nameof(SaDoListRow.LineCount), Width = "80px", VisibleIndex = 6, Size = GridColumnSize.Tiny },
+        new() { Caption = "Gross (excl. tax)", FieldName = nameof(SaDoListRow.GrossExTax), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 7, Size = GridColumnSize.Amount },
+        new() { Caption = "Tax", FieldName = nameof(SaDoListRow.Tax), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 8, Size = GridColumnSize.Quantity },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaDoListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 9, Size = GridColumnSize.Amount },
         ..AuditColumns.For(startVisibleIndex: 10)
     ];
 

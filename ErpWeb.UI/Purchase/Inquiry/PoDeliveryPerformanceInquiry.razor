@@ -246,7 +246,7 @@
                 }
                 else
                 {
-                    <DxGrid Data="@ReceiptRows" PageSize="20" ShowFilterRow="false">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@ReceiptRows" PageSize="20" ShowFilterRow="false" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.BatchNo)" Caption="GRN" Width="90px" />
                             <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.TrxDtTime)" Caption="Date" DisplayFormat="dd/MM/yyyy" Width="110px" />

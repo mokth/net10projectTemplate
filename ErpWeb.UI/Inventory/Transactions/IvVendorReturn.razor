@@ -115,7 +115,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvVendorReturnLineVm)context.DataItem;
@@ -141,7 +141,7 @@
                         <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.PoNo)" Caption="PO No" Width="110px" />
                         <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.PoRelNo)" Caption="Rel" Width="56px" />
                         <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.PoLineNo)" Caption="PO Line" Width="80px" />
-                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.ICode)" Caption="Item" Width="130px">
+                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135">
                             <CellDisplayTemplate>
                                 @{
                                     var itemLine = (IvVendorReturnLineVm)context.DataItem;
@@ -166,20 +166,20 @@
                                 </div>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Quantity)" Caption="Return Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.IStatus)" Caption="Status" Width="90px">
+                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Quantity)" Caption="Return Qty" Width="120px" MinWidth="100" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.IStatus)" Caption="Status" Width="115px" MinWidth="95">
                             <CellDisplayTemplate>
                                 <span class="@StatusChipClass(((IvVendorReturnLineVm)context.DataItem).IStatus)">
                                     @(((IvVendorReturnLineVm)context.DataItem).IStatus)
                                 </span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Reason)" Caption="Reason" Width="100px">
+                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Reason)" Caption="Reason" Width="135px" MinWidth="110">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvVendorReturnLineVm)context.DataItem).Reason)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Remarks)" Caption="Remark" MinWidth="120">
+                        <DxGridDataColumn FieldName="@nameof(IvVendorReturnLineVm.Remarks)" Caption="Remark" Width="280px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvVendorReturnLineVm)context.DataItem).Remarks)
                             </CellDisplayTemplate>

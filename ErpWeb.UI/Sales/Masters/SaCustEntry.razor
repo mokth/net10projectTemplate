@@ -142,7 +142,7 @@
                     </DxTabPage>
                     <DxTabPage Text="Addresses">
                         <div class="sa-cust-tab">
-                            <DxGrid Data="@Model.Addresses"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Addresses"
                                     KeyFieldName="@nameof(SaCustAddressVm.Line)"
                                     ShowFilterRow="false"
                                     ShowGroupPanel="false"
@@ -155,19 +155,19 @@
                                     <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.AddName)" Caption="Name" MinWidth="120" />
                                     <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.DeliverTo)" Caption="Deliver to" MinWidth="120" />
                                     <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Address1)" Caption="Address" MinWidth="180" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.City)" Caption="City" Width="110" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.State)" Caption="State" Width="90" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.PostalCode)" Caption="Postal" Width="90" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Country)" Caption="Country" Width="100" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Tel)" Caption="Tel" Width="110" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Fax)" Caption="Fax" Width="110" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.City)" Caption="City" Width="110px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.State)" Caption="State" Width="90px" MinWidth="80" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.PostalCode)" Caption="Postal" Width="90px" MinWidth="80" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Country)" Caption="Country" Width="100px" MinWidth="90" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Tel)" Caption="Tel" Width="110px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Fax)" Caption="Fax" Width="110px" MinWidth="100" />
                                 </Columns>
                             </DxGrid>
                         </div>
                     </DxTabPage>
                     <DxTabPage Text="Contacts">
                         <div class="sa-cust-tab">
-                            <DxGrid Data="@Model.Contacts"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Contacts"
                                     KeyFieldName="@nameof(SaCustContactVm.Line)"
                                     ShowFilterRow="false"
                                     ShowGroupPanel="false"
@@ -178,11 +178,11 @@
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Line)" Caption="#" Width="56px" />
                                     <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactPerson)" Caption="Contact person" MinWidth="140" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Title)" Caption="Title" Width="110" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Department)" Caption="Department" Width="120" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Title)" Caption="Title" Width="110px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Department)" Caption="Department" Width="120px" MinWidth="105" />
                                     <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactEmail)" Caption="Email" MinWidth="160" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactTelp)" Caption="Tel" Width="110" />
-                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactFax)" Caption="Fax" Width="110" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactTelp)" Caption="Tel" Width="110px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactFax)" Caption="Fax" Width="110px" MinWidth="100" />
                                 </Columns>
                             </DxGrid>
                         </div>
@@ -510,7 +510,7 @@
                                               Click="@OnNewAddressClick"
                                               Enabled="@(!IsSubmitting)" />
                                 </div>
-                                <DxGrid Data="@Model.Addresses"
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Addresses"
                                         KeyFieldName="@nameof(SaCustAddressVm.Line)"
                                         ShowFilterRow="false"
                                         ShowGroupPanel="false"
@@ -545,12 +545,12 @@
                                         <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.AddName)" Caption="Name" MinWidth="120" />
                                         <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.DeliverTo)" Caption="Deliver to" MinWidth="120" />
                                         <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Address1)" Caption="Address" MinWidth="180" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.City)" Caption="City" Width="110" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.State)" Caption="State" Width="90" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.PostalCode)" Caption="Postal" Width="90" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Country)" Caption="Country" Width="100" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Tel)" Caption="Tel" Width="110" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Fax)" Caption="Fax" Width="110" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.City)" Caption="City" Width="110px" MinWidth="100" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.State)" Caption="State" Width="90px" MinWidth="80" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.PostalCode)" Caption="Postal" Width="90px" MinWidth="80" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Country)" Caption="Country" Width="100px" MinWidth="90" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Tel)" Caption="Tel" Width="110px" MinWidth="100" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustAddressVm.Fax)" Caption="Fax" Width="110px" MinWidth="100" />
                                     </Columns>
                                 </DxGrid>
                             </div>
@@ -564,7 +564,7 @@
                                               Click="@OnNewContactClick"
                                               Enabled="@(!IsSubmitting)" />
                                 </div>
-                                <DxGrid Data="@Model.Contacts"
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Contacts"
                                         KeyFieldName="@nameof(SaCustContactVm.Line)"
                                         ShowFilterRow="false"
                                         ShowGroupPanel="false"
@@ -600,11 +600,11 @@
                                         </DxGridCommandColumn>
                                         <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Line)" Caption="#" Width="56px" />
                                         <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactPerson)" Caption="Contact person" MinWidth="140" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Title)" Caption="Title" Width="110" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Department)" Caption="Department" Width="120" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Title)" Caption="Title" Width="110px" MinWidth="100" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.Department)" Caption="Department" Width="120px" MinWidth="105" />
                                         <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactEmail)" Caption="Email" MinWidth="160" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactTelp)" Caption="Tel" Width="110" />
-                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactFax)" Caption="Fax" Width="110" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactTelp)" Caption="Tel" Width="110px" MinWidth="100" />
+                                        <DxGridDataColumn FieldName="@nameof(SaCustContactVm.ContactFax)" Caption="Fax" Width="110px" MinWidth="100" />
                                     </Columns>
                                 </DxGrid>
                             </div>

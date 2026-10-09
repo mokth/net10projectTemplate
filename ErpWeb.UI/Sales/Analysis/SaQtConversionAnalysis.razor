@@ -106,7 +106,7 @@
                 }
                 else
                 {
-                    <DxGrid Data="@Result.LostReasons" CssClass="w-100">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Result.LostReasons" CssClass="w-100" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(SaQtLostReasonRow.Reason)" Caption="Reason" />
                             <DxGridDataColumn FieldName="@nameof(SaQtLostReasonRow.Count)" Caption="Count" Width="110px" TextAlignment="GridTextAlignment.Right" />
@@ -120,7 +120,7 @@
             {
                 <section class="iv-card">
                     <h2 class="pi-headline">By sales rep</h2>
-                    <DxGrid Data="@Result.BySalesRep" CssClass="w-100">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Result.BySalesRep" CssClass="w-100" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(SaQtConversionBySalesRepRow.SalesRep)" Caption="Sales rep" Width="140px" />
                             <DxGridDataColumn FieldName="Total.Count" Caption="Total" Width="90px" TextAlignment="GridTextAlignment.Right" />

@@ -297,7 +297,7 @@
                     }
                 </div>
 
-                <DxGrid Data="@Lines"
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Lines"
                         KeyFieldName="@nameof(SaCdnLineVm.Line)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
@@ -308,7 +308,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (SaCdnLineVm)context.DataItem;
@@ -322,8 +322,8 @@
                                 </CellDisplayTemplate>
                             </DxGridCommandColumn>
                         }
-                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.Line)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.ICode)" Caption="Item" Width="160px">
+                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.Line)" Caption="#" Width="56px" MinWidth="50" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.ICode)" Caption="Item" Width="160px" MinWidth="150">
                             <CellDisplayTemplate>
                                 @{
                                     var itemLine = (SaCdnLineVm)context.DataItem;
@@ -336,15 +336,15 @@
                         </DxGridDataColumn>
                         @if (IsCreditNote && ReturnStock)
                         {
-                            <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.FrWarehouse)" Caption="Warehouse" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.LotNo)" Caption="Lot" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.FrWarehouse)" Caption="Warehouse" Width="110px" MinWidth="105" />
+                            <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.LotNo)" Caption="Lot" Width="110px" MinWidth="100" />
                         }
-                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.Qty)" Caption="Qty" Width="90px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.Qty)" Caption="Qty" Width="90px" MinWidth="90" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.UnitPrice)" Caption="Unit Price" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.NetAmount)" Caption="Net Amt" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.TaxAmt)" Caption="Tax" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaCdnLineVm.Amount)" Caption="Amount" Width="110px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn Caption="Issues" Width="220px">
+                        <DxGridDataColumn Caption="Issues" Width="220px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @{
                                     var issuesRow = (SaCdnLineVm)context.DataItem;
@@ -633,7 +633,8 @@
                     }
                     else if (InvoicePickerRows.Count > 0)
                     {
-                        <DxGrid Data="@InvoicePickerRows"
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@InvoicePickerRows"
+                                TextWrapEnabled="false"
                                 KeyFieldName="@nameof(SaCdnInvoicePickerRow.InvNo)"
                                 FocusedRowEnabled="true"
                                 RowDoubleClick="@OnInvoiceRowDoubleClick"

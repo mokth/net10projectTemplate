@@ -142,18 +142,18 @@ public partial class PoSbCdnList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Doc No.", FieldName = nameof(PoSbCdnListRow.DocNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(PoSbCdnListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(PoSbCdnListRow.Status), Width = "150px", VisibleIndex = 3 },
-        new() { Caption = "Vendor", FieldName = nameof(PoSbCdnListRow.VendorCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Name", FieldName = nameof(PoSbCdnListRow.VendorName), VisibleIndex = 5 },
-        new() { Caption = "Origin invoice", FieldName = nameof(PoSbCdnListRow.OriginSbInvNo), Width = "140px", VisibleIndex = 6 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(PoSbCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 7 },
-        new() { Caption = "Lines", FieldName = nameof(PoSbCdnListRow.LineCount), Width = "80px", VisibleIndex = 8 },
+        new() { Caption = "Doc No.", FieldName = nameof(PoSbCdnListRow.DocNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(PoSbCdnListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(PoSbCdnListRow.Status), Width = "150px", VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Vendor", FieldName = nameof(PoSbCdnListRow.VendorCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(PoSbCdnListRow.VendorName), VisibleIndex = 5, Size = GridColumnSize.Name },
+        new() { Caption = "Origin invoice", FieldName = nameof(PoSbCdnListRow.OriginSbInvNo), VisibleIndex = 6, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(PoSbCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 7, Size = GridColumnSize.Amount },
+        new() { Caption = "Lines", FieldName = nameof(PoSbCdnListRow.LineCount), Width = "80px", VisibleIndex = 8, Size = GridColumnSize.Tiny },
         // "E-Inv" and "E-Status" bind the SAME IrbmStatus property, exactly like the sales CN/DN list.
-        new() { Caption = "E-Inv", FieldName = nameof(PoSbCdnListRow.IrbmStatus), Width = "110px", VisibleIndex = 9 },
-        new() { Caption = "E-UUID", FieldName = nameof(PoSbCdnListRow.IrbmUuid), DataType = "link", VisibleIndex = 10 },
-        new() { Caption = "E-Status", FieldName = nameof(PoSbCdnListRow.IrbmStatus), DataType = "string", VisibleIndex = 11 },
+        new() { Caption = "E-Inv", FieldName = nameof(PoSbCdnListRow.IrbmStatus), VisibleIndex = 9, Size = GridColumnSize.Status },
+        new() { Caption = "E-UUID", FieldName = nameof(PoSbCdnListRow.IrbmUuid), DataType = "link", VisibleIndex = 10, Size = GridColumnSize.Reference },
+        new() { Caption = "E-Status", FieldName = nameof(PoSbCdnListRow.IrbmStatus), DataType = "string", VisibleIndex = 11, Size = GridColumnSize.Status },
         ..AuditColumns.For(startVisibleIndex: 12)
     ];
 

@@ -15,6 +15,12 @@ public interface IIvStockMasterService
         bool isNew,
         CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
+        IvStockMasterEditVm model,
+        bool isNew,
+        IvStockMasterImageChange? imageChange,
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<object>> SetActiveAsync(
         IReadOnlyList<IvMasterKeyToken> items,
         bool isActive,

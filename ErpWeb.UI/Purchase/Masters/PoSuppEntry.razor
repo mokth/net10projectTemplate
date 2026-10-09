@@ -108,7 +108,7 @@
 
                     <DxTabPage Text="SHIPPING ADDRESS">
                         <div class="po-supp-tab">
-                            <DxGrid Data="@Model.Addresses"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Addresses"
                                     KeyFieldName="@nameof(PoSupplierAddressVm.Line)"
                                     ShowFilterRow="false"
                                     ShowGroupPanel="false"
@@ -222,7 +222,7 @@
 
                     <DxTabPage Text="ATTACHMENT">
                         <div class="po-supp-tab">
-                            <DxGrid Data="@AttachmentRows"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@AttachmentRows"
                                     KeyFieldName="@nameof(PoSupplierAttachmentRow.DocName)"
                                     ShowFilterRow="false"
                                     ShowGroupPanel="false"
@@ -444,7 +444,7 @@
                                               Click="@OnNewAddressClick"
                                               Enabled="@(!IsSubmitting)" />
                                 </div>
-                                <DxGrid Data="@Model.Addresses"
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Model.Addresses"
                                         KeyFieldName="@nameof(PoSupplierAddressVm.Line)"
                                         ShowFilterRow="false"
                                         ShowGroupPanel="false"
@@ -768,7 +768,7 @@
                                     <p class="po-supp-hint">Save the supplier first before uploading attachments.</p>
                                 }
 
-                                <DxGrid Data="@AttachmentRows"
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@AttachmentRows"
                                         KeyFieldName="@nameof(PoSupplierAttachmentRow.DocName)"
                                         ShowFilterRow="false"
                                         ShowGroupPanel="false"

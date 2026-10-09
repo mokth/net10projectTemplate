@@ -28,7 +28,7 @@
                       Click="@SearchAsync" />
         </div>
 
-        <DxGrid @ref="_grid"
+        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" @ref="_grid"
                 Data="@_items"
                 KeyFieldName="@nameof(PoPurchasingItemLookupRow.ICode)"
                 ShowFilterRow="false"
@@ -39,8 +39,8 @@
                 RowDoubleClick="@OnRowDoubleClick"
                 SelectedDataItemChanged="@OnSelectedItemChanged">
             <Columns>
-                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.ICode)" Caption="ITEM CODE" Width="130px" />
-                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.IDesc)" Caption="DESCRIPTION" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.ICode)" Caption="ITEM CODE" Width="165px" MinWidth="145" />
+                <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.IDesc)" Caption="DESCRIPTION" Width="280px" MinWidth="210" />
                 <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.SourceLabel)" Caption="SOURCE" Width="90px" />
                 <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.PurchaseUom)" Caption="UOM" Width="70px" />
                 <DxGridDataColumn FieldName="@nameof(PoPurchasingItemLookupRow.Category)" Caption="CATEGORY" Width="110px" />

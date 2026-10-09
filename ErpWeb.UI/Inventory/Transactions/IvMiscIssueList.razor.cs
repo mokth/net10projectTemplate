@@ -82,12 +82,12 @@ public partial class IvMiscIssueList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Batch No", FieldName = nameof(IvMiscIssueListRow.BatchNo), Width = "100px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(IvMiscIssueListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(IvMiscIssueListRow.BatchStatus), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "Ref No", FieldName = nameof(IvMiscIssueListRow.RefNo), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Remarks", FieldName = nameof(IvMiscIssueListRow.Remarks), VisibleIndex = 5 },
-        new() { Caption = "Lines", FieldName = nameof(IvMiscIssueListRow.LineCount), Width = "80px", VisibleIndex = 6 },
+        new() { Caption = "Batch No", FieldName = nameof(IvMiscIssueListRow.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(IvMiscIssueListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(IvMiscIssueListRow.BatchStatus), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Ref No", FieldName = nameof(IvMiscIssueListRow.RefNo), VisibleIndex = 4, Size = GridColumnSize.Reference },
+        new() { Caption = "Remarks", FieldName = nameof(IvMiscIssueListRow.Remarks), VisibleIndex = 5, Size = GridColumnSize.LongText },
+        new() { Caption = "Lines", FieldName = nameof(IvMiscIssueListRow.LineCount), Width = "80px", VisibleIndex = 6, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 7)
     ];
 

@@ -41,6 +41,18 @@ public partial class CommonDataGrid<T>
         AllowMultipleSelection ? GridSelectionMode.Multiple : GridSelectionMode.Single;
 
     private string GetActionColumnWidth() => $"{Math.Max(RowActions.Count, 1) * 36}px";
+    private int GetActionColumnMinWidth() => Math.Max(RowActions.Count, 1) * 36;
+
+    private static string? GetEffectiveWidth(GridColumnDefinition column) =>
+        GridColumnSizing.GetEffectiveWidth(column);
+
+    private static int GetEffectiveMinWidth(GridColumnDefinition column) =>
+        GridColumnSizing.GetEffectiveMinWidth(column);
+
+    private string? VersionTwoLayoutKey =>
+        string.IsNullOrWhiteSpace(GridKey)
+            ? null
+            : GridLayoutPersistence.GetVersionTwoKey(GridKey);
 
     private async Task OnToolbarClickAsync(GridToolbarButton button)
     {
@@ -101,25 +113,34 @@ public partial class CommonDataGrid<T>
 
     private async Task OnLayoutLoadingAsync(GridPersistentLayoutEventArgs e)
     {
-        if (!PersistLayout || string.IsNullOrWhiteSpace(GridKey))
+        if (!PersistLayout || string.IsNullOrWhiteSpace(GridKey) || string.IsNullOrWhiteSpace(VersionTwoLayoutKey))
         {
             return;
         }
 
-        var layout = await LayoutStorage.LoadAsync(GridKey);
-        if (layout is not null)
+        var activeLayout = await LayoutStorage.LoadAsync(VersionTwoLayoutKey);
+        if (activeLayout is not null)
         {
-            e.Layout = layout;
+            e.Layout = activeLayout;
+            return;
+        }
+
+        var legacyLayout = await LayoutStorage.LoadAsync(GridKey);
+        if (legacyLayout is not null)
+        {
+            var migratedLayout = GridLayoutPersistence.StripColumnWidths(legacyLayout);
+            e.Layout = migratedLayout;
+            await LayoutStorage.SaveAsync(VersionTwoLayoutKey, migratedLayout);
         }
     }
 
     private async Task OnLayoutSavingAsync(GridPersistentLayoutEventArgs e)
     {
-        if (!PersistLayout || string.IsNullOrWhiteSpace(GridKey) || e.Layout is null)
+        if (!PersistLayout || string.IsNullOrWhiteSpace(VersionTwoLayoutKey) || e.Layout is null)
         {
             return;
         }
 
-        await LayoutStorage.SaveAsync(GridKey, e.Layout);
+        await LayoutStorage.SaveAsync(VersionTwoLayoutKey, e.Layout);
     }
 }

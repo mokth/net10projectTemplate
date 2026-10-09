@@ -449,17 +449,17 @@
                         else
                         {
                             <p class="pwo-empty">Equal stage sequences run in parallel. Select a work center to filter operations.</p>
-                            <DxGrid Data="@RouteRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@RouteRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
                                     FocusedRowEnabled="true" FocusedRowChanged="OnRouteFocused">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.StageSequence)" Caption="Stage" Width="70px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.WorkCentreCode)" Caption="Work Center" Width="130px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputItemCode)" Caption="Output" Width="130px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedQty)" Caption="Planned" DisplayFormat="n4" Width="100px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputUom)" Caption="UOM" Width="70px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
-                                    <DxGridDataColumn Caption="Duration" Width="100px">
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.WorkCentreCode)" Caption="Work Center" Width="150px" MinWidth="130" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputItemCode)" Caption="Output" Width="165px" MinWidth="145" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedQty)" Caption="Planned" DisplayFormat="n4" Width="120px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.OutputUom)" Caption="UOM" Width="80px" MinWidth="65" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" MinWidth="145" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderRouteStepVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" MinWidth="145" />
+                                    <DxGridDataColumn Caption="Duration" Width="120px" MinWidth="100">
                                         <CellDisplayTemplate>
                                             @DurationLabel(((ProductionWorkOrderRouteStepVm)context.DataItem).PlannedStartDateTime, ((ProductionWorkOrderRouteStepVm)context.DataItem).PlannedCompletionDateTime)
                                         </CellDisplayTemplate>
@@ -480,13 +480,13 @@
                         else
                         {
                             <p class="pwo-empty">Select a process to filter materials. Machines and labour list every process in the current route scope.</p>
-                            <DxGrid Data="@VisibleOperationRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@VisibleOperationRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100"
                                     FocusedRowEnabled="true" FocusedRowChanged="OnOperationFocused">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.ProcessSequence)" Caption="Process" Width="80px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationCode)" Caption="Code" Width="110px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationDescription)" Caption="Description" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.ProcessType)" Caption="Type" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationCode)" Caption="Code" Width="150px" MinWidth="130" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.OperationDescription)" Caption="Description" Width="280px" MinWidth="210" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.ProcessType)" Caption="Type" Width="120px" MinWidth="105" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.IsFinalOperation)" Caption="Final" Width="70px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedInputQty)" Caption="Input" DisplayFormat="n4" Width="90px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderOperationVm.PlannedInputUom)" Caption="In UOM" Width="80px" />
@@ -519,11 +519,11 @@
                         }
                         else
                         {
-                            <DxGrid Data="@VisibleMaterialRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@VisibleMaterialRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.MaterialSequence)" Caption="#" Width="55px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentCode)" Caption="Component" Width="130px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentDescription)" Caption="Description" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentCode)" Caption="Component" Width="165px" MinWidth="145" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentDescription)" Caption="Description" Width="280px" MinWidth="210" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.AlternateGroupCode)" Caption="Group" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ConsumingOperationCode)" Caption="Process" Width="110px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.ComponentQtyPerParent)" Caption="Std Qty" DisplayFormat="n4" Width="95px" />
@@ -543,7 +543,7 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.Tolerance)" Caption="Tolerance %" DisplayFormat="n4" Width="110px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.IssueMethod)" Caption="Issue" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.SupplySource)" Caption="Supply" Width="140px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.WarehouseCode)" Caption="Warehouse" Width="100px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.WarehouseCode)" Caption="Warehouse" Width="120px" MinWidth="105" />
                                     <DxGridDataColumn Caption="" Width="90px">
                                         <CellDisplayTemplate>
                                             @{
@@ -566,7 +566,7 @@
                         }
                         else
                         {
-                            <DxGrid Data="@VisibleMachineRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@VisibleMachineRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.OperationCode)" Caption="Process" Width="110px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.Priority)" Caption="Priority" Width="80px" />
@@ -610,12 +610,12 @@
                         }
                         else
                         {
-                            <DxGrid Data="@VisibleLabourRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@VisibleLabourRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.OperationCode)" Caption="Process" Width="110px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.MachineCode)" Caption="Machine" Width="110px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourCode)" Caption="Labour" Width="110px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourDescription)" Caption="Description" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.MachineCode)" Caption="Machine" Width="140px" MinWidth="120" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourCode)" Caption="Labour" Width="140px" MinWidth="120" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderLabourVm.LabourDescription)" Caption="Description" Width="280px" MinWidth="210" />
                                     <DxGridDataColumn Caption="Units" Width="90px">
                                         <CellDisplayTemplate>
                                             @OptionalQty(((ProductionWorkOrderLabourVm)context.DataItem).PlannedUnits)
@@ -680,7 +680,7 @@
                             }
                             else
                             {
-                                <DxGrid Data="@CostingRows" PageSize="25" TextWrapEnabled="false" CssClass="w-100">
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@CostingRows" PageSize="25" TextWrapEnabled="false" CssClass="w-100">
                                     <Columns>
                                         <DxGridDataColumn FieldName="@nameof(CostingRow.OperationCode)" Caption="Operation" />
                                         <DxGridDataColumn FieldName="@nameof(CostingRow.ProcessType)" Caption="Type" />
@@ -714,15 +714,15 @@
                         }
                         else
                         {
-                            <DxGrid Data="@AuditRows" PageSize="20" TextWrapEnabled="true" CssClass="w-100">
+                            <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@AuditRows" PageSize="20" TextWrapEnabled="false" CssClass="w-100">
                                 <Columns>
                                     <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.OccurredDate)" Caption="Date" DisplayFormat="dd MMM yyyy HH:mm:ss" Width="170px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.EventType)" Caption="Event" Width="155px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.FromStatus)" Caption="From" Width="110px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ToStatus)" Caption="To" Width="110px" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.EventType)" Caption="Event" Width="155px" MinWidth="140" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.FromStatus)" Caption="From" Width="110px" MinWidth="100" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ToStatus)" Caption="To" Width="110px" MinWidth="100" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.SnapshotRevision)" Caption="Snapshot" Width="90px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ActorUserId)" Caption="User" Width="90px" />
-                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.Reason)" Caption="Reason" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.ActorUserId)" Caption="User" Width="140px" MinWidth="120" />
+                                    <DxGridDataColumn FieldName="@nameof(ProductionAuditEventVm.Reason)" Caption="Reason" Width="280px" MinWidth="210" />
                                 </Columns>
                             </DxGrid>
                         }

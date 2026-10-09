@@ -54,21 +54,69 @@
         }
         else if (IsViewMode)
         {
-            <div class="iv-form-grid">
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Basic</h2>
-                    <div class="iv-detail-grid">
-                        @Detail("Code", Model.ICode)
-                        @Detail("Description", Model.IDesc)
-                        @Detail("Supply method", SupplyMethodDisplay)
-                        @Detail("Barcode", Model.Barcode)
-                        @Detail("Brand", Model.Brand)
-                        @Detail("Active", Model.IsActive ? "Yes" : "No")
+            <div class="iv-stock-layout">
+                <section class="iv-card iv-stock-card iv-stock-card--identity">
+                    <div class="iv-stock-card__heading">
+                        <h2 class="iv-card__title">Item identity</h2>
+                        <span class="iv-section-kicker">Primary item profile</span>
+                    </div>
+                    <div class="iv-stock-identity__layout">
+                        <div class="iv-stock-image-panel">
+                            <div class="iv-stock-image-frame">
+                                @if (HasImagePreview)
+                                {
+                                    <img class="iv-stock-image"
+                                         src="@ImagePreviewUrl"
+                                         alt="@ImageAlt"
+                                         loading="lazy" />
+                                }
+                                else
+                                {
+                                    <div class="iv-stock-image-placeholder" aria-label="No item image">
+                                        <i class="fa-regular fa-image" aria-hidden="true"></i>
+                                        <span>No image</span>
+                                    </div>
+                                }
+                            </div>
+                            <span class="iv-stock-image-caption">
+                                @(Model.HasImage ? "Stored item image" : "No image stored")
+                            </span>
+                        </div>
+                        <div class="iv-stock-fields">
+                            <div class="iv-detail-row">
+                                <span class="iv-detail-row__label">Code</span>
+                                <span class="iv-detail-row__value">@Model.ICode</span>
+                            </div>
+                            <div class="iv-detail-row iv-stock-field--wide">
+                                <span class="iv-detail-row__label">Description</span>
+                                <span class="iv-detail-row__value">@DisplayText(Model.IDesc)</span>
+                            </div>
+                            <div class="iv-detail-row">
+                                <span class="iv-detail-row__label">Supply method</span>
+                                <span class="iv-detail-row__value">@SupplyMethodDisplay</span>
+                            </div>
+                            <div class="iv-detail-row">
+                                <span class="iv-detail-row__label">Barcode</span>
+                                <span class="iv-detail-row__value">@DisplayText(Model.Barcode)</span>
+                            </div>
+                            <div class="iv-detail-row">
+                                <span class="iv-detail-row__label">Brand</span>
+                                <span class="iv-detail-row__value">@DisplayText(Model.Brand)</span>
+                            </div>
+                            <div class="iv-detail-row">
+                                <span class="iv-detail-row__label">Active</span>
+                                <span class="iv-detail-row__value">@(Model.IsActive ? "Yes" : "No")</span>
+                            </div>
+                        </div>
                     </div>
                 </section>
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Classification</h2>
-                    <div class="iv-detail-grid">
+
+                <section class="iv-card iv-stock-card">
+                    <div class="iv-stock-card__heading">
+                        <h2 class="iv-card__title">Product classification</h2>
+                        <span class="iv-section-kicker">How the item is organized</span>
+                    </div>
+                    <div class="iv-stock-fields">
                         @Detail("Type", Model.IType)
                         @Detail("Class", Model.IClassCode)
                         @Detail("Subclass", Model.ISubClassCode)
@@ -77,48 +125,65 @@
                         @Detail("Color", Model.Color)
                     </div>
                 </section>
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Units</h2>
-                    <div class="iv-detail-grid">
-                        @Detail("Std UOM", Model.StdUom)
-                        @Detail("Selling UOM", Model.SellingUom)
-                        @Detail("Purchase UOM", Model.PurUom)
-                        @Detail("Std pack size", FormatDec(Model.StdPackSize))
-                        @Detail("Purchase pack size", FormatDec(Model.PurStdPackSize))
+
+                <section class="iv-card iv-stock-card">
+                    <div class="iv-stock-card__heading">
+                        <h2 class="iv-card__title">Units &amp; inventory</h2>
+                        <span class="iv-section-kicker">Stock handling and replenishment</span>
+                    </div>
+                    <div class="iv-stock-subsection">
+                        <h3>Units</h3>
+                        <div class="iv-stock-fields">
+                            @Detail("Std UOM", Model.StdUom)
+                            @Detail("Selling UOM", Model.SellingUom)
+                            @Detail("Purchase UOM", Model.PurUom)
+                            @Detail("Std pack size", FormatDec(Model.StdPackSize))
+                            @Detail("Purchase pack size", FormatDec(Model.PurStdPackSize))
+                        </div>
+                    </div>
+                    <div class="iv-stock-subsection">
+                        <h3>Inventory controls</h3>
+                        <div class="iv-stock-fields">
+                            @Detail("Stock control", Model.StockControl ? "Yes" : "No")
+                            @Detail("Lot control", Model.LotControl ? "Yes" : "No")
+                            @Detail("Expiry control", ExpiryControlLabel(Model.ExpiryControl))
+                            @Detail("Default warehouse", Model.DefWarehouse)
+                            @Detail("Default location", Model.DefLocation)
+                            @Detail("Min stock", FormatDec(Model.MinStock))
+                            @Detail("Max stock", FormatDec(Model.MaxStock))
+                        </div>
                     </div>
                 </section>
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Inventory</h2>
-                    <div class="iv-detail-grid">
-                        @Detail("Stock control", Model.StockControl ? "Yes" : "No")
-                        @Detail("Lot control", Model.LotControl ? "Yes" : "No")
-                        @Detail("Expiry control", ExpiryControlLabel(Model.ExpiryControl))
-                        @Detail("Default warehouse", Model.DefWarehouse)
-                        @Detail("Default location", Model.DefLocation)
-                        @Detail("Min stock", FormatDec(Model.MinStock))
-                        @Detail("Max stock", FormatDec(Model.MaxStock))
+
+                <section class="iv-card iv-stock-card">
+                    <div class="iv-stock-card__heading">
+                        <h2 class="iv-card__title">Pricing &amp; accounting</h2>
+                        <span class="iv-section-kicker">Commercial and posting defaults</span>
                     </div>
-                </section>
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Pricing</h2>
-                    <div class="iv-detail-grid">
-                        @Detail("Selling price", FormatDec(Model.SellingPrice, "n4"))
-                        @Detail("Purchase price", FormatDec(Model.PurchasePrice, "n4"))
+                    <div class="iv-stock-subsection">
+                        <h3>Pricing</h3>
+                        <div class="iv-stock-fields">
+                            @Detail("Selling price", FormatDec(Model.SellingPrice, "n4"))
+                            @Detail("Purchase price", FormatDec(Model.PurchasePrice, "n4"))
+                        </div>
                     </div>
-                </section>
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Accounting</h2>
-                    <div class="iv-detail-grid">
-                        @Detail("Selling GL", Model.SellingGlCode)
-                        @Detail("Purchase GL", Model.PurchaseGlCode)
-                        @Detail("Tax group", Model.TaxGroup)
-                        @Detail("Purchase tax group", Model.PurchaseTaxGroup)
+                    <div class="iv-stock-subsection">
+                        <h3>Accounting</h3>
+                        <div class="iv-stock-fields">
+                            @Detail("Selling GL", Model.SellingGlCode)
+                            @Detail("Purchase GL", Model.PurchaseGlCode)
+                            @Detail("Tax group", Model.TaxGroup)
+                            @Detail("Purchase tax group", Model.PurchaseTaxGroup)
+                        </div>
                     </div>
                 </section>
             </div>
 
-            <section class="iv-card">
-                <h2 class="iv-card__title">Audit</h2>
+            <section class="iv-card iv-stock-card">
+                <div class="iv-stock-card__heading">
+                    <h2 class="iv-card__title">Audit</h2>
+                    <span class="iv-section-kicker">Record history</span>
+                </div>
                 <div class="iv-audit">
                     <span>Created @(Model.CreatedBy ?? "—") · @FormatUtc(Model.CreatedDate)</span>
                     <span>Updated @(Model.ModifiedBy ?? "—") · @FormatUtc(Model.ModifiedDate)</span>
@@ -145,58 +210,136 @@
         else
         {
             <EditForm Model="@Model" OnValidSubmit="@OnSaveAsync">
-                <div class="iv-form-grid">
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Basic</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
-                            <div class="iv-field">
-                                <label class="iv-field__label">Item code</label>
-                                <DxTextBox @bind-Text="@Model.ICode"
-                                           maxlength="30"
-                                           ReadOnly="@(!IsNewMode)"
-                                           InputCssClass="required-field"
-                                           NullText="Required" />
-                                @FieldError(nameof(IvStockMasterEditVm.ICode))
+                <div class="iv-stock-layout">
+                    <section class="iv-card iv-stock-card iv-stock-card--identity">
+                        <div class="iv-stock-card__heading">
+                            <h2 class="iv-card__title">Item identity</h2>
+                            <span class="iv-section-kicker">Primary item profile</span>
+                        </div>
+                        <div class="iv-stock-identity__layout">
+                            <div class="iv-stock-image-panel">
+                                <div class="iv-stock-image-frame" aria-busy="@IsPreparingImage">
+                                    @if (HasImagePreview)
+                                    {
+                                        <img class="iv-stock-image"
+                                             src="@ImagePreviewUrl"
+                                             alt="@ImageAlt"
+                                             loading="lazy" />
+                                    }
+                                    else
+                                    {
+                                        <div class="iv-stock-image-placeholder" aria-label="No item image">
+                                            <i class="fa-regular fa-image" aria-hidden="true"></i>
+                                            <span>@(HasPendingImageRemoval ? "Image will be removed" : "No image")</span>
+                                        </div>
+                                    }
+                                </div>
+                                <div class="iv-stock-image-actions">
+                                    <label class="iv-stock-image-picker @(CanChooseImage ? string.Empty : "is-disabled")">
+                                        <i class="fa-solid fa-image" aria-hidden="true"></i>
+                                        <span>@ImageActionLabel</span>
+                                        <InputFile @key="_imageInputKey"
+                                                   OnChange="@OnImageSelectedAsync"
+                                                   accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                                                   disabled="@(!CanChooseImage)" />
+                                    </label>
+                                    @if (HasPendingImage || HasPendingImageRemoval)
+                                    {
+                                        <button type="button"
+                                                class="iv-stock-image-action"
+                                                @onclick="UndoImageChange"
+                                                disabled="@IsSubmitting">
+                                            Undo image change
+                                        </button>
+                                    }
+                                    @if (CanRemoveImage)
+                                    {
+                                        <button type="button"
+                                                class="iv-stock-image-action iv-stock-image-action--danger"
+                                                @onclick="RemoveImage">
+                                            Remove image
+                                        </button>
+                                    }
+                                </div>
+                                <span class="iv-stock-image-caption">
+                                    JPG, PNG or WebP · max @(MaxImageUploadBytes / 1024 / 1024) MB
+                                </span>
+                                @if (HasPendingImage)
+                                {
+                                    <span class="iv-stock-image-caption iv-stock-image-caption--pending">
+                                        Prepared and pending Save
+                                    </span>
+                                }
+                                @if (HasPendingImageRemoval)
+                                {
+                                    <span class="iv-stock-image-caption iv-stock-image-caption--pending">
+                                        Removal pending Save
+                                    </span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(ImageError))
+                                {
+                                    <p class="iv-field__error" role="alert">@ImageError</p>
+                                }
                             </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Description</label>
-                                <DxTextBox @bind-Text="@Model.IDesc" maxlength="100" NullText="Item description" InputCssClass="required-field" />
-                                @FieldError(nameof(IvStockMasterEditVm.IDesc))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Barcode</label>
-                                <DxTextBox @bind-Text="@Model.Barcode" maxlength="50" />
-                                @FieldError(nameof(IvStockMasterEditVm.Barcode))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Brand</label>
-                                <DxTextBox @bind-Text="@Model.Brand" maxlength="50" />
-                                @FieldError(nameof(IvStockMasterEditVm.Brand))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Active</label>
-                                <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Supply method</label>
-                                <div class="iv-detail-row__value">@SupplyMethodDisplay</div>
-                                <p class="iv-field__hint">Controlled by Production Definition setup.</p>
+                            <div class="iv-stock-fields">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Item code</label>
+                                    <DxTextBox @bind-Text="@Model.ICode"
+                                               maxlength="30"
+                                               ReadOnly="@(!IsNewMode)"
+                                               InputCssClass="required-field"
+                                               NullText="Required" />
+                                    @FieldError(nameof(IvStockMasterEditVm.ICode))
+                                </div>
+                                <div class="iv-field iv-stock-field--wide">
+                                    <label class="iv-field__label">Description</label>
+                                    <DxTextBox @bind-Text="@Model.IDesc"
+                                               maxlength="200"
+                                               NullText="Item description"
+                                               InputCssClass="required-field" />
+                                    @FieldError(nameof(IvStockMasterEditVm.IDesc))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Barcode</label>
+                                    <DxTextBox @bind-Text="@Model.Barcode" maxlength="50" />
+                                    @FieldError(nameof(IvStockMasterEditVm.Barcode))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Brand</label>
+                                    <DxTextBox @bind-Text="@Model.Brand" maxlength="50" />
+                                    @FieldError(nameof(IvStockMasterEditVm.Brand))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Active</label>
+                                    <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Supply method</label>
+                                    <div class="iv-detail-row__value">@SupplyMethodDisplay</div>
+                                    <p class="iv-field__hint">Controlled by Production Definition setup.</p>
+                                </div>
                             </div>
                         </div>
                     </section>
 
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Classification</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
+                    <section class="iv-card iv-stock-card">
+                        <div class="iv-stock-card__heading">
+                            <h2 class="iv-card__title">Product classification</h2>
+                            <span class="iv-section-kicker">How the item is organized</span>
+                        </div>
+                        <div class="iv-stock-fields">
                             <div class="iv-field">
                                 <label class="iv-field__label">Type</label>
-                                <IvCodeComboBox Data="@Types" @bind-Value="@Model.IType" NullText="Select type" />
+                                <IvCodeComboBox Data="@Types"
+                                                @bind-Value="@Model.IType"
+                                                NullText="Select type" />
                                 @FieldError(nameof(IvStockMasterEditVm.IType))
                             </div>
                             <div class="iv-field">
                                 <label class="iv-field__label">Class</label>
                                 <IvCodeComboBox Data="@Classes"
                                                 Value="@Model.IClassCode"
+                                                ValueExpression="() => Model.IClassCode"
                                                 ValueChanged="OnClassChangedAsync"
                                                 NullText="Select class" />
                                 @FieldError(nameof(IvStockMasterEditVm.IClassCode))
@@ -229,128 +372,142 @@
                         </div>
                     </section>
 
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Units</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
-                            <div class="iv-field">
-                                <label class="iv-field__label">Std UOM</label>
-                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.StdUom" NullText="Select UOM" />
-                                @FieldError(nameof(IvStockMasterEditVm.StdUom))
+                    <section class="iv-card iv-stock-card">
+                        <div class="iv-stock-card__heading">
+                            <h2 class="iv-card__title">Units &amp; inventory</h2>
+                            <span class="iv-section-kicker">Stock handling and replenishment</span>
+                        </div>
+                        <div class="iv-stock-subsection">
+                            <h3>Units</h3>
+                            <div class="iv-stock-fields">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Std UOM</label>
+                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.StdUom" NullText="Select UOM" />
+                                    @FieldError(nameof(IvStockMasterEditVm.StdUom))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Selling UOM</label>
+                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.SellingUom" NullText="Select UOM" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Purchase UOM</label>
+                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.PurUom" NullText="Select UOM" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Std pack size</label>
+                                    <DxSpinEdit @bind-Value="@Model.StdPackSize" MinValue="0m" DisplayFormat="n4" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Purchase pack size</label>
+                                    <DxSpinEdit @bind-Value="@Model.PurStdPackSize" MinValue="0m" DisplayFormat="n4" />
+                                </div>
                             </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Selling UOM</label>
-                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.SellingUom" NullText="Select UOM" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Purchase UOM</label>
-                                <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.PurUom" NullText="Select UOM" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Std pack size</label>
-                                <DxSpinEdit @bind-Value="@Model.StdPackSize" MinValue="0m" DisplayFormat="n4" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Purchase pack size</label>
-                                <DxSpinEdit @bind-Value="@Model.PurStdPackSize" MinValue="0m" DisplayFormat="n4" />
+                        </div>
+                        <div class="iv-stock-subsection">
+                            <h3>Inventory controls</h3>
+                            <div class="iv-stock-fields">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Stock control</label>
+                                    <DxCheckBox @bind-Checked="@Model.StockControl" AllowIndeterminateState="false" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Lot control</label>
+                                    <DxCheckBox Checked="@Model.LotControl"
+                                                CheckedExpression="() => Model.LotControl"
+                                                CheckedChanged="@((bool value) => OnLotControlChanged(value))"
+                                                AllowIndeterminateState="false" />
+                                    @FieldError(nameof(IvStockMasterEditVm.LotControl))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Expiry control</label>
+                                    <DxComboBox Data="@ExpiryControlOptions"
+                                                TData="IvExpiryControlOption"
+                                                TValue="string"
+                                                ValueExpression="() => Model.ExpiryControl"
+                                                TextFieldName="@nameof(IvExpiryControlOption.Label)"
+                                                ValueFieldName="@nameof(IvExpiryControlOption.Code)"
+                                                Value="@Model.ExpiryControl"
+                                                ValueChanged="@OnExpiryControlChanged"
+                                                Enabled="@Model.LotControl"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
+                                    @FieldError(nameof(IvStockMasterEditVm.ExpiryControl))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Default warehouse</label>
+                                    <IvCodeComboBox Data="@Warehouses"
+                                                    Value="@Model.DefWarehouse"
+                                                    ValueExpression="() => Model.DefWarehouse"
+                                                    ValueChanged="OnWarehouseChangedAsync"
+                                                    NullText="Select warehouse" />
+                                    @FieldError(nameof(IvStockMasterEditVm.DefWarehouse))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Default location</label>
+                                    <IvCodeComboBox Data="@Locations"
+                                                    @bind-Value="@Model.DefLocation"
+                                                    IsLoading="@LocationsLoading"
+                                                    Enabled="@(!string.IsNullOrWhiteSpace(Model.DefWarehouse))"
+                                                    NullText="Select location" />
+                                    @FieldError(nameof(IvStockMasterEditVm.DefLocation))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Min stock</label>
+                                    <DxSpinEdit @bind-Value="@Model.MinStock" MinValue="0m" DisplayFormat="n4" />
+                                    @FieldError(nameof(IvStockMasterEditVm.MinStock))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Max stock</label>
+                                    <DxSpinEdit @bind-Value="@Model.MaxStock" MinValue="0m" DisplayFormat="n4" />
+                                    @FieldError(nameof(IvStockMasterEditVm.MaxStock))
+                                </div>
                             </div>
                         </div>
                     </section>
 
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Inventory</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
-                            <div class="iv-field">
-                                <label class="iv-field__label">Stock control</label>
-                                <DxCheckBox @bind-Checked="@Model.StockControl" AllowIndeterminateState="false" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Lot control</label>
-                                <DxCheckBox Checked="@Model.LotControl"
-                                            CheckedExpression="() => Model.LotControl" 
-                                            CheckedChanged="@((bool value) => OnLotControlChanged(value))"
-                                            AllowIndeterminateState="false" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Expiry control</label>
-                                <DxComboBox Data="@ExpiryControlOptions"
-                                            TData="IvExpiryControlOption"
-                                            TValue="string"
-                                            ValueExpression="() => Model.ExpiryControl"
-                                            TextFieldName="@nameof(IvExpiryControlOption.Label)"
-                                            ValueFieldName="@nameof(IvExpiryControlOption.Code)"
-                                            Value="@Model.ExpiryControl"
-                                            ValueChanged="@OnExpiryControlChanged"
-                                            Enabled="@Model.LotControl"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
-                                @FieldError(nameof(IvStockMasterEditVm.ExpiryControl))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Default warehouse</label>
-                                <IvCodeComboBox Data="@Warehouses"
-                                                Value="@Model.DefWarehouse"
-                                                ValueChanged="OnWarehouseChangedAsync"
-                                                NullText="Select warehouse" />
-                                @FieldError(nameof(IvStockMasterEditVm.DefWarehouse))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Default location</label>
-                                <IvCodeComboBox Data="@Locations"
-                                                @bind-Value="@Model.DefLocation"
-                                                IsLoading="@LocationsLoading"
-                                                Enabled="@(!string.IsNullOrWhiteSpace(Model.DefWarehouse))"
-                                                NullText="Select location" />
-                                @FieldError(nameof(IvStockMasterEditVm.DefLocation))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Min stock</label>
-                                <DxSpinEdit @bind-Value="@Model.MinStock" MinValue="0m" DisplayFormat="n4" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Max stock</label>
-                                <DxSpinEdit @bind-Value="@Model.MaxStock" MinValue="0m" DisplayFormat="n4" />
+                    <section class="iv-card iv-stock-card">
+                        <div class="iv-stock-card__heading">
+                            <h2 class="iv-card__title">Pricing &amp; accounting</h2>
+                            <span class="iv-section-kicker">Commercial and posting defaults</span>
+                        </div>
+                        <div class="iv-stock-subsection">
+                            <h3>Pricing</h3>
+                            <div class="iv-stock-fields">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Selling price</label>
+                                    <DxSpinEdit @bind-Value="@Model.SellingPrice" MinValue="0m" DisplayFormat="n4" />
+                                    @FieldError(nameof(IvStockMasterEditVm.SellingPrice))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Purchase price</label>
+                                    <DxSpinEdit @bind-Value="@Model.PurchasePrice" MinValue="0m" DisplayFormat="n4" />
+                                    @FieldError(nameof(IvStockMasterEditVm.PurchasePrice))
+                                </div>
                             </div>
                         </div>
-                    </section>
-
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Pricing</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
-                            <div class="iv-field">
-                                <label class="iv-field__label">Selling price</label>
-                                <DxSpinEdit @bind-Value="@Model.SellingPrice" MinValue="0m" DisplayFormat="n4" />
-                                @FieldError(nameof(IvStockMasterEditVm.SellingPrice))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Purchase price</label>
-                                <DxSpinEdit @bind-Value="@Model.PurchasePrice" MinValue="0m" DisplayFormat="n4" />
-                                @FieldError(nameof(IvStockMasterEditVm.PurchasePrice))
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="iv-card">
-                        <h2 class="iv-card__title">Accounting</h2>
-                        <div class="iv-form-grid iv-form-grid--single">
-                            <div class="iv-field">
-                                <label class="iv-field__label">Selling GL</label>
-                                <DxTextBox @bind-Text="@Model.SellingGlCode"
-                                           maxlength="20"
-                                           InputCssClass="required-field"
-                                           NullText="Required" />
-                                @FieldError(nameof(IvStockMasterEditVm.SellingGlCode))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Purchase GL</label>
-                                <DxTextBox @bind-Text="@Model.PurchaseGlCode" maxlength="20" />
-                                @FieldError(nameof(IvStockMasterEditVm.PurchaseGlCode))
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Tax group</label>
-                                <DxTextBox @bind-Text="@Model.TaxGroup" maxlength="20" />
-                            </div>
-                            <div class="iv-field">
-                                <label class="iv-field__label">Purchase tax group</label>
-                                <DxTextBox @bind-Text="@Model.PurchaseTaxGroup" maxlength="20" />
+                        <div class="iv-stock-subsection">
+                            <h3>Accounting</h3>
+                            <div class="iv-stock-fields">
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Selling GL</label>
+                                    <DxTextBox @bind-Text="@Model.SellingGlCode"
+                                               maxlength="20"
+                                               InputCssClass="required-field"
+                                               NullText="Required" />
+                                    @FieldError(nameof(IvStockMasterEditVm.SellingGlCode))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Purchase GL</label>
+                                    <DxTextBox @bind-Text="@Model.PurchaseGlCode" maxlength="20" />
+                                    @FieldError(nameof(IvStockMasterEditVm.PurchaseGlCode))
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Tax group</label>
+                                    <DxTextBox @bind-Text="@Model.TaxGroup" maxlength="20" />
+                                </div>
+                                <div class="iv-field">
+                                    <label class="iv-field__label">Purchase tax group</label>
+                                    <DxTextBox @bind-Text="@Model.PurchaseTaxGroup" maxlength="20" />
+                                </div>
                             </div>
                         </div>
                     </section>
@@ -358,7 +515,7 @@
 
                 @if (ValidationErrors.Count > 0)
                 {
-                    <section class="iv-card">
+                    <section class="iv-card iv-stock-card">
                         <h2 class="iv-card__title">Validation</h2>
                         <ul class="iv-validation-list">
                             @foreach (var pair in ValidationErrors)
@@ -382,7 +539,7 @@
                                       Text="@(IsSubmitting ? "Saving…" : "SAVE")"
                                       IconCssClass="fa-solid fa-floppy-disk"
                                       SubmitFormOnClick="true"
-                                      Enabled="@(!IsSubmitting)" />
+                                      Enabled="@(!IsSubmitting && !IsPreparingImage)" />
                         </PermissionAuthorize>
                     </div>
                 </footer>
@@ -436,7 +593,7 @@
     {
         <div class="iv-detail-row">
             <span class="iv-detail-row__label">@label</span>
-            <span class="iv-detail-row__value">@(string.IsNullOrWhiteSpace(value) ? "—" : value)</span>
+            <span class="iv-detail-row__value">@DisplayText(value)</span>
         </div>
     };
 
@@ -447,4 +604,7 @@
             <p class="iv-field__error">@message</p>
         }
     };
+
+    private static string DisplayText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "—" : value;
 }

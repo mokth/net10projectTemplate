@@ -86,7 +86,7 @@
             else
             {
                 <div class="iv-list-desktop">
-                    <DxGrid Data="@Headers" PageSize="10" ShowPager="true" AllowSelectRowByClick="false">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Headers" PageSize="10" ShowPager="true" AllowSelectRowByClick="false" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn Caption="Period" Width="180px">
                                 <CellDisplayTemplate>

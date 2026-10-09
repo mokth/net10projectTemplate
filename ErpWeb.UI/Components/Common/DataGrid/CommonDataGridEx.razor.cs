@@ -1,6 +1,4 @@
 ﻿using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using DevExpress.Blazor;
 using DevExpress.Export;
 using Microsoft.AspNetCore.Components;
@@ -73,7 +71,9 @@ public class CommonDataGridExBase<T> : ComponentBase
     private string? LayoutKey =>
         !string.IsNullOrWhiteSpace(GridKey)
             ? GridKey
-            : (string.IsNullOrWhiteSpace(Title) ? null : Title.Replace(" ", string.Empty));
+            : null;
+    private string? VersionTwoLayoutKey =>
+        LayoutKey is null ? null : GridLayoutPersistence.GetVersionTwoKey(LayoutKey);
 
     protected override void OnInitialized()
     {
@@ -131,6 +131,15 @@ public class CommonDataGridExBase<T> : ComponentBase
         var count = Math.Max(ActionButtons?.Count ?? 0, 1);
         return $"{count * 35}px";
     }
+
+    public int GetGridActionColMinWidth() =>
+        Math.Max(ActionButtons?.Count ?? 0, 1) * 35;
+
+    protected static string? GetEffectiveWidth(GridColumnData column) =>
+        GridColumnSizing.GetEffectiveWidth(column);
+
+    protected static int GetEffectiveMinWidth(GridColumnData column) =>
+        GridColumnSizing.GetEffectiveMinWidth(column);
 
     public async Task OnRefreshClick()
     {
@@ -194,6 +203,11 @@ public class CommonDataGridExBase<T> : ComponentBase
         if (!string.IsNullOrWhiteSpace(LayoutKey))
         {
             await LayoutStorage.ClearAsync(LayoutKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(VersionTwoLayoutKey))
+        {
+            await LayoutStorage.ClearAsync(VersionTwoLayoutKey);
         }
 
         // Remount so LayoutAutoLoading applies defaults (storage cleared).
@@ -362,19 +376,31 @@ public class CommonDataGridExBase<T> : ComponentBase
 
     protected async Task Grid_LayoutAutoLoading(GridPersistentLayoutEventArgs e)
     {
-        if (!PersistLayout || string.IsNullOrWhiteSpace(LayoutKey))
+        if (!PersistLayout ||
+            string.IsNullOrWhiteSpace(LayoutKey) ||
+            string.IsNullOrWhiteSpace(VersionTwoLayoutKey))
         {
             return;
         }
 
         try
         {
-            var layout = await LayoutStorage.LoadAsync(LayoutKey);
-            if (layout is not null)
+            var activeLayout = await LayoutStorage.LoadAsync(VersionTwoLayoutKey);
+            if (activeLayout is not null)
             {
-                // Keep sort/visibility/order, but ignore saved widths so a stale layout
-                // cannot shrink the grid to a fraction of the page.
-                e.Layout = StripColumnWidths(layout);
+                e.Layout = activeLayout;
+                return;
+            }
+
+            var legacyLayout = await LayoutStorage.LoadAsync(LayoutKey);
+            if (legacyLayout is not null)
+            {
+                var migratedLayout = GridLayoutPersistence.StripFilterCriteria(
+                    GridLayoutPersistence.StripColumnWidths(legacyLayout));
+                e.Layout = migratedLayout;
+
+                // Migrate once so future loads preserve user-resized widths.
+                await LayoutStorage.SaveAsync(VersionTwoLayoutKey, migratedLayout);
             }
         }
         catch (Exception ex)
@@ -385,15 +411,17 @@ public class CommonDataGridExBase<T> : ComponentBase
 
     protected async Task Grid_LayoutAutoSaving(GridPersistentLayoutEventArgs e)
     {
-        if (!PersistLayout || string.IsNullOrWhiteSpace(LayoutKey) || e.Layout is null)
+        if (!PersistLayout ||
+            string.IsNullOrWhiteSpace(VersionTwoLayoutKey) ||
+            e.Layout is null)
         {
             return;
         }
 
         try
         {
-            var layout = StripFilterCriteria(e.Layout);
-            await LayoutStorage.SaveAsync(LayoutKey, layout);
+            var layout = GridLayoutPersistence.StripFilterCriteria(e.Layout);
+            await LayoutStorage.SaveAsync(VersionTwoLayoutKey, layout);
         }
         catch (Exception ex)
         {
@@ -428,39 +456,4 @@ public class CommonDataGridExBase<T> : ComponentBase
         return property?.GetValue(dataItem)?.ToString();
     }
 
-    private static GridPersistentLayout StripFilterCriteria(GridPersistentLayout layout)
-    {
-        if (layout.FilterCriteria is null)
-        {
-            return layout;
-        }
-
-        var node = JsonNode.Parse(JsonSerializer.Serialize(layout));
-        if (node is null)
-        {
-            return layout;
-        }
-
-        node["FilterCriteria"] = null;
-        return JsonSerializer.Deserialize<GridPersistentLayout>(node.ToJsonString()) ?? layout;
-    }
-
-    private static GridPersistentLayout StripColumnWidths(GridPersistentLayout layout)
-    {
-        var node = JsonNode.Parse(JsonSerializer.Serialize(layout));
-        if (node is null)
-        {
-            return layout;
-        }
-
-        if (node["Columns"] is JsonArray columns)
-        {
-            foreach (var column in columns.OfType<JsonObject>())
-            {
-                column.Remove("Width");
-            }
-        }
-
-        return JsonSerializer.Deserialize<GridPersistentLayout>(node.ToJsonString()) ?? layout;
-    }
 }

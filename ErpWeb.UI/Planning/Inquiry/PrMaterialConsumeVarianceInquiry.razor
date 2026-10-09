@@ -106,10 +106,10 @@
             else if (ActiveTab == "detail")
             {
                 <DxGrid Data="@Detail.Rows"
+                        TextWrapEnabled="false"
                         KeyFieldName="@nameof(ProductionMaterialConsumeVarianceRow.ProductionOutputId)"
                         ShowFilterRow="false"
                         PageSize="50"
-                        TextWrapEnabled="false"
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer">
                     <Columns>
                         <DxGridDataColumn Caption="Document" MinWidth="130">
@@ -151,7 +151,7 @@
             }
             else if (ActiveTab == "component")
             {
-                <DxGrid Data="@Summaries.ByComponent" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Summaries.ByComponent" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByComponent.ComponentCode)" Caption="Component" />
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByComponent.RequiredUom)" Caption="UOM" Width="80px" />
@@ -167,7 +167,7 @@
             else if (ActiveTab == "reason")
             {
                 <p class="pr-var-note">Counts only. Quantity is never mixed across UOMs on this tab.</p>
-                <DxGrid Data="@Summaries.ByReason" ShowFilterRow="false" PageSize="50">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Summaries.ByReason" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByReason.VarianceReasonCode)" Caption="Reason" />
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByReason.DocumentLineCount)" Caption="Lines" TextAlignment="GridTextAlignment.Right" />
@@ -181,7 +181,7 @@
             }
             else if (ActiveTab == "reason-comp")
             {
-                <DxGrid Data="@Summaries.ByReasonComponent" ShowFilterRow="false" PageSize="50">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Summaries.ByReasonComponent" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByReasonComponent.VarianceReasonCode)" Caption="Reason" />
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByReasonComponent.ComponentCode)" Caption="Component" />
@@ -194,7 +194,7 @@
             else if (ActiveTab == "wo")
             {
                 <p class="pr-var-note">Counts only. Use WO + component for quantity drill-down.</p>
-                <DxGrid Data="@Summaries.ByWorkOrder" ShowFilterRow="false" PageSize="50">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Summaries.ByWorkOrder" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn Caption="Work Order">
                             <CellDisplayTemplate>
@@ -215,7 +215,7 @@
             }
             else
             {
-                <DxGrid Data="@Summaries.ByWorkOrderComponent" ShowFilterRow="false" PageSize="50">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Summaries.ByWorkOrderComponent" ShowFilterRow="false" PageSize="50" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByWorkOrderComponent.WorkOrderNo)" Caption="Work Order" />
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialConsumeVarianceByWorkOrderComponent.ComponentCode)" Caption="Component" />

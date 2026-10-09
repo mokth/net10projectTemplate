@@ -115,7 +115,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvStockAdjustmentLineVm)context.DataItem;
@@ -138,7 +138,7 @@
                             </DxGridCommandColumn>
                         }
                         <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.LineNo)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.ICode)" Caption="Item" Width="130px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135">
                             <CellDisplayTemplate>
                                 @{
                                     var itemLine = (IvStockAdjustmentLineVm)context.DataItem;
@@ -163,7 +163,7 @@
                                 </div>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.AdjustQty)" Caption="Adjust Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.AdjustQty)" Caption="Adjust Qty" Width="120px" MinWidth="100" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
                             <CellDisplayTemplate>
                                 @{
                                     var adjLine = (IvStockAdjustmentLineVm)context.DataItem;
@@ -171,20 +171,20 @@
                                 <span class="@AdjustQtyClass(adjLine.AdjustQty)">@adjLine.AdjustQty.ToString("n4")</span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.NewQty)" Caption="New Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.IStatus)" Caption="Status" Width="90px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.NewQty)" Caption="New Qty" Width="120px" MinWidth="100" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.IStatus)" Caption="Status" Width="115px" MinWidth="95">
                             <CellDisplayTemplate>
                                 <span class="@StatusChipClass(((IvStockAdjustmentLineVm)context.DataItem).IStatus)">
                                     @(((IvStockAdjustmentLineVm)context.DataItem).IStatus)
                                 </span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Reason)" Caption="Reason" Width="100px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Reason)" Caption="Reason" Width="135px" MinWidth="110">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvStockAdjustmentLineVm)context.DataItem).Reason)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Remarks)" Caption="Remark" MinWidth="120">
+                        <DxGridDataColumn FieldName="@nameof(IvStockAdjustmentLineVm.Remarks)" Caption="Remark" Width="280px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvStockAdjustmentLineVm)context.DataItem).Remarks)
                             </CellDisplayTemplate>

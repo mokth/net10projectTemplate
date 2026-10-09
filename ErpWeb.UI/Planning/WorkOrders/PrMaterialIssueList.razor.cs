@@ -79,16 +79,16 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
     ];
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Batch No", FieldName = nameof(ProductionMaterialIssueListRow.BatchNo), Width = "95px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Issue Date", FieldName = nameof(ProductionMaterialIssueListRow.IssueDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 2 },
-        new() { Caption = "Work Order", FieldName = nameof(ProductionMaterialIssueListRow.WorkOrderNo), Width = "135px", VisibleIndex = 3 },
-        new() { Caption = "Product", FieldName = nameof(ProductionMaterialIssueListRow.ProductCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Description", FieldName = nameof(ProductionMaterialIssueListRow.ProductDescription), VisibleIndex = 5 },
-        new() { Caption = "Status", FieldName = nameof(ProductionMaterialIssueListRow.Status), Width = "100px", VisibleIndex = 6 },
-        new() { Caption = "Materials", FieldName = nameof(ProductionMaterialIssueListRow.LineCount), DataType = "number", Width = "85px", VisibleIndex = 7 },
-        new() { Caption = "Posted By", FieldName = nameof(ProductionMaterialIssueListRow.PostedBy), Width = "105px", VisibleIndex = 8 },
-        new() { Caption = "Posted Date", FieldName = nameof(ProductionMaterialIssueListRow.PostedDate), DataType = "date", DisplayFormat = "dd MMM yyyy HH:mm", Width = "145px", VisibleIndex = 9 },
-        new() { Caption = "Reversed", FieldName = nameof(ProductionMaterialIssueListRow.RollbackDate), DataType = "date", DisplayFormat = "dd MMM yyyy HH:mm", Width = "145px", VisibleIndex = 10 }
+        new() { Caption = "Batch No", FieldName = nameof(ProductionMaterialIssueListRow.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Issue Date", FieldName = nameof(ProductionMaterialIssueListRow.IssueDate), DataType = "date", DisplayFormat = "dd MMM yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Work Order", FieldName = nameof(ProductionMaterialIssueListRow.WorkOrderNo), VisibleIndex = 3, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Product", FieldName = nameof(ProductionMaterialIssueListRow.ProductCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Description", FieldName = nameof(ProductionMaterialIssueListRow.ProductDescription), VisibleIndex = 5, Size = GridColumnSize.LongText },
+        new() { Caption = "Status", FieldName = nameof(ProductionMaterialIssueListRow.Status), VisibleIndex = 6, Size = GridColumnSize.Status },
+        new() { Caption = "Materials", FieldName = nameof(ProductionMaterialIssueListRow.LineCount), DataType = "number", Width = "85px", VisibleIndex = 7, Size = GridColumnSize.Tiny },
+        new() { Caption = "Posted By", FieldName = nameof(ProductionMaterialIssueListRow.PostedBy), VisibleIndex = 8, Size = GridColumnSize.Name },
+        new() { Caption = "Posted Date", FieldName = nameof(ProductionMaterialIssueListRow.PostedDate), DataType = "date", DisplayFormat = "dd MMM yyyy HH:mm", VisibleIndex = 9, Size = GridColumnSize.DateTime },
+        new() { Caption = "Reversed", FieldName = nameof(ProductionMaterialIssueListRow.RollbackDate), DataType = "date", DisplayFormat = "dd MMM yyyy HH:mm", VisibleIndex = 10, Size = GridColumnSize.DateTime }
     ];
     protected List<ButtonInfo> Buttons { get; private set; } = [];
     protected List<ButtonInfo> ActionButtons { get; private set; } = [];

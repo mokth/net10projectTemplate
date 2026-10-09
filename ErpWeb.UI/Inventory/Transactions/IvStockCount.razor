@@ -245,11 +245,11 @@
                             CssClass="sa-line-grid">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.LineNumber)" Caption="#" Width="60px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.ICode)" Caption="Item" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IDesc)" Caption="Description" Width="220px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.SliceLabel)" Caption="Warehouse / Loc / Lot" Width="180px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IStatus)" Caption="Status" Width="90px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.StdUom)" Caption="UOM" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IDesc)" Caption="Description" Width="280px" MinWidth="210" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.SliceLabel)" Caption="Warehouse / Loc / Lot" Width="220px" MinWidth="180" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.IStatus)" Caption="Status" Width="115px" MinWidth="95" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.StdUom)" Caption="UOM" Width="80px" MinWidth="65" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.SystemQty)" Caption="System" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.LiveQty)" Caption="Live" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             @if (CanCountLines)
@@ -443,7 +443,7 @@
                     </DxCheckBox>
                 }
                 <div class="sa-preview-grid">
-                    <DxGrid Data="@Preview.Lines.ToList()"
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Preview.Lines.ToList()"
                             KeyFieldName="@nameof(IvStockCountPreviewLine.LineNumber)"
                             PageSize="15"
                             ShowFilterRow="false"
@@ -453,7 +453,7 @@
                             CssClass="sa-line-grid">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LineNumber)" Caption="#" Width="60px" />
-                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.ICode)" Caption="Item" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.ICode)" Caption="Item" Width="155px" MinWidth="135" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.WHCode)" Caption="WH" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LocCode)" Caption="Loc" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.SystemQty)" Caption="System" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />

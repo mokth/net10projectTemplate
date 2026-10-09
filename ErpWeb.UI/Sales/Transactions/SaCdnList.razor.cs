@@ -193,20 +193,20 @@ public partial class SaCdnList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Doc No.", FieldName = nameof(SaCdnListRow.DocNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(SaCdnListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(SaCdnListRow.Status), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "E-Inv", FieldName = nameof(SaCdnListRow.IrbmStatus), Width = "110px", VisibleIndex = 4 },
-        new() { Caption = "Customer", FieldName = nameof(SaCdnListRow.CustCode), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Name", FieldName = nameof(SaCdnListRow.CustName), VisibleIndex = 6 },
-        new() { Caption = "Invoice", FieldName = nameof(SaCdnListRow.InvNo), Width = "130px", VisibleIndex = 7 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 8 },
-        new() { Caption = "E-UUID", FieldName = nameof(SaCdnListRow.IrbmUuid), DataType = "link", VisibleIndex = 9 },
+        new() { Caption = "Doc No.", FieldName = nameof(SaCdnListRow.DocNo), Size = GridColumnSize.DocumentNo, SortIndex = 0, VisibleIndex = 1 },
+        new() { Caption = "Date", FieldName = nameof(SaCdnListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(SaCdnListRow.Status), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "E-Inv", FieldName = nameof(SaCdnListRow.IrbmStatus), VisibleIndex = 4, Size = GridColumnSize.Status },
+        new() { Caption = "Customer", FieldName = nameof(SaCdnListRow.CustCode), VisibleIndex = 5, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(SaCdnListRow.CustName), VisibleIndex = 6, Size = GridColumnSize.Name },
+        new() { Caption = "Invoice", FieldName = nameof(SaCdnListRow.InvNo), VisibleIndex = 7, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaCdnListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 8, Size = GridColumnSize.Amount },
+        new() { Caption = "E-UUID", FieldName = nameof(SaCdnListRow.IrbmUuid), DataType = "link", VisibleIndex = 9, Size = GridColumnSize.Reference },
         // "E-Inv" and "E-Status" deliberately bind the SAME IrbmStatus property: that is exactly what the
         // invoice list shows, and the only difference is the explicit string rendering here. Do not "fix"
         // one of them into a different binding. VisibleIndex must stay unique, hence 10 rather than 9.
-        new() { Caption = "E-Status", FieldName = nameof(SaCdnListRow.IrbmStatus), DataType = "string", VisibleIndex = 10 },
-        new() { Caption = "Lines", FieldName = nameof(SaCdnListRow.LineCount), Width = "80px", VisibleIndex = 11 },
+        new() { Caption = "E-Status", FieldName = nameof(SaCdnListRow.IrbmStatus), DataType = "string", VisibleIndex = 10, Size = GridColumnSize.Status },
+        new() { Caption = "Lines", FieldName = nameof(SaCdnListRow.LineCount), Width = "80px", VisibleIndex = 11, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 12)
     ];
 

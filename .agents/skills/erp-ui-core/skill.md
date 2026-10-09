@@ -265,6 +265,25 @@ Use:
 - stable key field;
 - audit columns where the surrounding module does so.
 
+## 8.1 Grid readability and resizing standard
+
+Shared list columns use `GridColumnSize` semantic sizing from
+`ErpWeb.UI/Components/Common/DataGrid/GridColumnSizing.cs`. Explicit `Width` and
+`MinWidth` values override the semantic preset; rendered `MinWidth` values are integer
+pixels. Shared grids remain dense (`TextWrapEnabled="false"`), resizable, and must use a
+stable explicit `GridKey`.
+
+The shared layout contract uses the legacy `erp-grid-layout:{grid-key}` key only as a
+one-time migration source. The active layout is stored under `{grid-key}:v2`; the first
+migration removes stale widths, and `CommonDataGridEx` also removes non-persisted filter
+criteria. Subsequent loads preserve user-resized widths. Reset clears both keys.
+
+Direct desktop `DxGrid` entry, lookup, inquiry, and workflow grids should use
+`ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"`, keep text wrapping disabled
+unless a page-specific reason exists, use CSS units on `Width`, and give important item,
+document, reference, name, description, status, and amount columns useful `MinWidth`
+values. Do not add a new persistence subsystem to direct grids unless one already exists.
+
 ---
 
 # 9. List action rules

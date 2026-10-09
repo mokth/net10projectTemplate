@@ -144,7 +144,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvMiscReceiptLineVm)context.DataItem;
@@ -167,18 +167,18 @@
                             </DxGridCommandColumn>
                         }
                         <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.LineNo)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ICode)" Caption="Item" Width="130px" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.IDesc)" Caption="Description" MinWidth="160" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToWarehouse)" Caption="Warehouse" Width="110px" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToLocation)" Caption="Location" Width="110px" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToLotNo)" Caption="Lot" Width="110px">
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.IDesc)" Caption="Description" Width="280px" MinWidth="210" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToWarehouse)" Caption="Warehouse" Width="110px" MinWidth="105" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToLocation)" Caption="Location" Width="110px" MinWidth="100" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.ToLotNo)" Caption="Lot" Width="120px" MinWidth="105">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvMiscReceiptLineVm)context.DataItem).ToLotNo)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Quantity)" Caption="Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Uom)" Caption="UOM" Width="80px" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.IStatus)" Caption="Status" Width="110px">
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Quantity)" Caption="Qty" Width="120px" MinWidth="100" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Uom)" Caption="UOM" Width="80px" MinWidth="65" />
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.IStatus)" Caption="Status" Width="115px" MinWidth="95">
                             <CellDisplayTemplate>
                                 <span class="@StatusChipClass(((IvMiscReceiptLineVm)context.DataItem).IStatus)">
                                     @(((IvMiscReceiptLineVm)context.DataItem).IStatus)
@@ -186,7 +186,7 @@
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.UnitPrice)" Caption="Unit price" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Reason)" Caption="Reason" Width="100px">
+                        <DxGridDataColumn FieldName="@nameof(IvMiscReceiptLineVm.Reason)" Caption="Reason" Width="135px" MinWidth="110">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvMiscReceiptLineVm)context.DataItem).Reason)
                             </CellDisplayTemplate>

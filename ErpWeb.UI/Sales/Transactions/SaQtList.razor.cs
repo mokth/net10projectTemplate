@@ -65,18 +65,18 @@ public partial class SaQtList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Quotation No.", FieldName = nameof(SaQtListRow.QtNo), Width = "150px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Rev", FieldName = nameof(SaQtListRow.CustRel), Width = "60px", VisibleIndex = 2 },
-        new() { Caption = "Date", FieldName = nameof(SaQtListRow.QtDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "105px", VisibleIndex = 3 },
-        new() { Caption = "Valid until", FieldName = nameof(SaQtListRow.ValidUntil), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "105px", VisibleIndex = 4 },
-        new() { Caption = "Status", FieldName = nameof(SaQtListRow.Status), Width = "100px", VisibleIndex = 5 },
-        new() { Caption = "Conversion", FieldName = nameof(SaQtListRow.ConversionStatus), Width = "100px", VisibleIndex = 6 },
-        new() { Caption = "Customer", FieldName = nameof(SaQtListRow.CustCode), Width = "110px", VisibleIndex = 7 },
-        new() { Caption = "Name", FieldName = nameof(SaQtListRow.CustName), VisibleIndex = 8 },
-        new() { Caption = "Customer RFQ / Ref", FieldName = nameof(SaQtListRow.CustPo), Width = "150px", VisibleIndex = 9 },
-        new() { Caption = "Lines", FieldName = nameof(SaQtListRow.LineCount), Width = "70px", VisibleIndex = 10 },
-        new() { Caption = "Total", FieldName = nameof(SaQtListRow.TotAmnt), DataType = "number", DisplayFormat = "n2", Width = "110px", VisibleIndex = 11 },
-        new() { Caption = "Sales Order", FieldName = nameof(SaQtListRow.ConvertedSoNo), Width = "130px", VisibleIndex = 12 },
+        new() { Caption = "Quotation No.", FieldName = nameof(SaQtListRow.QtNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Rev", FieldName = nameof(SaQtListRow.CustRel), VisibleIndex = 2, Size = GridColumnSize.Tiny },
+        new() { Caption = "Date", FieldName = nameof(SaQtListRow.QtDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 3, Size = GridColumnSize.Date },
+        new() { Caption = "Valid until", FieldName = nameof(SaQtListRow.ValidUntil), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 4, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(SaQtListRow.Status), VisibleIndex = 5, Size = GridColumnSize.Status },
+        new() { Caption = "Conversion", FieldName = nameof(SaQtListRow.ConversionStatus), VisibleIndex = 6, Size = GridColumnSize.Status },
+        new() { Caption = "Customer", FieldName = nameof(SaQtListRow.CustCode), VisibleIndex = 7, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(SaQtListRow.CustName), VisibleIndex = 8, Size = GridColumnSize.Name },
+        new() { Caption = "Customer RFQ / Ref", FieldName = nameof(SaQtListRow.CustPo), VisibleIndex = 9, Size = GridColumnSize.Reference },
+        new() { Caption = "Lines", FieldName = nameof(SaQtListRow.LineCount), VisibleIndex = 10, Size = GridColumnSize.Tiny },
+        new() { Caption = "Total", FieldName = nameof(SaQtListRow.TotAmnt), DataType = "number", DisplayFormat = "n2", VisibleIndex = 11, Size = GridColumnSize.Amount },
+        new() { Caption = "Sales Order", FieldName = nameof(SaQtListRow.ConvertedSoNo), VisibleIndex = 12, Size = GridColumnSize.DocumentNo },
         ..AuditColumns.For(startVisibleIndex: 13)
     ];
 

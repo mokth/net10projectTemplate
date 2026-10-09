@@ -79,14 +79,14 @@ public partial class IvGoodsReceiptList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Batch No", FieldName = nameof(IvGoodsReceiptListRow.BatchNo), Width = "100px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(IvGoodsReceiptListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Type", FieldName = nameof(IvGoodsReceiptListRow.TrxType), Width = "72px", VisibleIndex = 3 },
-        new() { Caption = "Status", FieldName = nameof(IvGoodsReceiptListRow.BatchStatus), Width = "100px", VisibleIndex = 4 },
-        new() { Caption = "Ref No", FieldName = nameof(IvGoodsReceiptListRow.RefNo), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Remarks", FieldName = nameof(IvGoodsReceiptListRow.Remarks), VisibleIndex = 6 },
-        new() { Caption = "Lines", FieldName = nameof(IvGoodsReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7 },
-        new() { Caption = "Total", FieldName = nameof(IvGoodsReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 8 },
+        new() { Caption = "Batch No", FieldName = nameof(IvGoodsReceiptListRow.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(IvGoodsReceiptListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Type", FieldName = nameof(IvGoodsReceiptListRow.TrxType), Width = "72px", VisibleIndex = 3, Size = GridColumnSize.Tiny },
+        new() { Caption = "Status", FieldName = nameof(IvGoodsReceiptListRow.BatchStatus), VisibleIndex = 4, Size = GridColumnSize.Status },
+        new() { Caption = "Ref No", FieldName = nameof(IvGoodsReceiptListRow.RefNo), VisibleIndex = 5, Size = GridColumnSize.Reference },
+        new() { Caption = "Remarks", FieldName = nameof(IvGoodsReceiptListRow.Remarks), VisibleIndex = 6, Size = GridColumnSize.LongText },
+        new() { Caption = "Lines", FieldName = nameof(IvGoodsReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7, Size = GridColumnSize.Tiny },
+        new() { Caption = "Total", FieldName = nameof(IvGoodsReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 8, Size = GridColumnSize.Amount },
         ..AuditColumns.For(startVisibleIndex: 9)
     ];
 

@@ -77,20 +77,20 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Work Order", FieldName = nameof(ProductionWorkOrderListRow.WorkOrderNo), Width = "145px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Product", FieldName = nameof(ProductionWorkOrderListRow.ProductCode), Width = "130px", VisibleIndex = 2 },
-        new() { Caption = "Description", FieldName = nameof(ProductionWorkOrderListRow.ProductDescription), VisibleIndex = 3 },
-        new() { Caption = "Definition", FieldName = nameof(ProductionWorkOrderListRow.SourceDefinitionCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Status", FieldName = nameof(ProductionWorkOrderListRow.Status), Width = "115px", VisibleIndex = 5 },
-        new() { Caption = "Def. Ver.", FieldName = nameof(ProductionWorkOrderListRow.BomVersion), DataType = "number", Width = "85px", VisibleIndex = 6 },
-        new() { Caption = "Planned Qty", FieldName = nameof(ProductionWorkOrderListRow.PlannedQty), DataType = "number", DecimalPlace = 4, Width = "110px", VisibleIndex = 7 },
-        new() { Caption = "Good Qty", FieldName = nameof(ProductionWorkOrderListRow.GoodQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 8 },
-        new() { Caption = "Remaining", FieldName = nameof(ProductionWorkOrderListRow.RemainingQty), DataType = "number", DecimalPlace = 4, Width = "105px", VisibleIndex = 9 },
-        new() { Caption = "Start", FieldName = nameof(ProductionWorkOrderListRow.PlannedStartDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 10 },
-        new() { Caption = "Completion", FieldName = nameof(ProductionWorkOrderListRow.PlannedCompletionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 11 },
-        new() { Caption = "Source", FieldName = nameof(ProductionWorkOrderListRow.SourceReference), Width = "130px", VisibleIndex = 12 },
-        new() { Caption = "Material %", FieldName = nameof(ProductionWorkOrderListRow.MaterialProgressPercent), DataType = "number", DecimalPlace = 2, Width = "100px", VisibleIndex = 13 },
-        new() { Caption = "Production %", FieldName = nameof(ProductionWorkOrderListRow.ProductionProgressPercent), DataType = "number", DecimalPlace = 2, Width = "110px", VisibleIndex = 14 },
+        new() { Caption = "Work Order", FieldName = nameof(ProductionWorkOrderListRow.WorkOrderNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Product", FieldName = nameof(ProductionWorkOrderListRow.ProductCode), VisibleIndex = 2, Size = GridColumnSize.Code },
+        new() { Caption = "Description", FieldName = nameof(ProductionWorkOrderListRow.ProductDescription), VisibleIndex = 3, Size = GridColumnSize.LongText },
+        new() { Caption = "Definition", FieldName = nameof(ProductionWorkOrderListRow.SourceDefinitionCode), VisibleIndex = 4, Size = GridColumnSize.Reference },
+        new() { Caption = "Status", FieldName = nameof(ProductionWorkOrderListRow.Status), Width = "115px", VisibleIndex = 5, Size = GridColumnSize.Status },
+        new() { Caption = "Def. Ver.", FieldName = nameof(ProductionWorkOrderListRow.BomVersion), DataType = "number", VisibleIndex = 6, Size = GridColumnSize.Tiny },
+        new() { Caption = "Planned Qty", FieldName = nameof(ProductionWorkOrderListRow.PlannedQty), DataType = "number", DecimalPlace = 4, VisibleIndex = 7, Size = GridColumnSize.Quantity },
+        new() { Caption = "Good Qty", FieldName = nameof(ProductionWorkOrderListRow.GoodQty), DataType = "number", DecimalPlace = 4, VisibleIndex = 8, Size = GridColumnSize.Quantity },
+        new() { Caption = "Remaining", FieldName = nameof(ProductionWorkOrderListRow.RemainingQty), DataType = "number", DecimalPlace = 4, VisibleIndex = 9, Size = GridColumnSize.Quantity },
+        new() { Caption = "Start", FieldName = nameof(ProductionWorkOrderListRow.PlannedStartDate), DataType = "date", DisplayFormat = "dd MMM yyyy", VisibleIndex = 10, Size = GridColumnSize.Date },
+        new() { Caption = "Completion", FieldName = nameof(ProductionWorkOrderListRow.PlannedCompletionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", VisibleIndex = 11, Size = GridColumnSize.Date },
+        new() { Caption = "Source", FieldName = nameof(ProductionWorkOrderListRow.SourceReference), VisibleIndex = 12, Size = GridColumnSize.Reference },
+        new() { Caption = "Material %", FieldName = nameof(ProductionWorkOrderListRow.MaterialProgressPercent), DataType = "number", DecimalPlace = 2, VisibleIndex = 13, Size = GridColumnSize.Percent },
+        new() { Caption = "Production %", FieldName = nameof(ProductionWorkOrderListRow.ProductionProgressPercent), DataType = "number", DecimalPlace = 2, Width = "110px", VisibleIndex = 14, Size = GridColumnSize.Percent },
         ..AuditColumns.For(startVisibleIndex: 15)
     ];
 

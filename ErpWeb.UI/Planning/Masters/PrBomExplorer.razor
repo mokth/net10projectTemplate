@@ -113,7 +113,7 @@
                         <span class="pdf-count">@Result.Nodes.Count rows</span>
                     </header>
                     <div class="pdf-grid">
-                        <DxGrid Data="@Result.Nodes"
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Result.Nodes"
                                 KeyFieldName="@nameof(BomExplosionNode.Path)"
                                 ShowFilterRow="false"
                                 ShowGroupPanel="false"

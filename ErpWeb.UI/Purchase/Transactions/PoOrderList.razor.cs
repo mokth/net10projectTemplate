@@ -80,16 +80,16 @@ public partial class PoOrderList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Date", FieldName = nameof(PoOrderListRow.PoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 1 },
-        new() { Caption = "PO No", FieldName = nameof(PoOrderListRow.PoNo), Width = "140px", SortIndex = 0, VisibleIndex = 2 },
-        new() { Caption = "Rev", FieldName = nameof(PoOrderListRow.PoRelNo), Width = "70px", VisibleIndex = 3 },
-        new() { Caption = "Vendor", FieldName = nameof(PoOrderListRow.VendCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Name", FieldName = nameof(PoOrderListRow.VendName), VisibleIndex = 5 },
-        new() { Caption = "Amount", FieldName = nameof(PoOrderListRow.Total), Width = "120px", DisplayFormat = "n2", VisibleIndex = 6 },
-        new() { Caption = "Buyer", FieldName = nameof(PoOrderListRow.Buyer), Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Status", FieldName = nameof(PoOrderListRow.Status), Width = "110px", VisibleIndex = 8 },
-        new() { Caption = "ETA", FieldName = nameof(PoOrderListRow.EtaDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 9 },
-        new() { Caption = "Currency", FieldName = nameof(PoOrderListRow.CurCode), Width = "90px", VisibleIndex = 10 },
+        new() { Caption = "Date", FieldName = nameof(PoOrderListRow.PoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 1, Size = GridColumnSize.Date },
+        new() { Caption = "PO No", FieldName = nameof(PoOrderListRow.PoNo), SortIndex = 0, VisibleIndex = 2, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Rev", FieldName = nameof(PoOrderListRow.PoRelNo), VisibleIndex = 3, Size = GridColumnSize.Tiny },
+        new() { Caption = "Vendor", FieldName = nameof(PoOrderListRow.VendCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(PoOrderListRow.VendName), VisibleIndex = 5, Size = GridColumnSize.Name },
+        new() { Caption = "Amount", FieldName = nameof(PoOrderListRow.Total), DisplayFormat = "n2", VisibleIndex = 6, Size = GridColumnSize.Amount },
+        new() { Caption = "Buyer", FieldName = nameof(PoOrderListRow.Buyer), VisibleIndex = 7, Size = GridColumnSize.Name },
+        new() { Caption = "Status", FieldName = nameof(PoOrderListRow.Status), VisibleIndex = 8, Size = GridColumnSize.Status },
+        new() { Caption = "ETA", FieldName = nameof(PoOrderListRow.EtaDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 9, Size = GridColumnSize.Date },
+        new() { Caption = "Currency", FieldName = nameof(PoOrderListRow.CurCode), VisibleIndex = 10, Size = GridColumnSize.Code },
         ..AuditColumns.For(startVisibleIndex: 11)
     ];
 

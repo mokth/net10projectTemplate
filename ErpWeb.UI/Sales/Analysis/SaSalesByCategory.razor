@@ -81,7 +81,7 @@
             }
             else
             {
-                <DxGrid Data="@Rows" CssClass="w-100">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Rows" CssClass="w-100" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(SaSalesDetailRow.Key)" Caption="Category" Width="140px" />
                         <DxGridDataColumn FieldName="@nameof(SaSalesDetailRow.Description)" Caption="Description" />

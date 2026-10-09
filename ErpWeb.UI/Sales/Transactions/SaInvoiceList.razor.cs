@@ -130,19 +130,19 @@ public partial class SaInvoiceList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Invoice", FieldName = nameof(SaInvoiceListRow.InvNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(SaInvoiceListRow.InvDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(SaInvoiceListRow.Status), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "E-Inv", FieldName = nameof(SaInvoiceListRow.IrbmStatus), Width = "110px", VisibleIndex = 4 },
-        new() { Caption = "Customer", FieldName = nameof(SaInvoiceListRow.CustCode), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 6 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 7 },
-        new() { Caption="E-UUID"   , FieldName=nameof(SaInvoiceListRow.IrbmUuid)     ,DataType="link",VisibleIndex=8},
+        new() { Caption = "Invoice", FieldName = nameof(SaInvoiceListRow.InvNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(SaInvoiceListRow.InvDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(SaInvoiceListRow.Status), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "E-Inv", FieldName = nameof(SaInvoiceListRow.IrbmStatus), VisibleIndex = 4, Size = GridColumnSize.Status },
+        new() { Caption = "Customer", FieldName = nameof(SaInvoiceListRow.CustCode), VisibleIndex = 5, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(SaInvoiceListRow.CustName), VisibleIndex = 6, Size = GridColumnSize.Name },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(SaInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 7, Size = GridColumnSize.Amount },
+        new() { Caption="E-UUID"   , FieldName=nameof(SaInvoiceListRow.IrbmUuid)     ,DataType="link",VisibleIndex=8, Size = GridColumnSize.Reference},
         // VisibleIndex 9, not 8: two columns may not share an index, and the UUID link needs a
         // deterministic position for its click target.
-        new()  { Caption="E-Status"     , FieldName=nameof(SaInvoiceListRow.IrbmStatus)        ,DataType="string",VisibleIndex=9 },
+        new()  { Caption="E-Status"     , FieldName=nameof(SaInvoiceListRow.IrbmStatus)        ,DataType="string",VisibleIndex=9, Size = GridColumnSize.Status },
 
-        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 10 },
+        new() { Caption = "Lines", FieldName = nameof(SaInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 10, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 11)
     ];
 

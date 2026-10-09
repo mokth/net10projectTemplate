@@ -112,7 +112,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvStockReturnLineVm)context.DataItem;
@@ -135,27 +135,27 @@
                             </DxGridCommandColumn>
                         }
                         <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.LineNo)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ICode)" Caption="Item" Width="130px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.IDesc)" Caption="Description" MinWidth="160" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToWarehouse)" Caption="Warehouse" Width="110px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToLocation)" Caption="Location" Width="110px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToLotNo)" Caption="Lot" Width="110px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ICode)" Caption="Item" Width="155px" MinWidth="135" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.IDesc)" Caption="Description" Width="280px" MinWidth="210" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToWarehouse)" Caption="Warehouse" Width="110px" MinWidth="105" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToLocation)" Caption="Location" Width="110px" MinWidth="100" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.ToLotNo)" Caption="Lot" Width="120px" MinWidth="105">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvStockReturnLineVm)context.DataItem).ToLotNo)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Quantity)" Caption="Qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Uom)" Caption="UOM" Width="80px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.IStatus)" Caption="Status" Width="110px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Quantity)" Caption="Qty" Width="120px" MinWidth="100" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Uom)" Caption="UOM" Width="80px" MinWidth="65" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.IStatus)" Caption="Status" Width="115px" MinWidth="95">
                             <CellDisplayTemplate>
                                 <span class="@StatusChipClass(((IvStockReturnLineVm)context.DataItem).IStatus)">
                                     @(((IvStockReturnLineVm)context.DataItem).IStatus)
                                 </span>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvNo)" Caption="Invoice" Width="120px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvoiceLine)" Caption="Inv line" Width="80px" />
-                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Reason)" Caption="Reason" Width="100px">
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvNo)" Caption="Invoice" Width="165px" MinWidth="135" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.SourceInvoiceLine)" Caption="Inv line" Width="80px" MinWidth="70" />
+                        <DxGridDataColumn FieldName="@nameof(IvStockReturnLineVm.Reason)" Caption="Reason" Width="135px" MinWidth="110">
                             <CellDisplayTemplate>
                                 @DisplayOrDash(((IvStockReturnLineVm)context.DataItem).Reason)
                             </CellDisplayTemplate>

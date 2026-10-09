@@ -83,7 +83,7 @@
         else if (Rows.Count > 0)
         {
             <section class="iv-card">
-                <DxGrid Data="@Rows" CssClass="w-100">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Rows" CssClass="w-100" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.Code)" Caption="Sales rep" Width="140px" />
                         <DxGridDataColumn FieldName="@nameof(SaSalesRepAttainmentRow.Name)" Caption="Name" />

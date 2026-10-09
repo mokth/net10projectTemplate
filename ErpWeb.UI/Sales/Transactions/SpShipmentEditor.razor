@@ -9,7 +9,8 @@
     <p class="sinv-ship-editor__hint">
         Line @_soLineNo · required @(_requestedStdQty.ToString("n4")). Snapshot only — APPLY re-locks stock.
     </p>
-    <DxGrid Data="@_rows"
+    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@_rows"
+            TextWrapEnabled="false"
             KeyFieldName="@nameof(EditorRow.Key)"
             PageSize="20"
             CssClass="sinv-grid">

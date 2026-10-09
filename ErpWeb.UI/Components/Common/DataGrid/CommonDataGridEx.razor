@@ -116,7 +116,7 @@
             <Columns>
                 @if (allowSelect)
                 {
-                    <DxGridSelectionColumn Width="60px" VisibleIndex="0" />
+                    <DxGridSelectionColumn Width="60px" MinWidth="48" VisibleIndex="0" />
                 }
 
                 @if (ActionButtons.Count > 0)
@@ -126,7 +126,8 @@
                                          EditButtonVisible="false"
                                          DeleteButtonVisible="false"
                                          VisibleIndex="0"
-                                         Width="@GetGridActionColWidth()">
+                                         Width="@GetGridActionColWidth()"
+                                         MinWidth="@GetGridActionColMinWidth()">
                         <CellDisplayTemplate>
                             <DxToolbar SizeMode="SizeMode.Small"
                                        ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
@@ -199,7 +200,8 @@
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
                                   DisplayFormat="@(col.DisplayFormat ?? "dd-MM-yyyy")"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                   SortOrder="@col.SortOrder"
                                   AllowSort="@col.AllowSort"
@@ -211,7 +213,8 @@
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
                                   DisplayFormat="@(col.DisplayFormat ?? "dd-MM-yyyy hh:mm:ss tt")"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                   SortOrder="@col.SortOrder"
                                   AllowSort="@col.AllowSort"
@@ -222,7 +225,8 @@
             case "stringicon":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                   Width="@col.Width"
+                                   Width="@GetEffectiveWidth(col)"
+                                   MinWidth="@GetEffectiveMinWidth(col)"
                                    AllowSort="@col.AllowSort"
                                    GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
@@ -238,7 +242,8 @@
             case "stringicon2":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                   Width="@col.Width"
+                                   Width="@GetEffectiveWidth(col)"
+                                   MinWidth="@GetEffectiveMinWidth(col)"
                                    AllowSort="@col.AllowSort"
                                    GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
@@ -254,7 +259,8 @@
             case "stringiconlink":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                   Width="@col.Width"
+                                   Width="@GetEffectiveWidth(col)"
+                                   MinWidth="@GetEffectiveMinWidth(col)"
                                    AllowSort="@col.AllowSort"
                                    GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
@@ -277,7 +283,8 @@
             case "link":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                    SortOrder="@col.SortOrder"
                                    AllowSort="@col.AllowSort"
@@ -300,7 +307,8 @@
             case "click":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                    SortOrder="@col.SortOrder"
                                    AllowSort="@col.AllowSort"
@@ -326,7 +334,8 @@
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
                                   DisplayFormat="@col.DisplayFormat"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                    SortOrder="@col.SortOrder"
                                    AllowSort="@col.AllowSort"
@@ -338,7 +347,8 @@
             case "boolean":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                   Width="@col.Width"
+                                   Width="@GetEffectiveWidth(col)"
+                                   MinWidth="@GetEffectiveMinWidth(col)"
                                    AllowSort="@col.AllowSort"
                                    Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
@@ -346,7 +356,8 @@
             default:
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
+                                  Width="@GetEffectiveWidth(col)"
+                                  MinWidth="@GetEffectiveMinWidth(col)"
                                   SortIndex="@col.SortIndex"
                                    SortOrder="@col.SortOrder"
                                    AllowSort="@col.AllowSort"

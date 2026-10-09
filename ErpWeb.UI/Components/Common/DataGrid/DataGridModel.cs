@@ -8,6 +8,8 @@ public class GridColumnData
     public string FieldName { get; set; } = string.Empty;
     public string DataType { get; set; } = "string";
     public string? Width { get; set; }
+    public GridColumnSize Size { get; set; } = GridColumnSize.Auto;
+    public int? MinWidth { get; set; }
     public int DecimalPlace { get; set; }
     public int VisibleIndex { get; set; }
     public bool Visible { get; set; } = true;

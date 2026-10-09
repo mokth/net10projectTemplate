@@ -5,6 +5,8 @@ using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.Extensions.Options;
 
 namespace ErpWeb.UI.Inventory.Masters;
 
@@ -15,8 +17,10 @@ public partial class IvStockMasterEntry : PageBase
     [SupplyParameterFromQuery(Name = "copy")] public string? CopyFrom { get; set; }
 
     [Inject] private IIvStockMasterService StockMasters { get; set; } = default!;
+    [Inject] private IIvStockMasterImageService StockMasterImages { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
+    [Inject] private IOptions<ItemImageStorageOptions> ItemImageOptions { get; set; } = default!;
 
     private int _subClassLoadVersion;
     private int _locationLoadVersion;
@@ -25,6 +29,12 @@ public partial class IvStockMasterEntry : PageBase
     private string _cleanSnapshot = string.Empty;
     private bool _lookupsLoaded;
     private string? _loadedKey;
+    private IvPreparedStockImage? _pendingImage;
+    private bool _pendingImageRemoval;
+    private string? _pendingImagePreviewDataUrl;
+    private string? _imageError;
+    private bool _isPreparingImage;
+    private int _imageInputKey;
 
     protected bool IsLoading = true;
     protected bool IsSubmitting;
@@ -32,6 +42,7 @@ public partial class IvStockMasterEntry : PageBase
     protected bool ConcurrencyVisible;
     protected bool SubClassesLoading;
     protected bool LocationsLoading;
+    protected bool CanAdd;
     protected bool CanEdit;
     protected string? StatusMessage;
     protected IvStockMasterEditVm Model { get; set; } = CreateBlank();
@@ -89,7 +100,57 @@ public partial class IvStockMasterEntry : PageBase
     protected bool IsDirty =>
         !IsViewMode
         && !IsLoading
-        && !string.Equals(_cleanSnapshot, Snapshot(Model), StringComparison.Ordinal);
+        && (!string.Equals(_cleanSnapshot, Snapshot(Model), StringComparison.Ordinal)
+            || HasPendingImageChange);
+
+    protected bool HasPendingImage => _pendingImage is not null;
+    protected bool HasPendingImageRemoval => _pendingImageRemoval;
+    protected bool HasPendingImageChange => HasPendingImage || HasPendingImageRemoval;
+    protected bool IsPreparingImage => _isPreparingImage;
+    protected string? ImageError => _imageError;
+    protected long MaxImageUploadBytes => ItemImageOptions.Value.MaxUploadBytes;
+    protected bool CanChooseImage =>
+        !IsViewMode
+        && !IsSubmitting
+        && !_isPreparingImage
+        && (IsNewMode ? CanAdd : CanEdit);
+    protected bool CanRemoveImage =>
+        !IsNewMode
+        && Model.HasImage
+        && !HasPendingImage
+        && !_pendingImageRemoval
+        && !IsSubmitting
+        && CanEdit;
+    protected bool HasImagePreview => !string.IsNullOrWhiteSpace(ImagePreviewUrl);
+    protected string? ImagePreviewUrl
+    {
+        get
+        {
+            if (_pendingImageRemoval)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_pendingImagePreviewDataUrl))
+            {
+                return _pendingImagePreviewDataUrl;
+            }
+
+            if (!Model.HasImage || string.IsNullOrWhiteSpace(Model.ICode))
+            {
+                return null;
+            }
+
+            return Navigation.Resolve(
+                $"/inventory/item-image?iCode={Uri.EscapeDataString(Model.ICode)}");
+        }
+    }
+
+    protected string ImageAlt => string.IsNullOrWhiteSpace(Model.IDesc)
+        ? $"Item {Model.ICode}"
+        : $"{Model.ICode} — {Model.IDesc}";
+
+    protected string ImageActionLabel => IsNewMode ? "CHOOSE IMAGE" : "REPLACE IMAGE";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -97,6 +158,7 @@ public partial class IvStockMasterEntry : PageBase
 
         if (!_lookupsLoaded)
         {
+            CanAdd = await AccessRights.CanAsync(MenuCodes.InventoryItemMaster, PermissionCodes.Add);
             CanEdit = await AccessRights.CanAsync(MenuCodes.InventoryItemMaster, PermissionCodes.Edit);
             await LoadLookupsAsync();
             _lookupsLoaded = true;
@@ -163,9 +225,13 @@ public partial class IvStockMasterEntry : PageBase
 
         try
         {
-            var result = await StockMasters.SaveAsync(Model, IsNewMode);
+            var result = await StockMasters.SaveAsync(
+                Model,
+                IsNewMode,
+                BuildImageChange());
             if (result.Succeeded)
             {
+                ClearPendingImageState();
                 Navigation.NavigateTo("/inventory/items");
                 return;
             }
@@ -198,6 +264,7 @@ public partial class IvStockMasterEntry : PageBase
             return Task.CompletedTask;
         }
 
+        ClearPendingImageState();
         Navigation.NavigateTo("/inventory/items");
         return Task.CompletedTask;
     }
@@ -221,6 +288,7 @@ public partial class IvStockMasterEntry : PageBase
     protected void ConfirmDiscardAsync()
     {
         ConfirmDiscardVisible = false;
+        ClearPendingImageState();
         Navigation.NavigateTo("/inventory/items");
     }
 
@@ -246,6 +314,7 @@ public partial class IvStockMasterEntry : PageBase
         }
 
         Model = Clone(result.Data);
+        ClearPendingImageState();
         ValidationErrors.Clear();
         ErrorMessage = null;
         StatusMessage = "Loaded latest version.";
@@ -271,12 +340,99 @@ public partial class IvStockMasterEntry : PageBase
 
         // Keep field edits; adopt latest RowVersion so the next save can overwrite.
         Model.RowVersion = result.Data.RowVersion;
+        Model.HasImage = result.Data.HasImage;
+        if (!result.Data.HasImage && _pendingImage is null)
+        {
+            _pendingImageRemoval = false;
+        }
         StatusMessage = "Kept your changes. Save again to overwrite.";
         await Task.CompletedTask;
     }
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
+
+    protected async Task OnImageSelectedAsync(InputFileChangeEventArgs args)
+    {
+        if (!CanChooseImage)
+        {
+            return;
+        }
+
+        _imageError = null;
+        var file = args.File;
+        if (file is null || file.Size <= 0)
+        {
+            _imageError = "The selected file is empty.";
+            return;
+        }
+
+        _imageInputKey++;
+        if (file.Size > MaxImageUploadBytes)
+        {
+            _imageError = $"Image exceeds the {MaxImageUploadBytes / (1024 * 1024)} MB upload limit.";
+            return;
+        }
+
+        _isPreparingImage = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImageUploadBytes);
+            var result = await StockMasterImages.PrepareAsync(
+                file.Name,
+                file.ContentType,
+                stream,
+                file.Size);
+            if (!result.Succeeded || result.Data is null)
+            {
+                _imageError = result.Message ?? "The selected image could not be prepared.";
+                return;
+            }
+
+            _pendingImage = result.Data;
+            _pendingImageRemoval = false;
+            _pendingImagePreviewDataUrl =
+                $"data:{result.Data.ContentType};base64,{Convert.ToBase64String(result.Data.Content)}";
+        }
+        catch (IOException)
+        {
+            _imageError = "The selected image could not be read.";
+        }
+        catch (InvalidOperationException)
+        {
+            _imageError = "The selected image could not be read.";
+        }
+        finally
+        {
+            _isPreparingImage = false;
+        }
+    }
+
+    protected void RemoveImage()
+    {
+        if (!CanRemoveImage)
+        {
+            return;
+        }
+
+        _pendingImage = null;
+        _pendingImagePreviewDataUrl = null;
+        _pendingImageRemoval = true;
+        _imageError = null;
+    }
+
+    protected void UndoImageChange()
+    {
+        if (IsSubmitting)
+        {
+            return;
+        }
+
+        _pendingImage = null;
+        _pendingImagePreviewDataUrl = null;
+        _pendingImageRemoval = false;
+        _imageError = null;
+    }
 
     protected static string FormatUtc(DateTime? value) =>
         value.HasValue ? value.Value.ToLocalTime().ToString("g") : "—";
@@ -300,6 +456,7 @@ public partial class IvStockMasterEntry : PageBase
         ValidationErrors.Clear();
         ConcurrencyVisible = false;
         ConfirmDiscardVisible = false;
+        ClearPendingImageState();
 
         try
         {
@@ -326,6 +483,7 @@ public partial class IvStockMasterEntry : PageBase
                         Model.CreatedDate = null;
                         Model.ModifiedBy = null;
                         Model.ModifiedDate = null;
+                        Model.HasImage = false;
                         StatusMessage = $"Copied from {CopyFrom}.";
                     }
                 }
@@ -458,12 +616,30 @@ public partial class IvStockMasterEntry : PageBase
 
     private void CaptureCleanSnapshot() => _cleanSnapshot = Snapshot(Model);
 
+    private IvStockMasterImageChange? BuildImageChange() =>
+        _pendingImage is not null
+            ? new IvStockMasterImageChange { Replacement = _pendingImage }
+            : _pendingImageRemoval
+                ? new IvStockMasterImageChange { RemoveExisting = true }
+                : null;
+
+    private void ClearPendingImageState()
+    {
+        _pendingImage = null;
+        _pendingImageRemoval = false;
+        _pendingImagePreviewDataUrl = null;
+        _imageError = null;
+        _isPreparingImage = false;
+        _imageInputKey++;
+    }
+
     private static string Snapshot(IvStockMasterEditVm model) =>
         JsonSerializer.Serialize(model);
 
     private static IvStockMasterEditVm CreateBlank() =>
         new()
         {
+            HasImage = false,
             MfgType = "BUY",
             IsActive = true,
             StockControl = true,
@@ -475,6 +651,7 @@ public partial class IvStockMasterEntry : PageBase
         {
             ICode = source.ICode,
             IDesc = source.IDesc,
+            HasImage = source.HasImage,
             MfgType = string.IsNullOrWhiteSpace(source.MfgType) ? "BUY" : source.MfgType,
             Barcode = source.Barcode,
             Brand = source.Brand,

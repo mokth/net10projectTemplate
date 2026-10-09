@@ -79,15 +79,15 @@ public partial class IvMiscReceiptList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Batch No", FieldName = nameof(IvMiscReceiptListRow.BatchNo), Width = "100px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(IvMiscReceiptListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(IvMiscReceiptListRow.BatchStatus), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "Vendor", FieldName = nameof(IvMiscReceiptListRow.VendName), Width = "160px", VisibleIndex = 4 },
-        new() { Caption = "Ref No", FieldName = nameof(IvMiscReceiptListRow.RefNo), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Remarks", FieldName = nameof(IvMiscReceiptListRow.Remarks), VisibleIndex = 6 },
-        new() { Caption = "Lines", FieldName = nameof(IvMiscReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7 },
-        new() { Caption = "Total", FieldName = nameof(IvMiscReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", Width = "110px", VisibleIndex = 8 },
-        new() { Caption = "Vendor code", FieldName = nameof(IvMiscReceiptListRow.VendCode), Visible = false, VisibleIndex = 9 },
+        new() { Caption = "Batch No", FieldName = nameof(IvMiscReceiptListRow.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(IvMiscReceiptListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(IvMiscReceiptListRow.BatchStatus), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Vendor", FieldName = nameof(IvMiscReceiptListRow.VendName), VisibleIndex = 4, Size = GridColumnSize.Name },
+        new() { Caption = "Ref No", FieldName = nameof(IvMiscReceiptListRow.RefNo), VisibleIndex = 5, Size = GridColumnSize.Reference },
+        new() { Caption = "Remarks", FieldName = nameof(IvMiscReceiptListRow.Remarks), VisibleIndex = 6, Size = GridColumnSize.LongText },
+        new() { Caption = "Lines", FieldName = nameof(IvMiscReceiptListRow.LineCount), Width = "80px", VisibleIndex = 7, Size = GridColumnSize.Tiny },
+        new() { Caption = "Total", FieldName = nameof(IvMiscReceiptListRow.TotalAmount), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 8, Size = GridColumnSize.Amount },
+        new() { Caption = "Vendor code", FieldName = nameof(IvMiscReceiptListRow.VendCode), Visible = false, VisibleIndex = 9, Size = GridColumnSize.Code },
         ..AuditColumns.For(startVisibleIndex: 10)
     ];
 

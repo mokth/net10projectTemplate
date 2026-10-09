@@ -88,15 +88,15 @@ public partial class IvStockCountList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Count No", FieldName = nameof(IvStockCountListRow.CountNo), Width = "110px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Count Date", FieldName = nameof(IvStockCountListRow.CountDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(IvStockCountListRow.Status), Width = "110px", VisibleIndex = 3 },
-        new() { Caption = "Warehouse", FieldName = nameof(IvStockCountListRow.WHCode), Width = "100px", VisibleIndex = 4 },
-        new() { Caption = "Lines", FieldName = nameof(IvStockCountListRow.LineCount), DataType = "int", Width = "70px", VisibleIndex = 5 },
-        new() { Caption = "Counted", FieldName = nameof(IvStockCountListRow.CountedLines), DataType = "int", Width = "80px", VisibleIndex = 6 },
-        new() { Caption = "Batch", FieldName = nameof(IvStockCountListRow.PostedBatchNo), DataType = "int", Width = "80px", VisibleIndex = 7 },
-        new() { Caption = "Stale", FieldName = nameof(IvStockCountListRow.PostedStaleLines), DataType = "int", Width = "70px", VisibleIndex = 8 },
-        new() { Caption = "Counted By", FieldName = nameof(IvStockCountListRow.CountedBy), Width = "100px", VisibleIndex = 9 },
+        new() { Caption = "Count No", FieldName = nameof(IvStockCountListRow.CountNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Count Date", FieldName = nameof(IvStockCountListRow.CountDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(IvStockCountListRow.Status), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Warehouse", FieldName = nameof(IvStockCountListRow.WHCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Lines", FieldName = nameof(IvStockCountListRow.LineCount), DataType = "int", VisibleIndex = 5, Size = GridColumnSize.Tiny },
+        new() { Caption = "Counted", FieldName = nameof(IvStockCountListRow.CountedLines), DataType = "int", Width = "80px", VisibleIndex = 6, Size = GridColumnSize.Tiny },
+        new() { Caption = "Batch", FieldName = nameof(IvStockCountListRow.PostedBatchNo), DataType = "int", VisibleIndex = 7, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Stale", FieldName = nameof(IvStockCountListRow.PostedStaleLines), DataType = "int", VisibleIndex = 8, Size = GridColumnSize.Tiny },
+        new() { Caption = "Counted By", FieldName = nameof(IvStockCountListRow.CountedBy), VisibleIndex = 9, Size = GridColumnSize.Name },
         ..AuditColumns.For(startVisibleIndex: 10)
     ];
 

@@ -4,6 +4,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -15,6 +16,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
     private readonly ICurrentDateService _dates;
     private readonly IIvStockMasterRepository _stockMasters;
     private readonly IIvStockCommonRepository _common;
+    private readonly IIvStockMasterImageService? _imageService;
+    private readonly ILogger<IvStockMasterService>? _logger;
 
     public IvStockMasterService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -22,7 +25,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
         IAccessRightService accessRights,
         ICurrentDateService dates,
         IIvStockMasterRepository stockMasters,
-        IIvStockCommonRepository common)
+        IIvStockCommonRepository common,
+        IIvStockMasterImageService? imageService = null,
+        ILogger<IvStockMasterService>? logger = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -30,6 +35,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         _dates = dates;
         _stockMasters = stockMasters;
         _common = common;
+        _imageService = imageService;
+        _logger = logger;
     }
 
     public async Task<IvMasterOperationResult<IvStockMasterListPage>> SearchAsync(
@@ -90,11 +97,30 @@ public sealed class IvStockMasterService : IIvStockMasterService
     public async Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
         IvStockMasterEditVm model,
         bool isNew,
+        CancellationToken cancellationToken = default) =>
+        await SaveAsync(model, isNew, imageChange: null, cancellationToken: cancellationToken);
+
+    public async Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
+        IvStockMasterEditVm model,
+        bool isNew,
+        IvStockMasterImageChange? imageChange,
         CancellationToken cancellationToken = default)
     {
         if (model is null)
         {
             return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "Save model is required.");
+        }
+
+        if (imageChange is not null && imageChange.Replacement is not null && imageChange.RemoveExisting)
+        {
+            return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "Item image change is invalid.");
+        }
+
+        if (imageChange?.HasChange == true && _imageService is null)
+        {
+            return Fail<IvStockMasterEditVm>(
+                IvMasterErrorCode.Validation,
+                "Item image storage is unavailable. The item was not saved.");
         }
 
         var context = ValidateUserContext();
@@ -340,15 +366,41 @@ public sealed class IvStockMasterService : IIvStockMasterService
 
         var now = _dates.Now;
         var userId = Truncate(writeScope.UserId, 10);
+        string? newImagePath = null;
+        string? oldImagePath = null;
+        var databaseSaved = false;
 
         try
         {
             if (isNew)
             {
+                if (imageChange?.RemoveExisting == true)
+                {
+                    return Fail<IvStockMasterEditVm>(
+                        IvMasterErrorCode.Validation,
+                        "A new item does not have an existing image to remove.");
+                }
+
+                if (imageChange?.Replacement is not null)
+                {
+                    var storedImage = await _imageService!.StorePreparedAsync(
+                        context.CompanyCode!,
+                        code,
+                        imageChange.Replacement,
+                        cancellationToken);
+                    if (!storedImage.Succeeded || storedImage.Data is null)
+                    {
+                        return ImageFailure(storedImage);
+                    }
+
+                    newImagePath = storedImage.Data.RelativePath;
+                }
+
                 var entity = new IvStockMaster
                 {
                     CompanyCode = context.CompanyCode!,
                     ICode = code,
+                    ImagePath = newImagePath,
                     CreatedDate = now,
                     CreatedBy = userId,
                     ModifiedDate = now,
@@ -372,6 +424,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
                 await db.SaveChangesAsync(cancellationToken);
+                databaseSaved = true;
                 await db.Entry(entity).ReloadAsync(cancellationToken);
                 return IvMasterOperationResult<IvStockMasterEditVm>.Ok(MapEditVm(entity));
             }
@@ -413,6 +466,22 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, structuralError);
             }
 
+            oldImagePath = existing.ImagePath;
+            if (imageChange?.Replacement is not null)
+            {
+                var storedImage = await _imageService!.StorePreparedAsync(
+                    context.CompanyCode!,
+                    code,
+                    imageChange.Replacement,
+                    cancellationToken);
+                if (!storedImage.Succeeded || storedImage.Data is null)
+                {
+                    return ImageFailure(storedImage);
+                }
+
+                newImagePath = storedImage.Data.RelativePath;
+            }
+
             var entry = db.Entry(existing);
             entry.Property(x => x.RowVersion).OriginalValue = model.RowVersion!;
 
@@ -430,22 +499,51 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 defLoc,
                 classification,
                 expiryControl);
+            if (imageChange?.Replacement is not null)
+            {
+                existing.ImagePath = newImagePath;
+            }
+            else if (imageChange?.RemoveExisting == true)
+            {
+                existing.ImagePath = null;
+            }
+
             // Leftover BranchCode / LocationCode: do not touch on update.
             existing.ModifiedDate = now;
             existing.ModifiedBy = userId;
 
             await db.SaveChangesAsync(cancellationToken);
+            databaseSaved = true;
             await db.Entry(existing).ReloadAsync(cancellationToken);
+            if (imageChange?.HasChange == true && !PathsEqual(oldImagePath, newImagePath))
+            {
+                await TryCleanupImageAsync(
+                    oldImagePath,
+                    context.CompanyCode!,
+                    code,
+                    "item-replace-or-remove");
+            }
+
             return IvMasterOperationResult<IvStockMasterEditVm>.Ok(MapEditVm(existing));
         }
         catch (DbUpdateConcurrencyException)
         {
+            if (!databaseSaved)
+            {
+                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+            }
+
             return Fail<IvStockMasterEditVm>(
                 IvMasterErrorCode.Concurrency,
                 "This item was modified by another user. Your changes were not saved.");
         }
         catch (DbUpdateException ex) when (IsDuplicateKey(ex))
         {
+            if (!databaseSaved)
+            {
+                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+            }
+
             return Fail<IvStockMasterEditVm>(
                 IvMasterErrorCode.DuplicateKey,
                 "Item code already exists.",
@@ -453,6 +551,15 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 {
                     ["ICode"] = "Item code already exists."
                 });
+        }
+        catch
+        {
+            if (!databaseSaved)
+            {
+                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+            }
+
+            throw;
         }
     }
 
@@ -618,6 +725,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             var codes = new List<string>();
             var entities = new List<IvStockMaster>();
+            var imagePaths = new List<(string Code, string? Path)>();
             var stale = 0;
 
             foreach (var item in items)
@@ -639,6 +747,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 db.Entry(entity).Property(x => x.RowVersion).OriginalValue = item.RowVersion;
                 codes.Add(code);
                 entities.Add(entity);
+                imagePaths.Add((code, entity.ImagePath));
             }
 
             if (stale > 0)
@@ -684,6 +793,11 @@ public sealed class IvStockMasterService : IIvStockMasterService
             db.IvStockMasters.RemoveRange(entities);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
+            foreach (var (code, imagePath) in imagePaths)
+            {
+                await TryCleanupImageAsync(imagePath, context.CompanyCode!, code, "item-delete");
+            }
+
             return IvMasterOperationResult<object>.Ok();
         }
         catch (DbUpdateConcurrencyException)
@@ -882,6 +996,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             ICode = x.ICode,
             IDesc = x.IDesc,
+            HasImage = !string.IsNullOrWhiteSpace(x.ImagePath),
             MfgType = string.IsNullOrWhiteSpace(x.MfgType) ? "BUY" : x.MfgType,
             Barcode = x.Barcode,
             Brand = x.Brand,
@@ -921,6 +1036,46 @@ public sealed class IvStockMasterService : IIvStockMasterService
         IvExpiryControlModes.TryNormalize(value, out var normalized)
             ? normalized
             : IvExpiryControlModes.None;
+
+    private static IvMasterOperationResult<IvStockMasterEditVm> ImageFailure(
+        IvMasterOperationResult<IvStoredStockImage> result) =>
+        Fail<IvStockMasterEditVm>(
+            result.ErrorCode == IvMasterErrorCode.None ? IvMasterErrorCode.Validation : result.ErrorCode,
+            result.Message ?? "The item image could not be stored.",
+            result.ValidationErrors);
+
+    private async Task TryCleanupImageAsync(
+        string? relativePath,
+        string companyCode,
+        string itemCode,
+        string operation)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath) || _imageService is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _imageService.TryDeleteManagedFileAsync(
+                relativePath,
+                companyCode,
+                itemCode,
+                operation);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "Item image cleanup failed for company {CompanyCode}, item {ItemCode}, operation {Operation}",
+                companyCode,
+                itemCode,
+                operation);
+        }
+    }
+
+    private static bool PathsEqual(string? left, string? right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     private UserContext ValidateUserContext()
     {

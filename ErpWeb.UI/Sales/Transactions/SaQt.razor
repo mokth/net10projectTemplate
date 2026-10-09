@@ -445,7 +445,7 @@
 
                 @FieldError("Lines")
 
-                <DxGrid Data="@Lines"
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Lines"
                         KeyFieldName="@nameof(SaQtLineVm.Line)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
@@ -456,7 +456,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (SaQtLineVm)context.DataItem;
@@ -476,8 +476,8 @@
                                 </CellDisplayTemplate>
                             </DxGridCommandColumn>
                         }
-                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Line)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ICode)" Caption="Item" Width="170px">
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Line)" Caption="#" Width="56px" MinWidth="50" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ICode)" Caption="Item" Width="170px" MinWidth="150">
                             <CellDisplayTemplate>
                                 @{
                                     var itemLine = (SaQtLineVm)context.DataItem;
@@ -488,16 +488,16 @@
                                 </div>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Warehouse)" Caption="Warehouse" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Warehouse)" Caption="Warehouse" Width="110px" MinWidth="105" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.OrderQty)" Caption="Order qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ConvertedQty)" Caption="Converted" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.RemainingQty)" Caption="Remaining" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.DeliveryDate)" Caption="Delivery" Width="110px" DisplayFormat="dd/MM/yyyy" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.DeliveryDate)" Caption="Delivery" Width="110px" MinWidth="105" DisplayFormat="dd/MM/yyyy" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Amount)" Caption="Amount" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn Caption="Issues" Width="220px">
+                        <DxGridDataColumn Caption="Issues" Width="220px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @{
                                     var issuesRow = (SaQtLineVm)context.DataItem;

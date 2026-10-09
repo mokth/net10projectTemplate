@@ -73,14 +73,14 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Receipt", FieldName = nameof(FinishedGoodReceiptSummary.BatchNo), Width = "110px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(FinishedGoodReceiptSummary.EffectiveDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "120px", VisibleIndex = 2 },
-        new() { Caption = "Work Order", FieldName = nameof(FinishedGoodReceiptSummary.WorkOrderNo), Width = "140px", VisibleIndex = 3 },
-        new() { Caption = "Item", FieldName = nameof(FinishedGoodReceiptSummary.ItemSummary), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Lot", FieldName = nameof(FinishedGoodReceiptSummary.LotSummary), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Qty", FieldName = nameof(FinishedGoodReceiptSummary.QtySummary), Width = "130px", VisibleIndex = 6 },
-        new() { Caption = "Warehouse", FieldName = nameof(FinishedGoodReceiptSummary.WarehouseSummary), Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Status", FieldName = nameof(FinishedGoodReceiptSummary.Status), Width = "100px", VisibleIndex = 8 }
+        new() { Caption = "Receipt", FieldName = nameof(FinishedGoodReceiptSummary.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(FinishedGoodReceiptSummary.EffectiveDate), DataType = "date", DisplayFormat = "dd MMM yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Work Order", FieldName = nameof(FinishedGoodReceiptSummary.WorkOrderNo), VisibleIndex = 3, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Item", FieldName = nameof(FinishedGoodReceiptSummary.ItemSummary), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Lot", FieldName = nameof(FinishedGoodReceiptSummary.LotSummary), VisibleIndex = 5, Size = GridColumnSize.Reference },
+        new() { Caption = "Qty", FieldName = nameof(FinishedGoodReceiptSummary.QtySummary), Width = "130px", VisibleIndex = 6, Size = GridColumnSize.Quantity },
+        new() { Caption = "Warehouse", FieldName = nameof(FinishedGoodReceiptSummary.WarehouseSummary), VisibleIndex = 7, Size = GridColumnSize.Code },
+        new() { Caption = "Status", FieldName = nameof(FinishedGoodReceiptSummary.Status), VisibleIndex = 8, Size = GridColumnSize.Status }
     ];
 
     protected List<ButtonInfo> Buttons { get; private set; } = [];

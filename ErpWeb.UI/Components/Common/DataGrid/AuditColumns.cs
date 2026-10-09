@@ -46,7 +46,8 @@ public static class AuditColumns
             FieldName = "CreatedDate",
             DataType = "date",
             DisplayFormat = DateDisplayFormat,
-            Width = "140px",
+            Size = GridColumnSize.DateTime,
+            MinWidth = 135,
             VisibleIndex = startVisibleIndex
         },
         new()
@@ -54,7 +55,9 @@ public static class AuditColumns
             Caption = CreatedByCaption,
             FieldName = "CreatedBy",
             DataType = "string",
-            Width = "110px",
+            Size = GridColumnSize.Small,
+            Width = "135px",
+            MinWidth = 130,
             VisibleIndex = startVisibleIndex + 1
         },
         new()
@@ -63,7 +66,8 @@ public static class AuditColumns
             FieldName = "ModifiedDate",
             DataType = "date",
             DisplayFormat = DateDisplayFormat,
-            Width = "140px",
+            Size = GridColumnSize.DateTime,
+            MinWidth = 135,
             VisibleIndex = startVisibleIndex + 2
         },
         new()
@@ -71,7 +75,9 @@ public static class AuditColumns
             Caption = ModifiedByCaption,
             FieldName = "ModifiedBy",
             DataType = "string",
-            Width = "110px",
+            Size = GridColumnSize.Small,
+            Width = "135px",
+            MinWidth = 130,
             VisibleIndex = startVisibleIndex + 3
         }
     ];

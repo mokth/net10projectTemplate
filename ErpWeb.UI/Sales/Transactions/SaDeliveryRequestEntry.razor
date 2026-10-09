@@ -194,7 +194,7 @@
                 }
                 else
                 {
-                    <DxGrid Data="@SourceRows" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@SourceRows" CssClass="sdoc-line-grid" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn Caption="SO / revision / line" Width="190px">
                                 <CellDisplayTemplate>
@@ -312,7 +312,7 @@
 
                     @if (Detail.WorkOrders.Count > 0)
                     {
-                        <DxGrid Data="@Detail.WorkOrders" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Detail.WorkOrders" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
                             <Columns>
                                 <DxGridDataColumn Caption="Work Order" Width="150px">
                                     <CellDisplayTemplate>
@@ -355,7 +355,7 @@
                             <p class="sdoc-popup-hint">Purchased and external-supply materials use current stock availability and linked PR/PO coverage. Quantities are in the material base UOM.</p>
                         </div>
                     </div>
-                    <DxGrid Data="@Detail.MaterialShortages" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Detail.MaterialShortages" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.WorkOrderNo)" Caption="Work Order" Width="130px" />
                             <DxGridDataColumn Caption="Component" Width="210px">
@@ -420,7 +420,7 @@
                     }
                     else
                     {
-                        <DxGrid Data="@Detail.AuditEvents" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Detail.AuditEvents" CssClass="sdoc-line-grid" TextWrapEnabled="false">
                             <Columns>
                                 <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.OccurredDate)" Caption="When" DisplayFormat="dd/MM/yyyy HH:mm" Width="155px" />
                                 <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.EventType)" Caption="Event" Width="150px" />
@@ -493,7 +493,7 @@
                     }
                     else
                     {
-                        <DxGrid Data="@EligibleSources" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@EligibleSources" CssClass="sdoc-line-grid" TextWrapEnabled="false">
                             <Columns>
                                 <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestEligibleSource.SoNo)" Caption="SO / revision / line" Width="190px">
                                     <CellDisplayTemplate>

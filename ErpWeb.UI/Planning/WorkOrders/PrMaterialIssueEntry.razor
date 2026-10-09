@@ -169,7 +169,7 @@
                         CssClass="pr-issue-grid">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.InventoryLineNo)" Caption="#" Width="56px" />
-                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.ItemCode)" Caption="Item" MinWidth="180">
+                        <DxGridDataColumn FieldName="@nameof(ProductionMaterialIssueDocumentLine.ItemCode)" Caption="Item" Width="190px" MinWidth="180">
                             <CellDisplayTemplate>
                                 @{
                                     var line = (ProductionMaterialIssueDocumentLine)context.DataItem;
@@ -502,7 +502,7 @@
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                         CssClass="pr-issue-grid">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.ComponentCode)" Caption="Material" MinWidth="200">
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineVm.ComponentCode)" Caption="Material" Width="280px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @{
                                     var line = (MaterialLineVm)context.DataItem;

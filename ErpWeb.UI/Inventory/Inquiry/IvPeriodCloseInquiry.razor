@@ -83,7 +83,7 @@
                     </p>
                 }
                 <div class="iv-list-desktop">
-                    <DxGrid Data="@lines" PageSize="20" ShowPager="true" AllowSelectRowByClick="false">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@lines" PageSize="20" ShowPager="true" AllowSelectRowByClick="false" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.ICode)" Caption="Item" Width="110px" />
                             <DxGridDataColumn FieldName="@nameof(IvPeriodCloseBalRow.WhCode)" Caption="Warehouse" Width="90px" />

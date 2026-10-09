@@ -66,16 +66,16 @@ public partial class SaSoList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "SO No.", FieldName = nameof(SaSoListRow.SoNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Rev", FieldName = nameof(SaSoListRow.CustRel), Width = "70px", VisibleIndex = 2 },
-        new() { Caption = "Date", FieldName = nameof(SaSoListRow.SoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 3 },
-        new() { Caption = "Status", FieldName = nameof(SaSoListRow.Status), Width = "100px", VisibleIndex = 4 },
-        new() { Caption = "Fulfill %", FieldName = nameof(SaSoListRow.FulfillmentPct), Width = "90px", VisibleIndex = 5, DisplayFormat = "n0" },
-        new() { Caption = "Bill %", FieldName = nameof(SaSoListRow.BillingPct), Width = "90px", VisibleIndex = 6, DisplayFormat = "n0" },
-        new() { Caption = "Customer", FieldName = nameof(SaSoListRow.CustCode), Width = "120px", VisibleIndex = 7 },
-        new() { Caption = "Name", FieldName = nameof(SaSoListRow.CustName), VisibleIndex = 8 },
-        new() { Caption = "Customer PO", FieldName = nameof(SaSoListRow.CustPo), Width = "160px", VisibleIndex = 9 },
-        new() { Caption = "Lines", FieldName = nameof(SaSoListRow.LineCount), Width = "80px", VisibleIndex = 10 },
+        new() { Caption = "SO No.", FieldName = nameof(SaSoListRow.SoNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Rev", FieldName = nameof(SaSoListRow.CustRel), VisibleIndex = 2, Size = GridColumnSize.Tiny },
+        new() { Caption = "Date", FieldName = nameof(SaSoListRow.SoDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 3, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(SaSoListRow.Status), VisibleIndex = 4, Size = GridColumnSize.Status },
+        new() { Caption = "Fulfill %", FieldName = nameof(SaSoListRow.FulfillmentPct), VisibleIndex = 5, DisplayFormat = "n0", Size = GridColumnSize.Percent },
+        new() { Caption = "Bill %", FieldName = nameof(SaSoListRow.BillingPct), VisibleIndex = 6, DisplayFormat = "n0", Size = GridColumnSize.Percent },
+        new() { Caption = "Customer", FieldName = nameof(SaSoListRow.CustCode), VisibleIndex = 7, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(SaSoListRow.CustName), VisibleIndex = 8, Size = GridColumnSize.Name },
+        new() { Caption = "Customer PO", FieldName = nameof(SaSoListRow.CustPo), VisibleIndex = 9, Size = GridColumnSize.Reference },
+        new() { Caption = "Lines", FieldName = nameof(SaSoListRow.LineCount), Width = "80px", VisibleIndex = 10, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 11)
     ];
 

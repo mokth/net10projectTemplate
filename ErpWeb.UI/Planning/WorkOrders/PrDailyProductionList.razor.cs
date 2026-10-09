@@ -73,16 +73,16 @@ public partial class PrDailyProductionList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Document", FieldName = nameof(ProductionOutputListRow.DocumentNo), Width = "120px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(ProductionOutputListRow.ProductionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", Width = "115px", VisibleIndex = 2 },
-        new() { Caption = "Work Order", FieldName = nameof(ProductionOutputListRow.WorkOrderNo), Width = "135px", VisibleIndex = 3 },
-        new() { Caption = "Operation", FieldName = nameof(ProductionOutputListRow.OperationCode), Width = "110px", VisibleIndex = 4 },
-        new() { Caption = "Output item", FieldName = nameof(ProductionOutputListRow.OutputItemCode), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Lot", FieldName = nameof(ProductionOutputListRow.OutputLotNo), Width = "120px", VisibleIndex = 6 },
-        new() { Caption = "Status", FieldName = nameof(ProductionOutputListRow.Status), Width = "100px", VisibleIndex = 7 },
-        new() { Caption = "Good", FieldName = nameof(ProductionOutputListRow.GoodQty), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 8 },
-        new() { Caption = "Scrap", FieldName = nameof(ProductionOutputListRow.ScrapQty), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 9 },
-        new() { Caption = "Reject", FieldName = nameof(ProductionOutputListRow.RejectQty), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 10 }
+        new() { Caption = "Document", FieldName = nameof(ProductionOutputListRow.DocumentNo), Size = GridColumnSize.DocumentNo, SortIndex = 0, VisibleIndex = 1 },
+        new() { Caption = "Date", FieldName = nameof(ProductionOutputListRow.ProductionDate), DataType = "date", DisplayFormat = "dd MMM yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Work Order", FieldName = nameof(ProductionOutputListRow.WorkOrderNo), VisibleIndex = 3, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Operation", FieldName = nameof(ProductionOutputListRow.OperationCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Output item", FieldName = nameof(ProductionOutputListRow.OutputItemCode), VisibleIndex = 5, Size = GridColumnSize.Code },
+        new() { Caption = "Lot", FieldName = nameof(ProductionOutputListRow.OutputLotNo), VisibleIndex = 6, Size = GridColumnSize.Reference },
+        new() { Caption = "Status", FieldName = nameof(ProductionOutputListRow.Status), VisibleIndex = 7, Size = GridColumnSize.Status },
+        new() { Caption = "Good", FieldName = nameof(ProductionOutputListRow.GoodQty), DataType = "decimal", DisplayFormat = "n4", VisibleIndex = 8, Size = GridColumnSize.Quantity },
+        new() { Caption = "Scrap", FieldName = nameof(ProductionOutputListRow.ScrapQty), DataType = "decimal", DisplayFormat = "n4", VisibleIndex = 9, Size = GridColumnSize.Quantity },
+        new() { Caption = "Reject", FieldName = nameof(ProductionOutputListRow.RejectQty), DataType = "decimal", DisplayFormat = "n4", VisibleIndex = 10, Size = GridColumnSize.Quantity }
     ];
 
     protected List<ButtonInfo> Buttons { get; private set; } = [];

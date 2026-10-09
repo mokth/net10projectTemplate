@@ -67,18 +67,18 @@ public partial class PoPrList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "PR No.", FieldName = nameof(PoPrListRow.PrNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(PoPrListRow.CreateDt), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(PoPrListRow.Status), Width = "140px", VisibleIndex = 3 },
-        new() { Caption = "Requester", FieldName = nameof(PoPrListRow.Requester), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Dept", FieldName = nameof(PoPrListRow.DeptCode), Width = "100px", VisibleIndex = 5 },
-        new() { Caption = "Type", FieldName = nameof(PoPrListRow.PrType), Width = "110px", VisibleIndex = 6 },
-        new() { Caption = "Remaining", FieldName = nameof(PoPrListRow.RemainingQty), Width = "110px", DisplayFormat = "n4", VisibleIndex = 7 },
-        new() { Caption = "Currency", FieldName = nameof(PoPrListRow.Currency), Width = "90px", VisibleIndex = 8 },
-        new() { Caption = "Total", FieldName = nameof(PoPrListRow.Total), Width = "110px", VisibleIndex = 9, DisplayFormat = "n2" },
-        new() { Caption = "Lines", FieldName = nameof(PoPrListRow.LineCount), Width = "80px", VisibleIndex = 10 },
-        new() { Caption = "PO No.", FieldName = nameof(PoPrListRow.PoNo), Width = "120px", VisibleIndex = 11 },
-        new() { Caption = "Remarks", FieldName = nameof(PoPrListRow.Remarks), VisibleIndex = 12 },
+        new() { Caption = "PR No.", FieldName = nameof(PoPrListRow.PrNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(PoPrListRow.CreateDt), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(PoPrListRow.Status), Width = "140px", VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Requester", FieldName = nameof(PoPrListRow.Requester), VisibleIndex = 4, Size = GridColumnSize.Name },
+        new() { Caption = "Dept", FieldName = nameof(PoPrListRow.DeptCode), VisibleIndex = 5, Size = GridColumnSize.Code },
+        new() { Caption = "Type", FieldName = nameof(PoPrListRow.PrType), Width = "110px", VisibleIndex = 6, Size = GridColumnSize.Tiny },
+        new() { Caption = "Remaining", FieldName = nameof(PoPrListRow.RemainingQty), DisplayFormat = "n4", VisibleIndex = 7, Size = GridColumnSize.Quantity },
+        new() { Caption = "Currency", FieldName = nameof(PoPrListRow.Currency), VisibleIndex = 8, Size = GridColumnSize.Code },
+        new() { Caption = "Total", FieldName = nameof(PoPrListRow.Total), VisibleIndex = 9, DisplayFormat = "n2", Size = GridColumnSize.Amount },
+        new() { Caption = "Lines", FieldName = nameof(PoPrListRow.LineCount), Width = "80px", VisibleIndex = 10, Size = GridColumnSize.Tiny },
+        new() { Caption = "PO No.", FieldName = nameof(PoPrListRow.PoNo), VisibleIndex = 11, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Remarks", FieldName = nameof(PoPrListRow.Remarks), VisibleIndex = 12, Size = GridColumnSize.LongText },
         ..AuditColumns.For(startVisibleIndex: 13)
     ];
 

@@ -86,7 +86,7 @@
                         <div class="iv-toolbar-row">
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Export CSV" Click="@OnExportHistoryClick" />
                         </div>
-                        <DxGrid Data="@HistoryRows" CssClass="w-100">
+                        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@HistoryRows" CssClass="w-100" TextWrapEnabled="false">
                             <Columns>
                                 <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.Period)" Caption="Period" Width="100px" />
                                 <DxGridDataColumn FieldName="@nameof(SaCustomerSalesHistoryRow.InvoiceCount)" Caption="Invoices" Width="90px" TextAlignment="GridTextAlignment.Right" />

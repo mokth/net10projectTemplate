@@ -153,6 +153,7 @@ try
     app.MapIvStockSummaryExportEndpoints();
     app.MapIvStockCountVarianceExportEndpoints();
     app.MapIvStockValueExportEndpoints();
+    app.MapIvStockMasterImageEndpoints();
     app.MapSaCustExportEndpoints();
     app.MapPoSupplierExportEndpoints();
     app.MapPoMasterRefExportEndpoints();

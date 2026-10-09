@@ -28,7 +28,7 @@
                       Click="@SearchAsync" />
         </div>
 
-        <DxGrid @ref="_grid"
+        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" @ref="_grid"
                 Data="@_items"
                 KeyFieldName="@nameof(PoSupplierLookupRow.SuppCode)"
                 ShowFilterRow="false"
@@ -39,8 +39,8 @@
                 RowDoubleClick="@OnRowDoubleClick"
                 SelectedDataItemChanged="@OnSelectedItemChanged">
             <Columns>
-                <DxGridDataColumn FieldName="@nameof(PoSupplierLookupRow.SuppCode)" Caption="SUPPLIER CODE" Width="140px" />
-                <DxGridDataColumn FieldName="@nameof(PoSupplierLookupRow.SuppName)" Caption="SUPPLIER NAME" />
+                <DxGridDataColumn FieldName="@nameof(PoSupplierLookupRow.SuppCode)" Caption="SUPPLIER CODE" Width="165px" MinWidth="145" />
+                <DxGridDataColumn FieldName="@nameof(PoSupplierLookupRow.SuppName)" Caption="SUPPLIER NAME" Width="280px" MinWidth="210" />
                 <DxGridDataColumn FieldName="@nameof(PoSupplierLookupRow.Currency)" Caption="CURRENCY" Width="100px" />
             </Columns>
         </DxGrid>

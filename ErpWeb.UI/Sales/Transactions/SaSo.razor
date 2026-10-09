@@ -412,7 +412,7 @@
 
                 @FieldError("Lines")
 
-                <DxGrid Data="@Lines"
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Lines"
                         KeyFieldName="@nameof(SaSoLineVm.ClientKey)"
                         ShowFilterRow="false"
                         ShowGroupPanel="false"
@@ -423,7 +423,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (SaSoLineVm)context.DataItem;
@@ -444,7 +444,7 @@
                                 </CellDisplayTemplate>
                             </DxGridCommandColumn>
                         }
-                        <DxGridDataColumn Caption="#" Width="56px">
+                        <DxGridDataColumn Caption="#" Width="56px" MinWidth="50">
                             <CellDisplayTemplate>
                                 @{
                                     var sequenceRow = (SaSoLineVm)context.DataItem;
@@ -452,7 +452,7 @@
                                 @(Lines.IndexOf(sequenceRow) + 1)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.ICode)" Caption="Item" Width="170px">
+                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.ICode)" Caption="Item" Width="170px" MinWidth="150">
                             <CellDisplayTemplate>
                                 @{
                                     var itemLine = (SaSoLineVm)context.DataItem;
@@ -463,14 +463,14 @@
                                 </div>
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn Caption="Supply" Width="130px">
+                        <DxGridDataColumn Caption="Supply" Width="130px" MinWidth="115">
                             <CellDisplayTemplate>
                                 @ProductionDemandLabel((SaSoLineVm)context.DataItem)
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Warehouse)" Caption="Warehouse" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Warehouse)" Caption="Warehouse" Width="110px" MinWidth="105" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.OrderQty)" Caption="Order qty" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.DeliveryDate)" Caption="Delivery" Width="110px" DisplayFormat="dd/MM/yyyy" />
+                        <DxGridDataColumn FieldName="@nameof(SaSoLineVm.DeliveryDate)" Caption="Delivery" Width="110px" MinWidth="105" DisplayFormat="dd/MM/yyyy" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.DeliveredQty)" Caption="Delivered" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.InvoicedQty)" Caption="Invoiced" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.WrittenOffQty)" Caption="Written off" Width="105px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -480,7 +480,7 @@
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.Amount)" Caption="Amount" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaSoLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
-                        <DxGridDataColumn Caption="Issues" Width="220px">
+                        <DxGridDataColumn Caption="Issues" Width="220px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @{
                                     var issuesRow = (SaSoLineVm)context.DataItem;

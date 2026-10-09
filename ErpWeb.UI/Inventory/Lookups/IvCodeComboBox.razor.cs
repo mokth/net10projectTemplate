@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using ErpWeb.Core.Inventory;
 using Microsoft.AspNetCore.Components;
 
@@ -7,12 +8,16 @@ public partial class IvCodeComboBox
 {
     [Parameter] public IEnumerable<IvCodeLookupRow>? Data { get; set; }
     [Parameter] public string? Value { get; set; }
+    [Parameter] public Expression<Func<string?>>? ValueExpression { get; set; }
     [Parameter] public EventCallback<string?> ValueChanged { get; set; }
     [Parameter] public bool Enabled { get; set; } = true;
     [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public bool IsLoading { get; set; }
     [Parameter] public string? InputCssClass { get; set; }
     [Parameter] public string? NullText { get; set; }
+
+    private Expression<Func<string?>> EffectiveValueExpression =>
+        ValueExpression ?? (() => Value);
 
     private async Task OnValueChanged(string? value)
     {

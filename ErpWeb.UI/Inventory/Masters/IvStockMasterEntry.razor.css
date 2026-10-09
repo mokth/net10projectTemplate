@@ -10,3 +10,230 @@
 .iv-page ::deep .dxbl-spin-edit {
     width: 100%;
 }
+
+.iv-stock-layout {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+}
+
+.iv-stock-card {
+    min-width: 0;
+}
+
+.iv-stock-card__heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.iv-stock-card__heading .iv-card__title {
+    margin-bottom: 0;
+}
+
+.iv-section-kicker {
+    color: var(--iv-muted);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.iv-stock-identity__layout {
+    display: grid;
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+    gap: 22px;
+    min-width: 0;
+}
+
+.iv-stock-fields {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 14px 16px;
+    min-width: 0;
+}
+
+.iv-stock-fields > .iv-field,
+.iv-stock-fields > .iv-detail-row {
+    grid-column: span 4;
+    min-width: 0;
+}
+
+.iv-stock-fields > .iv-stock-field--wide {
+    grid-column: span 8;
+}
+
+.iv-stock-fields > .iv-stock-field--full {
+    grid-column: 1 / -1;
+}
+
+.iv-stock-subsection {
+    min-width: 0;
+}
+
+.iv-stock-subsection + .iv-stock-subsection {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--iv-line);
+}
+
+.iv-stock-subsection h3 {
+    margin: 0 0 12px;
+    color: var(--iv-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.iv-stock-image-panel {
+    display: grid;
+    align-content: start;
+    justify-items: stretch;
+    gap: 8px;
+    min-width: 0;
+}
+
+.iv-stock-image-frame {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border: 1px solid var(--iv-line);
+    border-radius: 14px;
+    background: var(--iv-soft);
+}
+
+.iv-stock-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.iv-stock-image-placeholder {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    color: var(--iv-muted);
+    font-size: 0.78rem;
+}
+
+.iv-stock-image-placeholder i {
+    font-size: 2rem;
+    opacity: 0.65;
+}
+
+.iv-stock-image-caption {
+    color: var(--iv-muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    text-align: center;
+}
+
+.iv-stock-image-caption--pending {
+    color: var(--accent, #2f6fed);
+    font-weight: 600;
+}
+
+.iv-stock-image-actions {
+    display: grid;
+    gap: 6px;
+}
+
+.iv-stock-image-picker,
+.iv-stock-image-action {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid var(--iv-line);
+    border-radius: 9px;
+    background: var(--iv-surface);
+    color: var(--iv-ink);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+}
+
+.iv-stock-image-picker:hover,
+.iv-stock-image-action:hover {
+    border-color: var(--accent, #2f6fed);
+    background: color-mix(in srgb, var(--accent, #2f6fed) 7%, var(--iv-surface));
+}
+
+.iv-stock-image-picker.is-disabled,
+.iv-stock-image-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.iv-stock-image-picker ::deep input[type="file"],
+.iv-stock-image-picker input[type="file"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: inherit;
+    opacity: 0;
+}
+
+.iv-stock-image-action--danger {
+    color: var(--danger, #b42318);
+}
+
+.iv-stock-image-action--danger:hover {
+    border-color: var(--danger, #b42318);
+    background: color-mix(in srgb, var(--danger, #b42318) 7%, var(--iv-surface));
+}
+
+@media (max-width: 1100px) {
+    .iv-stock-fields > .iv-field,
+    .iv-stock-fields > .iv-detail-row,
+    .iv-stock-fields > .iv-stock-field--wide {
+        grid-column: span 6;
+    }
+
+    .iv-stock-fields > .iv-stock-field--full {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 767px) {
+    .iv-stock-card__heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .iv-section-kicker {
+        white-space: normal;
+    }
+
+    .iv-stock-identity__layout {
+        grid-template-columns: 1fr;
+    }
+
+    .iv-stock-image-panel {
+        grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+        align-items: start;
+        column-gap: 14px;
+    }
+
+    .iv-stock-image-caption,
+    .iv-stock-image-panel > .iv-field__error {
+        grid-column: 1 / -1;
+    }
+
+    .iv-stock-fields > .iv-field,
+    .iv-stock-fields > .iv-detail-row,
+    .iv-stock-fields > .iv-stock-field--wide,
+    .iv-stock-fields > .iv-stock-field--full {
+        grid-column: 1 / -1;
+    }
+}

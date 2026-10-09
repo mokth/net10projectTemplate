@@ -56,6 +56,14 @@ public static class CoreServiceCollectionExtensions
 
             .Bind(configuration.GetSection(AttachmentStorageOptions.SectionName));
 
+        services.AddSingleton<IValidateOptions<ItemImageStorageOptions>, ItemImageStorageOptionsValidator>();
+
+        services.AddOptions<ItemImageStorageOptions>()
+
+            .Bind(configuration.GetSection(ItemImageStorageOptions.SectionName))
+
+            .ValidateOnStart();
+
 
 
         services.AddOptions<PoPrOptions>()
@@ -205,6 +213,9 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaAllocationReconciliationService, SaAllocationReconciliationService>();
         services.AddScoped<ISaDocFlowQuery, SaDocFlowQuery>();
 
+        services.AddScoped<IIvStockMasterImageService, IvStockMasterImageService>();
+        services.AddScoped<IIvStockMasterImageFileCleanup>(sp =>
+            sp.GetRequiredService<IIvStockMasterImageService>());
         services.AddScoped<IIvStockMasterService, IvStockMasterService>();
         // Single owner of item UOM conversion (Production Work Order Enhancement Plan §5.5).
         services.AddScoped<IUomConversionService, IvUomConversionService>();

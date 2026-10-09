@@ -118,7 +118,7 @@
             }
             else
             {
-                <DxGrid Data="@Result.ByMachine" CssClass="w-100">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Result.ByMachine" CssClass="w-100" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.MachineCd)" Caption="Machine" Width="120px" />
                         <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByMachine.ScheduledPm)" Caption="Scheduled" Width="100px" TextAlignment="GridTextAlignment.Right" />
@@ -142,7 +142,7 @@
             }
             else
             {
-                <DxGrid Data="@Result.ByReason" CssClass="w-100">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Result.ByReason" CssClass="w-100" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.ReasonCd)" Caption="Reason" Width="120px" />
                         <DxGridDataColumn FieldName="@nameof(MachineMaintenanceSummaryByReason.ReasonType)" Caption="Type" Width="120px" />

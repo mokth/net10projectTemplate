@@ -7,7 +7,7 @@
                 SearchMode="ListSearchMode.AutoSearch"
                 SearchFilterCondition="ListSearchFilterCondition.Contains"
                 Value="@Value"
-                ValueExpression="() => Value"
+                ValueExpression="@EffectiveValueExpression"
                 ValueChanged="@(async (string? v) => await OnValueChanged(v))"
                 Enabled="@Enabled"
                 ReadOnly="@ReadOnly"

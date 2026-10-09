@@ -73,7 +73,7 @@
             }
             else
             {
-                <DxGrid Data="@Rows" CssClass="w-100">
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Rows" CssClass="w-100" TextWrapEnabled="false">
                     <Columns>
                         <DxGridDataColumn FieldName="@nameof(PoCdnReservationReportRow.InvNo)" Caption="Invoice" Width="140px" />
                         <DxGridDataColumn FieldName="@nameof(PoCdnReservationReportRow.InvDate)" Caption="Date" Width="110px" DisplayFormat="dd/MM/yyyy" />

@@ -29,7 +29,7 @@
                       Click="@SearchAsync" />
         </div>
 
-        <DxGrid @ref="_grid"
+        <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" @ref="_grid"
                 Data="@_items"
                 KeyFieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.DeliveryRequestId)"
                 ShowFilterRow="false"
@@ -40,9 +40,9 @@
                 RowDoubleClick="@OnRowDoubleClick"
                 SelectedDataItemChanged="@OnSelectedItemChanged">
             <Columns>
-                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.DeliveryRequestNo)" Caption="DR NO" Width="140px" />
-                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductCode)" Caption="PRODUCT" Width="130px" />
-                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductDescription)" Caption="DESCRIPTION" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.DeliveryRequestNo)" Caption="DR NO" Width="165px" MinWidth="135" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductCode)" Caption="PRODUCT" Width="165px" MinWidth="145" />
+                <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.ProductDescription)" Caption="DESCRIPTION" Width="280px" MinWidth="210" />
                 <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.RequiredDate)" Caption="REQUIRED DATE" DisplayFormat="dd MMM yyyy" Width="125px" />
                 <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.Priority)" Caption="PRIORITY" Width="95px" />
                 <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderDeliveryRequestLookupRow.RequestedQty)" Caption="REQUESTED" DisplayFormat="n4" Width="115px" />

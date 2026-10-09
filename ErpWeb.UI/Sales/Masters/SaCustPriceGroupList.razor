@@ -166,7 +166,7 @@
                         @if (EditModel.Lines.Count > 0)
                         {
                             <div class="spg-grid">
-                                <DxGrid Data="@EditModel.Lines"
+                                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@EditModel.Lines"
                                         KeyFieldName="@nameof(IvCustPriceLineVm.Key)"
                                         ShowFilterRow="false"
                                         ShowGroupPanel="false"

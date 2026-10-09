@@ -79,12 +79,12 @@ public partial class IvStockReturnList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Batch No", FieldName = nameof(IvStockReturnListRow.BatchNo), Width = "100px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(IvStockReturnListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(IvStockReturnListRow.BatchStatus), Width = "100px", VisibleIndex = 3 },
-        new() { Caption = "Ref No", FieldName = nameof(IvStockReturnListRow.RefNo), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Remarks", FieldName = nameof(IvStockReturnListRow.Remarks), VisibleIndex = 5 },
-        new() { Caption = "Lines", FieldName = nameof(IvStockReturnListRow.LineCount), Width = "80px", VisibleIndex = 6 },
+        new() { Caption = "Batch No", FieldName = nameof(IvStockReturnListRow.BatchNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(IvStockReturnListRow.TrxDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(IvStockReturnListRow.BatchStatus), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Ref No", FieldName = nameof(IvStockReturnListRow.RefNo), VisibleIndex = 4, Size = GridColumnSize.Reference },
+        new() { Caption = "Remarks", FieldName = nameof(IvStockReturnListRow.Remarks), VisibleIndex = 5, Size = GridColumnSize.LongText },
+        new() { Caption = "Lines", FieldName = nameof(IvStockReturnListRow.LineCount), Width = "80px", VisibleIndex = 6, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 7)
     ];
 

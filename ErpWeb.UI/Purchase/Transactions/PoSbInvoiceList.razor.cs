@@ -133,18 +133,18 @@ public partial class PoSbInvoiceList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Doc No.", FieldName = nameof(PoSbInvoiceListRow.DocNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(PoSbInvoiceListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Status", FieldName = nameof(PoSbInvoiceListRow.Status), Width = "150px", VisibleIndex = 3 },
-        new() { Caption = "Vendor", FieldName = nameof(PoSbInvoiceListRow.VendorCode), Width = "120px", VisibleIndex = 4 },
-        new() { Caption = "Name", FieldName = nameof(PoSbInvoiceListRow.VendorName), VisibleIndex = 5 },
-        new() { Caption = "Total (incl. tax)", FieldName = nameof(PoSbInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "130px", VisibleIndex = 6 },
-        new() { Caption = "Lines", FieldName = nameof(PoSbInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 7 },
+        new() { Caption = "Doc No.", FieldName = nameof(PoSbInvoiceListRow.DocNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(PoSbInvoiceListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Status", FieldName = nameof(PoSbInvoiceListRow.Status), Width = "150px", VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Vendor", FieldName = nameof(PoSbInvoiceListRow.VendorCode), VisibleIndex = 4, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(PoSbInvoiceListRow.VendorName), VisibleIndex = 5, Size = GridColumnSize.Name },
+        new() { Caption = "Total (incl. tax)", FieldName = nameof(PoSbInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 6, Size = GridColumnSize.Amount },
+        new() { Caption = "Lines", FieldName = nameof(PoSbInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 7, Size = GridColumnSize.Tiny },
         // "E-Inv" and "E-Status" deliberately bind the SAME IrbmStatus property: that is what the sales
         // lists do (one value rendered twice), so VisibleIndex must stay unique.
-        new() { Caption = "E-Inv", FieldName = nameof(PoSbInvoiceListRow.IrbmStatus), Width = "110px", VisibleIndex = 8 },
-        new() { Caption = "E-UUID", FieldName = nameof(PoSbInvoiceListRow.IrbmUuid), DataType = "link", VisibleIndex = 9 },
-        new() { Caption = "E-Status", FieldName = nameof(PoSbInvoiceListRow.IrbmStatus), DataType = "string", VisibleIndex = 10 },
+        new() { Caption = "E-Inv", FieldName = nameof(PoSbInvoiceListRow.IrbmStatus), VisibleIndex = 8, Size = GridColumnSize.Status },
+        new() { Caption = "E-UUID", FieldName = nameof(PoSbInvoiceListRow.IrbmUuid), DataType = "link", VisibleIndex = 9, Size = GridColumnSize.Reference },
+        new() { Caption = "E-Status", FieldName = nameof(PoSbInvoiceListRow.IrbmStatus), DataType = "string", VisibleIndex = 10, Size = GridColumnSize.Status },
         ..AuditColumns.For(startVisibleIndex: 11)
     ];
 

@@ -139,6 +139,7 @@ public sealed class IvStockMasterEditVm
 {
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
+    public bool HasImage { get; set; }
     public string MfgType { get; set; } = "BUY";
     public string? Barcode { get; set; }
     public string? Brand { get; set; }

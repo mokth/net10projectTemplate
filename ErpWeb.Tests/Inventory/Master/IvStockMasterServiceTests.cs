@@ -469,6 +469,224 @@ public class IvStockMasterServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Get_MapsExistingImageToHasImage()
+    {
+        await SetImagePathAsync("A100", "managed-image.webp");
+
+        var result = await CreateSut().GetAsync("A100");
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.True(result.Data!.HasImage);
+    }
+
+    [Fact]
+    public async Task NormalSave_PreservesExistingImagePathAndDoesNotStore()
+    {
+        await SetImagePathAsync("A100", "managed-image.webp");
+        var imageService = new Mock<IIvStockMasterImageService>();
+        var sut = CreateSut(imageService: imageService.Object);
+        var model = (await sut.GetAsync("A100")).Data!;
+        model.IDesc = "Updated without image change";
+
+        var result = await sut.SaveAsync(model, isNew: false);
+
+        Assert.True(result.Succeeded, result.Message);
+        imageService.Verify(x => x.StorePreparedAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            "managed-image.webp",
+            await db.IvStockMasters
+                .Where(x => x.CompanyCode == "DEMO" && x.ICode == "A100")
+                .Select(x => x.ImagePath)
+                .SingleAsync());
+    }
+
+    [Fact]
+    public async Task NewItem_WithImage_SavesGeneratedRelativePath()
+    {
+        var imageService = new Mock<IIvStockMasterImageService>();
+        imageService.Setup(x => x.StorePreparedAsync(
+                "DEMO",
+                "D401",
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IvMasterOperationResult<IvStoredStockImage>.Ok(new IvStoredStockImage
+            {
+                RelativePath = "company/item/image.webp"
+            }));
+
+        var result = await CreateSut(imageService: imageService.Object).SaveAsync(
+            ValidNewModel("D401"),
+            isNew: true,
+            imageChange: new IvStockMasterImageChange
+            {
+                Replacement = new IvPreparedStockImage
+                {
+                    Content = [1, 2, 3],
+                    Width = 1,
+                    Height = 1
+                }
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            "company/item/image.webp",
+            await db.IvStockMasters
+                .Where(x => x.CompanyCode == "DEMO" && x.ICode == "D401")
+                .Select(x => x.ImagePath)
+                .SingleAsync());
+    }
+
+    [Fact]
+    public async Task NewItem_ImageStorageFailure_DoesNotInsertItem()
+    {
+        var imageService = new Mock<IIvStockMasterImageService>();
+        imageService.Setup(x => x.StorePreparedAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IvMasterOperationResult<IvStoredStockImage>.Fail(
+                IvMasterErrorCode.Validation,
+                "Unable to store the item image."));
+
+        var result = await CreateSut(imageService: imageService.Object).SaveAsync(
+            ValidNewModel("D402"),
+            isNew: true,
+            imageChange: new IvStockMasterImageChange
+            {
+                Replacement = new IvPreparedStockImage
+                {
+                    Content = [1],
+                    Width = 1,
+                    Height = 1
+                }
+            });
+
+        Assert.False(result.Succeeded);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.IvStockMasters.AnyAsync(x => x.CompanyCode == "DEMO" && x.ICode == "D402"));
+    }
+
+    [Fact]
+    public async Task ExistingReplacement_UpdatesPathAndCleansOldAfterSave()
+    {
+        await SetImagePathAsync("A100", "old-image.webp");
+        var imageService = new Mock<IIvStockMasterImageService>();
+        imageService.Setup(x => x.StorePreparedAsync(
+                "DEMO",
+                "A100",
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IvMasterOperationResult<IvStoredStockImage>.Ok(new IvStoredStockImage
+            {
+                RelativePath = "new-image.webp"
+            }));
+
+        var sut = CreateSut(imageService: imageService.Object);
+        var model = (await sut.GetAsync("A100")).Data!;
+        var result = await sut.SaveAsync(
+            model,
+            isNew: false,
+            imageChange: new IvStockMasterImageChange
+            {
+                Replacement = new IvPreparedStockImage
+                {
+                    Content = [4, 5, 6],
+                    Width = 1,
+                    Height = 1
+                }
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        imageService.Verify(x => x.TryDeleteManagedFileAsync(
+                "old-image.webp",
+                "DEMO",
+                "A100",
+                "item-replace-or-remove",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            "new-image.webp",
+            await db.IvStockMasters
+                .Where(x => x.CompanyCode == "DEMO" && x.ICode == "A100")
+                .Select(x => x.ImagePath)
+                .SingleAsync());
+    }
+
+    [Fact]
+    public async Task ExistingRemove_ClearsPathAndCleansOld()
+    {
+        await SetImagePathAsync("A100", "old-image.webp");
+        var imageService = new Mock<IIvStockMasterImageService>();
+        var sut = CreateSut(imageService: imageService.Object);
+        var model = (await sut.GetAsync("A100")).Data!;
+
+        var result = await sut.SaveAsync(
+            model,
+            isNew: false,
+            imageChange: new IvStockMasterImageChange { RemoveExisting = true });
+
+        Assert.True(result.Succeeded, result.Message);
+        imageService.Verify(x => x.StorePreparedAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        imageService.Verify(x => x.TryDeleteManagedFileAsync(
+                "old-image.webp",
+                "DEMO",
+                "A100",
+                "item-replace-or-remove",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Null(await db.IvStockMasters
+            .Where(x => x.CompanyCode == "DEMO" && x.ICode == "A100")
+            .Select(x => x.ImagePath)
+            .SingleAsync());
+    }
+
+    [Fact]
+    public async Task ReplacementWithStaleRowVersion_DoesNotStoreImage()
+    {
+        var imageService = new Mock<IIvStockMasterImageService>();
+        var sut = CreateSut(imageService: imageService.Object);
+        var model = (await sut.GetAsync("A100")).Data!;
+        model.RowVersion![0] ^= 0xFF;
+
+        var result = await sut.SaveAsync(
+            model,
+            isNew: false,
+            imageChange: new IvStockMasterImageChange
+            {
+                Replacement = new IvPreparedStockImage
+                {
+                    Content = [1],
+                    Width = 1,
+                    Height = 1
+                }
+            });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, result.ErrorCode);
+        imageService.Verify(x => x.StorePreparedAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<IvPreparedStockImage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task MinGreaterThanMax_Fails()
     {
         var sut = CreateSut();
@@ -734,12 +952,21 @@ public class IvStockMasterServiceTests : IAsyncLifetime
 
     private static byte[] Rv(byte marker) => [marker, 0, 0, 0, 0, 0, 0, 0];
 
+    private async Task SetImagePathAsync(string code, string imagePath)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.IvStockMasters.SingleAsync(x => x.CompanyCode == "DEMO" && x.ICode == code);
+        row.ImagePath = imagePath;
+        await db.SaveChangesAsync();
+    }
+
     private IvStockMasterService CreateSut(
         bool canAccess = true,
         bool canAdd = true,
         bool canEdit = true,
         bool canDelete = true,
-        bool canExport = true)
+        bool canExport = true,
+        IIvStockMasterImageService? imageService = null)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(
@@ -774,6 +1001,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             access.Object,
             new FixedCurrentDateService(FixedToday),
             new IvStockMasterRepository(_factory),
-            new IvStockCommonRepository(_factory));
+            new IvStockCommonRepository(_factory),
+            imageService: imageService);
     }
 }

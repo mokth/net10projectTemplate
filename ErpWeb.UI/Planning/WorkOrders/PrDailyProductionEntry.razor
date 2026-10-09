@@ -195,9 +195,9 @@
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                         CssClass="pr-dp-grid">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" MinWidth="150" />
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" MinWidth="160" />
-                        <DxGridDataColumn Caption="Supply / Issue" MinWidth="160">
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" Width="190px" MinWidth="150" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" Width="280px" MinWidth="210" />
+                        <DxGridDataColumn Caption="Supply / Issue" Width="190px" MinWidth="160">
                             <CellDisplayTemplate>
                                 @{
                                     var line = (MaterialLineEdit)context.DataItem;
@@ -211,7 +211,7 @@
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ConsumeQty)" Caption="Consume" Width="120px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceQty)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceReasonCode)" Caption="Reason" Width="140px" />
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceReasonText)" Caption="Reason detail" MinWidth="140" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceReasonText)" Caption="Reason detail" Width="280px" MinWidth="210" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.AvailableQty)" Caption="Current Available" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RemainingAfterConsume)" Caption="Remaining After" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.RequiredUom)" Caption="UOM" Width="80px" />
@@ -612,9 +612,9 @@
                         ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
                         CssClass="pr-dp-grid">
                     <Columns>
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" MinWidth="140" />
-                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" MinWidth="150" />
-                        <DxGridDataColumn Caption="Supply / Issue" MinWidth="150">
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.ComponentCode)" Caption="Material" Width="190px" MinWidth="150" />
+                        <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.Description)" Caption="Description" Width="280px" MinWidth="210" />
+                        <DxGridDataColumn Caption="Supply / Issue" Width="190px" MinWidth="160">
                             <CellDisplayTemplate>
                                 @{
                                     var line = (MaterialLineEdit)context.DataItem;
@@ -655,7 +655,7 @@
                                             Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)" ValueExpression="@(() => line.VarianceReasonCode)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
-                        <DxGridDataColumn Caption="Reason detail" MinWidth="160">
+                        <DxGridDataColumn Caption="Reason detail" Width="280px" MinWidth="210">
                             <CellDisplayTemplate>
                                 @{
                                     var line = (MaterialLineEdit)context.DataItem;

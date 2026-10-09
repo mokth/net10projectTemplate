@@ -75,15 +75,15 @@ public partial class PoInvoiceList : PageBase, IDisposable
 
     protected List<GridColumnData> Columns { get; } =
     [
-        new() { Caption = "Doc No.", FieldName = nameof(PoInvoiceListRow.DocNo), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
-        new() { Caption = "Date", FieldName = nameof(PoInvoiceListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "110px", VisibleIndex = 2 },
-        new() { Caption = "Type", FieldName = nameof(PoInvoiceListRow.Type), Width = "70px", VisibleIndex = 3 },
-        new() { Caption = "Status", FieldName = nameof(PoInvoiceListRow.Status), Width = "100px", VisibleIndex = 4 },
-        new() { Caption = "Vendor", FieldName = nameof(PoInvoiceListRow.VendorCode), Width = "120px", VisibleIndex = 5 },
-        new() { Caption = "Name", FieldName = nameof(PoInvoiceListRow.VendorName), VisibleIndex = 6 },
-        new() { Caption = "Inv Ref", FieldName = nameof(PoInvoiceListRow.InvNo), Width = "130px", VisibleIndex = 7 },
-        new() { Caption = "Total", FieldName = nameof(PoInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", Width = "120px", VisibleIndex = 8 },
-        new() { Caption = "Lines", FieldName = nameof(PoInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 9 },
+        new() { Caption = "Doc No.", FieldName = nameof(PoInvoiceListRow.DocNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Date", FieldName = nameof(PoInvoiceListRow.DocDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
+        new() { Caption = "Type", FieldName = nameof(PoInvoiceListRow.Type), VisibleIndex = 3, Size = GridColumnSize.Tiny },
+        new() { Caption = "Status", FieldName = nameof(PoInvoiceListRow.Status), VisibleIndex = 4, Size = GridColumnSize.Status },
+        new() { Caption = "Vendor", FieldName = nameof(PoInvoiceListRow.VendorCode), VisibleIndex = 5, Size = GridColumnSize.Code },
+        new() { Caption = "Name", FieldName = nameof(PoInvoiceListRow.VendorName), VisibleIndex = 6, Size = GridColumnSize.Name },
+        new() { Caption = "Inv Ref", FieldName = nameof(PoInvoiceListRow.InvNo), VisibleIndex = 7, Size = GridColumnSize.DocumentNo },
+        new() { Caption = "Total", FieldName = nameof(PoInvoiceListRow.TotAmnt), DataType = "decimal", DisplayFormat = "n2", VisibleIndex = 8, Size = GridColumnSize.Amount },
+        new() { Caption = "Lines", FieldName = nameof(PoInvoiceListRow.LineCount), Width = "80px", VisibleIndex = 9, Size = GridColumnSize.Tiny },
         ..AuditColumns.For(startVisibleIndex: 10)
     ];
 

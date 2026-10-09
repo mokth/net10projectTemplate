@@ -216,7 +216,7 @@
                         @_calendarificCandidates.Count holidays were found for @_year. Review before importing.
                     </p>
                     <p class="plcal-hint plcal-hint--secondary">Holiday data provider: Calendarific</p>
-                    <DxGrid Data="@_calendarificCandidates" KeyFieldName="@nameof(CalendarificHolidayCandidate.DateOff)" CssClass="w-100">
+                    <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@_calendarificCandidates" KeyFieldName="@nameof(CalendarificHolidayCandidate.DateOff)" CssClass="w-100" TextWrapEnabled="false">
                         <Columns>
                             <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.DateOff)" Caption="Date" DisplayFormat="dd MMM yyyy" Width="110px" />
                             <DxGridDataColumn FieldName="@nameof(CalendarificHolidayCandidate.Description)" Caption="Holiday" />
@@ -243,7 +243,8 @@
             }
             else
             {
-                <DxGrid Data="@_holidays" KeyFieldName="@nameof(PrHoliday.Uid)"
+                <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@_holidays" KeyFieldName="@nameof(PrHoliday.Uid)"
+                        TextWrapEnabled="false"
                         CssClass="w-100"
                         DataItemDeleting="@(async e => { if (e.DataItem is PrHoliday h) await DeleteHolidayAsync(h.Uid); })">
                     <Columns>

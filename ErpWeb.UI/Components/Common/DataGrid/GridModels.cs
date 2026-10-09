@@ -8,6 +8,8 @@ public class GridColumnDefinition
     public string Caption { get; set; } = string.Empty;
     public string DataType { get; set; } = "string";
     public string? Width { get; set; }
+    public GridColumnSize Size { get; set; } = GridColumnSize.Auto;
+    public int? MinWidth { get; set; }
     public string? DisplayFormat { get; set; }
     public int VisibleIndex { get; set; }
     public int SortIndex { get; set; } = -1;

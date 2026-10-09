@@ -48,6 +48,7 @@
             PageSizeSelectorItems="@(new[] { 5, 10, 20, 50, 100 })"
             PageSizeSelectorAllRowsItemVisible="true"
             ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+            TextWrapEnabled="false"
             AllowSelectRowByClick="@AllowSelection"
             SelectionMode="@SelectionMode"
             SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
@@ -58,12 +59,12 @@
         <Columns>
             @if (AllowSelection)
             {
-                <DxGridSelectionColumn Width="60px" />
+                <DxGridSelectionColumn Width="60px" MinWidth="48" />
             }
 
             @if (RowActions.Count > 0)
             {
-                <DxGridCommandColumn Caption="" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false" Width="@GetActionColumnWidth()">
+                <DxGridCommandColumn Caption="" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false" Width="@GetActionColumnWidth()" MinWidth="@GetActionColumnMinWidth()">
                     <CellDisplayTemplate>
                         <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
                             <Items>
@@ -116,7 +117,8 @@
                 <DxGridDataColumn FieldName="@column.FieldName"
                                   Caption="@column.Caption"
                                   DisplayFormat="@(column.DisplayFormat ?? "g")"
-                                  Width="@column.Width"
+                                  Width="@GetEffectiveWidth(column)"
+                                  MinWidth="@GetEffectiveMinWidth(column)"
                                   SortIndex="@column.SortIndex"
                                   SortOrder="@column.SortOrder"
                                   GroupIndex="@column.GroupIndex"
@@ -133,7 +135,8 @@
                 <DxGridDataColumn FieldName="@column.FieldName"
                                   Caption="@column.Caption"
                                   DisplayFormat="@(column.DisplayFormat ?? "t")"
-                                  Width="@column.Width"
+                                  Width="@GetEffectiveWidth(column)"
+                                  MinWidth="@GetEffectiveMinWidth(column)"
                                   SortIndex="@column.SortIndex"
                                   SortOrder="@column.SortOrder"
                                   GroupIndex="@column.GroupIndex"
@@ -143,7 +146,8 @@
             case "boolean":
                 <DxGridDataColumn FieldName="@column.FieldName"
                                   Caption="@column.Caption"
-                                  Width="@column.Width"
+                                  Width="@GetEffectiveWidth(column)"
+                                  MinWidth="@GetEffectiveMinWidth(column)"
                                   SortIndex="@column.SortIndex"
                                   SortOrder="@column.SortOrder"
                                   GroupIndex="@column.GroupIndex"
@@ -155,7 +159,8 @@
                 <DxGridDataColumn FieldName="@column.FieldName"
                                   Caption="@column.Caption"
                                   DisplayFormat="@column.DisplayFormat"
-                                  Width="@column.Width"
+                                  Width="@GetEffectiveWidth(column)"
+                                  MinWidth="@GetEffectiveMinWidth(column)"
                                   SortIndex="@column.SortIndex"
                                   SortOrder="@column.SortOrder"
                                   GroupIndex="@column.GroupIndex"
@@ -165,7 +170,8 @@
                 <DxGridDataColumn FieldName="@column.FieldName"
                                   Caption="@column.Caption"
                                   DisplayFormat="@column.DisplayFormat"
-                                  Width="@column.Width"
+                                  Width="@GetEffectiveWidth(column)"
+                                  MinWidth="@GetEffectiveMinWidth(column)"
                                   SortIndex="@column.SortIndex"
                                   SortOrder="@column.SortOrder"
                                   GroupIndex="@column.GroupIndex"
