@@ -37,10 +37,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 if (replay.RequestFingerprint != fingerprint.RequestFingerprint) throw new FgException("The request ID was reused with different input.");
                 if (replay.SealedAtUtc is null) throw new FgException("The existing posting is not sealed; reconciliation is required.");
                 var recorded = await LoadAsync(db, scope, request.Id, false, ct);
-                var result = await MapAsync(db, recorded, ct);
+                var replayResult = await MapAsync(db, recorded, ct);
                 // Preserve the original operation identity even if the receipt was subsequently reversed.
-                if (reversal) result.ReversalPostingId = replay.Id; else result.PostingId = replay.Id;
-                return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(result);
+                if (reversal) replayResult.ReversalPostingId = replay.Id; else replayResult.PostingId = replay.Id;
+                return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(replayResult);
             }
             var r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
@@ -106,8 +106,14 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 r.PostingId = context.Posting.Id; r.Batch.BatchStatus = "POSTED"; r.Batch.PostedDate = date;
                 r.Batch.PostedBy = User(scope); r.Batch.PostedCount++; r.Batch.PostingOperationId = request.RequestId;
             }
+            await db.SaveChangesAsync(ct);
             await coordinator.CompleteInTransactionAsync(context, ct); await tx.CommitAsync(ct);
-            return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(await MapAsync(db, r, ct));
+
+            // DR synchronization deliberately runs after the financial/stock transaction has
+            // committed. A sync failure must leave the FG posting successful and retryable.
+            var result = await MapAsync(db, r, ct);
+            result.Warnings.AddRange(await ReconcileDeliveryRequestsAfterCommitAsync(r.WorkOrderId, scope, ct));
+            return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(result);
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptDocument>(e.Message, e.Code); }
         catch (StockLedgerException e) { return Fail<FinishedGoodReceiptDocument>(e.Error.Message); }

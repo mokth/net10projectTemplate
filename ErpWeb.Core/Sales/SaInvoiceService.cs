@@ -2347,6 +2347,40 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 });
         }
 
+        var directSoNos = prepared
+            .Where(x => !x.LinkDo && !string.IsNullOrWhiteSpace(x.SoNo))
+            .Select(x => x.SoNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (directSoNos.Count > 0)
+        {
+            var activeDeliveryRequestSources = await (
+                from source in db.SaDeliveryRequestSources.AsNoTracking()
+                join deliveryRequest in db.SaDeliveryRequests.AsNoTracking()
+                    on source.DeliveryRequestId equals deliveryRequest.Uid
+                where source.CompanyCode == companyCode
+                    && source.BranchCode == branchCode
+                    && source.IsActive
+                    && directSoNos.Contains(source.SoNo)
+                    && (deliveryRequest.Status == SaDeliveryRequestStatuses.Released
+                        || deliveryRequest.Status == SaDeliveryRequestStatuses.InProduction)
+                select source).ToListAsync(cancellationToken);
+            var blocked = activeDeliveryRequestSources.Any(source => prepared.Any(line =>
+                !line.LinkDo
+                && string.Equals(line.SoNo, source.SoNo, StringComparison.OrdinalIgnoreCase)
+                && line.SoLine == source.SoLine
+                && line.CustRel == source.CustRel));
+            if (blocked)
+            {
+                return PrepareOutcome.Validation(
+                    "Direct Sales Order invoicing is blocked while the Sales Order line is controlled by an active Delivery Request.",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["Lines"] = "Use a Delivery Order linked to the Delivery Request instead of a direct Sales Order invoice."
+                    });
+            }
+        }
+
         var reserveGate = await ValidateInvoiceSoReserveAsync(
             db,
             companyCode,

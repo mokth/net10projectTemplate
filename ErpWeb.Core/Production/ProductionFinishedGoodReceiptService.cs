@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Transactions;
@@ -11,6 +12,7 @@ using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using System.Globalization;
@@ -21,7 +23,9 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
-    IIvInventoryHistoryWriter historyWriter, IOptions<FinishedGoodReceiptOptions> options) : IProductionFinishedGoodReceiptService
+    IIvInventoryHistoryWriter historyWriter, IOptions<FinishedGoodReceiptOptions> options,
+    ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
+    ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
 {
     private const string Menu = MenuCodes.PlanningFinishedGoodReceipt;
     private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) => IvMasterOperationResult<T>.Fail(code, message);
@@ -35,6 +39,53 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     private sealed class FgException(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) : Exception(message)
     { public IvMasterErrorCode Code { get; } = code; }
     private static string User(InventoryTenantScope s) => s.UserId.Length > 10 ? s.UserId[..10] : s.UserId;
+
+    private async Task<IReadOnlyList<string>> ReconcileDeliveryRequestsAfterCommitAsync(
+        long workOrderId,
+        InventoryTenantScope scope,
+        CancellationToken ct)
+    {
+        if (deliveryRequestFulfilment is null || workOrderId <= 0)
+        {
+            return [];
+        }
+
+        try
+        {
+            await using var lookupDb = await factory.CreateDbContextAsync(ct);
+            var deliveryRequestIds = await lookupDb.PrWorkOrderDemandAllocations.AsNoTracking()
+                .Where(x => x.WorkOrderId == workOrderId
+                    && x.DeliveryRequestId > 0
+                    && x.IsActive
+                    && x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode)
+                .Select(x => x.DeliveryRequestId)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToListAsync(ct);
+
+            var warnings = new List<string>();
+            foreach (var deliveryRequestId in deliveryRequestIds)
+            {
+                var result = await deliveryRequestFulfilment.ReconcileAsync(deliveryRequestId, ct);
+                if (!result.Succeeded)
+                {
+                    warnings.Add(
+                        $"Delivery Request {deliveryRequestId} fulfilment synchronization was not completed: {result.Message ?? "Refresh Fulfilment to retry."}");
+                }
+            }
+
+            return warnings;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(
+                ex,
+                "Finished Good Receipt {WorkOrderId} committed, but Delivery Request fulfilment synchronization failed.",
+                workOrderId);
+            return ["Delivery Request fulfilment synchronization could not be completed. Refresh Fulfilment to retry."];
+        }
+    }
     private static void Version(ProductionFinishedGoodReceipt receipt, byte[] version)
     {
         if (version.Length == 0 || !receipt.RowVersion.SequenceEqual(version))

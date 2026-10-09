@@ -29,6 +29,8 @@ public class SaDeliveryRequest
     public byte[] RowVersion { get; set; } = [];
 
     public ICollection<SaDeliveryRequestSource> Sources { get; set; } = new List<SaDeliveryRequestSource>();
+    public ICollection<SaDeliveryRequestStockReservation> StockReservations { get; set; } =
+        new List<SaDeliveryRequestStockReservation>();
     public ICollection<ErpWeb.Model.Entities.Production.PrWorkOrderDemandAllocation> WorkOrderAllocations { get; set; } =
         new List<ErpWeb.Model.Entities.Production.PrWorkOrderDemandAllocation>();
     public ICollection<SaDeliveryRequestAuditEvent> AuditEvents { get; set; } =

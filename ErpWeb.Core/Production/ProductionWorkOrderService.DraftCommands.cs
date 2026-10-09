@@ -359,6 +359,13 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can refresh from its Product Definition.");
         }
 
+        var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, entity, cancellationToken);
+        if (procurementBlocker is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderRefreshPreview>.Fail(
+                IvMasterErrorCode.InUse, procurementBlocker);
+        }
+
         var header = HeaderRequest(entity);
         if (string.IsNullOrWhiteSpace(header.DefinitionCode) && entity.SourceBomHdrId > 0)
         {
@@ -411,6 +418,11 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, entity, cancellationToken);
+            if (procurementBlocker is not null)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.InUse, procurementBlocker);
+            }
             var header = HeaderRequest(entity);
             if (string.IsNullOrWhiteSpace(header.DefinitionCode) && entity.SourceBomHdrId > 0)
             {
@@ -494,6 +506,13 @@ public sealed partial class ProductionWorkOrderService
                 IvMasterErrorCode.Validation, "Only a Draft Work Order can change its Product Definition.");
         }
 
+        var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, entity, cancellationToken);
+        if (procurementBlocker is not null)
+        {
+            return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
+                IvMasterErrorCode.InUse, procurementBlocker);
+        }
+
         if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
                 entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
         {
@@ -566,6 +585,11 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, entity, cancellationToken);
+            if (procurementBlocker is not null)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.InUse, procurementBlocker);
+            }
             if (!ProductionSnapshotFormatVersions.IsCurrentForDraft(
                     entity.SnapshotFormatVersion, entity.SnapshotHashVersion))
             {
@@ -909,6 +933,11 @@ public sealed partial class ProductionWorkOrderService
         {
             await WorkOrderSchedulingLock.AcquireAsync(db, auth.Scope!.CompanyCode, exclusive: false, cancellationToken);
             var entity = await RequireDraftAsync(db, auth.Scope!, request.WorkOrderNo, request.RowVersion, cancellationToken);
+            var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, entity, cancellationToken);
+            if (procurementBlocker is not null)
+            {
+                throw new WorkOrderCommandException(IvMasterErrorCode.InUse, procurementBlocker);
+            }
             RequireCurrentSnapshot(entity);
             RequireSnapshotFingerprint(entity, request.SnapshotRevision, request.SnapshotHash);
 

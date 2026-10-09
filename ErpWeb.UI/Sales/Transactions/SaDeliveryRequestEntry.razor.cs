@@ -1,7 +1,9 @@
 using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Production;
@@ -18,7 +20,10 @@ public partial class SaDeliveryRequestEntry : PageBase
     [Parameter] public long? Uid { get; set; }
 
     [Inject] private ISaDeliveryRequestService Requests { get; set; } = default!;
+    [Inject] private ISaDeliveryRequestFulfilmentService Fulfilment { get; set; } = default!;
     [Inject] private IProductionWorkOrderService WorkOrders { get; set; } = default!;
+    [Inject] private IPrProductDefService ProductDefs { get; set; } = default!;
+    [Inject] private IPoPrService PurchaseRequests { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     private string? _loadedKey;
@@ -37,6 +42,7 @@ public partial class SaDeliveryRequestEntry : PageBase
     protected bool CanCancelPermission { get; private set; }
     protected bool CanDeletePermission { get; private set; }
     protected bool CanCreateWorkOrder { get; private set; }
+    protected bool CanCreatePurchaseRequisition { get; private set; }
     protected string? StatusMessage { get; private set; }
     protected string? SourcePickerError { get; private set; }
     protected Dictionary<string, string> ValidationErrors { get; private set; } =
@@ -51,6 +57,13 @@ public partial class SaDeliveryRequestEntry : PageBase
     protected string? ProjectCode { get; set; }
     protected string? Priority { get; set; }
     protected string? Remark { get; set; }
+    protected IReadOnlyList<DefinitionOption> DefinitionOptions { get; private set; } = [];
+    protected IReadOnlyList<string> PriorityOptions { get; } =
+    [
+        SaDeliveryRequestPriorities.Normal,
+        SaDeliveryRequestPriorities.High,
+        SaDeliveryRequestPriorities.Urgent
+    ];
 
     protected string SourceSearchSoNo { get; set; } = string.Empty;
     protected IReadOnlyList<SaDeliveryRequestEligibleSource> EligibleSources { get; private set; } = [];
@@ -106,6 +119,9 @@ public partial class SaDeliveryRequestEntry : PageBase
         && IsReadOnlyPresentation
         && string.Equals(Detail?.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase)
         && CanDeletePermission;
+    protected bool CanRefreshFulfilment => !IsSubmitting
+        && Detail is not null
+        && Detail.Status is SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction;
     protected bool CanSave => CanEdit && SourceRows.Count > 0;
     protected bool CanOfferWorkOrderCreation => !IsSubmitting
         && IsReadOnlyPresentation
@@ -143,6 +159,7 @@ public partial class SaDeliveryRequestEntry : PageBase
         CanCancelPermission = await AccessRights.CanAsync(MenuCodes.SalesDeliveryRequest, PermissionCodes.Cancel);
         CanDeletePermission = await AccessRights.CanAsync(MenuCodes.SalesDeliveryRequest, PermissionCodes.Delete);
         CanCreateWorkOrder = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Add);
+        CanCreatePurchaseRequisition = await AccessRights.CanAsync(MenuCodes.PurchaseRequisition, PermissionCodes.Add);
     }
 
     protected override async Task OnParametersSetAsync()
@@ -183,8 +200,9 @@ public partial class SaDeliveryRequestEntry : PageBase
             DefinitionCode = null;
             WarehouseCode = null;
             ProjectCode = null;
-            Priority = null;
+            Priority = SaDeliveryRequestPriorities.Normal;
             Remark = null;
+            DefinitionOptions = [];
             WorkOrderQty = 0m;
             IsLoading = false;
             return;
@@ -201,6 +219,7 @@ public partial class SaDeliveryRequestEntry : PageBase
         if (result.Succeeded && result.Data is not null)
         {
             ApplyDetail(result.Data);
+            await LoadDefinitionOptionsAsync(result.Data.ProductCode, selectDefaultWhenEmpty: false);
         }
         else
         {
@@ -219,7 +238,7 @@ public partial class SaDeliveryRequestEntry : PageBase
         DefinitionCode = detail.DefinitionCode;
         WarehouseCode = detail.WarehouseCode;
         ProjectCode = detail.ProjectCode;
-        Priority = detail.Priority;
+        Priority = detail.Priority ?? SaDeliveryRequestPriorities.Normal;
         Remark = detail.Remark;
         SourceRows = detail.Sources.Select(SourceEditorRow.From).ToList();
         WorkOrderQty = detail.UnplannedQty;
@@ -443,7 +462,9 @@ public partial class SaDeliveryRequestEntry : PageBase
         var result = await Requests.ListEligibleSalesOrderDemandAsync(new SaDeliveryRequestEligibleSourceQuery
         {
             SoNo = string.IsNullOrWhiteSpace(SourceSearchSoNo) ? null : SourceSearchSoNo.Trim(),
-            ProductCode = string.IsNullOrWhiteSpace(ProductCode) ? null : ProductCode
+            ProductCode = string.IsNullOrWhiteSpace(ProductCode) ? null : ProductCode,
+            WarehouseCode = string.IsNullOrWhiteSpace(WarehouseCode) ? null : WarehouseCode.Trim(),
+            ProjectCode = string.IsNullOrWhiteSpace(ProjectCode) ? null : ProjectCode.Trim()
         });
         if (result.Succeeded && result.Data is not null)
         {
@@ -456,7 +477,7 @@ public partial class SaDeliveryRequestEntry : PageBase
         }
     }
 
-    protected void AddEligibleSource(SaDeliveryRequestEligibleSource source)
+    protected async Task AddEligibleSourceAsync(SaDeliveryRequestEligibleSource source)
     {
         if (SourceRows.Any(x => string.Equals(x.SoNo, source.SoNo, StringComparison.OrdinalIgnoreCase)
             && x.CustRel == source.CustRel && x.SoLine == source.SoLine))
@@ -472,8 +493,19 @@ public partial class SaDeliveryRequestEntry : PageBase
             return;
         }
 
+        if (SourceRows.Count > 0
+            && (!string.Equals(WarehouseCode, source.WarehouseCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(ProjectCode, source.ProjectCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            SourcePickerError = "All source lines must use the same warehouse and project.";
+            return;
+        }
+
         ProductCode = source.ProductCode;
         ProductionUom = source.ProductionUom;
+        WarehouseCode = source.WarehouseCode;
+        ProjectCode = source.ProjectCode;
+        await LoadDefinitionOptionsAsync(ProductCode, selectDefaultWhenEmpty: true);
         if (RequiredDate == default
             || (source.RequestedDeliveryDate is DateTime requested && RequiredDate > requested.Date))
         {
@@ -512,6 +544,58 @@ public partial class SaDeliveryRequestEntry : PageBase
 
         row.Quantity = value;
         MarkDirty();
+    }
+
+    protected void OnProductCodeChanged(string? value)
+    {
+        if (!CanEdit || SourceRows.Count > 0)
+        {
+            return;
+        }
+
+        ProductCode = value?.Trim() ?? string.Empty;
+        MarkDirty();
+    }
+
+    private async Task LoadDefinitionOptionsAsync(string? productCode, bool selectDefaultWhenEmpty)
+    {
+        var code = (productCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            DefinitionOptions = [];
+            if (selectDefaultWhenEmpty)
+            {
+                DefinitionCode = null;
+            }
+
+            return;
+        }
+
+        var result = await ProductDefs.ListActiveDefinitionsAsync(code);
+        if (!result.Succeeded || result.Data is null)
+        {
+            DefinitionOptions = [];
+            return;
+        }
+
+        DefinitionOptions = result.Data
+            .Select(x => new DefinitionOption(
+                x.DefinitionCode,
+                x.DefinitionName,
+                x.Version,
+                x.IsDefaultDefinition,
+                string.IsNullOrWhiteSpace(x.DefinitionName)
+                    ? $"{x.DefinitionCode} (V{x.Version})"
+                    : $"{x.DefinitionCode} — {x.DefinitionName} (V{x.Version})"))
+            .ToList();
+
+        if (!selectDefaultWhenEmpty || DefinitionOptions.Count == 0)
+        {
+            return;
+        }
+
+        DefinitionCode = DefinitionOptions.FirstOrDefault(x => x.IsDefault)?.Code
+            ?? (DefinitionOptions.Count == 1 ? DefinitionOptions[0].Code : DefinitionOptions[0].Code);
     }
 
     protected void OnRequiredDateChanged(DateTime value)
@@ -555,6 +639,89 @@ public partial class SaDeliveryRequestEntry : PageBase
             else
             {
                 HandleOperationFailure(result, "Unable to create the draft Work Order.");
+            }
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task RefreshFulfilmentAsync()
+    {
+        if (!CanRefreshFulfilment || Detail is null)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearOperationMessages();
+        try
+        {
+            var result = await Fulfilment.ReconcileAsync(Detail.Uid);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.Message ?? "Unable to refresh Delivery Request fulfilment.";
+                return;
+            }
+
+            var latest = await Requests.GetAsync(Detail.Uid);
+            if (latest.Succeeded && latest.Data is not null)
+            {
+                ApplyDetail(latest.Data);
+                StatusMessage = "Fulfilment refreshed.";
+            }
+            else
+            {
+                ErrorMessage = latest.Message ?? "Fulfilment refreshed, but the latest Delivery Request could not be loaded.";
+            }
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task CreatePurchaseRequisitionAsync(SaDeliveryRequestMaterialShortageTrace shortage)
+    {
+        if (IsSubmitting
+            || !CanCreatePurchaseRequisition
+            || shortage.NetProcurementRequiredBaseQty <= 0.0001m
+            || !shortage.IsConsistent)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ClearOperationMessages();
+        try
+        {
+            var result = await PurchaseRequests.CreateFromWorkOrderMaterialAsync(
+                new PoPrCreateFromWorkOrderMaterialRequest
+                {
+                    WorkOrderMaterialId = shortage.WorkOrderMaterialId,
+                    RequestedBaseQty = shortage.NetProcurementRequiredBaseQty
+                });
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage ?? "Unable to create the Purchase Requisition.";
+                ValidationErrors = result.ValidationErrors.ToDictionary(
+                    x => x.Key,
+                    x => x.Value,
+                    StringComparer.OrdinalIgnoreCase);
+                return;
+            }
+
+            StatusMessage = string.IsNullOrWhiteSpace(result.PrNo)
+                ? "Purchase Requisition created."
+                : $"Purchase Requisition {result.PrNo} created.";
+            if (Detail is not null)
+            {
+                var refreshed = await Requests.GetAsync(Detail.Uid);
+                if (refreshed.Succeeded && refreshed.Data is not null)
+                {
+                    ApplyDetail(refreshed.Data);
+                }
             }
         }
         finally
@@ -653,6 +820,9 @@ public partial class SaDeliveryRequestEntry : PageBase
         public decimal SourceQty { get; init; }
         public decimal Quantity { get; set; }
         public DateTime? RequestedDeliveryDate { get; init; }
+        public string? CustomerCode { get; init; }
+        public string? WarehouseCode { get; init; }
+        public string? ProjectCode { get; init; }
 
         public static SourceEditorRow From(SaDeliveryRequestSourceTrace source) => new()
         {
@@ -663,7 +833,10 @@ public partial class SaDeliveryRequestEntry : PageBase
             ProductionUom = source.ProductionUom,
             SourceQty = source.ProductionDemandQty,
             Quantity = source.AllocatedProductionQty,
-            RequestedDeliveryDate = source.RequestedDeliveryDate
+            RequestedDeliveryDate = source.RequestedDeliveryDate,
+            CustomerCode = source.CustomerCode,
+            WarehouseCode = source.WarehouseCode,
+            ProjectCode = source.ProjectCode
         };
 
         public static SourceEditorRow From(SaDeliveryRequestEligibleSource source) => new()
@@ -676,7 +849,10 @@ public partial class SaDeliveryRequestEntry : PageBase
             ProductionUom = source.ProductionUom,
             SourceQty = source.ProductionDemandQty,
             Quantity = source.AvailableForDr,
-            RequestedDeliveryDate = source.RequestedDeliveryDate
+            RequestedDeliveryDate = source.RequestedDeliveryDate,
+            CustomerCode = source.CustomerCode,
+            WarehouseCode = source.WarehouseCode,
+            ProjectCode = source.ProjectCode
         };
     }
 
@@ -687,4 +863,6 @@ public partial class SaDeliveryRequestEntry : PageBase
         Cancel,
         Delete
     }
+
+    protected sealed record DefinitionOption(string Code, string? Name, int Version, bool IsDefault, string Label);
 }

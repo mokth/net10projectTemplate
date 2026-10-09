@@ -49,6 +49,7 @@ public sealed class ProductionMaterialStockCandidate
     public decimal ReservedCurrentDocumentBaseQty { get; init; }
     /// <summary>Usable stock after other-draft and current-document proposal reservations.</summary>
     public decimal AvailableToAllocateBaseQty { get; init; }
+    public bool LotControl { get; init; }
     public string BaseUom { get; init; } = string.Empty;
     public decimal SuggestedBaseQty { get; init; }
     public decimal? UnitPrice { get; init; }

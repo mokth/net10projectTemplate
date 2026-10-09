@@ -28,14 +28,35 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
     protected string SearchText = string.Empty;
     protected int TotalCount;
     protected List<SaDeliveryRequestListRow> CompactRows { get; set; } = [];
+    protected SaDeliveryRequestKpis Kpis { get; private set; } = new();
 
     protected bool CanAdd;
     protected bool CanEdit;
 
     protected string? AppliedStatus;
+    protected string? AppliedSoNo;
+    protected string? AppliedCustomerCode;
+    protected string? AppliedProductCode;
+    protected string? AppliedWarehouseCode;
+    protected string? AppliedProjectCode;
+    protected string? AppliedPriority;
+    protected string? AppliedFulfilmentStatus;
+    protected string? AppliedWorkOrderNo;
+    protected string? AppliedBlockerCode;
+    protected string? AppliedDueMode;
     protected DateTime? AppliedDateFrom;
     protected DateTime? AppliedDateTo;
     protected string DraftStatusKey = "all";
+    protected string DraftSoNo = string.Empty;
+    protected string DraftCustomerCode = string.Empty;
+    protected string DraftProductCode = string.Empty;
+    protected string DraftWarehouseCode = string.Empty;
+    protected string DraftProjectCode = string.Empty;
+    protected string DraftPriorityKey = "all";
+    protected string DraftFulfilmentStatusKey = "all";
+    protected string DraftDueModeKey = "all";
+    protected string DraftBlockerCodeKey = "all";
+    protected string DraftWorkOrderNo = string.Empty;
     protected DateTime? DraftDateFrom;
     protected DateTime? DraftDateTo;
 
@@ -46,6 +67,16 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
     protected bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(SearchText)
         || !string.IsNullOrWhiteSpace(AppliedStatus)
+        || !string.IsNullOrWhiteSpace(AppliedSoNo)
+        || !string.IsNullOrWhiteSpace(AppliedCustomerCode)
+        || !string.IsNullOrWhiteSpace(AppliedProductCode)
+        || !string.IsNullOrWhiteSpace(AppliedWarehouseCode)
+        || !string.IsNullOrWhiteSpace(AppliedProjectCode)
+        || !string.IsNullOrWhiteSpace(AppliedPriority)
+        || !string.IsNullOrWhiteSpace(AppliedFulfilmentStatus)
+        || !string.IsNullOrWhiteSpace(AppliedWorkOrderNo)
+        || !string.IsNullOrWhiteSpace(AppliedBlockerCode)
+        || !string.IsNullOrWhiteSpace(AppliedDueMode)
         || AppliedDateFrom is not null
         || AppliedDateTo is not null;
 
@@ -59,22 +90,75 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
         new(SaDeliveryRequestStatuses.Cancelled, "CANCELLED")
     ];
 
+    protected IReadOnlyList<StatusFilterOption> PriorityFilterOptions { get; } =
+    [
+        new("all", "All priorities"),
+        new(SaDeliveryRequestPriorities.Normal, "NORMAL"),
+        new(SaDeliveryRequestPriorities.High, "HIGH"),
+        new(SaDeliveryRequestPriorities.Urgent, "URGENT")
+    ];
+
+    protected IReadOnlyList<StatusFilterOption> FulfilmentFilterOptions { get; } =
+    [
+        new("all", "All fulfilment"),
+        new(SaDeliveryRequestFulfilmentStatuses.Open, "OPEN"),
+        new(SaDeliveryRequestFulfilmentStatuses.PartialReady, "PARTIAL READY"),
+        new(SaDeliveryRequestFulfilmentStatuses.Ready, "READY"),
+        new(SaDeliveryRequestFulfilmentStatuses.PartialDelivered, "PARTIAL DELIVERED"),
+        new(SaDeliveryRequestFulfilmentStatuses.Completed, "COMPLETED")
+    ];
+
+    protected IReadOnlyList<StatusFilterOption> BlockerFilterOptions { get; } =
+    [
+        new("all", "All blockers"),
+        new(SaDeliveryRequestBlockerCodes.None, "NONE"),
+        new(SaDeliveryRequestBlockerCodes.WoNotPlanned, "WO NOT PLANNED"),
+        new(SaDeliveryRequestBlockerCodes.MaterialShortage, "MATERIAL SHORTAGE"),
+        new(SaDeliveryRequestBlockerCodes.ProcurementLate, "PROCUREMENT LATE"),
+        new(SaDeliveryRequestBlockerCodes.ProductionLate, "PRODUCTION LATE"),
+        new(SaDeliveryRequestBlockerCodes.StockNotReady, "STOCK NOT READY")
+    ];
+
+    protected IReadOnlyList<StatusFilterOption> DueModeFilterOptions { get; } =
+    [
+        new("all", "All due modes"),
+        new(SaDeliveryRequestDueModes.Open, "OPEN"),
+        new(SaDeliveryRequestDueModes.DueToday, "DUE TODAY"),
+        new(SaDeliveryRequestDueModes.DueThisWeek, "DUE THIS WEEK"),
+        new(SaDeliveryRequestDueModes.Overdue, "OVERDUE"),
+        new(SaDeliveryRequestDueModes.AtRisk, "AT RISK"),
+        new(SaDeliveryRequestDueModes.ProductionRequired, "PRODUCTION REQUIRED"),
+        new(SaDeliveryRequestDueModes.MaterialShortage, "MATERIAL SHORTAGE"),
+        new(SaDeliveryRequestDueModes.ReadyForDelivery, "READY FOR DELIVERY"),
+        new(SaDeliveryRequestDueModes.Partial, "PARTIAL"),
+        new(SaDeliveryRequestDueModes.Completed, "COMPLETED")
+    ];
+
     protected List<GridColumnData> Columns { get; } =
     [
         new() { Caption = "DR No.", FieldName = nameof(SaDeliveryRequestListRow.DeliveryRequestNo), Width = "140px", VisibleIndex = 1 },
-        new() { Caption = "Product", FieldName = nameof(SaDeliveryRequestListRow.ProductCode), Width = "125px", VisibleIndex = 2 },
-        new() { Caption = "Description", FieldName = nameof(SaDeliveryRequestListRow.ProductDescription), VisibleIndex = 3, AllowSort = false },
-        new() { Caption = "UOM", FieldName = nameof(SaDeliveryRequestListRow.ProductionUom), Width = "90px", VisibleIndex = 4 },
-        new() { Caption = "Requested", FieldName = nameof(SaDeliveryRequestListRow.RequestedQty), DataType = "decimal", DisplayFormat = "n4", Width = "115px", VisibleIndex = 5 },
-        new() { Caption = "WO allocated", FieldName = nameof(SaDeliveryRequestListRow.WoAllocatedQty), DataType = "decimal", DisplayFormat = "n4", Width = "125px", VisibleIndex = 6, AllowSort = false },
-        new() { Caption = "Unplanned", FieldName = nameof(SaDeliveryRequestListRow.UnplannedQty), DataType = "decimal", DisplayFormat = "n4", Width = "115px", VisibleIndex = 7, AllowSort = false },
-        new() { Caption = "Produced", FieldName = nameof(SaDeliveryRequestListRow.ProducedQty), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 8, AllowSort = false },
-        new() { Caption = "Required date", FieldName = nameof(SaDeliveryRequestListRow.RequiredDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "125px", VisibleIndex = 9, SortIndex = 0, SortOrder = GridColumnSortOrder.Descending },
-        new() { Caption = "Status", FieldName = nameof(SaDeliveryRequestListRow.Status), Width = "125px", VisibleIndex = 10, AllowSort = false },
-        new() { Caption = "SO sources", FieldName = nameof(SaDeliveryRequestListRow.SourceCount), DataType = "int", Width = "100px", VisibleIndex = 11, AllowSort = false },
-        new() { Caption = "Work Orders", FieldName = nameof(SaDeliveryRequestListRow.WorkOrderCount), DataType = "int", Width = "110px", VisibleIndex = 12, AllowSort = false },
-        new() { Caption = "Created by", FieldName = nameof(SaDeliveryRequestListRow.CreatedBy), Width = "120px", VisibleIndex = 13 },
-        new() { Caption = "Created date", FieldName = nameof(SaDeliveryRequestListRow.CreatedDate), DataType = "datetime", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "150px", VisibleIndex = 14 }
+        new() { Caption = "Priority", FieldName = nameof(SaDeliveryRequestListRow.Priority), Width = "95px", VisibleIndex = 2 },
+        new() { Caption = "Customer", FieldName = nameof(SaDeliveryRequestListRow.CustomerCode), Width = "115px", VisibleIndex = 3 },
+        new() { Caption = "Product", FieldName = nameof(SaDeliveryRequestListRow.ProductCode), Width = "125px", VisibleIndex = 4 },
+        new() { Caption = "Description", FieldName = nameof(SaDeliveryRequestListRow.ProductDescription), VisibleIndex = 5, AllowSort = false },
+        new() { Caption = "Warehouse", FieldName = nameof(SaDeliveryRequestListRow.WarehouseCode), Width = "110px", VisibleIndex = 6 },
+        new() { Caption = "Project", FieldName = nameof(SaDeliveryRequestListRow.ProjectCode), Width = "110px", VisibleIndex = 7 },
+        new() { Caption = "UOM", FieldName = nameof(SaDeliveryRequestListRow.ProductionUom), Width = "90px", VisibleIndex = 8 },
+        new() { Caption = "Requested", FieldName = nameof(SaDeliveryRequestListRow.RequestedQty), DataType = "decimal", DisplayFormat = "n4", Width = "115px", VisibleIndex = 9 },
+        new() { Caption = "Ready", FieldName = nameof(SaDeliveryRequestListRow.ReadyQty), DataType = "decimal", DisplayFormat = "n4", Width = "105px", VisibleIndex = 10, AllowSort = false },
+        new() { Caption = "Production required", FieldName = nameof(SaDeliveryRequestListRow.ProductionRequiredQty), DataType = "decimal", DisplayFormat = "n4", Width = "145px", VisibleIndex = 11, AllowSort = false },
+        new() { Caption = "Unplanned", FieldName = nameof(SaDeliveryRequestListRow.ProductionUnplannedQty), DataType = "decimal", DisplayFormat = "n4", Width = "115px", VisibleIndex = 12, AllowSort = false },
+        new() { Caption = "WO allocated", FieldName = nameof(SaDeliveryRequestListRow.WoAllocatedQty), DataType = "decimal", DisplayFormat = "n4", Width = "125px", VisibleIndex = 13, AllowSort = false },
+        new() { Caption = "Produced", FieldName = nameof(SaDeliveryRequestListRow.ProducedQty), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 14, AllowSort = false },
+        new() { Caption = "Delivered", FieldName = nameof(SaDeliveryRequestListRow.DeliveredQty), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 15, AllowSort = false },
+        new() { Caption = "Required date", FieldName = nameof(SaDeliveryRequestListRow.RequiredDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", Width = "125px", VisibleIndex = 16, SortIndex = 0, SortOrder = GridColumnSortOrder.Descending },
+        new() { Caption = "Lifecycle", FieldName = nameof(SaDeliveryRequestListRow.Status), Width = "125px", VisibleIndex = 17, AllowSort = false },
+        new() { Caption = "Fulfilment", FieldName = nameof(SaDeliveryRequestListRow.FulfilmentStatus), Width = "145px", VisibleIndex = 18, AllowSort = false },
+        new() { Caption = "Blocker", FieldName = nameof(SaDeliveryRequestListRow.BlockerCode), Width = "145px", VisibleIndex = 19, AllowSort = false },
+        new() { Caption = "SO sources", FieldName = nameof(SaDeliveryRequestListRow.SourceCount), DataType = "int", Width = "100px", VisibleIndex = 20, AllowSort = false },
+        new() { Caption = "Work Orders", FieldName = nameof(SaDeliveryRequestListRow.WorkOrderCount), DataType = "int", Width = "110px", VisibleIndex = 21, AllowSort = false },
+        new() { Caption = "Created by", FieldName = nameof(SaDeliveryRequestListRow.CreatedBy), Width = "120px", VisibleIndex = 22 },
+        new() { Caption = "Created date", FieldName = nameof(SaDeliveryRequestListRow.CreatedDate), DataType = "datetime", DisplayFormat = "dd/MM/yyyy HH:mm", Width = "150px", VisibleIndex = 23 }
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -185,6 +269,16 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
     protected void OpenFilterPopup()
     {
         DraftStatusKey = string.IsNullOrWhiteSpace(AppliedStatus) ? "all" : AppliedStatus;
+        DraftSoNo = AppliedSoNo ?? string.Empty;
+        DraftCustomerCode = AppliedCustomerCode ?? string.Empty;
+        DraftProductCode = AppliedProductCode ?? string.Empty;
+        DraftWarehouseCode = AppliedWarehouseCode ?? string.Empty;
+        DraftProjectCode = AppliedProjectCode ?? string.Empty;
+        DraftPriorityKey = string.IsNullOrWhiteSpace(AppliedPriority) ? "all" : AppliedPriority;
+        DraftFulfilmentStatusKey = string.IsNullOrWhiteSpace(AppliedFulfilmentStatus) ? "all" : AppliedFulfilmentStatus;
+        DraftBlockerCodeKey = string.IsNullOrWhiteSpace(AppliedBlockerCode) ? "all" : AppliedBlockerCode;
+        DraftDueModeKey = string.IsNullOrWhiteSpace(AppliedDueMode) ? "all" : AppliedDueMode;
+        DraftWorkOrderNo = AppliedWorkOrderNo ?? string.Empty;
         DraftDateFrom = AppliedDateFrom;
         DraftDateTo = AppliedDateTo;
         FilterPopupVisible = true;
@@ -193,6 +287,16 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
     protected async Task ApplyFiltersAsync()
     {
         AppliedStatus = string.Equals(DraftStatusKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftStatusKey;
+        AppliedSoNo = NullIfWhiteSpace(DraftSoNo);
+        AppliedCustomerCode = NullIfWhiteSpace(DraftCustomerCode);
+        AppliedProductCode = NullIfWhiteSpace(DraftProductCode);
+        AppliedWarehouseCode = NullIfWhiteSpace(DraftWarehouseCode);
+        AppliedProjectCode = NullIfWhiteSpace(DraftProjectCode);
+        AppliedPriority = string.Equals(DraftPriorityKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftPriorityKey;
+        AppliedFulfilmentStatus = string.Equals(DraftFulfilmentStatusKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftFulfilmentStatusKey;
+        AppliedBlockerCode = string.Equals(DraftBlockerCodeKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftBlockerCodeKey;
+        AppliedDueMode = string.Equals(DraftDueModeKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftDueModeKey;
+        AppliedWorkOrderNo = NullIfWhiteSpace(DraftWorkOrderNo);
         AppliedDateFrom = DraftDateFrom;
         AppliedDateTo = DraftDateTo;
         FilterPopupVisible = false;
@@ -203,9 +307,29 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
     protected async Task ClearFiltersAsync()
     {
         DraftStatusKey = "all";
+        DraftSoNo = string.Empty;
+        DraftCustomerCode = string.Empty;
+        DraftProductCode = string.Empty;
+        DraftWarehouseCode = string.Empty;
+        DraftProjectCode = string.Empty;
+        DraftPriorityKey = "all";
+        DraftFulfilmentStatusKey = "all";
+        DraftDueModeKey = "all";
+        DraftBlockerCodeKey = "all";
+        DraftWorkOrderNo = string.Empty;
         DraftDateFrom = null;
         DraftDateTo = null;
         AppliedStatus = null;
+        AppliedSoNo = null;
+        AppliedCustomerCode = null;
+        AppliedProductCode = null;
+        AppliedWarehouseCode = null;
+        AppliedProjectCode = null;
+        AppliedPriority = null;
+        AppliedFulfilmentStatus = null;
+        AppliedWorkOrderNo = null;
+        AppliedBlockerCode = null;
+        AppliedDueMode = null;
         AppliedDateFrom = null;
         AppliedDateTo = null;
         FilterPopupVisible = false;
@@ -226,6 +350,12 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
         string.Equals(status, SaDeliveryRequestStatuses.Cancelled, StringComparison.OrdinalIgnoreCase) ? "is-off" :
         string.Equals(status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase) ? "is-hold" : "is-on";
 
+    protected static string FulfilmentChipClass(SaDeliveryRequestListRow row) =>
+        row.IsAtRisk ? "is-off" :
+        string.Equals(row.FulfilmentStatus, SaDeliveryRequestFulfilmentStatuses.Completed, StringComparison.OrdinalIgnoreCase) ? "is-on" :
+        string.Equals(row.FulfilmentStatus, SaDeliveryRequestFulfilmentStatuses.Ready, StringComparison.OrdinalIgnoreCase) ? "is-on" :
+        "is-hold";
+
     private async Task ReloadGridAsync()
     {
         SyncDataSourceFilters();
@@ -240,6 +370,17 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
         {
             SearchText = string.IsNullOrWhiteSpace(SearchText) ? null : SearchText.Trim(),
             Status = AppliedStatus,
+            LifecycleStatus = AppliedStatus,
+            SoNo = AppliedSoNo,
+            CustomerCode = AppliedCustomerCode,
+            ProductCode = AppliedProductCode,
+            WarehouseCode = AppliedWarehouseCode,
+            ProjectCode = AppliedProjectCode,
+            Priority = AppliedPriority,
+            FulfilmentStatus = AppliedFulfilmentStatus,
+            WorkOrderNo = AppliedWorkOrderNo,
+            BlockerCode = AppliedBlockerCode,
+            DueMode = AppliedDueMode,
             RequiredDateFrom = AppliedDateFrom,
             RequiredDateTo = AppliedDateTo,
             SortDescending = true
@@ -256,6 +397,7 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
         {
             CompactRows = result.Data.Rows.ToList();
             TotalCount = result.Data.TotalCount;
+            await RefreshKpisAsync();
         }
         else
         {
@@ -283,6 +425,18 @@ public partial class SaDeliveryRequestList : PageBase, IDisposable
         await InvokeAsync(() => TotalCount = result.Data.TotalCount);
         return (result.Data.Rows, result.Data.TotalCount);
     }
+
+    private async Task RefreshKpisAsync()
+    {
+        var result = await Requests.GetKpisAsync(DataSource.CurrentQuery);
+        if (result.Succeeded && result.Data is not null)
+        {
+            Kpis = result.Data;
+        }
+    }
+
+    private static string? NullIfWhiteSpace(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     protected sealed record StatusFilterOption(string Key, string Name);
 }
@@ -338,9 +492,19 @@ public sealed class SaDeliveryRequestGridDataSource : GridCustomDataSource
         {
             SearchText = source.SearchText,
             Status = source.Status,
+            SoNo = source.SoNo,
+            CustomerCode = source.CustomerCode,
+            LifecycleStatus = source.LifecycleStatus,
             ProductCode = source.ProductCode,
+            WarehouseCode = source.WarehouseCode,
+            ProjectCode = source.ProjectCode,
+            Priority = source.Priority,
+            FulfilmentStatus = source.FulfilmentStatus,
+            WorkOrderNo = source.WorkOrderNo,
+            BlockerCode = source.BlockerCode,
             RequiredDateFrom = source.RequiredDateFrom,
             RequiredDateTo = source.RequiredDateTo,
+            DueMode = source.DueMode,
             SortField = source.SortField,
             SortDescending = source.SortDescending,
             Skip = source.Skip,

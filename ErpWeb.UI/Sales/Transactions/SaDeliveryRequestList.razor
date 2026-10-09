@@ -1,6 +1,7 @@
 @page "/sales/delivery-requests"
 @inherits PageBase
 @using DevExpress.Blazor
+@using ErpWeb.Core.Sales
 @using ErpWeb.Model.Entities.Sales
 
 <PageTitle>Delivery Requests</PageTitle>
@@ -43,12 +44,55 @@
             </div>
         </header>
 
+        <section class="iv-card dr-kpi-card" aria-label="Delivery Request fulfilment KPIs">
+            <div class="dr-kpi-grid">
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Open DRs</span>
+                    <strong class="iv-kpi__value">@Kpis.OpenDrCount.ToString("N0")</strong>
+                    <span class="iv-kpi__sub">@Kpis.OpenDrQty.ToString("n4") open qty</span>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Due today</span>
+                    <strong class="iv-kpi__value">@Kpis.DueTodayCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Due this week</span>
+                    <strong class="iv-kpi__value">@Kpis.DueThisWeekCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Overdue</span>
+                    <strong class="iv-kpi__value">@Kpis.OverdueCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">At risk</span>
+                    <strong class="iv-kpi__value">@Kpis.AtRiskCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Ready for delivery</span>
+                    <strong class="iv-kpi__value">@Kpis.ReadyForDeliveryCount.ToString("N0")</strong>
+                    <span class="iv-kpi__sub">@Kpis.ReadyForDeliveryQty.ToString("n4") qty</span>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Material shortage</span>
+                    <strong class="iv-kpi__value">@Kpis.MaterialShortageCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">Partial fulfilment</span>
+                    <strong class="iv-kpi__value">@Kpis.PartialFulfilmentCount.ToString("N0")</strong>
+                </div>
+                <div class="iv-kpi">
+                    <span class="iv-kpi__label">On-time fulfilment</span>
+                    <strong class="iv-kpi__value">@Kpis.OnTimeFulfilmentPercent.ToString("n2")%</strong>
+                </div>
+            </div>
+        </section>
+
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
                     <DxTextBox Text="@SearchText"
                                TextChanged="OnSearchTextChanged"
-                               NullText="Search DR no, product, description…"
+                               NullText="Search DR, SO, customer, product, WO…"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                CssClass="w-100" />
                 </div>
@@ -103,10 +147,15 @@
                                     @onclick="() => NavigateView(row.Uid)">
                                 <span class="iv-list-compact__code">@row.DeliveryRequestNo</span>
                                 <span class="iv-list-compact__desc">
-                                    @row.ProductCode · @row.RequiredDate.ToString("dd/MM/yyyy")
+                                    @row.ProductCode · @row.ReadyQty.ToString("n4")/@row.RequestedQty.ToString("n4") ready · @row.RequiredDate.ToString("dd/MM/yyyy")
                                 </span>
                                 <div class="iv-list-compact__meta">
                                     <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                                    <span class="iv-status @FulfilmentChipClass(row)">@row.FulfilmentStatus</span>
+                                    @if (!string.Equals(row.BlockerCode, SaDeliveryRequestBlockerCodes.None, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="iv-status is-off">@row.BlockerCode</span>
+                                    }
                                 </div>
                             </button>
                         }
@@ -131,6 +180,68 @@
                                         ValueFieldName="@nameof(StatusFilterOption.Key)"
                                         @bind-Value="@DraftStatusKey"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="SO no." ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftSoNo" NullText="SO number" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Customer" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftCustomerCode" NullText="Customer code" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Product" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftProductCode" NullText="Product code" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftWarehouseCode" NullText="Warehouse code" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Project" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftProjectCode" NullText="Project code" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Work Order" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="DraftWorkOrderNo" NullText="Work Order number" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Priority" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@PriorityFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="DraftPriorityKey" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Fulfilment" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@FulfilmentFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="DraftFulfilmentStatusKey" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Blocker" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@BlockerFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="DraftBlockerCodeKey" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Due mode" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@DueModeFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="DraftDueModeKey" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Required date from" ColSpanMd="6">

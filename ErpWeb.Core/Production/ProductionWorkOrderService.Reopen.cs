@@ -244,6 +244,12 @@ public sealed partial class ProductionWorkOrderService
         ProductionWorkOrder order,
         CancellationToken cancellationToken)
     {
+        var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, order, cancellationToken);
+        if (procurementBlocker is not null)
+        {
+            return procurementBlocker;
+        }
+
         var postingBlocker = await GetReopenPostingLinkBlockerAsync(db, order.Uid, cancellationToken);
         if (postingBlocker is not null)
         {
@@ -267,6 +273,34 @@ public sealed partial class ProductionWorkOrderService
         }
 
         return null;
+    }
+
+    private static async Task<string?> GetLinkedProcurementBlockerAsync(
+        AppDbContext db,
+        ProductionWorkOrder order,
+        CancellationToken cancellationToken)
+    {
+        var materialIds = await db.ProductionWorkOrderMaterials.AsNoTracking()
+            .Where(x => x.WorkOrderId == order.Uid)
+            .Select(x => x.Uid)
+            .ToListAsync(cancellationToken);
+        if (materialIds.Count == 0)
+        {
+            return null;
+        }
+
+        var linked = await db.PoPrDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == order.CompanyCode
+                && x.BranchCode == order.BranchCode
+                && x.WorkOrderMaterialId.HasValue
+                && materialIds.Contains(x.WorkOrderMaterialId.Value))
+            .OrderBy(x => x.PrNo)
+            .ThenBy(x => x.Line)
+            .Select(x => new { x.PrNo, x.Line, x.WorkOrderMaterialId })
+            .FirstOrDefaultAsync(cancellationToken);
+        return linked is null
+            ? null
+            : $"Work Order material {linked.WorkOrderMaterialId} is referenced by PR {linked.PrNo} line {linked.Line}. Resolve the linked procurement line before changing or deleting the Work Order material snapshot.";
     }
 
     private static async Task<bool> HasWorkOrderExecutionProjectionAsync(

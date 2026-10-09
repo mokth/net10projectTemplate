@@ -43,5 +43,14 @@ public class PoPrDetailConfiguration : IEntityTypeConfiguration<PoPrDetail>
         builder.Property(e => e.ToWarehouse).HasMaxLength(20);
         builder.Property(e => e.SoNo).HasColumnName("SONo").HasMaxLength(30);
         builder.Property(e => e.SoLine).HasColumnName("SOLine");
+        builder.Property(e => e.WorkOrderMaterialId).HasColumnName("WorkOrderMaterialID");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.WorkOrderMaterialId })
+            .HasDatabaseName("IX_POPRDtl_Company_Branch_WorkOrderMaterialID");
+
+        builder.HasOne<ErpWeb.Model.Entities.Production.ProductionWorkOrderMaterial>()
+            .WithMany()
+            .HasForeignKey(e => e.WorkOrderMaterialId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

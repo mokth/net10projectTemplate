@@ -18,6 +18,7 @@ namespace ErpWeb.Core.Sales;
 
 public sealed class SaDoService : ISaDoService
 {
+    private const decimal QuantityTolerance = 0.0001m;
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
@@ -35,6 +36,7 @@ public sealed class SaDoService : ISaDoService
     private readonly ISaDocApplication _docApplication;
     private readonly ISaCustLookupService _custLookups;
     private readonly ILogger<SaDoService> _logger;
+    private readonly ISaDeliveryRequestFulfilmentService? _fulfilment;
 
     public SaDoService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -53,7 +55,8 @@ public sealed class SaDoService : ISaDoService
         ISaSoRepository salesOrders,
         ISaDocApplication docApplication,
         ISaCustLookupService custLookups,
-        ILogger<SaDoService> logger)
+        ILogger<SaDoService> logger,
+        ISaDeliveryRequestFulfilmentService? fulfilment = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -72,6 +75,7 @@ public sealed class SaDoService : ISaDoService
         _docApplication = docApplication;
         _custLookups = custLookups;
         _logger = logger;
+        _fulfilment = fulfilment;
     }
 
     // ─────────────────────────── Lookups ───────────────────────────
@@ -987,7 +991,8 @@ public sealed class SaDoService : ISaDoService
                             StdUom = x.StdUom,
                             FrWarehouse = x.FrWarehouse ?? string.Empty,
                             UnitPrice = x.UnitPrice,
-                            StockControl = x.StockControl
+                            StockControl = x.StockControl,
+                            DeliveryRequestSourceId = x.DeliveryRequestSourceId
                         })
                         .ToList()
                 },
@@ -1004,6 +1009,33 @@ public sealed class SaDoService : ISaDoService
                         IvSpShipmentErrorKind.Validation => SaDoErrorKind.Validation,
                         _ => SaDoErrorKind.BusinessRule
                     });
+            }
+
+            if (_fulfilment is not null)
+            {
+                var allocatedByLine = shipResult.Lines
+                    .GroupBy(x => x.SoLineNo)
+                    .ToDictionary(g => g.Key, g => IvQty.Round(g.Sum(x => x.AllocatedStdQty)));
+                foreach (var detail in deliveryOrder.Details.Where(x => x.DeliveryRequestSourceId is not null))
+                {
+                    var allocated = allocatedByLine.GetValueOrDefault(detail.Line);
+                    if (allocated > QuantityTolerance)
+                    {
+                        await _fulfilment.TransferToShipmentInTransactionAsync(
+                            db,
+                            detail.DeliveryRequestSourceId!.Value,
+                            allocated,
+                            new InventoryTenantScope
+                            {
+                                CompanyCode = context.CompanyCode!,
+                                BranchCode = context.BranchCode!,
+                                LocationCode = context.LocationCode!,
+                                UserId = context.UserId!
+                            },
+                            "Transferred to NEW Delivery Order shipment",
+                            cancellationToken);
+                    }
+                }
             }
 
             await db.SaveChangesAsync(cancellationToken);
@@ -1083,7 +1115,8 @@ public sealed class SaDoService : ISaDoService
                 DocumentDate = deliveryOrder.DoDate.Date,
                 ICode = line.ICode ?? string.Empty,
                 FrWarehouse = line.FrWarehouse ?? string.Empty,
-                RequestedStdQty = line.StdQty
+                RequestedStdQty = line.StdQty,
+                DeliveryRequestSourceId = line.DeliveryRequestSourceId
             },
             cancellationToken);
 
@@ -1205,6 +1238,7 @@ public sealed class SaDoService : ISaDoService
                     StdUom = line.StdUom,
                     FrWarehouse = line.FrWarehouse ?? string.Empty,
                     UnitPrice = line.UnitPrice,
+                    DeliveryRequestSourceId = line.DeliveryRequestSourceId,
                     Lots = (lots ?? []).Select(x => new IvSpSubmittedLot
                     {
                         FromBalLocId = x.FromBalLocId,
@@ -1773,7 +1807,8 @@ public sealed class SaDoService : ISaDoService
                             StdUom = d.StdUom,
                             FrWarehouse = d.FrWarehouse ?? string.Empty,
                             UnitPrice = d.UnitPrice,
-                            StockControl = d.StockControl
+                            StockControl = d.StockControl,
+                            DeliveryRequestSourceId = d.DeliveryRequestSourceId
                         }).ToList(),
                         LockedBalances = lockedBalances
                     },
@@ -2401,6 +2436,7 @@ public sealed class SaDoService : ISaDoService
             short? custRel = null;
             string? custPo = null;
             string? sellingUom = item.SellingUom;
+            SaSoDetail? salesOrderDetail = null;
             if (soNo.Length > 0)
             {
                 if (line.SoLine is not > 0)
@@ -2431,14 +2467,103 @@ public sealed class SaDoService : ISaDoService
                     {
                         custRel = salesOrder.CustRel;
                         custPo = salesOrder.CustPo;
-                        var soDetail = salesOrder.Details.FirstOrDefault(x => x.Line == soLine.Value && x.CustRel == salesOrder.CustRel);
-                        if (soDetail is null)
+                        salesOrderDetail = salesOrder.Details.FirstOrDefault(x => x.Line == soLine.Value && x.CustRel == salesOrder.CustRel);
+                        if (salesOrderDetail is null)
                         {
                             errors[$"Lines[{lineNo - 1}].SoLine"] = $"Sales Order {soNo} line {soLine.Value} was not found.";
                         }
                         else
                         {
-                            sellingUom = soDetail.SellingUom ?? item.SellingUom;
+                            sellingUom = salesOrderDetail.SellingUom ?? item.SellingUom;
+                        }
+                    }
+                }
+            }
+
+            long? deliveryRequestSourceId = line.DeliveryRequestSourceId;
+            if (deliveryRequestSourceId is long sourceId)
+            {
+                if (salesOrderDetail is null || soLine is null || custRel is null)
+                {
+                    errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                        "A Delivery Request line must reference an exact Sales Order line.";
+                }
+                else
+                {
+                    var sourceContext = await LockDeliveryRequestSourceAsync(
+                        db, companyCode, branchCode, sourceId, cancellationToken);
+                    if (sourceContext is null)
+                    {
+                        errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                            "The Delivery Request source was not found for this company and branch.";
+                    }
+                    else
+                    {
+                        var source = sourceContext.Source;
+                        var deliveryRequest = sourceContext.DeliveryRequest;
+                        if (!source.IsActive)
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Request source is no longer active.";
+                        }
+                        else if (deliveryRequest.Status is not (SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction))
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "Only RELEASED or IN_PRODUCTION Delivery Requests can create Delivery Orders.";
+                        }
+                        else if (!string.Equals(source.SoNo, soNo, StringComparison.OrdinalIgnoreCase)
+                            || source.CustRel != custRel
+                            || source.SoLine != soLine)
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Request source does not match the Sales Order line.";
+                        }
+                        else if (!string.Equals(source.CustomerCode, custCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Request source customer does not match the Delivery Order customer.";
+                        }
+                        else if (!string.Equals(source.ProductCode, iCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Request source product does not match the Delivery Order line.";
+                        }
+                        else if (!string.Equals(source.ProductionUom, item.StdUom, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Order standard UOM does not match the Delivery Request source.";
+                        }
+                        else if (string.IsNullOrWhiteSpace(deliveryRequest.WarehouseCode)
+                            || !string.Equals(warehouse, deliveryRequest.WarehouseCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].FrWarehouse"] =
+                                "The Delivery Order warehouse must match the Delivery Request fulfilment warehouse.";
+                        }
+                        else if (!string.Equals(
+                            NormalizeOptional(request.ProjId),
+                            NormalizeOptional(deliveryRequest.ProjectCode),
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].DeliveryRequestSourceId"] =
+                                "The Delivery Order project must match the Delivery Request project.";
+                        }
+                        else
+                        {
+                            var otherDoQty = await (
+                                from detail in db.SaDoDetails.AsNoTracking()
+                                join deliveryOrder in db.SaDos.AsNoTracking()
+                                    on new { detail.CompanyCode, detail.BranchCode, detail.DoNo }
+                                    equals new { deliveryOrder.CompanyCode, deliveryOrder.BranchCode, deliveryOrder.DoNo }
+                                where detail.DeliveryRequestSourceId == sourceId
+                                    && deliveryOrder.DeletedAtUtc == null
+                                    && (excludeDoNo == null || deliveryOrder.DoNo != excludeDoNo)
+                                select (decimal?)detail.StdQty).SumAsync(cancellationToken) ?? 0m;
+                            var remaining = Math.Max(source.AllocatedProductionQty - otherDoQty, 0m);
+                            if (stdQty <= 0m || stdQty > remaining + QuantityTolerance)
+                            {
+                                errors[$"Lines[{lineNo - 1}].Qty"] =
+                                    $"The Delivery Request source has only {remaining:N4} standard quantity remaining.";
+                            }
                         }
                     }
                 }
@@ -2478,6 +2603,7 @@ public sealed class SaDoService : ISaDoService
                 CustPo = custPo,
                 LinkDo = false,
                 SoConsumedQty = 0m,
+                DeliveryRequestSourceId = deliveryRequestSourceId,
                 ICode = iCode,
                 IDesc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim(),
                 Qty = qty,
@@ -2692,6 +2818,7 @@ public sealed class SaDoService : ISaDoService
                 BranchCode = deliveryOrder.BranchCode,
                 DoNo = deliveryOrder.DoNo,
                 Line = (short)line.Line,
+                DeliveryRequestSourceId = line.DeliveryRequestSourceId,
                 SoNo = line.SoNo,
                 CustRel = line.CustRel,
                 CustPo = TruncateOptional(line.CustPo, 50),
@@ -2748,6 +2875,7 @@ public sealed class SaDoService : ISaDoService
             return new SaDoLineDto
             {
                 Line = x.Line,
+                DeliveryRequestSourceId = x.DeliveryRequestSourceId,
                 SoNo = x.SoNo,
                 SoLine = x.SoLine,
                 CustRel = x.CustRel,
@@ -2872,6 +3000,53 @@ public sealed class SaDoService : ISaDoService
         }
 
         return rows.SingleOrDefault();
+    }
+
+    private async Task<DeliveryRequestSourceContext?> LockDeliveryRequestSourceAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long sourceId,
+        CancellationToken cancellationToken)
+    {
+        SaDeliveryRequestSource? source;
+        if (db.Database.IsSqlServer())
+        {
+            source = await db.SaDeliveryRequestSources.FromSqlInterpolated($@"
+SELECT * FROM dbo.SaDeliveryRequestSource WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+WHERE UID = {sourceId} AND CompanyCode = {companyCode} AND BranchCode = {branchCode}")
+                .AsTracking()
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+        else
+        {
+            source = await db.SaDeliveryRequestSources.SingleOrDefaultAsync(x => x.Uid == sourceId
+                && x.CompanyCode == companyCode
+                && x.BranchCode == branchCode, cancellationToken);
+        }
+
+        if (source is null)
+        {
+            return null;
+        }
+
+        SaDeliveryRequest? deliveryRequest;
+        if (db.Database.IsSqlServer())
+        {
+            deliveryRequest = await db.SaDeliveryRequests.FromSqlInterpolated($@"
+SELECT * FROM dbo.SaDeliveryRequest WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+WHERE UID = {source.DeliveryRequestId} AND CompanyCode = {companyCode} AND BranchCode = {branchCode}")
+                .AsTracking()
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+        else
+        {
+            deliveryRequest = await db.SaDeliveryRequests.SingleOrDefaultAsync(x => x.Uid == source.DeliveryRequestId
+                && x.CompanyCode == companyCode
+                && x.BranchCode == branchCode, cancellationToken);
+        }
+
+        return deliveryRequest is null ? null : new DeliveryRequestSourceContext(source, deliveryRequest);
     }
 
     private async Task<(IReadOnlyDictionary<string, SaSo> Headers, PrepareOutcome? Failure)> LockSalesOrdersForSaveAsync(
@@ -3201,6 +3376,7 @@ public sealed class SaDoService : ISaDoService
     private sealed class PreparedLine
     {
         public int Line { get; init; }
+        public long? DeliveryRequestSourceId { get; init; }
         public string SoNo { get; init; } = string.Empty;
         public short? SoLine { get; init; }
         public short? CustRel { get; init; }
@@ -3239,6 +3415,10 @@ public sealed class SaDoService : ISaDoService
         public string? Remarks { get; init; }
         public SaInvoiceLineCalcState Calc { get; init; } = new();
     }
+
+    private sealed record DeliveryRequestSourceContext(
+        SaDeliveryRequestSource Source,
+        SaDeliveryRequest DeliveryRequest);
 
     private readonly record struct UserContext(
         string? Error,

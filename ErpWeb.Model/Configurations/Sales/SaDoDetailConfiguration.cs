@@ -61,6 +61,7 @@ public class SaDoDetailConfiguration : IEntityTypeConfiguration<SaDoDetail>
         builder.Property(e => e.LocalAmount).HasPrecision(18, 2);
         builder.Property(e => e.Classification).HasMaxLength(50);
         builder.Property(e => e.SoConsumedQty).HasPrecision(18, 4);
+        builder.Property(e => e.DeliveryRequestSourceId).HasColumnName("DeliveryRequestSourceID");
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.DoNo, e.Line })
             .IsUnique()
@@ -68,5 +69,13 @@ public class SaDoDetailConfiguration : IEntityTypeConfiguration<SaDoDetail>
 
         builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.SoNo, e.SoLine })
             .HasDatabaseName("IX_SaDODetail_Company_Branch_SoNo_SoLine");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.DeliveryRequestSourceId })
+            .HasDatabaseName("IX_SaDODetail_Company_Branch_DeliveryRequestSourceID");
+
+        builder.HasOne(e => e.DeliveryRequestSource)
+            .WithMany()
+            .HasForeignKey(e => e.DeliveryRequestSourceId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

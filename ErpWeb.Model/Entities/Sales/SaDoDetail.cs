@@ -48,6 +48,8 @@ public class SaDoDetail
     public bool StockControl { get; set; } = true;
     public string? Classification { get; set; }
     public decimal SoConsumedQty { get; set; }
+    public long? DeliveryRequestSourceId { get; set; }
+    public SaDeliveryRequestSource? DeliveryRequestSource { get; set; }
 
     /// <summary>WHICH price source produced <see cref="UnitPrice"/>; the persisted token, e.g. <c>CUSTOMER_ITEM</c>.</summary>
     public string? PricingSource { get; set; }

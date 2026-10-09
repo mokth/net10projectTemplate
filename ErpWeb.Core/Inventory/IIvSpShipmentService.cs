@@ -119,6 +119,8 @@ public sealed class IvSpRequiredLine
     public bool StockControl { get; init; }
     /// <summary>True when the line is linked to a delivery order (already shipped on the DO).</summary>
     public bool LinkDo { get; init; }
+    /// <summary>Optional DR source whose soft reservation may be consumed by this shipment line.</summary>
+    public long? DeliveryRequestSourceId { get; init; }
 }
 
 public sealed class IvSpCreateOrReplaceCommand
@@ -153,6 +155,7 @@ public sealed class IvSpShipmentEditQuery
     public required string ICode { get; init; }
     public required string FrWarehouse { get; init; }
     public decimal RequestedStdQty { get; init; }
+    public long? DeliveryRequestSourceId { get; init; }
 }
 
 public sealed class IvSpSubmittedLot
@@ -177,6 +180,7 @@ public sealed class IvSpReplaceLineCommand
     public string? StdUom { get; init; }
     public required string FrWarehouse { get; init; }
     public decimal UnitPrice { get; init; }
+    public long? DeliveryRequestSourceId { get; init; }
     public required IReadOnlyList<IvSpSubmittedLot> Lots { get; init; }
 }
 

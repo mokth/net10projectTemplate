@@ -228,3 +228,47 @@ GO
 
 PRINT N'SaDeliveryRequest, SaDeliveryRequestSource, SaDeliveryRequestAudit, and PrWorkOrderDemandAllocation are ensured.';
 GO
+
+IF OBJECT_ID(N'dbo.SaDeliveryRequestStockReservation', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SaDeliveryRequestStockReservation
+    (
+        UID bigint IDENTITY(1,1) NOT NULL CONSTRAINT PK_SaDeliveryRequestStockReservation PRIMARY KEY,
+        DeliveryRequestID bigint NOT NULL,
+        DeliveryRequestSourceID bigint NOT NULL,
+        CompanyCode nvarchar(10) NOT NULL,
+        BranchCode nvarchar(10) NOT NULL,
+        BalLocID int NOT NULL,
+        ReservedQty decimal(18,4) NOT NULL,
+        IsActive bit NOT NULL CONSTRAINT DF_SaDeliveryRequestStockReservation_IsActive DEFAULT (1),
+        ReleasedDate datetime2 NULL,
+        ReleasedBy nvarchar(20) NULL,
+        ReleaseReason nvarchar(500) NULL,
+        CreatedDate datetime2 NULL,
+        CreatedBy nvarchar(20) NULL,
+        RowVersion rowversion NOT NULL,
+        CONSTRAINT FK_DrStockReservation_Request FOREIGN KEY (DeliveryRequestID)
+            REFERENCES dbo.SaDeliveryRequest (UID),
+        CONSTRAINT FK_DrStockReservation_Source FOREIGN KEY (DeliveryRequestSourceID)
+            REFERENCES dbo.SaDeliveryRequestSource (UID),
+        CONSTRAINT FK_DrStockReservation_BalLoc FOREIGN KEY (BalLocID)
+            REFERENCES dbo.IvBalLoc (ID),
+        CONSTRAINT CK_DrStockReservation_ReservedQty CHECK (ReservedQty > 0)
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.SaDeliveryRequestStockReservation') AND name = N'IX_DrStockReservation_Dr_Active')
+    CREATE INDEX IX_DrStockReservation_Dr_Active ON dbo.SaDeliveryRequestStockReservation (CompanyCode, BranchCode, DeliveryRequestID, IsActive);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.SaDeliveryRequestStockReservation') AND name = N'IX_DrStockReservation_Source_Active')
+    CREATE INDEX IX_DrStockReservation_Source_Active ON dbo.SaDeliveryRequestStockReservation (CompanyCode, BranchCode, DeliveryRequestSourceID, IsActive);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.SaDeliveryRequestStockReservation') AND name = N'IX_DrStockReservation_BalLoc_Active')
+    CREATE INDEX IX_DrStockReservation_BalLoc_Active ON dbo.SaDeliveryRequestStockReservation (CompanyCode, BranchCode, BalLocID, IsActive);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.SaDeliveryRequestStockReservation') AND name = N'UX_DrStockReservation_Source_BalLoc_Active')
+    CREATE UNIQUE INDEX UX_DrStockReservation_Source_BalLoc_Active
+        ON dbo.SaDeliveryRequestStockReservation (DeliveryRequestSourceID, BalLocID)
+        WHERE IsActive = 1;
+GO

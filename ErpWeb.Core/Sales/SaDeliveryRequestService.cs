@@ -1,8 +1,12 @@
 using System.Text.Json;
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.SqlClient;
@@ -24,17 +28,26 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
     private readonly IDocumentNumberingService _documentNumbers;
+    private readonly ISaDeliveryRequestFulfilmentService? _fulfilment;
+    private readonly IWorkOrderMaterialProcurementTraceService? _procurementTrace;
+    private readonly ICurrentDateService? _dates;
 
     public SaDeliveryRequestService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService accessRights,
-        IDocumentNumberingService documentNumbers)
+        IDocumentNumberingService documentNumbers,
+        ISaDeliveryRequestFulfilmentService? fulfilment = null,
+        IWorkOrderMaterialProcurementTraceService? procurementTrace = null,
+        ICurrentDateService? dates = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _accessRights = accessRights;
         _documentNumbers = documentNumbers;
+        _fulfilment = fulfilment;
+        _procurementTrace = procurementTrace;
+        _dates = dates;
     }
 
     public async Task<IvMasterOperationResult<SaDeliveryRequestListPage>> SearchAsync(
@@ -48,76 +61,58 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         }
 
         query ??= new SaDeliveryRequestListQuery();
+        if (!string.IsNullOrWhiteSpace(query.DueMode)
+            && !SaDeliveryRequestDueModes.IsValid(Normalize(query.DueMode)))
+        {
+            return Invalid<SaDeliveryRequestListPage>(
+                "Due mode is not supported.",
+                nameof(query.DueMode));
+        }
+
         var skip = Math.Max(query.Skip, 0);
         var take = query.Take <= 0 ? 20 : Math.Min(query.Take, 500);
         var scope = auth.Scope!;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var headers = db.SaDeliveryRequests.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
+        var headers = ApplyListHeaderFilters(
+            db.SaDeliveryRequests.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode),
+            db,
+            query);
 
-        if (!string.IsNullOrWhiteSpace(query.SearchText))
-        {
-            var term = query.SearchText.Trim();
-            headers = headers.Where(x => x.DeliveryRequestNo.Contains(term)
-                || x.ProductCode.Contains(term)
-                || (x.ProductDescription != null && x.ProductDescription.Contains(term)));
-        }
-
-        var statusFilter = NullIfEmpty(query.Status);
-        if (statusFilter is not null)
-        {
-            statusFilter = Normalize(statusFilter);
-            var completedRequestIds =
-                from header in db.SaDeliveryRequests.AsNoTracking()
-                join allocation in db.PrWorkOrderDemandAllocations.AsNoTracking()
-                    on header.Uid equals allocation.DeliveryRequestId
-                join workOrder in db.ProductionWorkOrders.AsNoTracking()
-                    on allocation.WorkOrderId equals workOrder.Uid
-                where header.CompanyCode == scope.CompanyCode
-                    && header.BranchCode == scope.BranchCode
-                    && workOrder.Status != ProductionWorkOrderStatuses.Cancelled
-                group workOrder by new { header.Uid, header.RequestedQty } into grouped
-                where grouped.Sum(x => x.GoodQty) + QuantityTolerance >= grouped.Key.RequestedQty
-                select grouped.Key.Uid;
-
-            headers = statusFilter switch
-            {
-                SaDeliveryRequestStatuses.Completed => headers
-                    .Where(x => x.Status != SaDeliveryRequestStatuses.Cancelled
-                        && completedRequestIds.Contains(x.Uid)),
-                SaDeliveryRequestStatuses.InProduction => headers
-                    .Where(x => x.Status == SaDeliveryRequestStatuses.InProduction
-                        && !completedRequestIds.Contains(x.Uid)),
-                SaDeliveryRequestStatuses.Draft => headers.Where(x => x.Status == SaDeliveryRequestStatuses.Draft),
-                SaDeliveryRequestStatuses.Released => headers.Where(x => x.Status == SaDeliveryRequestStatuses.Released),
-                SaDeliveryRequestStatuses.Cancelled => headers.Where(x => x.Status == SaDeliveryRequestStatuses.Cancelled),
-                _ => headers.Where(x => x.Status == statusFilter)
-            };
-        }
-
-        if (!string.IsNullOrWhiteSpace(query.ProductCode))
-        {
-            var product = Normalize(query.ProductCode);
-            headers = headers.Where(x => x.ProductCode == product);
-        }
-
-        if (query.RequiredDateFrom is DateTime from)
-        {
-            headers = headers.Where(x => x.RequiredDate >= from.Date);
-        }
-
-        if (query.RequiredDateTo is DateTime to)
-        {
-            headers = headers.Where(x => x.RequiredDate < to.Date.AddDays(1));
-        }
-
-        var total = await headers.CountAsync(cancellationToken);
         var ordered = BuildListOrdering(headers, query.SortField, query.SortDescending);
-        var page = await ordered
-            .Skip(skip)
-            .Take(take)
-            .ToListAsync(cancellationToken);
+        var hasFulfilmentFilter = !string.IsNullOrWhiteSpace(query.FulfilmentStatus)
+            || !string.IsNullOrWhiteSpace(query.BlockerCode)
+            || !string.IsNullOrWhiteSpace(query.DueMode);
+        int total;
+        List<SaDeliveryRequest> page;
+        if (hasFulfilmentFilter)
+        {
+            if (_fulfilment is null)
+            {
+                return Invalid<SaDeliveryRequestListPage>(
+                    "Fulfilment filters are unavailable because the fulfilment reader is not configured.",
+                    nameof(query.FulfilmentStatus));
+            }
+
+            var candidates = await ordered.ToListAsync(cancellationToken);
+            var candidateFacts = await LoadFactsBatchAsync(
+                candidates.Select(x => x.Uid), cancellationToken);
+            var matching = candidates
+                .Where(x => candidateFacts.TryGetValue(x.Uid, out var facts)
+                    && MatchesFulfilmentFilter(x.RequiredDate, facts!, query))
+                .ToList();
+            total = matching.Count;
+            page = matching.Skip(skip).Take(take).ToList();
+        }
+        else
+        {
+            total = await headers.CountAsync(cancellationToken);
+            page = await ordered
+                .Skip(skip)
+                .Take(take)
+                .ToListAsync(cancellationToken);
+        }
 
         var ids = page.Select(x => x.Uid).ToList();
         var sourceCounts = ids.Count == 0
@@ -126,6 +121,12 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 .Where(x => ids.Contains(x.DeliveryRequestId))
                 .GroupBy(x => x.DeliveryRequestId)
                 .Select(g => new { Id = g.Key, Count = g.Count() })
+                .ToListAsync(cancellationToken);
+        var sourceCustomers = ids.Count == 0
+            ? []
+            : await db.SaDeliveryRequestSources.AsNoTracking()
+                .Where(x => ids.Contains(x.DeliveryRequestId) && x.IsActive)
+                .Select(x => new { x.DeliveryRequestId, x.CustomerCode })
                 .ToListAsync(cancellationToken);
         var allocations = ids.Count == 0
             ? []
@@ -147,6 +148,12 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 .ToListAsync(cancellationToken);
 
         var sourceCountById = sourceCounts.ToDictionary(x => x.Id, x => x.Count);
+        var customerById = sourceCustomers
+            .GroupBy(x => x.DeliveryRequestId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.CustomerCode)
+                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)));
         var allocationById = allocations.GroupBy(x => x.DeliveryRequestId)
             .ToDictionary(g => g.Key, g => new ProgressFacts(
                 g.Where(x => x.IsActive).Sum(x => x.AllocatedQty),
@@ -158,23 +165,56 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                         or ProductionWorkOrderStatuses.Completed
                         or ProductionWorkOrderStatuses.Closed))));
 
+        var fulfilmentById = new Dictionary<long, SaDeliveryRequestFulfilmentFacts>();
+        if (_fulfilment is not null && ids.Count > 0)
+        {
+            var fulfilmentResult = await _fulfilment.GetFactsBatchAsync(ids, cancellationToken);
+            if (fulfilmentResult.Data is not null)
+            {
+                fulfilmentById = fulfilmentResult.Data.ToDictionary(x => x.Key, x => x.Value);
+            }
+        }
+
         var rows = page.Select(header =>
         {
             allocationById.TryGetValue(header.Uid, out var facts);
             facts ??= ProgressFacts.Empty;
+            fulfilmentById.TryGetValue(header.Uid, out var fulfilment);
+            fulfilment ??= new SaDeliveryRequestFulfilmentFacts
+            {
+                DeliveryRequestId = header.Uid,
+                RequestedQty = header.RequestedQty,
+                OpenDemandQty = header.RequestedQty
+            };
             return new SaDeliveryRequestListRow
             {
                 Uid = header.Uid,
                 DeliveryRequestNo = header.DeliveryRequestNo,
+                CustomerCode = customerById.GetValueOrDefault(header.Uid),
                 ProductCode = header.ProductCode,
                 ProductDescription = header.ProductDescription,
                 ProductionUom = header.ProductionUom,
-                RequestedQty = header.RequestedQty,
-                WoAllocatedQty = facts.AllocatedQty,
-                UnplannedQty = Unplanned(header.RequestedQty, facts.AllocatedQty),
-                ProducedQty = facts.ProducedQty,
+                RequestedQty = fulfilment.RequestedQty,
+                WoAllocatedQty = fulfilment.ActiveWoAllocatedQty,
+                UnplannedQty = fulfilment.ProductionUnplannedQty,
+                ProducedQty = fulfilment.ProducedQty,
+                DeliveredQty = fulfilment.DeliveredQty,
+                ReadyQty = fulfilment.ReadyQty,
+                DrStockReservedQty = fulfilment.DrStockReservedQty,
+                NewShipmentReservedQty = fulfilment.NewShipmentReservedQty,
+                ProductionRequiredQty = fulfilment.ProductionRequiredQty,
+                ProductionUnplannedQty = fulfilment.ProductionUnplannedQty,
+                OutstandingWoSupplyQty = fulfilment.OutstandingWoSupplyQty,
+                 WarehouseCode = header.WarehouseCode,
+                 ProjectCode = header.ProjectCode,
+                 Priority = header.Priority,
+                FulfilmentStatus = fulfilment.FulfilmentStatus,
+                BlockerCode = fulfilment.BlockerCode,
+                FulfilledDate = fulfilment.FulfilledDate,
+                ForecastReadyDate = fulfilment.ForecastReadyDate,
+                IsAtRisk = fulfilment.IsAtRisk,
                 RequiredDate = header.RequiredDate,
-                Status = DerivedStatus(header.Status, header.RequestedQty, facts),
+                Status = header.Status,
                 SourceCount = sourceCountById.GetValueOrDefault(header.Uid),
                 WorkOrderCount = facts.WorkOrderCount,
                 CreatedDate = header.CreatedDate,
@@ -188,6 +228,267 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             Rows = rows,
             TotalCount = total
         });
+    }
+
+    public async Task<IvMasterOperationResult<SaDeliveryRequestKpis>> GetKpisAsync(
+        SaDeliveryRequestListQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = await AuthorizeAsync(PermissionCodes.Access, write: false, cancellationToken);
+        if (auth.Error is not null)
+        {
+            return Failure<SaDeliveryRequestKpis>(auth.Error.Value);
+        }
+
+        query ??= new SaDeliveryRequestListQuery();
+        if (!string.IsNullOrWhiteSpace(query.DueMode)
+            && !SaDeliveryRequestDueModes.IsValid(Normalize(query.DueMode)))
+        {
+            return Invalid<SaDeliveryRequestKpis>(
+                "Due mode is not supported.",
+                nameof(query.DueMode));
+        }
+
+        if (_fulfilment is null)
+        {
+            return Invalid<SaDeliveryRequestKpis>(
+                "Fulfilment KPIs are unavailable because the fulfilment reader is not configured.",
+                nameof(query.FulfilmentStatus));
+        }
+
+        var scope = auth.Scope!;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var candidates = await ApplyListHeaderFilters(
+                db.SaDeliveryRequests.AsNoTracking()
+                    .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode),
+                db,
+                query)
+            .Select(x => new { x.Uid, x.RequiredDate })
+            .ToListAsync(cancellationToken);
+        var facts = await LoadFactsBatchAsync(candidates.Select(x => x.Uid), cancellationToken);
+        var today = (_dates?.Today ?? DateTime.Today).Date;
+        var rows = candidates
+            .Where(x => facts.TryGetValue(x.Uid, out var fact)
+                && MatchesFulfilmentFilter(x.RequiredDate, fact!, query))
+            .Select(x => new { x.RequiredDate, Facts = facts[x.Uid] })
+            .ToList();
+
+        var completed = rows
+            .Where(x => string.Equals(
+                x.Facts.FulfilmentStatus,
+                SaDeliveryRequestFulfilmentStatuses.Completed,
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var onTimePercent = completed.Count == 0
+            ? 0m
+            : Math.Round(
+                completed.Count(x => x.Facts.FulfilledDate is DateTime fulfilled
+                    && fulfilled.Date <= x.RequiredDate.Date) * 100m / completed.Count,
+                2,
+                MidpointRounding.AwayFromZero);
+
+        return IvMasterOperationResult<SaDeliveryRequestKpis>.Ok(new SaDeliveryRequestKpis
+        {
+            OpenDrCount = rows.Count(x => x.Facts.OpenDemandQty > QuantityTolerance),
+            OpenDrQty = rows.Sum(x => Math.Max(x.Facts.OpenDemandQty, 0m)),
+            DueTodayCount = rows.Count(x => x.Facts.OpenDemandQty > QuantityTolerance
+                && x.RequiredDate.Date == today),
+            DueThisWeekCount = rows.Count(x => x.Facts.OpenDemandQty > QuantityTolerance
+                && x.RequiredDate.Date >= today
+                && x.RequiredDate.Date <= today.AddDays(7)),
+            OverdueCount = rows.Count(x => x.Facts.OpenDemandQty > QuantityTolerance
+                && x.RequiredDate.Date < today),
+            AtRiskCount = rows.Count(x => x.Facts.IsAtRisk),
+            ReadyForDeliveryCount = rows.Count(x => x.Facts.OpenDemandQty > QuantityTolerance
+                && x.Facts.ReadyQty + QuantityTolerance >= x.Facts.OpenDemandQty),
+            ReadyForDeliveryQty = rows
+                .Where(x => x.Facts.OpenDemandQty > QuantityTolerance
+                    && x.Facts.ReadyQty + QuantityTolerance >= x.Facts.OpenDemandQty)
+                .Sum(x => x.Facts.OpenDemandQty),
+            MaterialShortageCount = rows.Count(x => string.Equals(
+                x.Facts.BlockerCode,
+                SaDeliveryRequestBlockerCodes.MaterialShortage,
+                StringComparison.OrdinalIgnoreCase)),
+            PartialFulfilmentCount = rows.Count(x => x.Facts.DeliveredQty > QuantityTolerance
+                && x.Facts.DeliveredQty + QuantityTolerance < x.Facts.RequestedQty),
+            OnTimeFulfilmentPercent = onTimePercent
+        });
+    }
+
+    private static IQueryable<SaDeliveryRequest> ApplyListHeaderFilters(
+        IQueryable<SaDeliveryRequest> headers,
+        AppDbContext db,
+        SaDeliveryRequestListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            var term = query.SearchText.Trim();
+            headers = headers.Where(x => x.DeliveryRequestNo.Contains(term)
+                || x.ProductCode.Contains(term)
+                || (x.ProductDescription != null && x.ProductDescription.Contains(term))
+                || db.SaDeliveryRequestSources.Any(source => source.DeliveryRequestId == x.Uid
+                    && (source.SoNo.Contains(term)
+                        || (source.CustomerCode != null && source.CustomerCode.Contains(term))))
+                || db.PrWorkOrderDemandAllocations.Any(allocation => allocation.DeliveryRequestId == x.Uid
+                    && db.ProductionWorkOrders.Any(workOrder => workOrder.Uid == allocation.WorkOrderId
+                        && workOrder.WorkOrderNo.Contains(term))));
+        }
+
+        var lifecycleFilter = NullIfEmpty(query.LifecycleStatus) ?? NullIfEmpty(query.Status);
+        if (lifecycleFilter is not null)
+        {
+            headers = headers.Where(x => x.Status == Normalize(lifecycleFilter));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SoNo))
+        {
+            var soNo = query.SoNo.Trim();
+            headers = headers.Where(x => db.SaDeliveryRequestSources.Any(source => source.DeliveryRequestId == x.Uid
+                && source.IsActive
+                && source.SoNo.Contains(soNo)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.CustomerCode))
+        {
+            var customer = query.CustomerCode.Trim();
+            headers = headers.Where(x => db.SaDeliveryRequestSources.Any(source => source.DeliveryRequestId == x.Uid
+                && source.IsActive
+                && source.CustomerCode != null
+                && source.CustomerCode.Contains(customer)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ProductCode))
+        {
+            var product = Normalize(query.ProductCode);
+            headers = headers.Where(x => x.ProductCode == product);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.WarehouseCode))
+        {
+            var warehouse = Normalize(query.WarehouseCode);
+            headers = headers.Where(x => x.WarehouseCode == warehouse);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ProjectCode))
+        {
+            var project = Normalize(query.ProjectCode);
+            headers = headers.Where(x => x.ProjectCode == project);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Priority))
+        {
+            var priority = Normalize(query.Priority);
+            headers = headers.Where(x => x.Priority == priority);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
+        {
+            var workOrderNo = query.WorkOrderNo.Trim();
+            headers = headers.Where(x => db.PrWorkOrderDemandAllocations.Any(allocation => allocation.DeliveryRequestId == x.Uid
+                && allocation.IsActive
+                && db.ProductionWorkOrders.Any(workOrder => workOrder.Uid == allocation.WorkOrderId
+                    && workOrder.WorkOrderNo.Contains(workOrderNo))));
+        }
+
+        if (query.RequiredDateFrom is DateTime from)
+        {
+            headers = headers.Where(x => x.RequiredDate >= from.Date);
+        }
+
+        if (query.RequiredDateTo is DateTime to)
+        {
+            headers = headers.Where(x => x.RequiredDate < to.Date.AddDays(1));
+        }
+
+        return headers;
+    }
+
+    private async Task<IReadOnlyDictionary<long, SaDeliveryRequestFulfilmentFacts>> LoadFactsBatchAsync(
+        IEnumerable<long> deliveryRequestIds,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<long, SaDeliveryRequestFulfilmentFacts>();
+        if (_fulfilment is null)
+        {
+            return result;
+        }
+
+        foreach (var batch in deliveryRequestIds
+            .Where(x => x > 0)
+            .Distinct()
+            .Chunk(400))
+        {
+            var batchResult = await _fulfilment.GetFactsBatchAsync(batch, cancellationToken);
+            if (batchResult.Data is null)
+            {
+                continue;
+            }
+
+            foreach (var pair in batchResult.Data)
+            {
+                result[pair.Key] = pair.Value;
+            }
+        }
+
+        return result;
+    }
+
+    private bool MatchesFulfilmentFilter(
+        DateTime requiredDate,
+        SaDeliveryRequestFulfilmentFacts facts,
+        SaDeliveryRequestListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.FulfilmentStatus)
+            && !string.Equals(
+                facts.FulfilmentStatus,
+                Normalize(query.FulfilmentStatus),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.BlockerCode)
+            && !string.Equals(
+                facts.BlockerCode,
+                Normalize(query.BlockerCode),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(query.DueMode))
+        {
+            return true;
+        }
+
+        var today = (_dates?.Today ?? DateTime.Today).Date;
+        var dueMode = Normalize(query.DueMode);
+        return dueMode switch
+        {
+            SaDeliveryRequestDueModes.Open => facts.OpenDemandQty > QuantityTolerance,
+            SaDeliveryRequestDueModes.DueToday => facts.OpenDemandQty > QuantityTolerance
+                && requiredDate.Date == today,
+            SaDeliveryRequestDueModes.DueThisWeek => facts.OpenDemandQty > QuantityTolerance
+                && requiredDate.Date >= today
+                && requiredDate.Date <= today.AddDays(7),
+            SaDeliveryRequestDueModes.Overdue => facts.OpenDemandQty > QuantityTolerance
+                && requiredDate.Date < today,
+            SaDeliveryRequestDueModes.AtRisk => facts.IsAtRisk,
+            SaDeliveryRequestDueModes.ProductionRequired => facts.ProductionRequiredQty > QuantityTolerance,
+            SaDeliveryRequestDueModes.MaterialShortage => string.Equals(
+                facts.BlockerCode,
+                SaDeliveryRequestBlockerCodes.MaterialShortage,
+                StringComparison.OrdinalIgnoreCase),
+            SaDeliveryRequestDueModes.ReadyForDelivery => facts.OpenDemandQty > QuantityTolerance
+                && facts.ReadyQty + QuantityTolerance >= facts.OpenDemandQty,
+            SaDeliveryRequestDueModes.Partial => facts.DeliveredQty > QuantityTolerance
+                && facts.DeliveredQty + QuantityTolerance < facts.RequestedQty,
+            SaDeliveryRequestDueModes.Completed => string.Equals(
+                facts.FulfilmentStatus,
+                SaDeliveryRequestFulfilmentStatuses.Completed,
+                StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
     }
 
     private static IOrderedQueryable<SaDeliveryRequest> BuildListOrdering(
@@ -305,6 +606,9 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 && (query.SoNo == null || header.SoNo == query.SoNo.Trim())
                 && (query.CustRel == null || header.CustRel == query.CustRel)
                 && (query.ProductCode == null || detail.ICode == query.ProductCode.Trim())
+                && (query.WarehouseCode == null || detail.Warehouse == query.WarehouseCode.Trim())
+                && (query.ProjectCode == null || header.ProjId == query.ProjectCode.Trim())
+                && (query.CustomerCode == null || header.CustCode == query.CustomerCode.Trim())
                 && detail.StdQty > 0m
                 && detail.StdUom != null
                 && detail.StdUom != ""
@@ -323,7 +627,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 detail.DeliveredQty,
                 CustomerCode = header.CustCode,
                 RequestedDeliveryDate = detail.DeliveryDate,
-                detail.Warehouse
+                detail.Warehouse,
+                ProjectCode = header.ProjId
             };
 
         var detailRows = await details
@@ -370,6 +675,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 CustomerCode = x.CustomerCode,
                 RequestedDeliveryDate = x.RequestedDeliveryDate,
                 WarehouseCode = x.Warehouse,
+                ProjectCode = x.ProjectCode,
                 RowVersion = x.HeaderRowVersion ?? []
             };
         }).Where(x => x.AvailableForDr > QuantityTolerance).ToList();
@@ -577,7 +883,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                         db.SaDeliveryRequests.Add(header);
                     }
                     ApplyHeader(header, request, prepared.ProductCode, prepared.ProductDescription, prepared.ProductionUom,
-                        prepared.RequestedQty, prepared.RequiredDate, scope.UserId, now);
+                        prepared.RequestedQty, prepared.RequiredDate, prepared.WarehouseCode, prepared.ProjectCode,
+                        scope.UserId, now);
                     var addedSources = new List<SaDeliveryRequestSource>();
                     if (update)
                     {
@@ -755,6 +1062,12 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                         source.ReleaseReason = NullIfEmpty(request.Reason) ?? "Delivery Request released";
                     }
 
+                    if (_fulfilment is not null)
+                    {
+                        await _fulfilment.ReconcileInTransactionAsync(
+                            db, header.Uid, scope, cancellationToken);
+                    }
+
                     db.SaDeliveryRequestAuditEvents.Add(Audit(
                         header.Uid,
                         SaDeliveryRequestAuditEventTypes.Released,
@@ -783,6 +1096,16 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                             "A Delivery Request with active or produced Work Order quantity cannot be cancelled.");
                     }
 
+                    var hasLinkedDeliveryOrder = await db.SaDoDetails.AsNoTracking()
+                        .AnyAsync(x => x.DeliveryRequestSourceId.HasValue
+                            && sources.Select(s => s.Uid).Contains(x.DeliveryRequestSourceId.Value), cancellationToken);
+                    if (hasLinkedDeliveryOrder)
+                    {
+                        throw new DeliveryRequestCommandException(
+                            IvMasterErrorCode.InUse,
+                            "A Delivery Request with linked Delivery Order history cannot be cancelled.");
+                    }
+
                     header.Status = SaDeliveryRequestStatuses.Cancelled;
                     foreach (var source in sources.Where(x => x.IsActive))
                     {
@@ -790,6 +1113,12 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                         source.ReleasedDate = now;
                         source.ReleasedBy = scope.UserId;
                         source.ReleaseReason = NullIfEmpty(request.Reason) ?? "Delivery Request cancelled";
+                    }
+
+                    if (_fulfilment is not null)
+                    {
+                        await _fulfilment.ReleaseAllInTransactionAsync(
+                            db, header.Uid, scope, NullIfEmpty(request.Reason) ?? "Delivery Request cancelled", cancellationToken);
                     }
 
                     db.SaDeliveryRequestAuditEvents.Add(Audit(
@@ -857,6 +1186,18 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     throw new DeliveryRequestCommandException(
                         IvMasterErrorCode.InUse,
                         "This Draft Delivery Request has Work Order history and cannot be deleted.");
+                }
+
+                var hasActiveReservation = await db.SaDeliveryRequestStockReservations.AsNoTracking()
+                    .AnyAsync(x => x.DeliveryRequestId == header.Uid
+                        && x.CompanyCode == scope.CompanyCode
+                        && x.BranchCode == scope.BranchCode
+                        && x.IsActive, cancellationToken);
+                if (hasActiveReservation)
+                {
+                    throw new DeliveryRequestCommandException(
+                        IvMasterErrorCode.InUse,
+                        "This Draft Delivery Request has an active stock reservation and cannot be deleted.");
                 }
 
                 var sources = await LockSourcesAsync(db, scope, header.Uid, cancellationToken);
@@ -936,6 +1277,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         string? productCode = null;
         string? productionUom = null;
         string? productDescription = null;
+        string? warehouseCode = null;
+        string? projectCode = null;
         DateTime? earliestRequiredDate = null;
         decimal requestedQty = 0m;
 
@@ -960,6 +1303,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             var lineProduct = Normalize(detail.ICode);
             var lineUom = Normalize(detail.StdUom);
             var sourceUom = Normalize(detail.SellingUom);
+            var lineWarehouse = NullIfEmpty(detail.Warehouse)?.ToUpperInvariant();
+            var lineProject = NullIfEmpty(header.ProjId)?.ToUpperInvariant();
             if (sourceUom.Length == 0)
             {
                 sourceUom = lineUom;
@@ -984,6 +1329,25 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     "All Sales Order sources in one Delivery Request must have the same product and production UOM.",
                     "Sources");
             }
+
+            if (rows.Count > 0 && !string.Equals(warehouseCode, lineWarehouse, StringComparison.OrdinalIgnoreCase))
+            {
+                if (warehouseCode is not null || lineWarehouse is not null)
+                {
+                    return PreparedSources.Fail(
+                        "All Sales Order sources in one Delivery Request must use the same fulfilment warehouse.",
+                        "WarehouseCode");
+                }
+            }
+
+            if (rows.Count > 0 && !string.Equals(projectCode, lineProject, StringComparison.OrdinalIgnoreCase))
+            {
+                return PreparedSources.Fail(
+                    "All Sales Order sources in one Delivery Request must use the same project.",
+                    "ProjectCode");
+            }
+            warehouseCode ??= lineWarehouse;
+            projectCode ??= lineProject;
 
             var activeSourceRows = await LockActiveSourceAllocationsAsync(
                 db, scope, input, currentDeliveryRequestId, cancellationToken);
@@ -1026,6 +1390,31 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             return PreparedSources.Fail("A valid production source is required.", "Sources");
         }
 
+        if (warehouseCode is not null
+            && !await db.IvWarehouses.AsNoTracking().AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WarehouseCode == warehouseCode
+                && x.IsActive, cancellationToken))
+        {
+            return PreparedSources.Fail($"Warehouse '{warehouseCode}' does not exist or is not active.", "WarehouseCode");
+        }
+
+        if (projectCode is not null)
+        {
+            var projectError = await MsRefLookupRules.ValidateAsync(
+                db,
+                scope.CompanyCode,
+                scope.BranchCode,
+                MsRefLookupKind.Project,
+                priorValue: null,
+                incomingValue: projectCode,
+                cancellationToken);
+            if (projectError is not null)
+            {
+                return PreparedSources.Fail(projectError, "ProjectCode");
+            }
+        }
+
         var requestProduct = NullIfEmpty(request.ProductCode);
         if (requestProduct is not null && !string.Equals(requestProduct, productCode, StringComparison.OrdinalIgnoreCase))
         {
@@ -1036,6 +1425,30 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         if (requestUom is not null && !string.Equals(requestUom, productionUom, StringComparison.OrdinalIgnoreCase))
         {
             return PreparedSources.Fail("The Delivery Request production UOM does not match its Sales Order sources.", "ProductionUom");
+        }
+
+        var requestedWarehouse = NullIfEmpty(request.WarehouseCode);
+        if (requestedWarehouse is not null
+            && !string.Equals(requestedWarehouse, warehouseCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return PreparedSources.Fail(
+                "The requested warehouse must match the selected Sales Order source warehouse.",
+                "WarehouseCode");
+        }
+
+        var requestedProject = NullIfEmpty(request.ProjectCode);
+        if (requestedProject is not null
+            && !string.Equals(requestedProject, projectCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return PreparedSources.Fail(
+                "The requested project must match the selected Sales Order source project.",
+                "ProjectCode");
+        }
+
+        var priority = NullIfEmpty(request.Priority)?.ToUpperInvariant() ?? SaDeliveryRequestPriorities.Normal;
+        if (!SaDeliveryRequestPriorities.IsValid(priority))
+        {
+            return PreparedSources.Fail("Priority must be NORMAL, HIGH, or URGENT.", "Priority");
         }
 
         var requiredDateValue = request.RequiredDate == default
@@ -1062,6 +1475,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             productionUom,
             requestedQty,
             requiredDateValue,
+            warehouseCode,
+            projectCode,
             rows);
     }
 
@@ -1115,6 +1530,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         string productionUom,
         decimal requestedQty,
         DateTime requiredDate,
+        string? warehouseCode,
+        string? projectCode,
         string actor,
         DateTime now)
     {
@@ -1124,9 +1541,9 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         header.RequestedQty = requestedQty;
         header.RequiredDate = requiredDate;
         header.DefinitionCode = TrimTo(request.DefinitionCode, 30);
-        header.WarehouseCode = TrimTo(request.WarehouseCode, 20);
-        header.ProjectCode = TrimTo(request.ProjectCode, 20);
-        header.Priority = TrimTo(request.Priority, 20);
+        header.WarehouseCode = TrimTo(warehouseCode, 20);
+        header.ProjectCode = TrimTo(projectCode, 20);
+        header.Priority = (NullIfEmpty(request.Priority)?.ToUpperInvariant() ?? SaDeliveryRequestPriorities.Normal);
         header.Remark = TrimTo(request.Remark, 500);
         header.ModifiedDate = now;
         header.ModifiedBy = actor;
@@ -1191,6 +1608,108 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             .Take(200)
             .ToListAsync(cancellationToken);
 
+        var materialShortages = new List<SaDeliveryRequestMaterialShortageTrace>();
+        if (_procurementTrace is not null && allocationRows.Count > 0)
+        {
+            var workOrderIds = allocationRows
+                .Where(x => x.Allocation.IsActive
+                    && x.WorkOrder.Status is ProductionWorkOrderStatuses.Released
+                        or ProductionWorkOrderStatuses.InProgress)
+                .Select(x => x.WorkOrder.Uid)
+                .Distinct()
+                .ToArray();
+            if (workOrderIds.Length > 0)
+            {
+                var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()
+                    .Where(x => workOrderIds.Contains(x.WorkOrderId)
+                        && (x.SupplySource == PrMaterialSupplySources.Purchased
+                            || x.SupplySource == PrMaterialSupplySources.ExternalSupply))
+                    .Select(x => new
+                    {
+                        x.Uid,
+                        x.WorkOrderId,
+                        WorkOrderNo = x.WorkOrder!.WorkOrderNo,
+                        x.ComponentCode,
+                        x.ComponentDescription,
+                        x.BaseUom,
+                        x.IssueMethod,
+                        x.SupplySource,
+                        x.RequiredBaseQty
+                    })
+                    .OrderBy(x => x.WorkOrderNo)
+                    .ThenBy(x => x.ComponentCode)
+                    .ToListAsync(cancellationToken);
+
+                foreach (var material in materials)
+                {
+                    var traceResult = await _procurementTrace.GetAsync(
+                        material.Uid,
+                        header.RequiredDate,
+                        cancellationToken);
+                    var trace = traceResult.Data;
+                    materialShortages.Add(new SaDeliveryRequestMaterialShortageTrace
+                    {
+                        WorkOrderMaterialId = material.Uid,
+                        WorkOrderId = material.WorkOrderId,
+                        WorkOrderNo = material.WorkOrderNo,
+                        ComponentCode = material.ComponentCode,
+                        ComponentDescription = material.ComponentDescription,
+                        BaseUom = material.BaseUom,
+                        IssueMethod = material.IssueMethod,
+                        SupplySource = material.SupplySource,
+                        RequiredBaseQty = trace?.RequiredBaseQty ?? material.RequiredBaseQty,
+                        AvailableBaseQty = trace?.AvailableBaseQty ?? 0m,
+                        PhysicalShortBaseQty = trace?.PhysicalShortBaseQty ?? 0m,
+                        OpenProcurementBaseQty = trace?.OpenProcurementBaseQty ?? 0m,
+                        NetProcurementRequiredBaseQty = trace?.NetProcurementRequiredBaseQty ?? 0m,
+                        IsConsistent = traceResult.Succeeded && trace?.IsConsistent == true,
+                        InconsistencyMessage = trace?.InconsistencyMessage ?? traceResult.ErrorMessage,
+                        Procurement = trace?.Lines.Select(x => new SaDeliveryRequestProcurementTraceLine
+                        {
+                            PrNo = x.PrNo,
+                            PrLineNo = x.PrLineNo,
+                            PoNo = x.PoNo,
+                            PoRelNo = x.PoRelNo,
+                            PrStdQty = x.PrStdQty,
+                            PrUnorderedStdQty = x.PrUnorderedStdQty,
+                            PoOrderedStdQty = x.PoOrderedStdQty,
+                            PoOpenStdQty = x.PoOpenStdQty,
+                            EtaDate = x.EtaDate,
+                            IsConsistent = x.IsConsistent
+                        }).ToList() ?? []
+                    });
+                }
+            }
+        }
+
+        var fulfilment = _fulfilment is null
+            ? null
+            : (await _fulfilment.GetFactsAsync(header.Uid, cancellationToken)).Data;
+        fulfilment ??= new SaDeliveryRequestFulfilmentFacts
+        {
+            DeliveryRequestId = header.Uid,
+            RequestedQty = sources.Where(x => x.IsActive).Sum(x => x.AllocatedProductionQty),
+            OpenDemandQty = sources.Where(x => x.IsActive).Sum(x => x.AllocatedProductionQty)
+        };
+
+        var effectiveBlockerCode = fulfilment.BlockerCode;
+        if (fulfilment.ProductionUnplannedQty <= QuantityTolerance)
+        {
+            var procurementLate = materialShortages.Any(x => x.IsConsistent
+                && x.OpenProcurementBaseQty > QuantityTolerance
+                && x.Procurement.Any(line => line.IsConsistent
+                    && line.PoOpenStdQty > QuantityTolerance
+                    && line.EtaDate is DateTime eta
+                    && eta.Date > header.RequiredDate.Date));
+            var materialShortage = materialShortages.Any(x => x.IsConsistent
+                && x.NetProcurementRequiredBaseQty > QuantityTolerance);
+            effectiveBlockerCode = procurementLate
+                ? SaDeliveryRequestBlockerCodes.ProcurementLate
+                : materialShortage
+                    ? SaDeliveryRequestBlockerCodes.MaterialShortage
+                    : effectiveBlockerCode;
+        }
+
         var progress = new ProgressFacts(
             allocationRows.Where(x => x.Allocation.IsActive).Sum(x => x.Allocation.AllocatedQty),
             allocationRows.Where(x => x.WorkOrder.Status != ProductionWorkOrderStatuses.Cancelled)
@@ -1211,16 +1730,28 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             ProductCode = header.ProductCode,
             ProductDescription = header.ProductDescription,
             ProductionUom = header.ProductionUom,
-            RequestedQty = header.RequestedQty,
-            WoAllocatedQty = progress.AllocatedQty,
-            UnplannedQty = Unplanned(header.RequestedQty, progress.AllocatedQty),
-            ProducedQty = progress.ProducedQty,
+            RequestedQty = fulfilment.RequestedQty,
+            WoAllocatedQty = fulfilment.ActiveWoAllocatedQty,
+            UnplannedQty = fulfilment.ProductionUnplannedQty,
+            ProducedQty = fulfilment.ProducedQty,
+            DeliveredQty = fulfilment.DeliveredQty,
+            ReadyQty = fulfilment.ReadyQty,
+            DrStockReservedQty = fulfilment.DrStockReservedQty,
+            NewShipmentReservedQty = fulfilment.NewShipmentReservedQty,
+            ProductionRequiredQty = fulfilment.ProductionRequiredQty,
+            ProductionUnplannedQty = fulfilment.ProductionUnplannedQty,
+            OutstandingWoSupplyQty = fulfilment.OutstandingWoSupplyQty,
+            FulfilmentStatus = fulfilment.FulfilmentStatus,
+            BlockerCode = effectiveBlockerCode,
+            FulfilledDate = fulfilment.FulfilledDate,
+            ForecastReadyDate = fulfilment.ForecastReadyDate,
+            IsAtRisk = fulfilment.IsAtRisk,
             RequiredDate = header.RequiredDate,
             DefinitionCode = header.DefinitionCode,
             WarehouseCode = header.WarehouseCode,
             ProjectCode = header.ProjectCode,
             Priority = header.Priority,
-            Status = DerivedStatus(header.Status, header.RequestedQty, progress),
+            Status = header.Status,
             Remark = header.Remark,
             CreatedDate = header.CreatedDate,
             CreatedBy = header.CreatedBy,
@@ -1247,6 +1778,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     activeBySource.GetValueOrDefault((source.SoNo.ToUpperInvariant(), source.CustRel, source.SoLine))),
                 CustomerCode = source.CustomerCode,
                 RequestedDeliveryDate = source.RequestedDeliveryDate,
+                WarehouseCode = header.WarehouseCode,
+                ProjectCode = header.ProjectCode,
                 IsActive = source.IsActive,
                 ReleasedDate = source.ReleasedDate,
                 ReleasedBy = source.ReleasedBy,
@@ -1265,6 +1798,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 CreatedDate = x.WorkOrder.CreatedDate,
                 RowVersion = x.WorkOrder.RowVersion ?? []
             }).ToList(),
+            MaterialShortages = materialShortages,
             AuditEvents = audits.Select(x => new SaDeliveryRequestAuditTrace
             {
                 Uid = x.Uid,
@@ -1621,6 +2155,8 @@ ORDER BY DeliveryRequestID")
         string ProductionUom,
         decimal RequestedQty,
         DateTime RequiredDate,
+        string? WarehouseCode,
+        string? ProjectCode,
         List<SaDeliveryRequestSource> Sources,
         DeliveryRequestCommandException? Error)
     {
@@ -1630,11 +2166,14 @@ ORDER BY DeliveryRequestID")
             string productionUom,
             decimal requestedQty,
             DateTime requiredDate,
+            string? warehouseCode,
+            string? projectCode,
             List<SaDeliveryRequestSource> sources) =>
-            new(productCode, productDescription, productionUom, requestedQty, requiredDate, sources, null);
+            new(productCode, productDescription, productionUom, requestedQty, requiredDate,
+                warehouseCode, projectCode, sources, null);
 
         public static PreparedSources Fail(string message, string field) =>
-            new(string.Empty, null, string.Empty, 0m, default, [],
+            new(string.Empty, null, string.Empty, 0m, default, null, null, [],
                 new DeliveryRequestCommandException(
                     IvMasterErrorCode.Validation,
                     message,

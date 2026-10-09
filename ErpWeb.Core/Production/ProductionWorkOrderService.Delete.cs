@@ -209,6 +209,12 @@ public sealed partial class ProductionWorkOrderService
         ProductionWorkOrder order,
         CancellationToken cancellationToken)
     {
+        var procurementBlocker = await GetLinkedProcurementBlockerAsync(db, order, cancellationToken);
+        if (procurementBlocker is not null)
+        {
+            return procurementBlocker;
+        }
+
         if (await HasWorkOrderExecutionProjectionAsync(db, order, cancellationToken))
         {
             return ExecutionDeleteBlockerMessage;

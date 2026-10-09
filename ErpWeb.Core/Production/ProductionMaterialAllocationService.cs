@@ -20,6 +20,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
     private readonly ICurrentDateService _clock;
     private readonly IInventoryAsOfStockService _asOfStock;
     private readonly IProductionMaterialIssueDraftReservationReader _draftReservations;
+    private readonly IProductionMaterialStockAvailabilityReader _stockAvailability;
 
     public ProductionMaterialAllocationService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -27,7 +28,8 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         IAccessRightService access,
         ICurrentDateService clock,
         IInventoryAsOfStockService? asOfStock = null,
-        IProductionMaterialIssueDraftReservationReader? draftReservations = null)
+        IProductionMaterialIssueDraftReservationReader? draftReservations = null,
+        IProductionMaterialStockAvailabilityReader? stockAvailability = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -35,6 +37,8 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         _clock = clock;
         _asOfStock = asOfStock ?? new InventoryAsOfStockService();
         _draftReservations = draftReservations ?? new ProductionMaterialIssueDraftReservationReader();
+        _stockAvailability = stockAvailability ?? new ProductionMaterialStockAvailabilityReader(
+            dbFactory, tenant, clock, _asOfStock, _draftReservations);
     }
 
     public async Task<IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>> GetStockCandidatesAsync(
@@ -44,7 +48,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance = null,
         int? excludeInventoryBatchNo = null)
     {
-        var prepared = await PrepareAsync(workOrderMaterialId, issueDate, reservedBaseQtyByBalance, excludeInventoryBatchNo, cancellationToken);
+        var prepared = await PrepareSharedAsync(workOrderMaterialId, issueDate, reservedBaseQtyByBalance, excludeInventoryBatchNo, cancellationToken);
         if (prepared.Error is not null)
             return IvMasterOperationResult<IReadOnlyList<ProductionMaterialStockCandidate>>.Fail(
                 prepared.Error.Value.Code, prepared.Error.Value.Message);
@@ -61,7 +65,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         if (request.RequestedQty <= 0m)
             return Fail(IvMasterErrorCode.Validation, "Requested quantity must be greater than zero.");
 
-        var prepared = await PrepareAsync(
+        var prepared = await PrepareSharedAsync(
             request.WorkOrderMaterialId, request.IssueDate, request.ReservedBaseQtyByBalance,
             request.ExcludeInventoryBatchNo, cancellationToken);
         if (prepared.Error is not null)
@@ -92,6 +96,65 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
             ShortBaseQty = IvQty.Round(Math.Max(requestedBaseQty - allocated, 0m)),
             Allocations = allocations
         });
+    }
+
+    private async Task<PreparedResult> PrepareSharedAsync(
+        long materialId,
+        DateTime issueDate,
+        IReadOnlyDictionary<int, decimal>? reservedBaseQtyByBalance,
+        int? excludeInventoryBatchNo,
+        CancellationToken cancellationToken)
+    {
+        if (!await _access.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, cancellationToken))
+        {
+            return PreparedResult.Fail(IvMasterErrorCode.AccessDenied, "Access denied.");
+        }
+
+        var canViewCost = await _access.CanAsync(
+            MenuCodes.PlanningMaterialIssue, PermissionCodes.ViewCost, cancellationToken);
+        var result = await _stockAvailability.GetAsync(
+            materialId,
+            issueDate,
+            cancellationToken,
+            reservedBaseQtyByBalance,
+            excludeInventoryBatchNo);
+        if (!result.Succeeded || result.Data is null)
+        {
+            return PreparedResult.Fail(
+                result.ErrorCode,
+                result.Message ?? "Unable to read material stock availability.");
+        }
+
+        // Preserve the existing allocation service's internal shape and cost masking while
+        // sourcing all stock facts from the shared reader.
+        var candidates = result.Data.Candidates
+            .Select(x => new CandidateRow
+            {
+                FromBalLocId = x.FromBalLocId,
+                Warehouse = x.Warehouse,
+                Location = x.Location,
+                LotId = x.LotId,
+                LotNo = x.LotNo,
+                ExpiryDate = x.ExpiryDate,
+                StockDate = x.StockDate,
+                AvailableBaseQty = x.AvailableBaseQty,
+                CurrentBaseQty = x.CurrentBaseQty,
+                AsOfBaseQty = x.AsOfBaseQty,
+                UsableBaseQty = x.UsableBaseQty,
+                ReservedOtherDraftBaseQty = x.ReservedOtherDraftBaseQty,
+                ReservedCurrentDocumentBaseQty = x.ReservedCurrentDocumentBaseQty,
+                BaseUom = x.BaseUom,
+                UnitPrice = x.UnitPrice,
+                LotControl = x.LotControl
+            })
+            .ToList();
+
+        if (!string.Equals(result.Data.IssueMethod, PrMaterialIssueMethods.Manual, StringComparison.OrdinalIgnoreCase))
+        {
+            return PreparedResult.Fail(IvMasterErrorCode.Validation, "This material is not configured for manual issue.");
+        }
+
+        return PreparedResult.Ok(result.Data.ConversionFactorToBase, canViewCost, candidates);
     }
 
     private async Task<PreparedResult> PrepareAsync(
@@ -220,6 +283,7 @@ public sealed class ProductionMaterialAllocationService : IProductionMaterialAll
         ReservedOtherDraftBaseQty = IvQty.Round(row.ReservedOtherDraftBaseQty),
         ReservedCurrentDocumentBaseQty = IvQty.Round(row.ReservedCurrentDocumentBaseQty),
         AvailableToAllocateBaseQty = IvQty.Round(row.AvailableBaseQty),
+        LotControl = row.LotControl,
         BaseUom = row.BaseUom,
         SuggestedBaseQty = suggested,
         UnitPrice = canViewCost ? row.UnitPrice : null

@@ -23,6 +23,12 @@
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
             </div>
         }
+        @if (Document.Warnings.Count > 0)
+        {
+            <div class="iv-toast iv-toast--warn" role="status">
+                <span>@string.Join(" ", Document.Warnings)</span>
+            </div>
+        }
 
         <header class="iv-hero">
             <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-stacked"></i></div>

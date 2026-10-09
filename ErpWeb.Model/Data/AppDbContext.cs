@@ -142,6 +142,7 @@ public class AppDbContext : DbContext
     public DbSet<SaDeliveryRequest> SaDeliveryRequests => Set<SaDeliveryRequest>();
     public DbSet<SaDeliveryRequestSource> SaDeliveryRequestSources => Set<SaDeliveryRequestSource>();
     public DbSet<SaDeliveryRequestAuditEvent> SaDeliveryRequestAuditEvents => Set<SaDeliveryRequestAuditEvent>();
+    public DbSet<SaDeliveryRequestStockReservation> SaDeliveryRequestStockReservations => Set<SaDeliveryRequestStockReservation>();
     public DbSet<SaQt> SaQts => Set<SaQt>();
     public DbSet<SaQtDetail> SaQtDetails => Set<SaQtDetail>();
     public DbSet<SaEInvoiceLog> SaEInvoiceLogs => Set<SaEInvoiceLog>();

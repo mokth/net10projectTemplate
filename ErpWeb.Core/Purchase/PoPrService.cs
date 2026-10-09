@@ -2,10 +2,13 @@ using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Planning;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Purchase;
@@ -31,6 +34,7 @@ public sealed class PoPrService : IPoPrService
     private readonly PoPrOptions _options;
     private readonly IPoPrAttachmentService _attachments;
     private readonly ILogger<PoPrService> _logger;
+    private readonly IProductionMaterialStockAvailabilityReader? _materialAvailability;
 
     public PoPrService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -42,7 +46,8 @@ public sealed class PoPrService : IPoPrService
         IOptions<PoPrOptions> options,
         IPoPrAttachmentService attachments,
         ILogger<PoPrService> logger,
-        IPoOrderRepository? poOrders = null)
+        IPoOrderRepository? poOrders = null,
+        IProductionMaterialStockAvailabilityReader? materialAvailability = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -54,6 +59,7 @@ public sealed class PoPrService : IPoPrService
         _options = options.Value;
         _attachments = attachments;
         _logger = logger;
+        _materialAvailability = materialAvailability;
     }
 
     public async Task<PoPrOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default)
@@ -509,6 +515,366 @@ public sealed class PoPrService : IPoPrService
         }
     }
 
+    public async Task<PoPrOperationResult> CreateFromWorkOrderMaterialAsync(
+        PoPrCreateFromWorkOrderMaterialRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null)
+        {
+            return PoPrOperationResult.FailValidation("Create request is required.");
+        }
+
+        if (request.WorkOrderMaterialId <= 0 || request.RequestedBaseQty <= 0m)
+        {
+            return PoPrOperationResult.FailValidation(
+                "A Work Order material and a positive requested base quantity are required.");
+        }
+
+        var context = ValidateWriteContext();
+        if (context.Error is not null)
+        {
+            return PoPrOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(PermissionCodes.Add, cancellationToken))
+        {
+            return PoPrOperationResult.Fail("Not authorized.", PoPrErrorKind.Authorization);
+        }
+
+        if (_materialAvailability is null)
+        {
+            return PoPrOperationResult.Fail(
+                "Material stock availability is not configured.",
+                PoPrErrorKind.Unexpected);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            // The material row is the serialization point for this explicit action. Every DR
+            // shortage action for the same material therefore re-reads linked PR coverage before
+            // it can create another line.
+            var material = await LockWorkOrderMaterialAsync(
+                db,
+                request.WorkOrderMaterialId,
+                cancellationToken);
+            if (material is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "Work Order material was not found.",
+                    PoPrErrorKind.NotFound);
+            }
+
+            var workOrder = await LockWorkOrderAsync(db, material.WorkOrderId, cancellationToken);
+            if (workOrder is null
+                || !string.Equals(workOrder.CompanyCode, context.CompanyCode, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(workOrder.BranchCode, context.BranchCode, StringComparison.OrdinalIgnoreCase))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail("Work Order material was not found.", PoPrErrorKind.NotFound);
+            }
+
+            if (workOrder.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "Purchase Requisition can be created only for a released or in-progress Work Order.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            if (material.SupplySource is not (PrMaterialSupplySources.Purchased or PrMaterialSupplySources.ExternalSupply))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "This Work Order material is not purchasing-relevant.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            if (string.IsNullOrWhiteSpace(material.ComponentCode)
+                || string.IsNullOrWhiteSpace(material.BaseUom)
+                || string.IsNullOrWhiteSpace(material.WarehouseCode)
+                || material.ConversionFactorToBase <= 0m)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "The Work Order material has incomplete purchasing or UOM data.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var linkedDetails = await LoadLockedLinkedPrDetailsAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                request.WorkOrderMaterialId,
+                cancellationToken);
+            var coverage = await ComputeLockedProcurementCoverageAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                material,
+                linkedDetails,
+                cancellationToken);
+            if (!coverage.IsConsistent)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    coverage.ErrorMessage ?? "Existing procurement coverage is inconsistent with the material base UOM.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var availability = await _materialAvailability.GetAsync(
+                request.WorkOrderMaterialId,
+                _dates.Today.Date,
+                cancellationToken);
+            if (!availability.Succeeded || availability.Data is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    availability.Message ?? "Material stock availability could not be read.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var availableBaseQty = IvQty.Round(
+                availability.Data.Candidates.Sum(x => x.AvailableToAllocateBaseQty));
+            var physicalShort = IvQty.Round(Math.Max(material.RequiredBaseQty - availableBaseQty, 0m));
+            var netRequirement = IvQty.Round(Math.Max(physicalShort - coverage.OpenProcurementBaseQty, 0m));
+            var requestedBaseQty = IvQty.Round(request.RequestedBaseQty);
+            if (requestedBaseQty > netRequirement + 0.00005m)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    $"Requested base quantity exceeds the current uncovered procurement requirement ({netRequirement:n4}).",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var resolved = await ResolveItemAsync(
+                db,
+                context.CompanyCode!,
+                material.ComponentCode.Trim(),
+                cancellationToken);
+            if (resolved is null
+                || !string.Equals(resolved.StdUom?.Trim(), material.BaseUom.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "The purchasing item standard UOM does not match the Work Order material base UOM.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var purchaseUom = TruncateOptional(resolved.PurchaseUom, 10);
+            if (purchaseUom is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "The purchasing item has no purchase UOM.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var packSize = PoPrCalc.EffectivePackSize(resolved.PackSz);
+            var purchaseQty = PoPrCalc.RoundQty(requestedBaseQty / packSize);
+            var recomputedStdQty = PoPrCalc.ComputeStdQty(purchaseQty, packSize);
+            if (Math.Abs(recomputedStdQty - requestedBaseQty) > 0.00005m)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "Requested base quantity cannot be represented by the purchasing pack size.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var currency = resolved.Currency;
+            if (string.IsNullOrWhiteSpace(currency))
+            {
+                currency = await db.SaCurrencies.AsNoTracking()
+                    .Where(x => x.CompanyCode == context.CompanyCode
+                        && (x.IsActive == null || x.IsActive == true))
+                    .OrderBy(x => x.CurrCode)
+                    .Select(x => x.CurrCode)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(currency))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "A purchase currency is required before a PR can be created.",
+                    PoPrErrorKind.BusinessRule);
+            }
+
+            var projectCode = await db.PrWorkOrderDemandAllocations.AsNoTracking()
+                .Where(x => x.WorkOrderId == material.WorkOrderId
+                    && x.CompanyCode == context.CompanyCode
+                    && x.BranchCode == context.BranchCode
+                    && x.IsActive)
+                .OrderBy(x => x.Uid)
+                .Select(x => x.DeliveryRequest.ProjectCode)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var prRequest = new PoPrSaveRequest
+            {
+                CreateDt = _dates.Today.Date,
+                Requester = context.UserId,
+                PrType = PoPrTypes.Purchasing,
+                ProjId = projectCode,
+                Remarks = $"DR Work Order material shortage: {material.ComponentCode}",
+                Lines =
+                [
+                    new PoPrLineDto
+                    {
+                        ICode = material.ComponentCode.Trim(),
+                        IDesc = material.ComponentDescription,
+                        Qty = requestedBaseQty,
+                        PackSz = packSize,
+                        StdUom = material.BaseUom,
+                        PurchaseQty = purchaseQty,
+                        PurchaseUom = purchaseUom,
+                        Currency = currency,
+                        UnitPrice = resolved.UnitPrice,
+                        VendorCd = resolved.VendorCd,
+                        TaxGroup = resolved.TaxGroup,
+                        IsInclusive = _options.PurchaseItemTaxInclusive,
+                        ToWarehouse = material.WarehouseCode,
+                        WorkOrderMaterialId = request.WorkOrderMaterialId,
+                        StdQty = requestedBaseQty
+                    }
+                ]
+            };
+
+            var refErrors = await ValidateDeptProjectAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                priorDeptCode: null,
+                priorProjId: null,
+                prRequest.DeptCode,
+                prRequest.ProjId,
+                cancellationToken);
+            if (refErrors is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.FailValidation(
+                    ValidationMessageFormat.JoinMessages(refErrors),
+                    refErrors);
+            }
+
+            var prepared = await PrepareLinesAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                prRequest.PrType,
+                StripEmptyLines(prRequest.Lines),
+                existingByLine: null,
+                cancellationToken);
+            if (prepared.Error is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return prepared.ToFail();
+            }
+
+            DocumentNumberResult issued;
+            try
+            {
+                issued = await _documentNumbers.NextAsync(
+                    db,
+                    "PR",
+                    "",
+                    prRequest.CreateDt,
+                    DocumentNumberRequestMode.New,
+                    "AUTO",
+                    cancellationToken);
+            }
+            catch (DocumentNumberingNotConfiguredException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "PR numbering is not configured for this company/branch.",
+                    PoPrErrorKind.BusinessRule);
+            }
+            catch (DocumentNumberingConfigurationException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "PR numbering is not configured correctly. Contact an administrator.",
+                    PoPrErrorKind.BusinessRule);
+            }
+            catch (DocumentNumberingOverflowException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "The next PR number exceeds the configured length.",
+                    PoPrErrorKind.BusinessRule);
+            }
+            catch (DocumentNumberingConcurrencyException)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(
+                    "The PR could not be saved because of a database conflict. Try again.",
+                    PoPrErrorKind.Unexpected);
+            }
+
+            var now = DateTime.UtcNow;
+            var uid = Truncate(context.UserId!, 20);
+            var header = new PoPr
+            {
+                CompanyCode = context.CompanyCode!,
+                BranchCode = context.BranchCode!,
+                PrNo = issued.DocumentNumber,
+                CreateDt = prRequest.CreateDt,
+                Status = PoPrStatuses.New,
+                Requester = uid,
+                PrType = PoPrTypes.Purchasing,
+                LocationCode = TruncateOptional(context.LocationCode, 10),
+                ProjId = TruncateOptional(projectCode, 20),
+                Remarks = TruncateOptional(prRequest.Remarks, 500),
+                CreatedDate = now,
+                CreatedBy = uid
+            };
+
+            short lineNo = 1;
+            foreach (var line in prepared.Lines!)
+            {
+                header.Details.Add(ToDetailEntity(header, line, lineNo++));
+            }
+
+            TouchRowVersion(db, header);
+            db.PoPrs.Add(header);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "PR created from Work Order material. UserId={UserId} Company={Company} PrNo={PrNo} WorkOrderMaterialId={WorkOrderMaterialId}",
+                context.UserId,
+                context.CompanyCode,
+                header.PrNo,
+                request.WorkOrderMaterialId);
+
+            return await GetAsync(header.PrNo, cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoPrOperationResult.Fail("PR number is already used.", PoPrErrorKind.Unexpected);
+        }
+        catch (SqlException ex) when (ex.Number == 1205)
+        {
+            _logger.LogWarning(ex, "PR-from-material save deadlock.");
+            await tx.RollbackAsync(cancellationToken);
+            return PoPrOperationResult.Fail(
+                "The PR could not be saved because of a database conflict. Try again.",
+                PoPrErrorKind.Unexpected);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PR-from-material save failed.");
+            await tx.RollbackAsync(cancellationToken);
+            return PoPrOperationResult.Fail(
+                "Unable to create the Purchase Requisition from the Work Order material.",
+                PoPrErrorKind.Unexpected);
+        }
+    }
+
     public async Task<PoPrOperationResult> UpdateAsync(
         string prNo,
         PoPrSaveRequest? request,
@@ -768,6 +1134,8 @@ public sealed class PoPrService : IPoPrService
                 ToWarehouse = x.ToWarehouse,
                 SoNo = null,
                 SoLine = null,
+                // A copied PR is a new procurement commitment, not another Work Order link.
+                WorkOrderMaterialId = null,
                 NetAmount = x.IsInclusive ? x.Amount - x.TaxAmount : x.Amount
             })
             .ToList();
@@ -1134,6 +1502,158 @@ public sealed class PoPrService : IPoPrService
         return errors.Count == 0 ? null : errors;
     }
 
+    private static async Task<ProductionWorkOrderMaterial?> LockWorkOrderMaterialAsync(
+        AppDbContext db,
+        long workOrderMaterialId,
+        CancellationToken cancellationToken)
+    {
+        if (db.Database.IsSqlServer())
+        {
+            return await db.ProductionWorkOrderMaterials
+                .FromSqlInterpolated($@"
+SELECT * FROM dbo.PrWorkOrderMaterial WITH (UPDLOCK,HOLDLOCK)
+WHERE UID={workOrderMaterialId}")
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        return await db.ProductionWorkOrderMaterials
+            .SingleOrDefaultAsync(x => x.Uid == workOrderMaterialId, cancellationToken);
+    }
+
+    private static async Task<ProductionWorkOrder?> LockWorkOrderAsync(
+        AppDbContext db,
+        long workOrderId,
+        CancellationToken cancellationToken)
+    {
+        if (db.Database.IsSqlServer())
+        {
+            return await db.ProductionWorkOrders
+                .FromSqlInterpolated($@"
+SELECT * FROM dbo.PrWorkOrder WITH (UPDLOCK,HOLDLOCK)
+WHERE UID={workOrderId}")
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        return await db.ProductionWorkOrders
+            .SingleOrDefaultAsync(x => x.Uid == workOrderId, cancellationToken);
+    }
+
+    private static async Task<List<PoPrDetail>> LoadLockedLinkedPrDetailsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long workOrderMaterialId,
+        CancellationToken cancellationToken)
+    {
+        if (db.Database.IsSqlServer())
+        {
+            return await db.PoPrDetails
+                .FromSqlInterpolated($@"
+SELECT d.*
+FROM dbo.POPRDtl AS d WITH (UPDLOCK,HOLDLOCK)
+WHERE d.CompanyCode={companyCode}
+  AND d.BranchCode={branchCode}
+  AND d.WorkOrderMaterialID={workOrderMaterialId}")
+                .ToListAsync(cancellationToken);
+        }
+
+        return await db.PoPrDetails
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.WorkOrderMaterialId == workOrderMaterialId)
+            .ToListAsync(cancellationToken);
+    }
+
+    private static async Task<ProcurementCoverage> ComputeLockedProcurementCoverageAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        ProductionWorkOrderMaterial material,
+        IReadOnlyList<PoPrDetail> linkedDetails,
+        CancellationToken cancellationToken)
+    {
+        var linkedPrNos = linkedDetails
+            .Select(x => x.PrNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var headers = linkedPrNos.Length == 0
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await db.PoPrs.AsNoTracking()
+                .Where(x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && linkedPrNos.Contains(x.PrNo))
+                .ToDictionaryAsync(x => x.PrNo, x => x.Status, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+        var activeDetails = linkedDetails
+            .Where(x => headers.TryGetValue(x.PrNo, out var status)
+                && !string.Equals(status, PoPrStatuses.Cancelled, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(x.Status, PoPrStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var activePrNos = activeDetails
+            .Select(x => x.PrNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var poRows = activePrNos.Length == 0
+            ? []
+            : await db.PoOrderDetails.AsNoTracking()
+                .Where(x => x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.PrNo != null
+                    && activePrNos.Contains(x.PrNo)
+                    && x.PrLineNo != null)
+                .Select(x => new CoveragePoRow
+                {
+                    PrNo = x.PrNo!,
+                    PrLineNo = x.PrLineNo!.Value,
+                    PoNo = x.PoNo,
+                    PoRelNo = x.PoRelNo,
+                    OrderedStdQty = x.PoQty,
+                    OpenStdQty = x.BalanceQty * (x.PackSz == 0m ? 1m : x.PackSz),
+                    StdUom = x.StdUom,
+                    Status = x.Order.Status
+                })
+                .ToListAsync(cancellationToken);
+
+        var latestRevisionByPo = poRows
+            .GroupBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Max(x => x.PoRelNo), StringComparer.OrdinalIgnoreCase);
+
+        var open = 0m;
+        var consistencyError = (string?)null;
+        foreach (var detail in activeDetails)
+        {
+            if (!string.Equals(detail.StdUom?.Trim(), material.BaseUom?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                consistencyError ??= $"PR {detail.PrNo} line {detail.Line} standard UOM does not match the Work Order material base UOM.";
+            }
+
+            var current = poRows
+                .Where(x => string.Equals(x.PrNo, detail.PrNo, StringComparison.OrdinalIgnoreCase)
+                    && x.PrLineNo == detail.Line
+                    && latestRevisionByPo.TryGetValue(x.PoNo, out var latest)
+                    && latest == x.PoRelNo
+                    && !string.Equals(x.Status, PoOrderStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var ordered = current.Sum(x => x.OrderedStdQty);
+            open += Math.Max(detail.StdQty - ordered, 0m);
+            open += current.Sum(x => Math.Max(x.OpenStdQty, 0m));
+
+            foreach (var po in current)
+            {
+                if (!string.Equals(po.StdUom?.Trim(), material.BaseUom?.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    consistencyError ??= $"PO {po.PoNo} revision {po.PoRelNo} standard UOM does not match the Work Order material base UOM.";
+                }
+            }
+        }
+
+        return new ProcurementCoverage(
+            PoPrCalc.RoundQty(Math.Max(open, 0m)),
+            consistencyError is null,
+            consistencyError);
+    }
+
     private async Task<PrepareOutcome> PrepareLinesAsync(
         AppDbContext db,
         string companyCode,
@@ -1172,6 +1692,33 @@ public sealed class PoPrService : IPoPrService
                 && existingByLine.TryGetValue(src.Line, out var existingDetail)
                     ? existingDetail
                     : null;
+
+            if (existing?.WorkOrderMaterialId is long existingMaterialId)
+            {
+                if (src.WorkOrderMaterialId != existingMaterialId)
+                {
+                    errors[$"{prefix}.WorkOrderMaterialId"] =
+                        "The linked Work Order material cannot be changed on an existing PR line.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(src.ICode)
+                    && !string.Equals(src.ICode.Trim(), existing.ICode?.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    errors[$"{prefix}.ICode"] = "The linked PR item cannot be changed.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(src.StdUom)
+                    && !string.Equals(src.StdUom.Trim(), existing.StdUom?.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    errors[$"{prefix}.StdUom"] = "The linked PR standard UOM cannot be changed.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(src.ToWarehouse)
+                    && !string.Equals(src.ToWarehouse.Trim(), existing.ToWarehouse?.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    errors[$"{prefix}.ToWarehouse"] = "The linked PR warehouse cannot be changed.";
+                }
+            }
 
             if (existing is not null && !string.IsNullOrWhiteSpace(existing.PoNo))
             {
@@ -1221,6 +1768,45 @@ public sealed class PoPrService : IPoPrService
             {
                 errors[$"{prefix}.ICode"] = "Item was not found in stock or purchase item master.";
                 continue;
+            }
+
+            var linkedMaterialId = src.WorkOrderMaterialId ?? existing?.WorkOrderMaterialId;
+            if (linkedMaterialId is long materialId)
+            {
+                var linkedMaterial = await db.ProductionWorkOrderMaterials.AsNoTracking()
+                    .Where(x => x.Uid == materialId
+                        && x.WorkOrder!.CompanyCode == companyCode
+                        && x.WorkOrder.BranchCode == branchCode)
+                    .Select(x => new
+                    {
+                        x.ComponentCode,
+                        x.BaseUom,
+                        x.WarehouseCode
+                    })
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (linkedMaterial is null)
+                {
+                    errors[$"{prefix}.WorkOrderMaterialId"] = "The linked Work Order material was not found in the current branch.";
+                }
+                else
+                {
+                    if (!string.Equals(linkedMaterial.ComponentCode, iCode, StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors[$"{prefix}.ICode"] = "The PR item must match the linked Work Order material.";
+                    }
+
+                    var requestedStdUom = TruncateOptional(src.StdUom, 10)
+                        ?? TruncateOptional(resolved.StdUom, 10);
+                    if (!string.Equals(linkedMaterial.BaseUom, requestedStdUom, StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors[$"{prefix}.StdUom"] = "The PR standard UOM must match the linked Work Order material base UOM.";
+                    }
+
+                    if (!string.Equals(linkedMaterial.WarehouseCode, TruncateOptional(src.ToWarehouse, 20), StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors[$"{prefix}.ToWarehouse"] = "The PR warehouse must match the linked Work Order material warehouse.";
+                    }
+                }
             }
 
             var taxGroup = TruncateOptional(src.TaxGroup, 20);
@@ -1319,6 +1905,7 @@ public sealed class PoPrService : IPoPrService
                 ToWarehouse = TruncateOptional(src.ToWarehouse, 20),
                 SoNo = TruncateOptional(src.SoNo, 30),
                 SoLine = src.SoLine,
+                WorkOrderMaterialId = linkedMaterialId,
                 NetAmount = net,
                 PoNo = null
             };
@@ -1402,6 +1989,7 @@ public sealed class PoPrService : IPoPrService
             ToWarehouse = existing.ToWarehouse,
             SoNo = existing.SoNo,
             SoLine = existing.SoLine,
+            WorkOrderMaterialId = existing.WorkOrderMaterialId,
             NetAmount = net,
             PoNo = existing.PoNo
         };
@@ -1518,6 +2106,7 @@ public sealed class PoPrService : IPoPrService
         detail.IsInclusive = line.IsInclusive;
         detail.ToWarehouse = line.ToWarehouse;
         detail.SoNo = line.SoNo;
+        detail.WorkOrderMaterialId = line.WorkOrderMaterialId;
         detail.SoLine = line.SoLine;
     }
 
@@ -1557,7 +2146,8 @@ public sealed class PoPrService : IPoPrService
                 null,
                 null,
                 0m,
-                stock.DefWarehouse);
+                stock.DefWarehouse,
+                null);
         }
 
         var pur = await db.PoPurItems.AsNoTracking()
@@ -1582,7 +2172,8 @@ public sealed class PoPrService : IPoPrService
             pur.Category,
             pur.Vendor,
             pur.Moq,
-            null);
+            null,
+            pur.Currency);
     }
 
     private async Task<decimal> ResolveUnitPriceAsync(
@@ -1944,6 +2535,7 @@ public sealed class PoPrService : IPoPrService
             ToWarehouse = x.ToWarehouse,
             SoNo = x.SoNo,
             SoLine = x.SoLine,
+            WorkOrderMaterialId = x.WorkOrderMaterialId,
             NetAmount = net
         };
     }
@@ -2029,6 +2621,23 @@ public sealed class PoPrService : IPoPrService
                 : PoPrOperationResult.Fail(Error ?? "Unable to save the Purchase Requisition.", Kind);
     }
 
+    private readonly record struct ProcurementCoverage(
+        decimal OpenProcurementBaseQty,
+        bool IsConsistent,
+        string? ErrorMessage);
+
+    private sealed class CoveragePoRow
+    {
+        public string PrNo { get; init; } = string.Empty;
+        public short PrLineNo { get; init; }
+        public string PoNo { get; init; } = string.Empty;
+        public short PoRelNo { get; init; }
+        public decimal OrderedStdQty { get; init; }
+        public decimal OpenStdQty { get; init; }
+        public string? StdUom { get; init; }
+        public string? Status { get; init; }
+    }
+
     private sealed class PreparedLine
     {
         public int RequestOrder { get; init; }
@@ -2064,6 +2673,7 @@ public sealed class PoPrService : IPoPrService
         public string? ToWarehouse { get; init; }
         public string? SoNo { get; init; }
         public int? SoLine { get; init; }
+        public long? WorkOrderMaterialId { get; init; }
         public decimal NetAmount { get; init; }
         public string? PoNo { get; init; }
     }
@@ -2080,7 +2690,8 @@ public sealed class PoPrService : IPoPrService
         string? Category,
         string? VendorCd,
         decimal Moq,
-        string? DefWarehouse);
+        string? DefWarehouse,
+        string? Currency);
 
     private readonly record struct UserContext(
         string? Error,

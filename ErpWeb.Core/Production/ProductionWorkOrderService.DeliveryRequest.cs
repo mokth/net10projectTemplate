@@ -24,6 +24,16 @@ public sealed partial class ProductionWorkOrderService
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            if (_deliveryRequestFulfilment is not null)
+            {
+                var reconcile = await _deliveryRequestFulfilment.ReconcileAsync(
+                    request.DeliveryRequestId, cancellationToken);
+                if (!reconcile.Succeeded)
+                {
+                    return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(
+                        reconcile.ErrorCode, reconcile.Message ?? "Delivery Request fulfilment reconciliation failed.");
+                }
+            }
             var prepared = await BuildDeliveryRequestSnapshotAsync(db, auth.Scope!, request, cancellationToken);
             if (prepared.Error is not null)
             {
@@ -107,7 +117,12 @@ public sealed partial class ProductionWorkOrderService
             var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
                 db, scope, deliveryRequest.Uid, cancellationToken);
             var activeAllocated = allocations.Where(x => x.IsActive).Sum(x => x.AllocatedQty);
-            var unplanned = Math.Max(deliveryRequest.RequestedQty - activeAllocated, 0m);
+            var fulfilment = _deliveryRequestFulfilment is null
+                ? null
+                : await _deliveryRequestFulfilment.ReconcileInTransactionAsync(
+                    db, deliveryRequest.Uid, scope, cancellationToken);
+            var unplanned = fulfilment?.ProductionUnplannedQty
+                ?? Math.Max(deliveryRequest.RequestedQty - activeAllocated, 0m);
             if (plannedQty - unplanned > 0.0001m)
             {
                 throw new WorkOrderCommandException(
@@ -119,7 +134,8 @@ public sealed partial class ProductionWorkOrderService
                 db,
                 scope,
                 CopyRequestWithPlannedQty(request, plannedQty),
-                cancellationToken);
+                cancellationToken,
+                reconciledUnplannedQty: unplanned);
             if (prepared.Error is not null || prepared.Snapshot?.WorkOrder is null)
             {
                 throw new WorkOrderCommandException(
@@ -236,7 +252,8 @@ public sealed partial class ProductionWorkOrderService
         AppDbContext db,
         InventoryTenantScope scope,
         ProductionWorkOrderDeliveryRequestRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        decimal? reconciledUnplannedQty = null)
     {
         var deliveryRequest = await db.SaDeliveryRequests.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Uid == request.DeliveryRequestId
@@ -258,7 +275,8 @@ public sealed partial class ProductionWorkOrderService
                 && x.BranchCode == scope.BranchCode)
             .ToListAsync(cancellationToken);
         var activeAllocated = allocations.Where(x => x.IsActive).Sum(x => x.AllocatedQty);
-        var unplanned = Math.Max(deliveryRequest.RequestedQty - activeAllocated, 0m);
+        var unplanned = reconciledUnplannedQty
+            ?? Math.Max(deliveryRequest.RequestedQty - activeAllocated, 0m);
         var plannedQty = IvQty.Round(request.PlannedQty);
         if (plannedQty <= 0m)
         {

@@ -32,6 +32,23 @@
     font-weight: 500;
 }
 
+.dr-fulfilment__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    margin-top: 14px;
+    color: var(--sdoc-muted-text, #667085);
+    font-size: .82rem;
+}
+
+.dr-fulfilment__risk {
+    color: #b42318;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
 .dr-qty {
     min-width: 8rem;
     max-width: 10rem;

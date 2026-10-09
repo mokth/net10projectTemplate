@@ -98,6 +98,7 @@ public sealed class FinishedGoodReceiptDocument
     public bool CanViewCost { get; set; }
     public bool PostingEnabled { get; set; }
     public List<string> ReadinessErrors { get; set; } = [];
+    public List<string> Warnings { get; set; } = [];
     public List<FinishedGoodReceiptLine> Lines { get; set; } = [];
 }
 public sealed class FinishedGoodReceiptLine

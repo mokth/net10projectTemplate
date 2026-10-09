@@ -105,3 +105,24 @@ IF OBJECT_ID(N'dbo.POPRAttachFile', N'U') IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_POPRAttachFile_Company_Branch_DocKey' AND object_id = OBJECT_ID(N'dbo.POPRAttachFile'))
     CREATE INDEX IX_POPRAttachFile_Company_Branch_DocKey ON dbo.POPRAttachFile (CompanyCode, BranchCode, DocKey);
 GO
+
+IF OBJECT_ID(N'dbo.POPRDtl', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.POPRDtl', N'WorkOrderMaterialID') IS NULL
+    ALTER TABLE dbo.POPRDtl ADD WorkOrderMaterialID bigint NULL;
+GO
+
+IF OBJECT_ID(N'dbo.POPRDtl', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.PrWorkOrderMaterial', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_POPRDtl_WorkOrderMaterial')
+BEGIN
+    ALTER TABLE dbo.POPRDtl WITH CHECK ADD CONSTRAINT FK_POPRDtl_WorkOrderMaterial
+        FOREIGN KEY (WorkOrderMaterialID) REFERENCES dbo.PrWorkOrderMaterial (UID);
+    ALTER TABLE dbo.POPRDtl CHECK CONSTRAINT FK_POPRDtl_WorkOrderMaterial;
+END
+GO
+
+IF OBJECT_ID(N'dbo.POPRDtl', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_POPRDtl_Company_Branch_WorkOrderMaterialID' AND object_id = OBJECT_ID(N'dbo.POPRDtl'))
+    CREATE INDEX IX_POPRDtl_Company_Branch_WorkOrderMaterialID
+        ON dbo.POPRDtl (CompanyCode, BranchCode, WorkOrderMaterialID);
+GO

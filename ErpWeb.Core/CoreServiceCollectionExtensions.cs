@@ -199,6 +199,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IInventoryAsOfStockService, InventoryAsOfStockService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
+        services.AddScoped<IInventorySoftReservationReader, InventorySoftReservationReader>();
 
         services.AddScoped<IIvInventoryReconciliationService, IvInventoryReconciliationService>();
         services.AddScoped<ISaAllocationReconciliationService, SaAllocationReconciliationService>();
@@ -214,7 +215,9 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
         services.AddScoped<ISaDeliveryRequestService, SaDeliveryRequestService>();
+        services.AddScoped<ISaDeliveryRequestFulfilmentService, SaDeliveryRequestFulfilmentService>();
         services.AddScoped<IProductionMaterialAllocationService, ProductionMaterialAllocationService>();
+        services.AddScoped<IProductionMaterialStockAvailabilityReader, ProductionMaterialStockAvailabilityReader>();
         services.AddSingleton<IProductionOperationEligibilityService, ProductionOperationEligibilityService>();
         services.AddScoped<IProductionMaterialIssueDraftReservationReader, ProductionMaterialIssueDraftReservationReader>();
         services.AddScoped<IProductionMaterialReconciliationService, ProductionMaterialReconciliationService>();
@@ -283,6 +286,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IPoMasterRefService, PoMasterRefService>();
 
         services.AddScoped<IPoPrService, PoPrService>();
+        services.AddScoped<IWorkOrderMaterialProcurementTraceService, WorkOrderMaterialProcurementTraceService>();
 
         services.AddScoped<IPoPrAttachmentService, PoPrAttachmentService>();
 

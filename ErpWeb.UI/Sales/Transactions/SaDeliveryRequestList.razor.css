@@ -7,3 +7,25 @@
 .iv-page ::deep .dxbl-grid {
     border: 0;
 }
+
+.dr-kpi-card {
+    margin-bottom: 1rem;
+}
+
+.dr-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .75rem;
+}
+
+@media (max-width: 1200px) {
+    .dr-kpi-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .dr-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

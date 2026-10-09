@@ -12,15 +12,26 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
     private readonly IIvStockPostingRepository _postingRepo;
     private readonly IIvStockTransactionRepository _transactions;
     private readonly IRunningNumberService _runningNumbers;
+    private readonly IInventorySoftReservationReader _softReservations;
 
     public IvSpShipmentService(
         IIvStockPostingRepository postingRepo,
         IIvStockTransactionRepository transactions,
         IRunningNumberService runningNumbers)
+        : this(postingRepo, transactions, runningNumbers, new InventorySoftReservationReader())
+    {
+    }
+
+    public IvSpShipmentService(
+        IIvStockPostingRepository postingRepo,
+        IIvStockTransactionRepository transactions,
+        IRunningNumberService runningNumbers,
+        IInventorySoftReservationReader softReservations)
     {
         _postingRepo = postingRepo;
         _transactions = transactions;
         _runningNumbers = runningNumbers;
+        _softReservations = softReservations;
     }
 
     public async Task<IvSpShipmentResult> CreateOrReplaceShipmentAsync(
@@ -148,6 +159,19 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             remainingByBalLoc[id] = IvQty.Round(row.StdQty - reserved);
         }
 
+        var ownDeliveryRequestReservations = await _softReservations
+            .GetActiveDeliveryRequestReservationsAsync(
+                db,
+                company,
+                branch,
+                location,
+                required
+                    .Where(x => x.DeliveryRequestSourceId is not null)
+                    .Select(x => x.DeliveryRequestSourceId!.Value)
+                    .Distinct()
+                    .ToList(),
+                cancellationToken);
+
         var allocation = IvSpShipmentAllocator.Allocate(
             required,
             locked,
@@ -155,7 +179,8 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             company,
             branch,
             location,
-            documentDate);
+            documentDate,
+            ownDeliveryRequestReservations);
 
         if (batch is null)
         {
@@ -244,6 +269,17 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         var location = query.LocationCode.Trim();
         var invNo = query.DocumentNo.Trim();
 
+        var editSourceId = query.DeliveryRequestSourceId;
+        var ownDeliveryRequestReservations = editSourceId is long
+            ? await _softReservations.GetActiveDeliveryRequestReservationsAsync(
+                db,
+                company,
+                branch,
+                location,
+                [editSourceId.Value],
+                cancellationToken)
+            : new Dictionary<(long DeliveryRequestSourceId, int BalLocId), decimal>();
+
         var batch = await db.IvTrxBatches.AsNoTracking()
             .Where(x =>
                 x.CompanyCode == company
@@ -275,7 +311,12 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
                     {
                         var reserved = await SumOtherNewSpReservationsAsync(
                             db, company, branch, location, bal.Id, excludeDetailIds, cancellationToken);
-                        available = IvQty.Round(bal.StdQty - reserved);
+                        available = IvQty.Round(
+                            bal.StdQty
+                            - reserved
+                            + (editSourceId is long
+                                ? ownDeliveryRequestReservations.GetValueOrDefault((editSourceId.Value, bal.Id))
+                                : 0m));
                     }
                 }
 
@@ -306,7 +347,12 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
 
             var reserved = await SumOtherNewSpReservationsAsync(
                 db, company, branch, location, pile.Id, excludeDetailIds, cancellationToken);
-            var available = IvQty.Round(pile.StdQty - reserved);
+            var available = IvQty.Round(
+                pile.StdQty
+                - reserved
+                + (editSourceId is long
+                    ? ownDeliveryRequestReservations.GetValueOrDefault((editSourceId.Value, pile.Id))
+                    : 0m));
             if (available <= 0m)
             {
                 continue;
@@ -421,6 +467,16 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         }
 
         var excludeDetailIds = lineDetails.Select(x => x.Id).ToHashSet();
+        var replaceSourceId = command.DeliveryRequestSourceId;
+        var ownDeliveryRequestReservations = replaceSourceId is long
+            ? await _softReservations.GetActiveDeliveryRequestReservationsAsync(
+                db,
+                company,
+                branch,
+                location,
+                [replaceSourceId.Value],
+                cancellationToken)
+            : new Dictionary<(long DeliveryRequestSourceId, int BalLocId), decimal>();
         var evaluated = new List<IvSpLotResult>();
         foreach (var lot in submitted)
         {
@@ -439,7 +495,12 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
 
             var reservedOther = await SumOtherNewSpReservationsAsync(
                 db, company, branch, location, lot.FromBalLocId, excludeDetailIds, cancellationToken);
-            var available = IvQty.Round(row.StdQty - reservedOther);
+            var available = IvQty.Round(
+                row.StdQty
+                - reservedOther
+                + (replaceSourceId is long
+                    ? ownDeliveryRequestReservations.GetValueOrDefault((replaceSourceId.Value, lot.FromBalLocId))
+                    : 0m));
             var issue = IvQty.Round(lot.IssueQty);
             if (issue > available)
             {
@@ -640,6 +701,25 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         }
 
         var thisBatchDetailIds = details.Select(x => x.Id).ToHashSet();
+        var sourceByLine = query.RequiredLines
+            .Where(x => x.DeliveryRequestSourceId is not null)
+            .GroupBy(x => x.Line)
+            .ToDictionary(x => x.Key, x => x.First().DeliveryRequestSourceId!.Value);
+        var sourceIds = details
+            .Select(x => x.SoLineNo is short lineNo && sourceByLine.TryGetValue(lineNo, out var sourceId)
+                ? sourceId
+                : 0L)
+            .Where(x => x > 0)
+            .Distinct()
+            .ToList();
+        var ownDeliveryRequestReservations = await _softReservations
+            .GetActiveDeliveryRequestReservationsAsync(
+                db,
+                company,
+                branch,
+                location,
+                sourceIds,
+                cancellationToken);
         var byBalLoc = details
             .Where(d => d.FromBalLocId is > 0)
             .GroupBy(d => d.FromBalLocId!.Value)
@@ -655,7 +735,14 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
 
             var other = await SumOtherNewSpReservationsAsync(
                 db, company, branch, location, balLocId, thisBatchDetailIds, cancellationToken);
-            var available = IvQty.Round(lockedRow.StdQty - other);
+            var own = details
+                .Where(x => x.FromBalLocId == balLocId
+                    && x.SoLineNo is short lineNo
+                    && sourceByLine.TryGetValue(lineNo, out _))
+                .Select(x => sourceByLine[x.SoLineNo!.Value])
+                .Distinct()
+                .Sum(sourceId => ownDeliveryRequestReservations.GetValueOrDefault((sourceId, balLocId)));
+            var available = IvQty.Round(lockedRow.StdQty - other + own);
             if (thisQty > available)
             {
                 return IvSpValidatePostResult.Fail(
@@ -807,37 +894,28 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
             .ThenBy(x => x.Id)
             .ToListAsync(cancellationToken);
 
-    private static async Task<decimal> SumOtherNewSpReservationsAsync(
+    private async Task<decimal> SumOtherNewSpReservationsAsync(
         AppDbContext db,
         string company,
         string branch,
         string location,
         int balLocId,
         HashSet<int>? excludeDetailIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? excludeDeliveryRequestSourceId = null)
     {
-        var query =
-            from detail in db.IvTrxBatchDetails.AsNoTracking()
-            join batch in db.IvTrxBatches.AsNoTracking() on detail.BatchId equals batch.Id
-            where detail.CompanyCode == company
-                  && detail.BranchCode == branch
-                  && detail.LocationCode == location
-                  && detail.FromBalLocId == balLocId
-                  && batch.CompanyCode == company
-                  && batch.BranchCode == branch
-                  && batch.LocationCode == location
-                  && batch.TrxType == IvTrxTypes.SalesOut
-                  && batch.BatchStatus == IvBatchStatuses.New
-                  && batch.DeletedAtUtc == null
-            select detail;
-
-        if (excludeDetailIds is { Count: > 0 })
-        {
-            query = query.Where(d => !excludeDetailIds.Contains(d.Id));
-        }
-
-        var sum = await query.SumAsync(d => d.FrStdQty ?? 0m, cancellationToken);
-        return IvQty.Round(sum);
+        var values = await _softReservations.GetReservedByBalanceAsync(
+            db,
+            company,
+            branch,
+            location,
+            [balLocId],
+            excludeDetailIds,
+            excludeDeliveryRequestSourceId,
+            cancellationToken);
+        return values.TryGetValue(balLocId, out var reserved)
+            ? reserved.TotalReservedQty
+            : 0m;
     }
 
     private static List<IvSpLotResult> PrefillFifoIssueQty(List<IvSpLotResult> lots, decimal requested)

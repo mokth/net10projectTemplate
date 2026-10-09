@@ -2,7 +2,9 @@
 @page "/sales/delivery-requests/{Mode:regex(^(edit|view)$)}/{Uid:long}"
 @inherits PageBase
 @using DevExpress.Blazor
+@using ErpWeb.Core.Sales
 @using ErpWeb.Model.Entities.Sales
+@using ErpWeb.UI.Inventory.Lookups
 
 <PageTitle>@PageHeading</PageTitle>
 
@@ -39,11 +41,35 @@
                 </div>
             </header>
 
-            <section class="sdoc-master dr-progress" aria-label="Delivery Request progress">
-                <div class="dr-progress__item"><span>Requested</span><strong>@(Detail?.RequestedQty.ToString("n4") ?? (SourceRows.Count == 0 ? "—" : SourceRows.Sum(x => x.Quantity).ToString("n4"))) <small>@(Detail?.ProductionUom ?? ProductionUom)</small></strong></div>
-                <div class="dr-progress__item"><span>WO allocated</span><strong>@(Detail?.WoAllocatedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
-                <div class="dr-progress__item"><span>Unplanned</span><strong>@(Detail?.UnplannedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
-                <div class="dr-progress__item"><span>Produced</span><strong>@(Detail?.ProducedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+            <section class="sdoc-master dr-fulfilment" aria-label="Delivery Request fulfilment">
+                <div class="dr-progress">
+                    <div class="dr-progress__item"><span>Requested</span><strong>@(Detail?.RequestedQty.ToString("n4") ?? (SourceRows.Count == 0 ? "—" : SourceRows.Sum(x => x.Quantity).ToString("n4"))) <small>@(Detail?.ProductionUom ?? ProductionUom)</small></strong></div>
+                    <div class="dr-progress__item"><span>Delivered</span><strong>@(Detail?.DeliveredQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>DR stock reserved</span><strong>@(Detail?.DrStockReservedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>NEW shipment reserved</span><strong>@(Detail?.NewShipmentReservedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>Ready</span><strong>@(Detail?.ReadyQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>Production required</span><strong>@(Detail?.ProductionRequiredQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>Production unplanned</span><strong>@(Detail?.ProductionUnplannedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                    <div class="dr-progress__item"><span>Outstanding WO supply</span><strong>@(Detail?.OutstandingWoSupplyQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                </div>
+                @if (Detail is not null)
+                {
+                    <div class="dr-fulfilment__meta">
+                        <span class="iv-status @(Detail.IsAtRisk ? "is-off" : "is-on")">@Detail.FulfilmentStatus</span>
+                        @if (!string.Equals(Detail.BlockerCode, SaDeliveryRequestBlockerCodes.None, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <span class="iv-status is-hold">Blocker: @Detail.BlockerCode</span>
+                        }
+                        @if (Detail.FulfilledDate is DateTime fulfilledDate)
+                        {
+                            <span>Fulfilled @fulfilledDate.ToString("dd/MM/yyyy")</span>
+                        }
+                        @if (Detail.IsAtRisk)
+                        {
+                            <span class="dr-fulfilment__risk">At risk</span>
+                        }
+                    </div>
+                }
             </section>
 
             <section class="sdoc-master">
@@ -77,19 +103,43 @@
                         <HeaderContentTemplate>Production</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="Product" ColSpanMd="12">
-                                <Template><DxTextBox Text="@ProductCode" ReadOnly="true" /></Template>
+                                <Template>
+                                    @if (SourceRows.Count == 0 && CanEdit)
+                                    {
+                                        <IvStockMasterPicker ICode="@ProductCode"
+                                                             ICodeChanged="@OnProductCodeChanged"
+                                                             Enabled="@CanEdit"
+                                                             NullText="Select product or use SO filter" />
+                                    }
+                                    else
+                                    {
+                                        <DxTextBox Text="@ProductCode" ReadOnly="true" />
+                                    }
+                                </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Production UOM" ColSpanMd="12">
                                 <Template><DxTextBox Text="@ProductionUom" ReadOnly="true" /></Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Product definition" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="@DefinitionCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="30" />
+                                    @if (CanEdit && DefinitionOptions.Count > 0)
+                                    {
+                                        <DxComboBox Data="@DefinitionOptions"
+                                                    TextFieldName="@nameof(DefinitionOption.Label)"
+                                                    ValueFieldName="@nameof(DefinitionOption.Code)"
+                                                    @bind-Value="@DefinitionCode"
+                                                    @bind-Value:after="MarkDirtyOnly"
+                                                    NullText="Select ACTIVE definition" />
+                                    }
+                                    else
+                                    {
+                                        <DxTextBox Text="@DefinitionCode" ReadOnly="true" MaxLength="30" />
+                                    }
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Warehouse" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="@WarehouseCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                    <DxTextBox @bind-Text="@WarehouseCode" @bind-Text:after="MarkDirtyOnly" Enabled="@(CanEdit && SourceRows.Count == 0)" MaxLength="20" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -100,12 +150,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="@ProjectCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                    <DxTextBox @bind-Text="@ProjectCode" @bind-Text:after="MarkDirtyOnly" Enabled="@(CanEdit && SourceRows.Count == 0)" MaxLength="20" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Priority" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Priority" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                    <DxComboBox Data="@PriorityOptions" @bind-Value="@Priority" @bind-Value:after="MarkDirtyOnly" Enabled="@CanEdit" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
@@ -170,6 +220,9 @@
                             </DxGridDataColumn>
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.SourceQty)" Caption="Demand" DisplayFormat="n4" Width="110px" />
                             <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ProductionUom)" Caption="UOM" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.WarehouseCode)" Caption="Warehouse" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ProjectCode)" Caption="Project" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.CustomerCode)" Caption="Customer" Width="110px" />
                             <DxGridDataColumn Caption="Allocated" Width="145px">
                                 <CellDisplayTemplate>
                                     @{
@@ -288,6 +341,70 @@
                 </section>
             }
 
+            @if (Detail is not null && Detail.MaterialShortages.Count > 0)
+            {
+                <section class="sdoc-master">
+                    <div class="sdoc-items__head">
+                        <div>
+                            <h2 class="sdoc-items__title">Material / procurement</h2>
+                            <p class="sdoc-popup-hint">Purchased and external-supply materials use current stock availability and linked PR/PO coverage. Quantities are in the material base UOM.</p>
+                        </div>
+                    </div>
+                    <DxGrid Data="@Detail.MaterialShortages" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.WorkOrderNo)" Caption="Work Order" Width="130px" />
+                            <DxGridDataColumn Caption="Component" Width="210px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var material = (SaDeliveryRequestMaterialShortageTrace)context.DataItem;
+                                    }
+                                    <div class="dr-cell-stack">
+                                        <span class="dr-cell-stack__primary">@material.ComponentCode</span>
+                                        <span class="dr-cell-stack__secondary">@material.ComponentDescription</span>
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.RequiredBaseQty)" Caption="Required" DisplayFormat="n4" />
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.AvailableBaseQty)" Caption="Available" DisplayFormat="n4" />
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.PhysicalShortBaseQty)" Caption="Physical short" DisplayFormat="n4" />
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.OpenProcurementBaseQty)" Caption="Open procurement" DisplayFormat="n4" />
+                            <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestMaterialShortageTrace.NetProcurementRequiredBaseQty)" Caption="Net to procure" DisplayFormat="n4" />
+                            <DxGridDataColumn Caption="PR / PO" Width="190px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var material = (SaDeliveryRequestMaterialShortageTrace)context.DataItem;
+                                        var trace = string.Join(", ", material.Procurement
+                                            .Select(x => string.IsNullOrWhiteSpace(x.PoNo)
+                                                ? $"PR {x.PrNo}/{x.PrLineNo}"
+                                                : $"PR {x.PrNo}/{x.PrLineNo} → PO {x.PoNo}/{x.PoRelNo}"));
+                                    }
+                                    <span>@(string.IsNullOrWhiteSpace(trace) ? "—" : trace)</span>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridCommandColumn Caption="" Width="110px" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var material = (SaDeliveryRequestMaterialShortageTrace)context.DataItem;
+                                    }
+                                    @if (!material.IsConsistent && !string.IsNullOrWhiteSpace(material.InconsistencyMessage))
+                                    {
+                                        <span class="iv-status is-hold" title="@material.InconsistencyMessage">UOM issue</span>
+                                    }
+                                    else if (CanCreatePurchaseRequisition && material.NetProcurementRequiredBaseQty > 0.0001m)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  Text="Create PR"
+                                                  Click="@(() => CreatePurchaseRequisitionAsync(material))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        </Columns>
+                    </DxGrid>
+                </section>
+            }
+
             @if (Detail is not null)
             {
                 <section class="sdoc-master">
@@ -319,6 +436,10 @@
                         @if (CanEditFromView)
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
+                        }
+                        @if (CanRefreshFulfilment)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Refresh fulfilment" IconCssClass="fa-solid fa-rotate" Click="@RefreshFulfilmentAsync" Enabled="@(!IsSubmitting)" />
                         }
                         @if (CanRelease)
                         {
@@ -395,7 +516,7 @@
                                         @{
                                             var source = (SaDeliveryRequestEligibleSource)context.DataItem;
                                         }
-                                        <DxButton RenderStyle="ButtonRenderStyle.Primary" RenderStyleMode="ButtonRenderStyleMode.Text" Text="Add" Click="@(() => AddEligibleSource(source))" />
+                                         <DxButton RenderStyle="ButtonRenderStyle.Primary" RenderStyleMode="ButtonRenderStyleMode.Text" Text="Add" Click="@(() => AddEligibleSourceAsync(source))" />
                                     </CellDisplayTemplate>
                                 </DxGridCommandColumn>
                             </Columns>

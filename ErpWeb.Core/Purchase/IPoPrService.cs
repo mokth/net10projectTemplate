@@ -203,6 +203,7 @@ public sealed class PoPrLineDto
     public string? ToWarehouse { get; set; }
     public string? SoNo { get; set; }
     public int? SoLine { get; set; }
+    public long? WorkOrderMaterialId { get; set; }
     public decimal NetAmount { get; set; }
     public bool IsConsumed => !string.IsNullOrWhiteSpace(PoNo);
 }
@@ -261,6 +262,12 @@ public sealed class PoPrKeyedRequest
     public byte[] RowVersion { get; init; } = [];
 }
 
+public sealed class PoPrCreateFromWorkOrderMaterialRequest
+{
+    public long WorkOrderMaterialId { get; init; }
+    public decimal RequestedBaseQty { get; init; }
+}
+
 public sealed class PoPrCancelRequest
 {
     public string PrNo { get; init; } = string.Empty;
@@ -279,6 +286,10 @@ public interface IPoPrService
     Task<PoPrOperationResult> GetAsync(string prNo, CancellationToken cancellationToken = default);
 
     Task<PoPrOperationResult> SaveNewAsync(PoPrSaveRequest? request, CancellationToken cancellationToken = default);
+
+    Task<PoPrOperationResult> CreateFromWorkOrderMaterialAsync(
+        PoPrCreateFromWorkOrderMaterialRequest? request,
+        CancellationToken cancellationToken = default);
 
     Task<PoPrOperationResult> UpdateAsync(string prNo, PoPrSaveRequest? request, CancellationToken cancellationToken = default);
 

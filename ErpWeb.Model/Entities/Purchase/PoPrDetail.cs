@@ -37,6 +37,7 @@ public class PoPrDetail
     public string? ToWarehouse { get; set; }
     public string? SoNo { get; set; }
     public int? SoLine { get; set; }
+    public long? WorkOrderMaterialId { get; set; }
 
     public PoPr Pr { get; set; } = null!;
 }

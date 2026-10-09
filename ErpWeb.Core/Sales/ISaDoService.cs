@@ -354,6 +354,7 @@ public sealed class SaDoDocument
 public sealed class SaDoLineDto
 {
     public int Line { get; init; }
+    public long? DeliveryRequestSourceId { get; init; }
     public string SoNo { get; init; } = string.Empty;
     public short? SoLine { get; init; }
     public short? CustRel { get; init; }
@@ -459,6 +460,7 @@ public sealed class SaDoSaveRequest
 public sealed class SaDoLineRequest
 {
     public int Line { get; set; }
+    public long? DeliveryRequestSourceId { get; set; }
     public string ICode { get; set; } = string.Empty;
     public string? IDesc { get; set; }
     public string? SoNo { get; set; }

@@ -16,10 +16,14 @@ internal static class IvSpShipmentAllocator
         string company,
         string branch,
         string location,
-        DateTime invDate)
+        DateTime invDate,
+        IReadOnlyDictionary<(long DeliveryRequestSourceId, int BalLocId), decimal>? ownDeliveryRequestReservations = null)
     {
         var lines = new List<IvSpLineResult>();
         var takes = new List<Take>();
+        var ownRemaining = ownDeliveryRequestReservations is null
+            ? new Dictionary<(long DeliveryRequestSourceId, int BalLocId), decimal>()
+            : ownDeliveryRequestReservations.ToDictionary(x => x.Key, x => IvQty.Round(x.Value));
 
         // Shared pool: remaining is mutated across lines in Line ascending order.
         foreach (var line in requiredLines.OrderBy(x => x.Line))
@@ -34,7 +38,14 @@ internal static class IvSpShipmentAllocator
                 .ThenBy(row => row.Id)
                 .ToList();
 
-            var lineAvailable = IvQty.Round(eligible.Sum(row => Math.Max(0m, remainingByBalLoc.GetValueOrDefault(row.Id))));
+            var ownForLine = line.DeliveryRequestSourceId is long lineSourceId
+                ? eligible.ToDictionary(
+                    row => row.Id,
+                    row => ownRemaining.GetValueOrDefault((lineSourceId, row.Id)))
+                : new Dictionary<int, decimal>();
+            var lineAvailable = IvQty.Round(eligible.Sum(row =>
+                Math.Max(0m, remainingByBalLoc.GetValueOrDefault(row.Id))
+                + Math.Max(0m, ownForLine.GetValueOrDefault(row.Id))));
             var allocated = 0m;
 
             foreach (var pile in eligible)
@@ -44,7 +55,9 @@ internal static class IvSpShipmentAllocator
                     break;
                 }
 
-                var avail = IvQty.Round(Math.Max(0m, remainingByBalLoc.GetValueOrDefault(pile.Id)));
+                var freeAvail = IvQty.Round(Math.Max(0m, remainingByBalLoc.GetValueOrDefault(pile.Id)));
+                var ownAvail = IvQty.Round(Math.Max(0m, ownForLine.GetValueOrDefault(pile.Id)));
+                var avail = IvQty.Round(freeAvail + ownAvail);
                 if (avail <= 0m)
                 {
                     continue;
@@ -57,7 +70,14 @@ internal static class IvSpShipmentAllocator
                 }
 
                 takes.Add(new Take(line.Line, pile.Id, take));
-                remainingByBalLoc[pile.Id] = IvQty.Round(avail - take);
+                var consumeOwn = IvQty.Round(Math.Min(take, ownAvail));
+                var consumeFree = IvQty.Round(take - consumeOwn);
+                if (line.DeliveryRequestSourceId is long allocationSourceId)
+                {
+                    ownRemaining[(allocationSourceId, pile.Id)] = IvQty.Round(ownAvail - consumeOwn);
+                }
+
+                remainingByBalLoc[pile.Id] = IvQty.Round(freeAvail - consumeFree);
                 remaining = IvQty.Round(remaining - take);
                 allocated = IvQty.Round(allocated + take);
             }
