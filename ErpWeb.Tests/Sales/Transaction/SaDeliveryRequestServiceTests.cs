@@ -268,6 +268,143 @@ public sealed class SaDeliveryRequestServiceTests : IAsyncLifetime
         Assert.Contains("current revision", result.Message!, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Search_filters_by_required_date_range()
+    {
+        await SeedHeadersAsync(
+            Header("DR-DATE-FROM", new DateTime(2026, 9, 10), 1m),
+            Header("DR-DATE-IN", new DateTime(2026, 9, 12, 23, 59, 0), 2m),
+            Header("DR-DATE-TO", new DateTime(2026, 9, 13, 12, 0, 0), 3m),
+            Header("DR-DATE-OUT", new DateTime(2026, 9, 14), 4m));
+
+        var result = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            RequiredDateFrom = new DateTime(2026, 9, 12),
+            RequiredDateTo = new DateTime(2026, 9, 13),
+            Take = 100
+        });
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(2, result.Data!.TotalCount);
+        Assert.Equal(
+            ["DR-DATE-TO", "DR-DATE-IN"],
+            result.Data.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+    }
+
+    [Fact]
+    public async Task Search_pages_with_skip_take_and_stable_default_order()
+    {
+        var seeded = await SeedHeadersAsync(
+            Header("DR-PAGE-1", new DateTime(2026, 9, 10), 1m),
+            Header("DR-PAGE-2", new DateTime(2026, 9, 12), 2m),
+            Header("DR-PAGE-3", new DateTime(2026, 9, 12), 3m),
+            Header("DR-PAGE-4", new DateTime(2026, 9, 14), 4m));
+        var expected = seeded
+            .OrderByDescending(x => x.RequiredDate)
+            .ThenByDescending(x => x.Uid)
+            .Select(x => x.DeliveryRequestNo)
+            .ToArray();
+
+        var firstPage = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            Skip = 0,
+            Take = 2
+        });
+        var secondPage = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            Skip = 2,
+            Take = 2
+        });
+
+        Assert.True(firstPage.Succeeded, firstPage.Message);
+        Assert.True(secondPage.Succeeded, secondPage.Message);
+        Assert.Equal(4, firstPage.Data!.TotalCount);
+        Assert.Equal(2, firstPage.Data.Rows.Count);
+        Assert.Equal(expected[..2], firstPage.Data.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+        Assert.Equal(expected[2..], secondPage.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+    }
+
+    [Fact]
+    public async Task Search_sorts_supported_direct_field()
+    {
+        await SeedHeadersAsync(
+            Header("DR-SORT-C", new DateTime(2026, 9, 10), 30m),
+            Header("DR-SORT-A", new DateTime(2026, 9, 12), 10m),
+            Header("DR-SORT-B", new DateTime(2026, 9, 11), 20m));
+
+        var noAscending = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.DeliveryRequestNo),
+            SortDescending = false,
+            Take = 100
+        });
+        var noDescending = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.DeliveryRequestNo),
+            SortDescending = true,
+            Take = 100
+        });
+        var qtyAscending = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.RequestedQty),
+            SortDescending = false,
+            Take = 100
+        });
+        var qtyDescending = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.RequestedQty),
+            SortDescending = true,
+            Take = 100
+        });
+
+        Assert.Equal(["DR-SORT-A", "DR-SORT-B", "DR-SORT-C"], noAscending.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+        Assert.Equal(["DR-SORT-C", "DR-SORT-B", "DR-SORT-A"], noDescending.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+        Assert.Equal(["DR-SORT-A", "DR-SORT-B", "DR-SORT-C"], qtyAscending.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+        Assert.Equal(["DR-SORT-C", "DR-SORT-B", "DR-SORT-A"], qtyDescending.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+    }
+
+    [Fact]
+    public async Task Search_sort_field_is_case_insensitive()
+    {
+        await SeedHeadersAsync(
+            Header("DR-CASE-B", new DateTime(2026, 9, 10), 2m),
+            Header("DR-CASE-A", new DateTime(2026, 9, 11), 1m));
+
+        var result = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.DeliveryRequestNo).ToLowerInvariant(),
+            SortDescending = false,
+            Take = 100
+        });
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(["DR-CASE-A", "DR-CASE-B"], result.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+    }
+
+    [Fact]
+    public async Task Search_unknown_sort_field_falls_back_to_default()
+    {
+        var seeded = await SeedHeadersAsync(
+            Header("DR-FALLBACK-1", new DateTime(2026, 9, 10), 1m),
+            Header("DR-FALLBACK-2", new DateTime(2026, 9, 12), 2m),
+            Header("DR-FALLBACK-3", new DateTime(2026, 9, 12), 3m));
+        var expected = seeded
+            .OrderByDescending(x => x.RequiredDate)
+            .ThenByDescending(x => x.Uid)
+            .Select(x => x.DeliveryRequestNo)
+            .ToArray();
+
+        var result = await Service().SearchAsync(new SaDeliveryRequestListQuery
+        {
+            SortField = nameof(SaDeliveryRequestListRow.UnplannedQty),
+            SortDescending = false,
+            Take = 100
+        });
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(expected, result.Data!.Rows.Select(x => x.DeliveryRequestNo).ToArray());
+    }
+
     private SaDeliveryRequestDraftRequest Request(decimal quantity, short custRel = 1) => new()
     {
         Sources =
@@ -280,6 +417,30 @@ public sealed class SaDeliveryRequestServiceTests : IAsyncLifetime
                 AllocatedProductionQty = quantity
             }
         ]
+    };
+
+    private async Task<IReadOnlyList<SaDeliveryRequest>> SeedHeadersAsync(params SaDeliveryRequest[] headers)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.SaDeliveryRequests.AddRange(headers);
+        await db.SaveChangesAsync();
+        return headers;
+    }
+
+    private static SaDeliveryRequest Header(string number, DateTime requiredDate, decimal quantity) => new()
+    {
+        CompanyCode = "DEMO",
+        BranchCode = "HQ",
+        DeliveryRequestNo = number,
+        ProductCode = "FG-DR",
+        ProductDescription = "Search test product",
+        ProductionUom = "EA",
+        RequestedQty = quantity,
+        RequiredDate = requiredDate,
+        Status = SaDeliveryRequestStatuses.Draft,
+        CreatedDate = requiredDate,
+        CreatedBy = "search-test",
+        RowVersion = [1]
     };
 
     private SaDeliveryRequestService Service()

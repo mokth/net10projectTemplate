@@ -81,9 +81,17 @@ dotnet publish -c Release -o ./publish
 
 ### Step 4: Database Initialization
 
-The application will automatically:
-- Sync menu definitions from `Menus/menus.xml` on first startup
-- Create database tables if they don't exist (via Entity Framework migrations)
+Run the database deployment in this order before enabling Delivery Request:
+
+1. Deploy the application-compatible base schema.
+2. Run `scripts/create-sales-delivery-request.sql`.
+3. Verify `SaDeliveryRequest`, `SaDeliveryRequestSource`, `SaDeliveryRequestAudit`, and `PrWorkOrderDemandAllocation` exist.
+4. Replace the `@Company` and `@Branch` `CHANGE_ME` inputs in `scripts/init-sales-delivery-request-menu.sql` with the real target values.
+5. Run `scripts/init-sales-delivery-request-menu.sql` to seed `SA_DR`, permissions, and `DR` numbering. It is idempotent, but fails if the DR schema or inputs are missing.
+6. Verify `SA_DR` permissions and `DR` numbering for the actual company/branch.
+7. Smoke test one `Sales Order → Delivery Request → Work Order` flow.
+
+The application menu sync may still run from `Menus/menus.xml` on startup, but it does not replace the explicit Delivery Request schema deployment.
 
 ### Step 5: Verify Deployment
 

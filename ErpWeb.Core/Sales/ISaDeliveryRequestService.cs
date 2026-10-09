@@ -9,6 +9,8 @@ public sealed class SaDeliveryRequestListQuery
     public string? ProductCode { get; set; }
     public DateTime? RequiredDateFrom { get; set; }
     public DateTime? RequiredDateTo { get; set; }
+    public string? SortField { get; set; }
+    public bool SortDescending { get; set; } = true;
     public int Skip { get; set; }
     public int Take { get; set; } = 20;
 }

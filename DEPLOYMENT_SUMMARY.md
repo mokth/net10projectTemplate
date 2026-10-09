@@ -40,6 +40,16 @@
 
 ## 🚀 Next Steps for Deployment
 
+### Delivery Request Deployment (Mandatory)
+
+1. Deploy the application-compatible base schema.
+2. Run `scripts/create-sales-delivery-request.sql` and verify the four Delivery Request tables: `SaDeliveryRequest`, `SaDeliveryRequestSource`, `SaDeliveryRequestAudit`, and `PrWorkOrderDemandAllocation`.
+3. Replace the `@Company` and `@Branch` `CHANGE_ME` inputs in `scripts/init-sales-delivery-request-menu.sql` with the real target values.
+4. Run the menu/numbering script, then verify `SA_DR` permissions and a `DR` numbering row for that company/branch.
+5. Smoke test `Sales Order → Delivery Request → Work Order`.
+
+The Delivery Request schema is not created automatically by application startup; the menu/numbering script fails closed when its schema or deployment inputs are missing.
+
 ### Step 1: Get Your Database Details
 You need:
 - SQL Server hostname or IP address

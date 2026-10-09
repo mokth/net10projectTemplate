@@ -1,11 +1,13 @@
-using ErpWeb.Core.Menus;
+using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales.Transactions;
@@ -20,10 +22,15 @@ public partial class SaDeliveryRequestEntry : PageBase
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     private string? _loadedKey;
+    private bool _isDirty;
+    private LifecycleAction _pendingLifecycleAction;
 
     protected bool IsLoading { get; private set; } = true;
     protected bool IsSubmitting { get; private set; }
     protected bool SourcePickerVisible { get; private set; }
+    protected bool ConfirmDiscardVisible { get; private set; }
+    protected bool ConfirmLifecycleVisible { get; private set; }
+    protected bool ConcurrencyVisible { get; private set; }
     protected bool CanAdd { get; private set; }
     protected bool CanEditPermission { get; private set; }
     protected bool CanReleasePermission { get; private set; }
@@ -31,6 +38,9 @@ public partial class SaDeliveryRequestEntry : PageBase
     protected bool CanDeletePermission { get; private set; }
     protected bool CanCreateWorkOrder { get; private set; }
     protected string? StatusMessage { get; private set; }
+    protected string? SourcePickerError { get; private set; }
+    protected Dictionary<string, string> ValidationErrors { get; private set; } =
+        new(StringComparer.OrdinalIgnoreCase);
     protected SaDeliveryRequestDetail? Detail { get; private set; }
 
     protected string ProductCode { get; private set; } = string.Empty;
@@ -50,16 +60,80 @@ public partial class SaDeliveryRequestEntry : PageBase
     protected DateTime WorkOrderStart { get; set; } = DateTime.UtcNow.Date;
     protected DateTime WorkOrderCompletion { get; set; } = DateTime.UtcNow.Date;
 
-    protected string PageHeading => IsNew ? "New Delivery Request" : IsEdit ? "Edit Delivery Request" : "View Delivery Request";
-    protected string ModeDisplay => IsNew ? "New" : IsEdit ? "Edit" : "View";
+    protected string PageHeading => IsNew
+        ? "New Delivery Request"
+        : IsReadOnlyPresentation
+            ? "View Delivery Request"
+            : IsEdit
+                ? "Edit Delivery Request"
+                : "View Delivery Request";
+    protected string ModeDisplay => IsNew ? "New" : IsReadOnlyPresentation ? "View" : IsEdit ? "Edit" : "View";
+    protected string DocumentNoDisplay => Detail?.DeliveryRequestNo ?? "AUTO";
+    protected string StatusDisplay => Detail?.Status ?? (IsNew ? SaDeliveryRequestStatuses.Draft : "—");
+    protected string HeaderKpiLabel => Detail is null ? "Requested" : "Unplanned";
+    protected string HeaderKpiValue => Detail is not null
+        ? $"{Detail.UnplannedQty:n4} {Detail.ProductionUom}"
+        : SourceRows.Count == 0
+            ? "—"
+            : $"{SourceRows.Sum(x => x.Quantity):n4} {ProductionUom}";
+
     protected bool IsNew => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEdit => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
-    protected bool CanEdit => !IsSubmitting && (IsNew ? CanAdd : IsEdit && CanEditPermission && Detail?.Status == SaDeliveryRequestStatuses.Draft);
-    protected bool CanRelease => !IsSubmitting && Detail?.Status == SaDeliveryRequestStatuses.Draft && CanReleasePermission;
-    protected bool CanCancel => !IsSubmitting && Detail is not null
+    protected bool IsView => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
+    protected bool IsReadOnlyPresentation => IsView
+        || (Detail is not null && !string.Equals(Detail.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase));
+    protected bool CanEdit => !IsSubmitting
+        && (IsNew
+            ? CanAdd
+            : IsEdit
+                && CanEditPermission
+                && string.Equals(Detail?.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase));
+    protected bool CanEditFromView => IsView
+        && IsReadOnlyPresentation
+        && string.Equals(Detail?.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase)
+        && CanEditPermission
+        && !IsSubmitting;
+    protected bool CanRelease => !IsSubmitting
+        && IsReadOnlyPresentation
+        && string.Equals(Detail?.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase)
+        && CanReleasePermission;
+    protected bool CanCancel => !IsSubmitting
+        && IsReadOnlyPresentation
+        && Detail is not null
         && Detail.Status is not (SaDeliveryRequestStatuses.Cancelled or SaDeliveryRequestStatuses.Completed)
         && CanCancelPermission;
-    protected bool CanDelete => !IsSubmitting && Detail?.Status == SaDeliveryRequestStatuses.Draft && CanDeletePermission;
+    protected bool CanDelete => !IsSubmitting
+        && IsReadOnlyPresentation
+        && string.Equals(Detail?.Status, SaDeliveryRequestStatuses.Draft, StringComparison.OrdinalIgnoreCase)
+        && CanDeletePermission;
+    protected bool CanSave => CanEdit && SourceRows.Count > 0;
+    protected bool CanOfferWorkOrderCreation => !IsSubmitting
+        && IsReadOnlyPresentation
+        && Detail is not null
+        && Detail.Status is SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction
+        && Detail.UnplannedQty > 0.0001m
+        && CanCreateWorkOrder;
+    protected bool ShowWorkOrderSection => Detail is not null
+        && (Detail.WorkOrders.Count > 0 || CanOfferWorkOrderCreation);
+
+    protected string LifecycleConfirmMessage => _pendingLifecycleAction switch
+    {
+        LifecycleAction.Release => "Release this Delivery Request to production?",
+        LifecycleAction.Cancel => "Cancel this Delivery Request? Active or produced Work Order quantity will still be rejected by the server.",
+        LifecycleAction.Delete => "Permanently delete this never-released Draft Delivery Request?",
+        _ => string.Empty
+    };
+    protected string LifecycleConfirmButtonText => _pendingLifecycleAction switch
+    {
+        LifecycleAction.Release => "Release",
+        LifecycleAction.Cancel => "Cancel Delivery Request",
+        LifecycleAction.Delete => "Delete Draft",
+        _ => "Confirm"
+    };
+    protected ButtonRenderStyle LifecycleConfirmButtonStyle =>
+        _pendingLifecycleAction == LifecycleAction.Release
+            ? ButtonRenderStyle.Primary
+            : ButtonRenderStyle.Danger;
 
     protected override async Task OnPageInitializedAsync()
     {
@@ -89,7 +163,15 @@ public partial class SaDeliveryRequestEntry : PageBase
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
+        ValidationErrors.Clear();
         SourcePickerVisible = false;
+        SourcePickerError = null;
+        ConfirmDiscardVisible = false;
+        ConfirmLifecycleVisible = false;
+        ConcurrencyVisible = false;
+        _pendingLifecycleAction = LifecycleAction.None;
+        _isDirty = false;
+        EligibleSources = [];
         SourceRows.Clear();
 
         if (IsNew)
@@ -103,6 +185,7 @@ public partial class SaDeliveryRequestEntry : PageBase
             ProjectCode = null;
             Priority = null;
             Remark = null;
+            WorkOrderQty = 0m;
             IsLoading = false;
             return;
         }
@@ -142,19 +225,25 @@ public partial class SaDeliveryRequestEntry : PageBase
         WorkOrderQty = detail.UnplannedQty;
         WorkOrderStart = detail.RequiredDate.Date;
         WorkOrderCompletion = detail.RequiredDate.Date;
+        _isDirty = false;
     }
 
     protected async Task SaveAsync()
     {
-        if (!CanEdit || SourceRows.Count == 0)
+        if (!CanEdit)
         {
-            ErrorMessage = SourceRows.Count == 0 ? "Add at least one SO demand source before saving." : "The Delivery Request cannot be edited in its current state.";
+            ErrorMessage = "The Delivery Request cannot be edited in its current state.";
+            return;
+        }
+
+        if (SourceRows.Count == 0)
+        {
+            ErrorMessage = "Add at least one SO demand source before saving.";
             return;
         }
 
         IsSubmitting = true;
-        ErrorMessage = null;
-        StatusMessage = null;
+        ClearOperationMessages();
         try
         {
             var request = BuildDraftRequest();
@@ -185,11 +274,12 @@ public partial class SaDeliveryRequestEntry : PageBase
 
             if (result.Succeeded && result.Data is not null)
             {
+                _isDirty = false;
                 Navigation.NavigateTo($"/sales/delivery-requests/view/{result.Data.Uid}");
             }
             else
             {
-                ErrorMessage = BuildValidationMessage(result.ValidationErrors, result.Message);
+                HandleOperationFailure(result, "Unable to save the Delivery Request.");
             }
         }
         finally
@@ -218,70 +308,121 @@ public partial class SaDeliveryRequestEntry : PageBase
         }).ToList()
     };
 
-    protected async Task ReleaseAsync()
+    protected void BeginRelease()
     {
-        if (Detail is null || !CanRelease) return;
-        await RunLifecycleAsync(() => Requests.ReleaseAsync(new SaDeliveryRequestCommandRequest { Uid = Detail.Uid, RowVersion = Detail.RowVersion }), "Delivery Request released.");
+        if (!CanRelease)
+        {
+            return;
+        }
+
+        _pendingLifecycleAction = LifecycleAction.Release;
+        ConfirmLifecycleVisible = true;
     }
 
-    protected async Task CancelAsync()
+    protected void BeginCancel()
     {
-        if (Detail is null || !CanCancel) return;
-        await RunLifecycleAsync(() => Requests.CancelAsync(new SaDeliveryRequestCommandRequest { Uid = Detail.Uid, RowVersion = Detail.RowVersion, Reason = "Cancelled from Delivery Request entry." }), "Delivery Request cancelled.");
+        if (!CanCancel)
+        {
+            return;
+        }
+
+        _pendingLifecycleAction = LifecycleAction.Cancel;
+        ConfirmLifecycleVisible = true;
     }
 
-    private async Task RunLifecycleAsync(
-        Func<Task<IvMasterOperationResult<SaDeliveryRequestDetail>>> operation,
-        string successMessage)
+    protected void BeginDelete()
     {
+        if (!CanDelete)
+        {
+            return;
+        }
+
+        _pendingLifecycleAction = LifecycleAction.Delete;
+        ConfirmLifecycleVisible = true;
+    }
+
+    protected async Task ConfirmLifecycleAsync()
+    {
+        if (IsSubmitting || Detail is null)
+        {
+            ConfirmLifecycleVisible = false;
+            return;
+        }
+
+        var action = _pendingLifecycleAction;
+        if ((action == LifecycleAction.Release && !CanRelease)
+            || (action == LifecycleAction.Cancel && !CanCancel)
+            || (action == LifecycleAction.Delete && !CanDelete))
+        {
+            ConfirmLifecycleVisible = false;
+            _pendingLifecycleAction = LifecycleAction.None;
+            return;
+        }
+
+        ConfirmLifecycleVisible = false;
         IsSubmitting = true;
-        ErrorMessage = null;
-        StatusMessage = null;
+        ClearOperationMessages();
         try
         {
-            var result = await operation();
+            if (action == LifecycleAction.Delete)
+            {
+                var deleteResult = await Requests.DeleteDraftAsync(new SaDeliveryRequestCommandRequest
+                {
+                    Uid = Detail.Uid,
+                    RowVersion = Detail.RowVersion
+                });
+                if (deleteResult.Succeeded)
+                {
+                    Navigation.NavigateTo("/sales/delivery-requests");
+                }
+                else
+                {
+                    HandleOperationFailure(deleteResult, "Unable to delete the Draft Delivery Request.");
+                }
+
+                return;
+            }
+
+            var result = action == LifecycleAction.Release
+                ? await Requests.ReleaseAsync(new SaDeliveryRequestCommandRequest
+                {
+                    Uid = Detail.Uid,
+                    RowVersion = Detail.RowVersion
+                })
+                : await Requests.CancelAsync(new SaDeliveryRequestCommandRequest
+                {
+                    Uid = Detail.Uid,
+                    RowVersion = Detail.RowVersion,
+                    Reason = "Cancelled from Delivery Request entry."
+                });
+
             if (result.Succeeded && result.Data is not null)
             {
                 ApplyDetail(result.Data);
-                StatusMessage = successMessage;
+                StatusMessage = action == LifecycleAction.Release
+                    ? "Delivery Request released."
+                    : "Delivery Request cancelled.";
             }
             else
             {
-                ErrorMessage = BuildValidationMessage(result.ValidationErrors, result.Message);
+                HandleOperationFailure(result, "Unable to complete the Delivery Request action.");
             }
         }
         finally
         {
-            IsSubmitting = false;
-        }
-    }
-
-    protected async Task DeleteAsync()
-    {
-        if (Detail is null || !CanDelete) return;
-        IsSubmitting = true;
-        ErrorMessage = null;
-        try
-        {
-            var result = await Requests.DeleteDraftAsync(new SaDeliveryRequestCommandRequest { Uid = Detail.Uid, RowVersion = Detail.RowVersion });
-            if (result.Succeeded)
-            {
-                Navigation.NavigateTo("/sales/delivery-requests");
-            }
-            else
-            {
-                ErrorMessage = result.Message ?? "Unable to delete the Draft Delivery Request.";
-            }
-        }
-        finally
-        {
+            _pendingLifecycleAction = LifecycleAction.None;
             IsSubmitting = false;
         }
     }
 
     protected async Task OpenSourcePickerAsync()
     {
-        if (!CanEdit) return;
+        if (!CanEdit)
+        {
+            return;
+        }
+
+        SourcePickerError = null;
         SourcePickerVisible = true;
         EligibleSources = [];
         if (!string.IsNullOrWhiteSpace(SourceSearchSoNo))
@@ -290,11 +431,15 @@ public partial class SaDeliveryRequestEntry : PageBase
         }
     }
 
-    protected void CloseSourcePicker() => SourcePickerVisible = false;
+    protected void CloseSourcePicker()
+    {
+        SourcePickerVisible = false;
+        SourcePickerError = null;
+    }
 
     protected async Task LoadEligibleAsync()
     {
-        ErrorMessage = null;
+        SourcePickerError = null;
         var result = await Requests.ListEligibleSalesOrderDemandAsync(new SaDeliveryRequestEligibleSourceQuery
         {
             SoNo = string.IsNullOrWhiteSpace(SourceSearchSoNo) ? null : SourceSearchSoNo.Trim(),
@@ -307,7 +452,7 @@ public partial class SaDeliveryRequestEntry : PageBase
         else
         {
             EligibleSources = [];
-            ErrorMessage = result.Message ?? "Unable to load eligible Sales Order demand.";
+            SourcePickerError = result.Message ?? "Unable to load eligible Sales Order demand.";
         }
     }
 
@@ -316,38 +461,63 @@ public partial class SaDeliveryRequestEntry : PageBase
         if (SourceRows.Any(x => string.Equals(x.SoNo, source.SoNo, StringComparison.OrdinalIgnoreCase)
             && x.CustRel == source.CustRel && x.SoLine == source.SoLine))
         {
-            ErrorMessage = "That SO revision/line is already in this Delivery Request.";
+            SourcePickerError = "That SO revision/line is already in this Delivery Request.";
             return;
         }
 
         if (SourceRows.Count > 0 && (!string.Equals(ProductCode, source.ProductCode, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(ProductionUom, source.ProductionUom, StringComparison.OrdinalIgnoreCase)))
         {
-            ErrorMessage = "All source lines must use the same product and production UOM.";
+            SourcePickerError = "All source lines must use the same product and production UOM.";
             return;
         }
 
         ProductCode = source.ProductCode;
         ProductionUom = source.ProductionUom;
-        if (RequiredDate == default || RequiredDate > source.RequestedDeliveryDate?.Date)
+        if (RequiredDate == default
+            || (source.RequestedDeliveryDate is DateTime requested && RequiredDate > requested.Date))
         {
             RequiredDate = source.RequestedDeliveryDate?.Date ?? RequiredDate;
         }
 
         SourceRows.Add(SourceEditorRow.From(source));
+        MarkDirty();
         SourcePickerVisible = false;
-        ErrorMessage = null;
+        SourcePickerError = null;
     }
 
     protected void RemoveSource(SourceEditorRow source)
     {
-        if (!CanEdit) return;
+        if (!CanEdit)
+        {
+            return;
+        }
+
         SourceRows.Remove(source);
         if (SourceRows.Count == 0)
         {
             ProductCode = string.Empty;
             ProductionUom = string.Empty;
         }
+
+        MarkDirty();
+    }
+
+    protected void OnSourceQuantityChanged(SourceEditorRow row, decimal value)
+    {
+        if (!CanEdit)
+        {
+            return;
+        }
+
+        row.Quantity = value;
+        MarkDirty();
+    }
+
+    protected void OnRequiredDateChanged(DateTime value)
+    {
+        RequiredDate = value.Date;
+        MarkDirty();
     }
 
     protected void OpenSalesOrder(SourceEditorRow source) =>
@@ -358,9 +528,13 @@ public partial class SaDeliveryRequestEntry : PageBase
 
     protected async Task CreateWorkOrderAsync()
     {
-        if (Detail is null || !CanCreateWorkOrder || WorkOrderQty <= 0m || Detail.UnplannedQty <= 0m) return;
+        if (Detail is null || !CanOfferWorkOrderCreation || WorkOrderQty <= 0m || Detail.UnplannedQty <= 0m)
+        {
+            return;
+        }
+
         IsSubmitting = true;
-        ErrorMessage = null;
+        ClearOperationMessages();
         try
         {
             var result = await WorkOrders.CreateDraftFromDeliveryRequestAsync(new ProductionWorkOrderDeliveryRequestRequest
@@ -380,7 +554,7 @@ public partial class SaDeliveryRequestEntry : PageBase
             }
             else
             {
-                ErrorMessage = BuildValidationMessage(result.ValidationErrors, result.Message);
+                HandleOperationFailure(result, "Unable to create the draft Work Order.");
             }
         }
         finally
@@ -389,26 +563,84 @@ public partial class SaDeliveryRequestEntry : PageBase
         }
     }
 
-    protected void BackToList() => Navigation.NavigateTo("/sales/delivery-requests");
-
-    private RenderFragment Kpi(string label, string value, string? suffix) => builder =>
+    protected Task OnCancelAsync()
     {
-        builder.OpenElement(0, "div");
-        builder.AddAttribute(1, "class", "dr-kpi");
-        builder.OpenElement(2, "span");
-        builder.AddContent(3, label);
-        builder.CloseElement();
-        builder.OpenElement(4, "strong");
-        builder.AddContent(5, value);
-        if (!string.IsNullOrWhiteSpace(suffix))
+        if (_isDirty && CanEdit)
         {
-            builder.OpenElement(6, "small");
-            builder.AddContent(7, suffix);
-            builder.CloseElement();
+            ConfirmDiscardVisible = true;
+            return Task.CompletedTask;
         }
-        builder.CloseElement();
-        builder.CloseElement();
-    };
+
+        Navigation.NavigateTo("/sales/delivery-requests");
+        return Task.CompletedTask;
+    }
+
+    protected void OnClose() =>
+        DocumentReturnNavigation.NavigateBack(Navigation, "/sales/delivery-requests");
+
+    protected void OnEditFromView()
+    {
+        if (CanEditFromView && Detail is not null)
+        {
+            Navigation.NavigateTo($"/sales/delivery-requests/edit/{Detail.Uid}");
+        }
+    }
+
+    protected void ConfirmDiscardAsync()
+    {
+        ConfirmDiscardVisible = false;
+        _isDirty = false;
+        Navigation.NavigateTo("/sales/delivery-requests");
+    }
+
+    protected async Task ReloadLatestAsync()
+    {
+        ConcurrencyVisible = false;
+        if (IsNew || Uid is not > 0)
+        {
+            return;
+        }
+
+        await LoadAsync();
+        if (Detail is not null && string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            StatusMessage = "Loaded latest version.";
+        }
+    }
+
+    protected void DismissStatus() => StatusMessage = null;
+    protected void DismissError() =>
+        ErrorMessage = null;
+
+    protected void MarkDirtyOnly() => MarkDirty();
+
+    private void MarkDirty()
+    {
+        if (CanEdit)
+        {
+            _isDirty = true;
+        }
+    }
+
+    private void ClearOperationMessages()
+    {
+        ErrorMessage = null;
+        StatusMessage = null;
+        ValidationErrors.Clear();
+    }
+
+    private void HandleOperationFailure<T>(IvMasterOperationResult<T> result, string fallback)
+    {
+        ValidationErrors = result.ValidationErrors.ToDictionary(
+            x => x.Key,
+            x => x.Value,
+            StringComparer.OrdinalIgnoreCase);
+        ErrorMessage = result.Message ?? fallback;
+        if (result.ErrorCode == IvMasterErrorCode.Concurrency)
+        {
+            ConcurrencyVisible = true;
+        }
+    }
 
     public sealed class SourceEditorRow
     {
@@ -446,5 +678,13 @@ public partial class SaDeliveryRequestEntry : PageBase
             Quantity = source.AvailableForDr,
             RequestedDeliveryDate = source.RequestedDeliveryDate
         };
+    }
+
+    private enum LifecycleAction
+    {
+        None,
+        Release,
+        Cancel,
+        Delete
     }
 }

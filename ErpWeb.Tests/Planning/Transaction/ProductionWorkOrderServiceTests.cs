@@ -217,6 +217,211 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Delivery_request_work_order_release_fails_closed_when_relational_allocation_is_missing()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-MISSING-RELEASE", 10m);
+        var created = await sut.CreateDraftFromDeliveryRequestAsync(DeliveryRequestRequest(deliveryRequestId, 10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var allocation = await db.PrWorkOrderDemandAllocations.SingleAsync();
+            db.PrWorkOrderDemandAllocations.Remove(allocation);
+            await db.SaveChangesAsync();
+        }
+
+        var release = await sut.ReleaseAsync(created.Data!.WorkOrderNo, created.Data.RowVersion);
+
+        Assert.False(release.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, release.ErrorCode);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            ProductionWorkOrderStatuses.Draft,
+            (await check.ProductionWorkOrders.SingleAsync()).Status);
+        Assert.Equal(
+            SaDeliveryRequestStatuses.Released,
+            (await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId)).Status);
+    }
+
+    [Fact]
+    public async Task Delivery_request_work_order_cancellation_fails_closed_when_relational_allocation_is_missing()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-MISSING-CANCEL", 10m);
+        var created = await sut.CreateDraftFromDeliveryRequestAsync(DeliveryRequestRequest(deliveryRequestId, 10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var allocation = await db.PrWorkOrderDemandAllocations.SingleAsync();
+            db.PrWorkOrderDemandAllocations.Remove(allocation);
+            await db.SaveChangesAsync();
+        }
+
+        var cancel = await sut.CancelDraftAsync(
+            created.Data!.WorkOrderNo,
+            created.Data.RowVersion,
+            "Corrupt demand bridge");
+
+        Assert.False(cancel.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, cancel.ErrorCode);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            ProductionWorkOrderStatuses.Draft,
+            (await check.ProductionWorkOrders.SingleAsync()).Status);
+        Assert.Equal(
+            SaDeliveryRequestStatuses.Released,
+            (await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId)).Status);
+    }
+
+    [Fact]
+    public async Task Reopening_last_delivery_request_work_order_restores_released_status_without_releasing_allocation()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var (deliveryRequestId, released) = await CreateReleasedDeliveryRequestAsync(
+            sut, "DR-WO-REOPEN-LAST", requestedQty: 10m, plannedQty: 10m);
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Correct planned quantity"
+        });
+
+        Assert.True(reopened.Succeeded, reopened.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reopened.Data!.Status);
+        await using var check = await _factory.CreateDbContextAsync();
+        var deliveryRequest = await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId);
+        var allocation = await check.PrWorkOrderDemandAllocations.SingleAsync();
+        Assert.Equal(SaDeliveryRequestStatuses.Released, deliveryRequest.Status);
+        Assert.True(allocation.IsActive);
+        Assert.Equal(0m, deliveryRequest.RequestedQty - allocation.AllocatedQty);
+    }
+
+    [Fact]
+    public async Task Reopening_one_of_multiple_delivery_request_work_orders_keeps_in_production_status()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var (deliveryRequestId, first) = await CreateReleasedDeliveryRequestAsync(
+            sut, "DR-WO-REOPEN-MULTI", requestedQty: 20m, plannedQty: 10m);
+        var second = await CreateAndReleaseDeliveryRequestWorkOrderAsync(
+            sut, deliveryRequestId, plannedQty: 10m);
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = first.WorkOrderNo,
+            RowVersion = first.RowVersion,
+            Reason = "Correct first Work Order"
+        });
+
+        Assert.True(reopened.Succeeded, reopened.Message);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            SaDeliveryRequestStatuses.InProduction,
+            (await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId)).Status);
+        Assert.Equal(2, await check.PrWorkOrderDemandAllocations.CountAsync(x => x.IsActive));
+        Assert.Equal(ProductionWorkOrderStatuses.Released,
+            (await check.ProductionWorkOrders.SingleAsync(x => x.Uid == second.Uid)).Status);
+    }
+
+    [Fact]
+    public async Task Reconciliation_does_not_overwrite_cancelled_delivery_request_status()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var (deliveryRequestId, released) = await CreateReleasedDeliveryRequestAsync(
+            sut, "DR-WO-CANCELLED", requestedQty: 10m, plannedQty: 10m);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var deliveryRequest = await db.SaDeliveryRequests
+                .SingleAsync(x => x.Uid == deliveryRequestId);
+            deliveryRequest.Status = SaDeliveryRequestStatuses.Cancelled;
+            await db.SaveChangesAsync();
+        }
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Verify cancelled status protection"
+        });
+
+        Assert.True(reopened.Succeeded, reopened.Message);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            SaDeliveryRequestStatuses.Cancelled,
+            (await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId)).Status);
+        Assert.True(await check.PrWorkOrderDemandAllocations
+            .AnyAsync(x => x.DeliveryRequestId == deliveryRequestId && x.IsActive));
+    }
+
+    [Fact]
+    public async Task Cancelling_last_delivery_request_work_order_allocation_restores_status_and_unplanned_quantity()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var deliveryRequestId = await SeedDeliveryRequestAsync("DR-WO-CANCEL-LAST", 10m);
+        var created = await sut.CreateDraftFromDeliveryRequestAsync(DeliveryRequestRequest(deliveryRequestId, 10m));
+        Assert.True(created.Succeeded, created.Message);
+
+        var cancel = await sut.CancelDraftAsync(
+            created.Data!.WorkOrderNo,
+            created.Data.RowVersion,
+            "No longer required");
+
+        Assert.True(cancel.Succeeded, cancel.Message);
+        await using var check = await _factory.CreateDbContextAsync();
+        var deliveryRequest = await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId);
+        var allocation = await check.PrWorkOrderDemandAllocations.SingleAsync();
+        Assert.False(allocation.IsActive);
+        Assert.Equal(SaDeliveryRequestStatuses.Released, deliveryRequest.Status);
+        Assert.Equal(10m, deliveryRequest.RequestedQty
+            - await check.PrWorkOrderDemandAllocations
+                .Where(x => x.DeliveryRequestId == deliveryRequestId && x.IsActive)
+                .SumAsync(x => x.AllocatedQty));
+    }
+
+    [Fact]
+    public async Task Cancelling_one_delivery_request_work_order_keeps_status_when_another_is_production_active()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var (deliveryRequestId, first) = await CreateReleasedDeliveryRequestAsync(
+            sut, "DR-WO-CANCEL-MULTI", requestedQty: 20m, plannedQty: 10m);
+        var second = await CreateAndReleaseDeliveryRequestWorkOrderAsync(
+            sut, deliveryRequestId, plannedQty: 10m);
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = first.WorkOrderNo,
+            RowVersion = first.RowVersion,
+            Reason = "Cancel first Work Order"
+        });
+        Assert.True(reopened.Succeeded, reopened.Message);
+
+        var cancelled = await sut.CancelDraftAsync(
+            reopened.Data!.WorkOrderNo,
+            reopened.Data.RowVersion,
+            "Cancel first Work Order");
+
+        Assert.True(cancelled.Succeeded, cancelled.Message);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            SaDeliveryRequestStatuses.InProduction,
+            (await check.SaDeliveryRequests.SingleAsync(x => x.Uid == deliveryRequestId)).Status);
+        Assert.False(await check.PrWorkOrderDemandAllocations
+            .AnyAsync(x => x.WorkOrderId == first.Uid && x.IsActive));
+        Assert.True(await check.PrWorkOrderDemandAllocations
+            .AnyAsync(x => x.WorkOrderId == second.Uid && x.IsActive));
+    }
+
+    [Fact]
     public async Task Preview_snapshots_routing_from_the_selected_bom_revision()
     {
         await using (var db = await _factory.CreateDbContextAsync())
@@ -2290,6 +2495,65 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.True(released.Succeeded, released.Message);
         return released.Data!;
     }
+
+    private async Task<(long DeliveryRequestId, ProductionWorkOrderDetail WorkOrder)>
+        CreateReleasedDeliveryRequestAsync(
+            ProductionWorkOrderService sut,
+            string deliveryRequestNo,
+            decimal requestedQty,
+            decimal plannedQty)
+    {
+        var deliveryRequestId = await SeedDeliveryRequestAsync(deliveryRequestNo, requestedQty);
+        var workOrder = await CreateAndReleaseDeliveryRequestWorkOrderAsync(
+            sut, deliveryRequestId, plannedQty);
+        return (deliveryRequestId, workOrder);
+    }
+
+    private async Task<ProductionWorkOrderDetail> CreateAndReleaseDeliveryRequestWorkOrderAsync(
+        ProductionWorkOrderService sut,
+        long deliveryRequestId,
+        decimal plannedQty)
+    {
+        var result = await sut.CreateAndReleaseFromDeliveryRequestAsync(
+            DeliveryRequestRequest(deliveryRequestId, plannedQty));
+        Assert.True(result.Succeeded, result.Message);
+        return result.Data!;
+    }
+
+    private async Task<long> SeedDeliveryRequestAsync(string deliveryRequestNo, decimal requestedQty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var request = new SaDeliveryRequest
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            DeliveryRequestNo = deliveryRequestNo,
+            ProductCode = "FG001",
+            ProductDescription = "Finished Good",
+            ProductionUom = "PCS",
+            RequestedQty = requestedQty,
+            RequiredDate = new DateTime(2026, 10, 1),
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            Status = SaDeliveryRequestStatuses.Released,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "admin",
+            RowVersion = [1]
+        };
+        db.SaDeliveryRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request.Uid;
+    }
+
+    private static ProductionWorkOrderDeliveryRequestRequest DeliveryRequestRequest(
+        long deliveryRequestId,
+        decimal plannedQty) => new()
+        {
+            DeliveryRequestId = deliveryRequestId,
+            PlannedQty = plannedQty,
+            PlannedStartDate = new DateTime(2026, 10, 1),
+            PlannedCompletionDate = new DateTime(2026, 10, 3),
+            SchedulingDirection = ProductionSchedulingDirections.Forward
+        };
 
     private static Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseCurrentAsync(
         ProductionWorkOrderService sut,

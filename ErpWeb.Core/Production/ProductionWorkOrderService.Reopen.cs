@@ -133,6 +133,14 @@ public sealed partial class ProductionWorkOrderService
             order.ModifiedDate = now;
             order.ModifiedBy = scope.UserId;
 
+            if (IsDeliveryRequestWorkOrder(order.SourceType))
+            {
+                var (deliveryRequest, _) = await LockRequiredDeliveryRequestAllocationAsync(
+                    db, order, scope, deliveryRequestId: null, cancellationToken);
+                await ReconcileDeliveryRequestStatusAsync(
+                    db, deliveryRequest, scope, cancellationToken);
+            }
+
             db.ProductionAuditEvents.Add(new ProductionAuditEvent
             {
                 WorkOrderId = order.Uid,

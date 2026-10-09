@@ -15,6 +15,7 @@ public class GridColumnData
     public int GroupIndex { get; set; } = -1;
     public GridColumnSortOrder SortOrder { get; set; } = GridColumnSortOrder.Ascending;
     public string? DisplayFormat { get; set; }
+    public bool? AllowSort { get; set; }
 }
 
 public class ButtonInfo

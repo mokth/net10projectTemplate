@@ -113,9 +113,8 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         }
 
         var total = await headers.CountAsync(cancellationToken);
-        var page = await headers
-            .OrderByDescending(x => x.RequiredDate)
-            .ThenByDescending(x => x.Uid)
+        var ordered = BuildListOrdering(headers, query.SortField, query.SortDescending);
+        var page = await ordered
             .Skip(skip)
             .Take(take)
             .ToListAsync(cancellationToken);
@@ -189,6 +188,66 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             Rows = rows,
             TotalCount = total
         });
+    }
+
+    private static IOrderedQueryable<SaDeliveryRequest> BuildListOrdering(
+        IQueryable<SaDeliveryRequest> headers,
+        string? sortField,
+        bool sortDescending)
+    {
+        var field = sortField?.Trim();
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.DeliveryRequestNo), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.DeliveryRequestNo).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.DeliveryRequestNo).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.ProductCode), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.ProductCode).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.ProductCode).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.ProductionUom), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.ProductionUom).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.ProductionUom).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.RequestedQty), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.RequestedQty).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.RequestedQty).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.RequiredDate), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.RequiredDate).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.RequiredDate).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.CreatedDate), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.CreatedDate).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.CreatedDate).ThenBy(x => x.Uid);
+        }
+
+        if (string.Equals(field, nameof(SaDeliveryRequestListRow.CreatedBy), StringComparison.OrdinalIgnoreCase))
+        {
+            return sortDescending
+                ? headers.OrderByDescending(x => x.CreatedBy).ThenByDescending(x => x.Uid)
+                : headers.OrderBy(x => x.CreatedBy).ThenBy(x => x.Uid);
+        }
+
+        return headers
+            .OrderByDescending(x => x.RequiredDate)
+            .ThenByDescending(x => x.Uid);
     }
 
     public async Task<IvMasterOperationResult<SaDeliveryRequestDetail>> GetAsync(

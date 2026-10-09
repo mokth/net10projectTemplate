@@ -105,6 +105,7 @@
                             <DxDropDownButtonItem Text="CALCULATE PREVIEW"
                                                   IconCssClass="fa-solid fa-gears"
                                                   Click="@ProcessPreviewAsync"
+                                                  Visible="@(!IsDeliveryRequestSource)"
                                                   Enabled="@(!IsSubmitting)" />
                             <DxDropDownButtonItem Text="RECALCULATE SCHEDULE"
                                                   IconCssClass="fa-solid fa-calendar-days"

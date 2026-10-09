@@ -429,24 +429,34 @@ public sealed partial class ProductionWorkOrderService
         string workOrderNo,
         CancellationToken cancellationToken)
     {
-        var identity = await (
-            from allocation in db.PrWorkOrderDemandAllocations.AsNoTracking()
-            join workOrder in db.ProductionWorkOrders.AsNoTracking()
-                on allocation.WorkOrderId equals workOrder.Uid
-            where workOrder.CompanyCode == scope.CompanyCode
-                && workOrder.BranchCode == scope.BranchCode
-                && workOrder.WorkOrderNo == workOrderNo
-                && allocation.CompanyCode == scope.CompanyCode
-                && allocation.BranchCode == scope.BranchCode
-            select new { allocation.DeliveryRequestId, allocation.WorkOrderId })
+        var identity = await db.ProductionWorkOrders
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WorkOrderNo == workOrderNo)
+            .Select(x => new { x.Uid, x.SourceType })
             .SingleOrDefaultAsync(cancellationToken);
-        if (identity is null)
+        if (identity is null || !IsDeliveryRequestWorkOrder(identity.SourceType))
         {
             return;
         }
 
+        var bridgeRows = await (
+            from allocation in db.PrWorkOrderDemandAllocations.AsNoTracking()
+            where allocation.WorkOrderId == identity.Uid
+                && allocation.CompanyCode == scope.CompanyCode
+                && allocation.BranchCode == scope.BranchCode
+            select new { allocation.DeliveryRequestId })
+            .ToListAsync(cancellationToken);
+        if (bridgeRows.Count != 1 || bridgeRows[0].DeliveryRequestId <= 0)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request Work Order must have exactly one valid demand allocation.");
+        }
+
         var deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
-            db, scope, identity.DeliveryRequestId, cancellationToken);
+            db, scope, bridgeRows[0].DeliveryRequestId, cancellationToken);
         if (deliveryRequest is null)
         {
             throw new WorkOrderCommandException(
@@ -456,11 +466,11 @@ public sealed partial class ProductionWorkOrderService
 
         var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
             db, scope, deliveryRequest.Uid, cancellationToken);
-        if (!allocations.Any(x => x.WorkOrderId == identity.WorkOrderId))
+        if (allocations.Count(x => x.WorkOrderId == identity.Uid) != 1)
         {
             throw new WorkOrderCommandException(
                 IvMasterErrorCode.InUse,
-                "The Work Order demand allocation could not be locked.");
+                "The Delivery Request Work Order must have exactly one valid demand allocation.");
         }
     }
 
@@ -472,37 +482,19 @@ public sealed partial class ProductionWorkOrderService
         string reason,
         CancellationToken cancellationToken)
     {
-        var requestId = deliveryRequestId
-            ?? entity.DemandAllocations
-                .OrderByDescending(x => x.IsActive)
-                .Select(x => (long?)x.DeliveryRequestId)
-                .FirstOrDefault();
-        if (requestId is not > 0)
+        if (!IsDeliveryRequestWorkOrder(entity.SourceType))
         {
             return;
         }
 
-        var deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
-            db, scope, requestId.Value, cancellationToken)
-            ?? throw new WorkOrderCommandException(IvMasterErrorCode.NotFound, "The Delivery Request source was not found.");
-        var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
-            db, scope, deliveryRequest.Uid, cancellationToken);
-        var allocation = allocations.SingleOrDefault(x => x.WorkOrderId == entity.Uid);
-        if (allocation is null)
-        {
-            throw new WorkOrderCommandException(
-                IvMasterErrorCode.InUse,
-                "The Work Order demand allocation could not be found.");
-        }
+        var (deliveryRequest, allocation) = await LockRequiredDeliveryRequestAllocationAsync(
+            db, entity, scope, deliveryRequestId, cancellationToken);
 
         var now = entity.ReleasedDate ?? DateTime.UtcNow;
         allocation.IsActive = true;
         allocation.ReleasedDate = now;
         allocation.ReleasedBy = entity.ReleasedBy ?? scope.UserId;
         allocation.ReleaseReason = reason;
-        deliveryRequest.Status = SaDeliveryRequestStatuses.InProduction;
-        deliveryRequest.ModifiedDate = now;
-        deliveryRequest.ModifiedBy = scope.UserId;
         db.SaDeliveryRequestAuditEvents.Add(new SaDeliveryRequestAuditEvent
         {
             DeliveryRequestId = deliveryRequest.Uid,
@@ -519,6 +511,9 @@ public sealed partial class ProductionWorkOrderService
             OccurredDate = now,
             ActorUserId = scope.UserId
         });
+
+        await ReconcileDeliveryRequestStatusAsync(
+            db, deliveryRequest, scope, cancellationToken);
     }
 
     private async Task DeactivateDeliveryRequestAllocationAsync(
@@ -528,30 +523,18 @@ public sealed partial class ProductionWorkOrderService
         string reason,
         CancellationToken cancellationToken)
     {
-        var requestId = entity.DemandAllocations
-            .OrderByDescending(x => x.IsActive)
-            .Select(x => (long?)x.DeliveryRequestId)
-            .FirstOrDefault();
-        if (requestId is not > 0)
+        if (!IsDeliveryRequestWorkOrder(entity.SourceType))
         {
             return;
         }
 
-        var deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
-            db, scope, requestId.Value, cancellationToken)
-            ?? throw new WorkOrderCommandException(IvMasterErrorCode.NotFound, "The Delivery Request source was not found.");
-        var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
-            db, scope, deliveryRequest.Uid, cancellationToken);
-        var allocation = allocations.SingleOrDefault(x => x.WorkOrderId == entity.Uid);
-        if (allocation is null)
-        {
-            throw new WorkOrderCommandException(
-                IvMasterErrorCode.InUse,
-                "The Work Order demand allocation could not be found.");
-        }
+        var (deliveryRequest, allocation) = await LockRequiredDeliveryRequestAllocationAsync(
+            db, entity, scope, deliveryRequestId: null, cancellationToken);
 
         if (!allocation.IsActive)
         {
+            await ReconcileDeliveryRequestStatusAsync(
+                db, deliveryRequest, scope, cancellationToken);
             return;
         }
 
@@ -574,7 +557,115 @@ public sealed partial class ProductionWorkOrderService
             OccurredDate = now,
             ActorUserId = scope.UserId
         });
+
+        await ReconcileDeliveryRequestStatusAsync(
+            db, deliveryRequest, scope, cancellationToken);
     }
+
+    private async Task<(SaDeliveryRequest DeliveryRequest, PrWorkOrderDemandAllocation Allocation)>
+        LockRequiredDeliveryRequestAllocationAsync(
+            AppDbContext db,
+            ProductionWorkOrder entity,
+            InventoryTenantScope scope,
+            long? deliveryRequestId,
+            CancellationToken cancellationToken)
+    {
+        var relatedAllocations = entity.DemandAllocations
+            .Where(x => x.WorkOrderId == entity.Uid)
+            .ToList();
+        if (relatedAllocations.Count > 1)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request Work Order has duplicate demand allocations.");
+        }
+
+        var relatedRequestId = relatedAllocations.Count == 1
+            ? relatedAllocations[0].DeliveryRequestId
+            : deliveryRequestId;
+        if (relatedRequestId is not > 0
+            || relatedAllocations.Count == 1
+                && deliveryRequestId is > 0
+                && relatedAllocations[0].DeliveryRequestId != deliveryRequestId.Value)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request Work Order has no valid relational demand identity.");
+        }
+
+        var deliveryRequest = await LockDeliveryRequestForWorkOrderAsync(
+            db, scope, relatedRequestId.Value, cancellationToken);
+        if (deliveryRequest is null)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request source could not be loaded for the current company and branch.");
+        }
+
+        var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
+            db, scope, deliveryRequest.Uid, cancellationToken);
+        var matching = allocations.Where(x => x.WorkOrderId == entity.Uid).ToList();
+        if (matching.Count != 1 || matching[0].DeliveryRequestId != deliveryRequest.Uid)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.InUse,
+                "The Delivery Request Work Order must have exactly one valid demand allocation.");
+        }
+
+        return (deliveryRequest, matching[0]);
+    }
+
+    private async Task ReconcileDeliveryRequestStatusAsync(
+        AppDbContext db,
+        SaDeliveryRequest deliveryRequest,
+        InventoryTenantScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(
+                deliveryRequest.Status,
+                SaDeliveryRequestStatuses.Cancelled,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var allocations = await LockDeliveryRequestAllocationsForWorkOrderAsync(
+            db, scope, deliveryRequest.Uid, cancellationToken);
+        var activeAllocations = allocations.Where(x => x.IsActive).ToList();
+        var workOrderIds = activeAllocations
+            .Select(x => x.WorkOrderId)
+            .Distinct()
+            .ToList();
+        var workOrders = workOrderIds.Count == 0
+            ? new List<ProductionWorkOrder>()
+            : await db.ProductionWorkOrders
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && workOrderIds.Contains(x.Uid))
+                .ToListAsync(cancellationToken);
+        var workOrderById = workOrders.ToDictionary(x => x.Uid);
+        var hasProductionActiveWorkOrder = activeAllocations.Any(allocation =>
+            workOrderById.TryGetValue(allocation.WorkOrderId, out var workOrder)
+            && (workOrder.Status is ProductionWorkOrderStatuses.Released
+                or ProductionWorkOrderStatuses.InProgress
+                or ProductionWorkOrderStatuses.Completed
+                or ProductionWorkOrderStatuses.Closed
+                || workOrder.GoodQty > 0m));
+        var nextStatus = hasProductionActiveWorkOrder
+            ? SaDeliveryRequestStatuses.InProduction
+            : SaDeliveryRequestStatuses.Released;
+        if (string.Equals(deliveryRequest.Status, nextStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        deliveryRequest.Status = nextStatus;
+        deliveryRequest.ModifiedDate = DateTime.UtcNow;
+        deliveryRequest.ModifiedBy = scope.UserId;
+    }
+
+    private static bool IsDeliveryRequestWorkOrder(string? sourceType) =>
+        string.Equals(sourceType, ProductionSourceTypes.DeliveryRequest, StringComparison.OrdinalIgnoreCase);
 
     private async Task<SaDeliveryRequest?> LockDeliveryRequestForWorkOrderAsync(
         AppDbContext db,

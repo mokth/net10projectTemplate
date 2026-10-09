@@ -202,6 +202,7 @@
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
                                   SortOrder="@col.SortOrder"
+                                  AllowSort="@col.AllowSort"
                                   GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
@@ -213,6 +214,7 @@
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
                                   SortOrder="@col.SortOrder"
+                                  AllowSort="@col.AllowSort"
                                   GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
@@ -220,8 +222,9 @@
             case "stringicon":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
-                                  GroupIndex="@col.GroupIndex"
+                                   Width="@col.Width"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex">
                     <CellDisplayTemplate>
@@ -235,8 +238,9 @@
             case "stringicon2":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
-                                  GroupIndex="@col.GroupIndex"
+                                   Width="@col.Width"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex">
                     <CellDisplayTemplate>
@@ -250,8 +254,9 @@
             case "stringiconlink":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
-                                  GroupIndex="@col.GroupIndex"
+                                   Width="@col.Width"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex">
                     <CellDisplayTemplate>
@@ -274,9 +279,10 @@
                                   Caption="@caption"
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
-                                  SortOrder="@col.SortOrder"
-                                  GroupIndex="@col.GroupIndex"
-                                  VisibleIndex="@col.VisibleIndex">
+                                   SortOrder="@col.SortOrder"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
+                                   VisibleIndex="@col.VisibleIndex">
                     <CellDisplayTemplate>
                         @if (context.Value is not null)
                         {
@@ -296,9 +302,10 @@
                                   Caption="@caption"
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
-                                  SortOrder="@col.SortOrder"
-                                  GroupIndex="@col.GroupIndex"
-                                  VisibleIndex="@col.VisibleIndex">
+                                   SortOrder="@col.SortOrder"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
+                                   VisibleIndex="@col.VisibleIndex">
                     <CellDisplayTemplate>
                         @if (context.Value is not null)
                         {
@@ -321,17 +328,19 @@
                                   DisplayFormat="@col.DisplayFormat"
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
-                                  SortOrder="@col.SortOrder"
-                                  GroupIndex="@col.GroupIndex"
-                                  Visible="@col.Visible"
+                                   SortOrder="@col.SortOrder"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
+                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
                 break;
             case "bool":
             case "boolean":
                 <DxGridDataColumn FieldName="@col.FieldName"
                                   Caption="@caption"
-                                  Width="@col.Width"
-                                  Visible="@col.Visible"
+                                   Width="@col.Width"
+                                   AllowSort="@col.AllowSort"
+                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
                 break;
             default:
@@ -339,9 +348,10 @@
                                   Caption="@caption"
                                   Width="@col.Width"
                                   SortIndex="@col.SortIndex"
-                                  SortOrder="@col.SortOrder"
-                                  GroupIndex="@col.GroupIndex"
-                                  Visible="@col.Visible"
+                                   SortOrder="@col.SortOrder"
+                                   AllowSort="@col.AllowSort"
+                                   GroupIndex="@col.GroupIndex"
+                                   Visible="@col.Visible"
                                   VisibleIndex="@col.VisibleIndex" />
                 break;
         }

@@ -41,6 +41,19 @@ ORDER BY TABLE_NAME;
 
 Expected result: 6 rows showing all table names.
 
+### Step 2A: Deploy Delivery Request Schema and Numbering (Mandatory)
+
+Before enabling the Delivery Request menu, run this sequence on the same database:
+
+1. Run `scripts/create-sales-delivery-request.sql`.
+2. Verify `SaDeliveryRequest`, `SaDeliveryRequestSource`, `SaDeliveryRequestAudit`, and `PrWorkOrderDemandAllocation` exist.
+3. Replace the `@Company` and `@Branch` `CHANGE_ME` inputs in `scripts/init-sales-delivery-request-menu.sql` with the real target values. `DEMO/HQ` and placeholders are rejected.
+4. Run `scripts/init-sales-delivery-request-menu.sql`; it is safe to re-run after a successful deployment.
+5. Verify `SA_DR` permissions and a `DR` row in `AdSmNumDate` for the configured company/branch.
+6. Smoke test one `Sales Order → Delivery Request → Work Order` flow.
+
+The menu/numbering script fails before enabling `SA_DR` when the four Delivery Request tables, numbering table, or deployment inputs are missing. The application does not create this schema automatically.
+
 ### Step 3: Verify Admin User Setup
 
 Check admin user's userlevel and role:

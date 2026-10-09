@@ -535,6 +535,13 @@ public partial class PrWorkOrderEntry : PageBase
 
     protected async Task ProcessPreviewAsync()
     {
+        if (IsDeliveryRequestSource)
+        {
+            ClearFeedback();
+            StatusMessage = "This Delivery Request Work Order already uses its saved demand snapshot; normal preview is unavailable.";
+            return;
+        }
+
         IsSubmitting = true;
         ClearFeedback();
         try

@@ -1,254 +1,455 @@
 @page "/sales/delivery-requests/{Mode:regex(^(new)$)}"
 @page "/sales/delivery-requests/{Mode:regex(^(edit|view)$)}/{Uid:long}"
 @inherits PageBase
+@using DevExpress.Blazor
 @using ErpWeb.Model.Entities.Sales
 
 <PageTitle>@PageHeading</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.SalesDeliveryRequest">
-    <div class="iv-page dr-page">
+    <SaDocPage>
         @if (!string.IsNullOrWhiteSpace(StatusMessage))
         {
-            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
-        }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
-        {
-            <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>
-        }
-
-        <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-packing"></i></div>
-            <div class="iv-hero__copy">
-                <p class="iv-eyebrow">Sales · Production demand</p>
-                <h1 class="iv-title">@PageHeading</h1>
-                <div class="iv-chips">
-                    <span class="iv-chip">@ModeDisplay</span>
-                    @if (Detail is not null)
-                    {
-                        <span class="iv-chip code-style">@Detail.DeliveryRequestNo</span>
-                        <span class="iv-chip">@Detail.Status</span>
-                    }
-                </div>
+            <div class="sdoc-toast sdoc-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
-            @if (Detail is not null)
-            {
-                <div class="iv-hero__kpi"><span>Unplanned</span><strong>@Detail.UnplannedQty.ToString("n4") @Detail.ProductionUom</strong></div>
-            }
-        </header>
-
-        <section class="iv-card dr-commandbar">
-            <button type="button" class="btn btn-outline-secondary" @onclick="BackToList">Back</button>
-            @if (CanEdit)
-            {
-                <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@IsSubmitting">Save draft</button>
-            }
-            @if (CanRelease)
-            {
-                <button type="button" class="btn btn-success" @onclick="ReleaseAsync" disabled="@IsSubmitting">Release</button>
-            }
-            @if (CanCancel)
-            {
-                <button type="button" class="btn btn-outline-danger" @onclick="CancelAsync" disabled="@IsSubmitting">Cancel</button>
-            }
-            @if (CanDelete)
-            {
-                <button type="button" class="btn btn-danger" @onclick="DeleteAsync" disabled="@IsSubmitting">Delete draft</button>
-            }
-        </section>
+        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
 
         @if (IsLoading)
         {
-            <section class="iv-card"><div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section>
+            <div class="sdoc-loading">
+                <p class="mb-0">Loading Delivery Request…</p>
+            </div>
         }
         else
         {
-            <section class="dr-kpis" aria-label="Delivery Request progress">
-                @Kpi("Requested", Detail?.RequestedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
-                @Kpi("WO allocated", Detail?.WoAllocatedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
-                @Kpi("Unplanned", Detail?.UnplannedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
-                @Kpi("Produced", Detail?.ProducedQty.ToString("n4") ?? "—", Detail?.ProductionUom)
-            </section>
-
-            <section class="iv-card">
-                <h2 class="iv-card__title">Delivery Request</h2>
-                <div class="dr-form-grid">
-                    <div class="iv-field">
-                        <label class="iv-field__label">Request number</label>
-                        <input class="form-control code-style" value="@(Detail?.DeliveryRequestNo ?? "AUTO")" readonly />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Product</label>
-                        <input class="form-control code-style" value="@ProductCode" readonly />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Production UOM</label>
-                        <input class="form-control code-style" value="@ProductionUom" readonly />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Required date</label>
-                        <InputDate @bind-Value="RequiredDate" class="form-control" disabled="@(!CanEdit)" />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Product definition</label>
-                        <InputText @bind-Value="DefinitionCode" class="form-control code-style" disabled="@(!CanEdit)" />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Warehouse</label>
-                        <InputText @bind-Value="WarehouseCode" class="form-control code-style" disabled="@(!CanEdit)" />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Project</label>
-                        <InputText @bind-Value="ProjectCode" class="form-control" disabled="@(!CanEdit)" />
-                    </div>
-                    <div class="iv-field">
-                        <label class="iv-field__label">Priority</label>
-                        <InputText @bind-Value="Priority" class="form-control" disabled="@(!CanEdit)" />
-                    </div>
-                    <div class="iv-field dr-form-grid__wide">
-                        <label class="iv-field__label">Remark</label>
-                        <textarea class="form-control" rows="3" @bind="Remark" disabled="@(!CanEdit)"></textarea>
-                    </div>
+            <header class="sdoc-titlebar">
+                <h1 class="sdoc-titlebar__title" title="@($"{PageHeading} · {DocumentNoDisplay}")">
+                    @PageHeading · @DocumentNoDisplay
+                </h1>
+                <span class="sdoc-titlebar__status" title="@($"{StatusDisplay} · {ModeDisplay}")">
+                    @StatusDisplay
+                    <span class="sdoc-titlebar__status-extra">@ModeDisplay</span>
+                </span>
+                <div class="sdoc-titlebar__kpi">
+                    <span>@HeaderKpiLabel</span>
+                    <strong>@HeaderKpiValue</strong>
                 </div>
+            </header>
+
+            <section class="sdoc-master dr-progress" aria-label="Delivery Request progress">
+                <div class="dr-progress__item"><span>Requested</span><strong>@(Detail?.RequestedQty.ToString("n4") ?? (SourceRows.Count == 0 ? "—" : SourceRows.Sum(x => x.Quantity).ToString("n4"))) <small>@(Detail?.ProductionUom ?? ProductionUom)</small></strong></div>
+                <div class="dr-progress__item"><span>WO allocated</span><strong>@(Detail?.WoAllocatedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                <div class="dr-progress__item"><span>Unplanned</span><strong>@(Detail?.UnplannedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
+                <div class="dr-progress__item"><span>Produced</span><strong>@(Detail?.ProducedQty.ToString("n4") ?? "—") <small>@Detail?.ProductionUom</small></strong></div>
             </section>
 
-            <section class="iv-card">
-                <div class="dr-section-heading">
+            <section class="sdoc-master">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Document</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Request no." ColSpanMd="12">
+                                <Template><DxTextBox Text="@DocumentNoDisplay" ReadOnly="true" /></Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Required date" ColSpanMd="12">
+                                <Template>
+                                    <DxDateEdit Date="@RequiredDate"
+                                                DateChanged="@((DateTime date) => OnRequiredDateChanged(date))"
+                                                DateExpression="() => RequiredDate"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@CanEdit"
+                                                InputCssClass="required-field" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (Detail is not null)
+                            {
+                                <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                                    <Template><DxTextBox Text="@StatusDisplay" ReadOnly="true" /></Template>
+                                </DxFormLayoutItem>
+                            }
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Production</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Product" ColSpanMd="12">
+                                <Template><DxTextBox Text="@ProductCode" ReadOnly="true" /></Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Production UOM" ColSpanMd="12">
+                                <Template><DxTextBox Text="@ProductionUom" ReadOnly="true" /></Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Product definition" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@DefinitionCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="30" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@WarehouseCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+
+                    <DxFormLayoutGroup ColSpanMd="4">
+                        <HeaderContentTemplate>Planning / Reference</HeaderContentTemplate>
+                        <Items>
+                            <DxFormLayoutItem Caption="Project" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@ProjectCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Priority" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Priority" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEdit" MaxLength="20" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                                <Template>
+                                    <DxMemo @bind-Text="@Remark" @bind-Text:after="MarkDirtyOnly" Rows="3" Enabled="@CanEdit" MaxLength="500" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </Items>
+                    </DxFormLayoutGroup>
+                </DxFormLayout>
+            </section>
+
+            <section class="sdoc-items">
+                <div class="sdoc-items__head">
                     <div>
-                        <h2 class="iv-card__title mb-1">Sales Order demand sources</h2>
-                        <p class="text-muted mb-0">Every row is an exact SO number, revision and line. Quantity is sourced from StdQty / StdUom.</p>
+                        <h2 class="sdoc-items__title">Sales Order demand sources</h2>
+                        <p class="sdoc-popup-hint">Every row is an exact SO number, revision and line. Quantity is sourced from StdQty / StdUom.</p>
                     </div>
-                    @if (CanEdit)
-                    {
-                        <button type="button" class="btn btn-outline-primary" @onclick="OpenSourcePickerAsync">Add SO line</button>
-                    }
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Add SO line"
+                              IconCssClass="fa-solid fa-plus"
+                              Click="@OpenSourcePickerAsync"
+                              Enabled="@CanEdit" />
                 </div>
 
                 @if (SourceRows.Count == 0)
                 {
-                    <p class="text-muted mb-0">Add at least one eligible current Sales Order line.</p>
+                    <div class="sdoc-empty">
+                        <h3>No demand sources yet</h3>
+                        <p>Add at least one eligible current Sales Order line.</p>
+                        @if (CanEdit)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add SO line" Click="@OpenSourcePickerAsync" />
+                        }
+                    </div>
                 }
                 else
                 {
-                    <div class="table-responsive">
-                        <table class="table align-middle dr-table">
-                            <thead><tr><th>Sales Order</th><th>Product</th><th>Demand</th><th>UOM</th><th class="text-end">Allocated</th><th>Required</th><th></th></tr></thead>
-                            <tbody>
-                                @foreach (var source in SourceRows)
-                                {
-                                    <tr>
-                                        <td>
-                                            <button type="button" class="dr-link" @onclick="() => OpenSalesOrder(source)">@source.SoNo / Rev @source.CustRel / Line @source.SoLine</button>
-                                        </td>
-                                        <td><span class="code-style">@source.ProductCode</span><small>@source.ProductDescription</small></td>
-                                        <td>@source.SourceQty.ToString("n4")</td>
-                                        <td class="code-style">@source.ProductionUom</td>
-                                        <td class="text-end">
-                                            @if (CanEdit)
-                                            {
-                                                <InputNumber @bind-Value="source.Quantity" class="form-control form-control-sm dr-qty" />
-                                            }
-                                            else
-                                            {
-                                                @source.Quantity.ToString("n4")
-                                            }
-                                        </td>
-                                        <td>@(source.RequestedDeliveryDate?.ToString("dd MMM yyyy") ?? "—")</td>
-                                        <td>
-                                            @if (CanEdit)
-                                            {
-                                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveSource(source)">Remove</button>
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
+                    <DxGrid Data="@SourceRows" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                        <Columns>
+                            <DxGridDataColumn Caption="SO / revision / line" Width="190px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var source = (SourceEditorRow)context.DataItem;
+                                    }
+                                    <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                              Text="@($"{source.SoNo} / Rev {source.CustRel} / Line {source.SoLine}")"
+                                              Click="@(() => OpenSalesOrder(source))" />
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Product" Width="180px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var source = (SourceEditorRow)context.DataItem;
+                                    }
+                                    <div class="dr-cell-stack">
+                                        <span class="dr-cell-stack__primary">@source.ProductCode</span>
+                                        <span class="dr-cell-stack__secondary">@source.ProductDescription</span>
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.SourceQty)" Caption="Demand" DisplayFormat="n4" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SourceEditorRow.ProductionUom)" Caption="UOM" Width="80px" />
+                            <DxGridDataColumn Caption="Allocated" Width="145px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var source = (SourceEditorRow)context.DataItem;
+                                    }
+                                    @if (CanEdit)
+                                    {
+                                        <DxSpinEdit Value="@source.Quantity"
+                                                    ValueChanged="@((decimal value) => OnSourceQuantityChanged(source, value))"
+                                                    Increment="0.0001m"
+                                                    ShowSpinButtons="false"
+                                                    InputCssClass="dr-qty" />
+                                    }
+                                    else
+                                    {
+                                        <span>@source.Quantity.ToString("n4")</span>
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn Caption="Required date" Width="120px">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var source = (SourceEditorRow)context.DataItem;
+                                    }
+                                    @(source.RequestedDeliveryDate?.ToString("dd/MM/yyyy") ?? "—")
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridCommandColumn Caption="" Width="88px" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var source = (SourceEditorRow)context.DataItem;
+                                    }
+                                    @if (CanEdit)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  Text="Remove"
+                                                  Click="@(() => RemoveSource(source))" />
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                        </Columns>
+                        <EmptyDataAreaTemplate>
+                            <div class="sdoc-empty"><p>No demand sources yet.</p></div>
+                        </EmptyDataAreaTemplate>
+                    </DxGrid>
                 }
             </section>
 
-            @if (Detail is not null && (Detail.Status is SaDeliveryRequestStatuses.Released or SaDeliveryRequestStatuses.InProduction) && Detail.UnplannedQty > 0.0001m)
+            @if (ShowWorkOrderSection && Detail is not null)
             {
-                <section class="iv-card dr-wo-create">
-                    <div class="dr-section-heading">
+                <section class="sdoc-master">
+                    <div class="sdoc-items__head">
                         <div>
-                            <h2 class="iv-card__title mb-1">Production Work Order</h2>
-                            <p class="text-muted mb-0">Create a Work Order from the remaining Delivery Request quantity. The server builds the normal snapshot and schedule atomically.</p>
+                            <h2 class="sdoc-items__title">Production Work Order</h2>
+                            <p class="sdoc-popup-hint">Create a Work Order from the remaining Delivery Request quantity. The server builds the normal snapshot and schedule atomically.</p>
                         </div>
-                        @if (CanCreateWorkOrder)
+                        @if (CanOfferWorkOrderCreation)
                         {
-                            <button type="button" class="btn btn-primary" @onclick="CreateWorkOrderAsync" disabled="@IsSubmitting">Create draft Work Order</button>
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Create draft Work Order"
+                                      IconCssClass="fa-solid fa-plus"
+                                      Click="@CreateWorkOrderAsync"
+                                      Enabled="@(!IsSubmitting && WorkOrderQty > 0m)" />
                         }
                     </div>
-                    @if (CanCreateWorkOrder)
+
+                    @if (CanOfferWorkOrderCreation)
                     {
-                        <div class="dr-form-grid dr-form-grid--compact">
-                            <div class="iv-field"><label class="iv-field__label">Planned quantity</label><InputNumber @bind-Value="WorkOrderQty" class="form-control" /></div>
-                            <div class="iv-field"><label class="iv-field__label">Start</label><InputDate @bind-Value="WorkOrderStart" class="form-control" /></div>
-                            <div class="iv-field"><label class="iv-field__label">Completion</label><InputDate @bind-Value="WorkOrderCompletion" class="form-control" /></div>
-                        </div>
+                        <DxFormLayout SizeMode="SizeMode.Small" CssClass="dr-work-order-form">
+                            <DxFormLayoutItem Caption="Planned quantity" ColSpanMd="4">
+                                <Template><DxSpinEdit @bind-Value="@WorkOrderQty" Increment="0.0001m" Enabled="@(!IsSubmitting)" /></Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Start" ColSpanMd="4">
+                                <Template><DxDateEdit @bind-Date="@WorkOrderStart" DisplayFormat="dd/MM/yyyy" Enabled="@(!IsSubmitting)" /></Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Completion" ColSpanMd="4">
+                                <Template><DxDateEdit @bind-Date="@WorkOrderCompletion" DisplayFormat="dd/MM/yyyy" Enabled="@(!IsSubmitting)" /></Template>
+                            </DxFormLayoutItem>
+                        </DxFormLayout>
                     }
-                    <div class="table-responsive mt-3">
-                        <table class="table table-sm align-middle dr-table"><thead><tr><th>Work Order</th><th>Allocated</th><th>Planned</th><th>Good</th><th>Status</th></tr></thead>
-                            <tbody>
-                                @foreach (var workOrder in Detail.WorkOrders)
-                                {
-                                    <tr>
-                                        <td><button type="button" class="dr-link" @onclick="() => OpenWorkOrder(workOrder.WorkOrderNo)">@workOrder.WorkOrderNo</button></td>
-                                        <td>@workOrder.AllocatedQty.ToString("n4")</td>
-                                        <td>@workOrder.PlannedQty.ToString("n4")</td>
-                                        <td>@workOrder.GoodQty.ToString("n4")</td>
-                                        <td>@workOrder.Status @(workOrder.IsActive ? "" : "(inactive)")</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
+
+                    @if (Detail.WorkOrders.Count > 0)
+                    {
+                        <DxGrid Data="@Detail.WorkOrders" CssClass="sdoc-line-grid dr-work-order-grid" TextWrapEnabled="false">
+                            <Columns>
+                                <DxGridDataColumn Caption="Work Order" Width="150px">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var workOrder = (SaDeliveryRequestWorkOrderTrace)context.DataItem;
+                                        }
+                                        <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  Text="@workOrder.WorkOrderNo"
+                                                  Click="@(() => OpenWorkOrder(workOrder.WorkOrderNo))" />
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestWorkOrderTrace.AllocatedQty)" Caption="Allocated" DisplayFormat="n4" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestWorkOrderTrace.PlannedQty)" Caption="Planned" DisplayFormat="n4" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestWorkOrderTrace.GoodQty)" Caption="Good" DisplayFormat="n4" />
+                                <DxGridDataColumn Caption="Status">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var workOrder = (SaDeliveryRequestWorkOrderTrace)context.DataItem;
+                                        }
+                                        @workOrder.Status @(workOrder.IsActive ? "" : "(inactive)")
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            </Columns>
+                        </DxGrid>
+                    }
+                    else if (CanOfferWorkOrderCreation)
+                    {
+                        <p class="text-muted mb-0 mt-3">No linked Work Orders yet.</p>
+                    }
                 </section>
             }
 
             @if (Detail is not null)
             {
-                <section class="iv-card">
-                    <h2 class="iv-card__title">Audit trail</h2>
+                <section class="sdoc-master">
+                    <h2 class="sdoc-items__title">Audit trail</h2>
                     @if (Detail.AuditEvents.Count == 0)
                     {
-                        <p class="text-muted mb-0">No audit events.</p>
+                        <div class="sdoc-empty"><p>No audit events.</p></div>
                     }
                     else
                     {
-                        <div class="table-responsive"><table class="table table-sm dr-table"><thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Reason</th></tr></thead><tbody>
-                            @foreach (var audit in Detail.AuditEvents)
-                            {
-                                <tr><td>@audit.OccurredDate.ToString("dd MMM yyyy HH:mm")</td><td>@audit.EventType</td><td>@audit.ActorUserId</td><td>@audit.Reason</td></tr>
-                            }
-                        </tbody></table></div>
+                        <DxGrid Data="@Detail.AuditEvents" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                            <Columns>
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.OccurredDate)" Caption="When" DisplayFormat="dd/MM/yyyy HH:mm" Width="155px" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.EventType)" Caption="Event" Width="150px" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.ActorUserId)" Caption="Actor" Width="140px" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestAuditTrace.Reason)" Caption="Reason" />
+                            </Columns>
+                        </DxGrid>
                     }
                 </section>
             }
-        }
 
-        @if (SourcePickerVisible)
-        {
-            <div class="dr-picker-backdrop" role="presentation">
-                <section class="dr-picker" role="dialog" aria-modal="true" aria-label="Select Sales Order demand">
-                    <div class="dr-section-heading"><div><h2 class="iv-card__title mb-1">Select current SO demand</h2><p class="text-muted mb-0">Search by SO number, then add an exact revision/line.</p></div><button type="button" class="btn-close" aria-label="Close" @onclick="CloseSourcePicker"></button></div>
-                    <div class="dr-toolbar"><input class="form-control" placeholder="Sales Order number" @bind="SourceSearchSoNo" /><button type="button" class="btn btn-primary" @onclick="LoadEligibleAsync">Search</button></div>
-                    @if (EligibleSources.Count == 0)
+            <footer class="sdoc-footer">
+                <p class="sdoc-footer__hint">@(_isDirty ? "Unsaved changes" : "Ready") · @SourceRows.Count @(SourceRows.Count == 1 ? "source" : "sources")</p>
+                <div class="sdoc-footer__actions">
+                    @if (IsReadOnlyPresentation)
                     {
-                        <p class="text-muted mb-0">No eligible current SO demand loaded.</p>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@OnClose" />
+                        @if (CanEditFromView)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
+                        }
+                        @if (CanRelease)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Release" IconCssClass="fa-solid fa-check" Click="@BeginRelease" />
+                        }
+                        @if (CanCancel)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Delivery Request" IconCssClass="fa-solid fa-ban" Click="@BeginCancel" />
+                        }
+                        @if (CanDelete)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Delete Draft" IconCssClass="fa-regular fa-trash-can" Click="@BeginDelete" />
+                        }
                     }
                     else
                     {
-                        <div class="table-responsive dr-picker__table"><table class="table table-sm align-middle dr-table"><thead><tr><th>SO / revision / line</th><th>Product</th><th>Std demand</th><th>Available</th><th></th></tr></thead><tbody>
-                            @foreach (var source in EligibleSources)
-                            {
-                                <tr><td>@source.SoNo / Rev @source.CustRel / Line @source.SoLine</td><td><span class="code-style">@source.ProductCode</span><small>@source.ProductDescription</small></td><td>@source.ProductionDemandQty.ToString("n4") @source.ProductionUom</td><td>@source.AvailableForDr.ToString("n4")</td><td><button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => AddEligibleSource(source)">Add</button></td></tr>
-                            }
-                        </tbody></table></div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancelAsync" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save Draft")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@SaveAsync"
+                                  Enabled="@CanSave" />
                     }
-                </section>
-            </div>
+                </div>
+            </footer>
         }
-    </div>
+
+        <DxPopup HeaderText="Select current SO demand"
+                 CloseOnOutsideClick="false"
+                 Width="980px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="@SourcePickerVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    @if (!string.IsNullOrWhiteSpace(SourcePickerError))
+                    {
+                        <p class="sdoc-popup-error">@SourcePickerError</p>
+                    }
+                    <div class="dr-picker-search">
+                        <DxTextBox @bind-Text="@SourceSearchSoNo" NullText="Sales Order number" CssClass="w-100" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Search" IconCssClass="fa-solid fa-magnifying-glass" Click="@LoadEligibleAsync" />
+                    </div>
+                    @if (EligibleSources.Count == 0)
+                    {
+                        <div class="sdoc-empty"><p>No eligible current SO demand loaded.</p></div>
+                    }
+                    else
+                    {
+                        <DxGrid Data="@EligibleSources" CssClass="sdoc-line-grid" TextWrapEnabled="false">
+                            <Columns>
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestEligibleSource.SoNo)" Caption="SO / revision / line" Width="190px">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var source = (SaDeliveryRequestEligibleSource)context.DataItem;
+                                        }
+                                        @($"{source.SoNo} / Rev {source.CustRel} / Line {source.SoLine}")
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                                <DxGridDataColumn Caption="Product" Width="190px">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var source = (SaDeliveryRequestEligibleSource)context.DataItem;
+                                        }
+                                        <div class="dr-cell-stack">
+                                            <span class="dr-cell-stack__primary">@source.ProductCode</span>
+                                            <span class="dr-cell-stack__secondary">@source.ProductDescription</span>
+                                        </div>
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestEligibleSource.ProductionDemandQty)" Caption="Standard demand" DisplayFormat="n4" />
+                                <DxGridDataColumn FieldName="@nameof(SaDeliveryRequestEligibleSource.AvailableForDr)" Caption="Available" DisplayFormat="n4" />
+                                <DxGridCommandColumn Caption="" Width="72px" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var source = (SaDeliveryRequestEligibleSource)context.DataItem;
+                                        }
+                                        <DxButton RenderStyle="ButtonRenderStyle.Primary" RenderStyleMode="ButtonRenderStyleMode.Text" Text="Add" Click="@(() => AddEligibleSource(source))" />
+                                    </CellDisplayTemplate>
+                                </DxGridCommandColumn>
+                            </Columns>
+                        </DxGrid>
+                    }
+                </div>
+                <div class="sdoc-popup-footer">
+                    <div class="sdoc-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@CloseSourcePicker" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Discard changes?"
+                 CloseOnOutsideClick="false"
+                 Width="420px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConfirmDiscardVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Confirm Delivery Request action"
+                 CloseOnOutsideClick="false"
+                 Width="520px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConfirmLifecycleVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">@LifecycleConfirmMessage</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ConfirmLifecycleVisible = false)" Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="@LifecycleConfirmButtonStyle" Text="@LifecycleConfirmButtonText" Click="@ConfirmLifecycleAsync" Enabled="@(!IsSubmitting)" />
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Reload required"
+                 CloseOnOutsideClick="false"
+                 Width="460px"
+                 CssClass="common-popup"
+                 @bind-Visible="@ConcurrencyVisible">
+            <Content>
+                <p class="sdoc-confirm__copy">This Delivery Request changed by another user. Reload the latest version before continuing.</p>
+                <div class="sdoc-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => ConcurrencyVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload latest" Click="@ReloadLatestAsync" />
+                </div>
+            </Content>
+        </DxPopup>
+    </SaDocPage>
 </MenuAuthorize>

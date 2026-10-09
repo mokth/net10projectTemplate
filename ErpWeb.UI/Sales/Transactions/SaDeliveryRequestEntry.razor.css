@@ -1,72 +1,90 @@
-.dr-commandbar {
-    display: flex;
-    gap: .6rem;
-    align-items: center;
-    flex-wrap: wrap;
-}
+/* Document chrome is provided by SaDocPage.razor.css; these are DR-only deltas. */
 
-.dr-kpis {
+.dr-progress {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: .8rem;
-    margin-bottom: 1rem;
+    gap: var(--sdoc-group-gap, 8px);
 }
 
-.dr-kpi {
+.dr-progress__item {
     display: flex;
     flex-direction: column;
-    gap: .25rem;
-    padding: 1rem;
-    border: 1px solid var(--bs-border-color);
-    border-radius: .65rem;
-    background: var(--bs-body-bg);
+    gap: 3px;
+    min-width: 0;
 }
 
-.dr-kpi span { color: var(--bs-secondary-color); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
-.dr-kpi strong { font-size: 1.35rem; }
-.dr-kpi small { margin-left: .35rem; color: var(--bs-secondary-color); font-size: .75rem; }
+.dr-progress__item span {
+    color: var(--sdoc-muted-text, #667085);
+    font-size: .72rem;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
 
-.dr-form-grid {
+.dr-progress__item strong {
+    color: var(--sdoc-ink, #1c2430);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.dr-progress__item small {
+    color: var(--sdoc-muted-text, #667085);
+    font-size: .75rem;
+    font-weight: 500;
+}
+
+.dr-qty {
+    min-width: 8rem;
+    max-width: 10rem;
+}
+
+.dr-cell-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dr-cell-stack__primary {
+    color: var(--sdoc-ink, #1c2430);
+    font-weight: 600;
+}
+
+.dr-cell-stack__secondary {
+    color: var(--sdoc-muted-text, #667085);
+    font-size: .78rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dr-picker-search {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
 }
 
-.dr-form-grid--compact { max-width: 52rem; margin-top: 1rem; }
-.dr-form-grid__wide { grid-column: 1 / -1; }
-.dr-section-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; margin-bottom: 1rem; }
-.dr-qty { min-width: 8rem; max-width: 10rem; margin-left: auto; }
-.dr-table small { display: block; color: var(--bs-secondary-color); }
-
-.dr-picker-backdrop {
-    position: fixed;
-    z-index: 1050;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 1rem;
-    background: rgba(15, 23, 42, .45);
+.dr-work-order-form {
+    margin-top: 8px;
 }
 
-.dr-picker {
-    width: min(980px, 100%);
-    max-height: min(760px, 92vh);
-    overflow: auto;
-    padding: 1.25rem;
-    border-radius: .75rem;
-    background: var(--bs-body-bg);
-    box-shadow: 0 1rem 3rem rgba(0, 0, 0, .25);
+.dr-work-order-grid {
+    margin-top: 12px;
 }
 
-.dr-picker__table { max-height: 58vh; overflow: auto; }
+@media (max-width: 767px) {
+    .dr-progress {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 
-@media (max-width: 900px) {
-    .dr-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .dr-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dr-picker-search {
+        grid-template-columns: 1fr;
+    }
 }
 
-@media (max-width: 600px) {
-    .dr-kpis, .dr-form-grid { grid-template-columns: 1fr; }
-    .dr-form-grid__wide { grid-column: auto; }
-    .dr-section-heading { flex-direction: column; }
+@media (max-width: 480px) {
+    .dr-progress {
+        grid-template-columns: 1fr;
+    }
 }

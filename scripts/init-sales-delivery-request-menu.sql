@@ -8,6 +8,35 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
+-- Explicit deployment inputs. Replace both values before execution.
+DECLARE @Company nvarchar(10) = N'CHANGE_ME';
+DECLARE @Branch nvarchar(10) = N'CHANGE_ME';
+DECLARE @Year smallint = CONVERT(smallint, YEAR(GETDATE()));
+DECLARE @Month smallint = CONVERT(smallint, MONTH(GETDATE()));
+
+IF NULLIF(LTRIM(RTRIM(@Company)), N'') IS NULL
+   OR NULLIF(LTRIM(RTRIM(@Branch)), N'') IS NULL
+   OR UPPER(LTRIM(RTRIM(@Company))) = N'CHANGE_ME'
+   OR UPPER(LTRIM(RTRIM(@Branch))) = N'CHANGE_ME'
+   OR (UPPER(LTRIM(RTRIM(@Company))) = N'DEMO'
+       AND UPPER(LTRIM(RTRIM(@Branch))) = N'HQ')
+BEGIN
+    THROW 51001, 'Replace the DR deployment company and branch inputs with the real target values; DEMO/HQ and placeholders are not allowed.', 1;
+END;
+
+IF OBJECT_ID(N'dbo.SaDeliveryRequest', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.SaDeliveryRequestSource', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.SaDeliveryRequestAudit', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrWorkOrderDemandAllocation', N'U') IS NULL
+BEGIN
+    THROW 51002, 'Run scripts/create-sales-delivery-request.sql before enabling Delivery Request.', 1;
+END;
+
+IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NULL
+BEGIN
+    THROW 51003, 'AdSmNumDate is required before enabling Delivery Request numbering.', 1;
+END;
+
 IF OBJECT_ID(N'dbo.Menu', N'U') IS NULL
    OR OBJECT_ID(N'dbo.Permission', N'U') IS NULL
    OR OBJECT_ID(N'dbo.MenuPermission', N'U') IS NULL
@@ -53,7 +82,6 @@ UPDATE dbo.Menu SET SortOrder = 6 WHERE MenuCode = N'SA_CN';
 UPDATE dbo.Menu SET SortOrder = 7 WHERE MenuCode = N'SA_DN';
 UPDATE dbo.Menu SET SortOrder = 8 WHERE MenuCode = N'SA_CN_RESERVATIONS';
 UPDATE dbo.Menu SET SortOrder = 9 WHERE MenuCode = N'SA_EINVOICE_TIN';
-GO
 
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
@@ -68,17 +96,10 @@ WHERE m.MenuCode = N'SA_DR'
       WHERE mp.MenuId = m.MenuId
         AND mp.PermissionId = p.PermissionId
   );
-GO
 
--- Monthly DR numbering. Change the tenant/branch/location before deployment.
+-- Monthly DR numbering for the explicit deployment company/branch.
 -- The service uses the date-based row when one exists for DR.
-DECLARE @Company nvarchar(10) = N'DEMO';
-DECLARE @Branch nvarchar(10) = N'HQ';
-DECLARE @Year smallint = CONVERT(smallint, YEAR(GETDATE()));
-DECLARE @Month smallint = CONVERT(smallint, MONTH(GETDATE()));
-
-IF OBJECT_ID(N'dbo.AdSmNumDate', N'U') IS NOT NULL
-   AND NOT EXISTS
+IF NOT EXISTS
    (
        SELECT 1
        FROM dbo.AdSmNumDate
@@ -96,7 +117,6 @@ BEGIN
         (@Company, @Branch, N'MAIN', @Year, @Month, N'DR', N'Delivery Request',
          4, N'DR', 1, GETDATE(), N'SYSTEM', N'-', NULL);
 END;
-GO
 
-PRINT N'SA_DR menu, ACCESS/ADD/EDIT/DELETE/APPROVE/CANCEL permissions and DR numbering seed ensured.';
+PRINT N'SA_DR menu, ACCESS/ADD/EDIT/DELETE/APPROVE/CANCEL permissions and DR numbering seed ensured for the explicit company/branch.';
 GO

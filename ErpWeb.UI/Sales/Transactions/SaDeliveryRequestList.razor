@@ -1,50 +1,64 @@
 @page "/sales/delivery-requests"
 @inherits PageBase
+@using DevExpress.Blazor
 @using ErpWeb.Model.Entities.Sales
 
 <PageTitle>Delivery Requests</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.SalesDeliveryRequest">
-    <div class="iv-page dr-page">
+    <div class="iv-page">
         @if (!string.IsNullOrWhiteSpace(StatusMessage))
         {
-            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
         }
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
-            <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
         }
 
         <header class="iv-hero">
-            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-boxes-packing"></i></div>
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-boxes-packing"></i>
+            </div>
             <div class="iv-hero__copy">
                 <p class="iv-eyebrow">Sales · Production demand</p>
                 <h1 class="iv-title">Delivery Requests</h1>
-                <div class="iv-chips"><span class="iv-chip">@TotalCountLabel</span></div>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
+                </div>
             </div>
-            <div class="iv-hero__kpi"><span>Unplanned demand</span><strong>@TotalUnplanned.ToString("n4")</strong></div>
+            <div class="iv-hero__kpi">
+                <span>Delivery Requests</span>
+                <strong>@TotalCount.ToString("N0")</strong>
+            </div>
         </header>
 
         <section class="iv-card">
-            <div class="dr-toolbar">
-                <input class="form-control" placeholder="Search DR no, product, description…"
-                       value="@SearchText" @oninput="OnSearchChanged" />
-                <select class="form-select dr-status-filter" @bind="StatusFilter">
-                    <option value="">All statuses</option>
-                    <option value="DRAFT">Draft</option>
-                    <option value="RELEASED">Released</option>
-                    <option value="IN_PRODUCTION">In production</option>
-                    <option value="COMPLETED">Completed</option>
-                    <option value="CANCELLED">Cancelled</option>
-                </select>
-                <button type="button" class="btn btn-outline-secondary" @onclick="LoadAsync">Refresh</button>
-                @if (CanAdd)
-                {
-                    <button type="button" class="btn btn-primary" @onclick="NewRequest">New Delivery Request</button>
-                }
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               NullText="Search DR no, product, description…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
             </div>
 
-            @if (IsLoading)
+            @if (IsBootstrapping)
             {
                 <div class="iv-skeleton" aria-busy="true">
                     <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
@@ -52,46 +66,95 @@
                     <div class="iv-skeleton__line"></div>
                 </div>
             }
-            else if (Rows.Count == 0)
-            {
-                <p class="text-muted mb-0">No Delivery Requests match the current filters.</p>
-            }
             else
             {
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle dr-table">
-                        <thead>
-                            <tr>
-                                <th>Delivery Request</th>
-                                <th>Product</th>
-                                <th>Required</th>
-                                <th class="text-end">Requested</th>
-                                <th class="text-end">WO allocated</th>
-                                <th class="text-end">Unplanned</th>
-                                <th class="text-end">Produced</th>
-                                <th>Status</th>
-                                <th>Sources</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var row in Rows)
-                            {
-                                <tr class="dr-table__row" @onclick="() => Open(row.Uid)">
-                                    <td><button type="button" class="dr-link" @onclick="() => Open(row.Uid)" @onclick:stopPropagation="true">@row.DeliveryRequestNo</button></td>
-                                    <td><span class="code-style">@row.ProductCode</span><small>@row.ProductDescription</small></td>
-                                    <td>@row.RequiredDate.ToString("dd MMM yyyy")</td>
-                                    <td class="text-end">@row.RequestedQty.ToString("n4") @row.ProductionUom</td>
-                                    <td class="text-end">@row.WoAllocatedQty.ToString("n4")</td>
-                                    <td class="text-end">@row.UnplannedQty.ToString("n4")</td>
-                                    <td class="text-end">@row.ProducedQty.ToString("n4")</td>
-                                    <td><span class="dr-status @StatusClass(row.Status)">@row.Status</span></td>
-                                    <td>@row.SourceCount</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SaDeliveryRequestListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SaDeliveryRequestListRow.Uid)"
+                                      GridKey="sa-delivery-request-list"
+                                      Title="Delivery Requests"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnGridInstance"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No Delivery Requests match the current filters.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
+                        {
+                            <button type="button"
+                                    class="iv-list-compact__item"
+                                    @onclick="() => NavigateView(row.Uid)">
+                                <span class="iv-list-compact__code">@row.DeliveryRequestNo</span>
+                                <span class="iv-list-compact__desc">
+                                    @row.ProductCode · @row.RequiredDate.ToString("dd/MM/yyyy")
+                                </span>
+                                <div class="iv-list-compact__meta">
+                                    <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                                </div>
+                            </button>
+                        }
+                    }
                 </div>
             }
         </section>
     </div>
+
+    <DxPopup HeaderText="Filter delivery requests"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatusKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Required date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Required date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
 </MenuAuthorize>
