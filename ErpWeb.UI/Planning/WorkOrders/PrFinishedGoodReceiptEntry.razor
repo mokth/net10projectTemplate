@@ -492,7 +492,7 @@
                                                 MinValue="0m"
                                                 Increment="0.0001m"
                                                 DisplayFormat="n4"
-                                                ShowSpinButtons="false" />
+                                                ShowSpinButtons="false" ValueExpression="@(() => editor.Line.Quantity)" />
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
                             <DxGridDataColumn Caption="Warehouse" Width="190px">
@@ -508,7 +508,7 @@
                                                 NullText="Required warehouse"
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                Enabled="@CanEditFields" />
+                                                Enabled="@CanEditFields" ValueExpression="@(() => editor.Line.Warehouse)" />
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
                             <DxGridDataColumn Caption="Location" Width="180px">
@@ -526,7 +526,7 @@
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                     SearchMode="ListSearchMode.AutoSearch"
                                                     SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                    Enabled="@(CanEditFields && !string.IsNullOrWhiteSpace(editor.Line.Warehouse))" />
+                                                    Enabled="@(CanEditFields && !string.IsNullOrWhiteSpace(editor.Line.Warehouse))" ValueExpression="@(() => editor.Line.Location)" />
                                     </div>
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
@@ -555,7 +555,7 @@
                                         <DxDateEdit Date="@editor.Line.ExpiryDate"
                                                     DateChanged="@((DateTime? value) => editor.Line.ExpiryDate = value)"
                                                     Enabled="@CanEditFields"
-                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" DateExpression="@(() => editor.Line.ExpiryDate)" />
                                     }
                                     else
                                     {

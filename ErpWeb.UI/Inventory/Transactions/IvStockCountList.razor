@@ -44,11 +44,11 @@
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
-                    <DxTextBox Text="@SearchText"
+<DxTextBox Text="@SearchText"
                                TextChanged="OnSearchTextChanged"
                                NullText="Search count no, remark…"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" />
+                               CssClass="w-100" TextExpression="@(() => SearchText)" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

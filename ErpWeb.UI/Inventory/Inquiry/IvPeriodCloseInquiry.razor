@@ -51,12 +51,12 @@
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
                     <label class="iv-field-label">Closed period</label>
-                    <DxComboBox Data="@Periods"
+<DxComboBox Data="@Periods"
                                 TextFieldName="@nameof(IvPeriodCloseHeaderRow.PeriodFrom)"
                                 ValueFieldName="@nameof(IvPeriodCloseHeaderRow.Id)"
                                 Value="@SelectedPeriodId"
                                 ValueChanged="@((int id) => OnPeriodChangedAsync(id))"
-                                CssClass="iv-card-group-combo" />
+                                CssClass="iv-card-group-combo" ValueExpression="@(() => SelectedPeriodId)" />
                 </div>
             </div>
 

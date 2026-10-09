@@ -1,10 +1,10 @@
 @namespace ErpWeb.UI.Inventory.Lookups
 
 <div class="iv-stock-picker d-flex gap-1 align-items-center">
-    <DxTextBox Text="@DisplayText"
+<DxTextBox Text="@DisplayText"
                ReadOnly="true"
                InputCssClass="@InputCssClass"
-               CssClass="flex-grow-1" />
+               CssClass="flex-grow-1" ValidationEnabled="false" />
     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
               IconCssClass="fa-solid fa-magnifying-glass"
               Text="Search"

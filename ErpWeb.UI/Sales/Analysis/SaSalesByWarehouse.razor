@@ -47,7 +47,7 @@
                     <label class="iv-field__label">Customer</label>
                     <IvCodeComboBox Data="@CustomerOptions" @bind-Value="@CustCode" NullText="All customers" />
                     <DxTextBox NullText="Search customers" maxlength="40"
-                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" ValidationEnabled="false" />
                 </div>
                 <div class="iv-field">
                     <label class="iv-field__label code-style">Branch</label>

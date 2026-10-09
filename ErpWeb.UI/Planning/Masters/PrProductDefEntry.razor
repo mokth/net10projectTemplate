@@ -130,7 +130,7 @@
                                 <label class="iv-field__label">Standard output quantity</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxTextBox Text="@Model.BaseQty.ToString("n4")" ReadOnly="true" />
+                                    <DxTextBox Text="@Model.BaseQty.ToString("n4")" ReadOnly="true" ValidationEnabled="false" />
                                 }
                                 else
                                 {
@@ -146,7 +146,7 @@
                                 <label class="iv-field__label">Work Order Prefix</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" />
+                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
                                 }
                                 else
                                 {
@@ -170,7 +170,7 @@
                                 <label class="iv-field__label">Remark</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxMemo Text="@(Model.Remark ?? string.Empty)" Rows="3" ReadOnly="true" />
+                                    <DxMemo Text="@(Model.Remark ?? string.Empty)" Rows="3" ReadOnly="true" ValidationEnabled="false" />
                                 }
                                 else
                                 {
@@ -345,11 +345,11 @@
                                         </div>
                                         <div class="iv-field pdf-field-description">
                                             <label class="iv-field__label">Description</label>
-                                            <DxTextBox Text="@(CentreEdit.OutputItemDescription ?? string.Empty)" ReadOnly="true" />
+                                            <DxTextBox Text="@(CentreEdit.OutputItemDescription ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                                         </div>
                                         <div class="iv-field pdf-field-short-code">
                                             <label class="iv-field__label">Class</label>
-                                            <DxTextBox Text="@(CentreEdit.Class ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" />
+                                            <DxTextBox Text="@(CentreEdit.Class ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
                                         </div>
                                         <div class="iv-field pdf-field-qty">
                                             <label class="iv-field__label">Pack Size</label>
@@ -659,7 +659,7 @@
                                                         ValueChanged="@((string? v) => OnLineSupplySourceChanged(v))"
                                                         TextFieldName="@nameof(Option.Text)"
                                                         ValueFieldName="@nameof(Option.Value)"
-                                                        SearchMode="ListSearchMode.AutoSearch" />
+                                                        SearchMode="ListSearchMode.AutoSearch" ValueExpression="@(() => LineSupplySource)" />
                                         </div>
                                         @if (string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal))
                                         {
@@ -684,7 +684,7 @@
                                                             ValueFieldName="@nameof(DefinitionOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
                                                             NullText="@(ComponentDefinitionOptions.Count == 0 ? "No definitions for item" : "Select definition")"
-                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" ValueExpression="@(() => LineComponentDefinitionCode)" />
                                             </div>
                                         }
                                         <div class="pdf-editor__actions">
@@ -803,7 +803,7 @@
                                         else
                                         {
                                             <div class="pdf-machine-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Machine</label><DxComboBox Data="@AvailableMachines" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(PrMachine.MachineCd)" ValueFieldName="@nameof(PrMachine.MachineCd)" SearchMode="ListSearchMode.AutoSearch" NullText="Select machine" InputCssClass="required-field code-style" /></div>
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Machine</label><DxComboBox Data="@AvailableMachines" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(PrMachine.MachineCd)" ValueFieldName="@nameof(PrMachine.MachineCd)" SearchMode="ListSearchMode.AutoSearch" NullText="Select machine" InputCssClass="required-field code-style" ValueExpression="@(() => MachineEdit.MachineCode)" /></div>
                                                 <div class="iv-field pdf-field-seq"><label class="iv-field__label">Sequence</label><DxSpinEdit @bind-Value="@MachineEdit.ResourceSequence" MinValue="1" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-seq"><label class="iv-field__label">Priority</label><DxSpinEdit @bind-Value="@MachineEdit.Priority" MinValue="1" ShowSpinButtons="false" /></div>
                                                 <div class="iv-field pdf-field-check"><label class="iv-field__label">Primary</label><DxCheckBox @bind-Checked="@MachineEdit.IsPrimary" AllowIndeterminateState="false" /></div>

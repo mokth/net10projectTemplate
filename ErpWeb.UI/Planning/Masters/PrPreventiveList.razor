@@ -161,10 +161,10 @@
         <Content>
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine" ColSpanMd="6">
-                    <Template><DxTextBox Text="@CompleteModel.MachineCd" ReadOnly="true" /></Template>
+                    <Template><DxTextBox Text="@CompleteModel.MachineCd" ReadOnly="true" ValidationEnabled="false" /></Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reason" ColSpanMd="6">
-                    <Template><DxTextBox Text="@CompleteModel.ReasonCd" ReadOnly="true" /></Template>
+                    <Template><DxTextBox Text="@CompleteModel.ReasonCd" ReadOnly="true" ValidationEnabled="false" /></Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Actual Start" ColSpanMd="6" BeginRow="true">
                     <Template><DxDateEdit @bind-Date="@CompleteModel.ActualStart" TimeSectionVisible="true" /></Template>

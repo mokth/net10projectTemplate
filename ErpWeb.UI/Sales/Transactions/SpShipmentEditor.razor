@@ -27,7 +27,7 @@
                                 ValueChanged="@((decimal v) => OnIssueChanged(row, v))"
                                 MinValue="0m"
                                 Enabled="@Enabled"
-                                CssClass="w-100" />
+                                CssClass="w-100" ValueExpression="@(() => row.IssueQty)" />
                 </CellDisplayTemplate>
             </DxGridDataColumn>
             <DxGridDataColumn FieldName="@nameof(EditorRow.FailReason)" Caption="Status" Width="140px" />

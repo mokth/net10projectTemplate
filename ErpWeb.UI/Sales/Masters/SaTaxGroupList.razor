@@ -104,17 +104,17 @@
                     {
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Company" ColSpanMd="4" BeginRow="true">
                             <Template>
-                                <DxTextBox Text="@EditModel.CompanyCode" ReadOnly="true" />
+                                <DxTextBox Text="@EditModel.CompanyCode" ReadOnly="true" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Branch" ColSpanMd="4">
                             <Template>
-                                <DxTextBox Text="@(EditModel.BranchCode ?? string.Empty)" ReadOnly="true" />
+                                <DxTextBox Text="@(EditModel.BranchCode ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem CaptionCssClass="code-style" Caption="Location" ColSpanMd="4">
                             <Template>
-                                <DxTextBox Text="@(EditModel.LocationCode ?? string.Empty)" ReadOnly="true" />
+                                <DxTextBox Text="@(EditModel.LocationCode ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                     } *@

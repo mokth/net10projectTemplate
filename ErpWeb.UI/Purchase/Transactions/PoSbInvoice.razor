@@ -46,7 +46,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Doc no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -59,12 +59,12 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -85,7 +85,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Name" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Model.VendorName ?? string.Empty)" ReadOnly="true" />
+                                    <DxTextBox Text="@(Model.VendorName ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
@@ -110,7 +110,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@IsEditable"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field" />
+                                                CssClass="w-100 required-field" ValueExpression="@(() => Model.Currency)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Rate" ColSpanMd="12">

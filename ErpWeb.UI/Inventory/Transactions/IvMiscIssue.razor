@@ -62,7 +62,7 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
                         <Template>
-                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+<DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
@@ -324,39 +324,39 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.FrWarehouse" ReadOnly="true" NullText="—" />
+<DxTextBox Text="@Popup.FrWarehouse" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Location" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.FrLocation" ReadOnly="true" NullText="—" />
+<DxTextBox Text="@Popup.FrLocation" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Lot" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.FrLotNo" ReadOnly="true" NullText="—" />
+<DxTextBox Text="@Popup.FrLotNo" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Available Qty" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.AvailableQty.ToString("n4")" ReadOnly="true" />
+<DxTextBox Text="@Popup.AvailableQty.ToString("n4")" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" />
+<DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Item status" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@Popup.IStatus" ReadOnly="true" NullText="—" />
+<DxTextBox Text="@Popup.IStatus" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             @if (Popup.LotControl && Popup.ExpiryDate.HasValue)
                             {
                                 <DxFormLayoutItem Caption="Expiry date" ColSpanMd="4">
                                     <Template>
-                                        <DxTextBox Text="@Popup.ExpiryDate.Value.ToString("dd/MM/yyyy")" ReadOnly="true" />
+<DxTextBox Text="@Popup.ExpiryDate.Value.ToString("dd/MM/yyyy")" ReadOnly="true" ValidationEnabled="false" />
                                     </Template>
                                 </DxFormLayoutItem>
                             }

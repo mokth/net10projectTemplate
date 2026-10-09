@@ -43,14 +43,14 @@
                                TextChanged="OnInvNoChanged"
                                NullText="Invoice no"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" />
+                               CssClass="w-100" TextExpression="@(() => InvNo)" />
                 </div>
                 <div class="iv-toolbar-row__search">
                     <DxTextBox Text="@VendorCode"
                                TextChanged="OnVendorCodeChanged"
                                NullText="Vendor code"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" />
+                               CssClass="w-100" TextExpression="@(() => VendorCode)" />
                 </div>
                 <DxCheckBox @bind-Checked="@OverReservedOnly" @bind-Checked:after="OnFilterChanged">Over-reserved only</DxCheckBox>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"

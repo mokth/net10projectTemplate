@@ -60,7 +60,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Inv no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@InvNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@InvNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -68,17 +68,17 @@
                                     <DxDateEdit Date="@InvDate"
                                                 DateChanged="@(async (DateTime d) => await OnInvDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" />
+                                                Enabled="@CanEditDocument" DateExpression="@(() => InvDate)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(InvPrefix ?? string.Empty)" ReadOnly="true" NullText="From customer" />
+                                    <DxTextBox Text="@(InvPrefix ?? string.Empty)" ReadOnly="true" NullText="From customer" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Department" ColSpanMd="12">
@@ -119,7 +119,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" />
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" />
                                     @if (HasCustomer && !CurrRateValid)
                                     {
                                         <p class="sdoc-field-error">Valid FX rate is required.</p>
@@ -149,7 +149,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" ValueExpression="@(() => TaxGrCode)" />
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -184,7 +184,7 @@
                             {
                                 <DxFormLayoutItem Caption="DO no." ColSpanMd="6">
                                     <Template>
-                                        <DxTextBox Text="@DoNoDisplay" ReadOnly="true" />
+                                        <DxTextBox Text="@DoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                     </Template>
                                 </DxFormLayoutItem>
                             }
@@ -302,7 +302,7 @@
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                     Enabled="@CanEditAddresses"
                                                     NullText="Select ship-to address"
-                                                    CssClass="w-100" />
+                                                    CssClass="w-100" ValueExpression="@(() => ShipToLine)" />
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Ship name" ColSpanMd="6">
@@ -601,12 +601,12 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
                         <Template>
-                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" />
+                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" ValueExpression="@(() => Popup.Qty)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Pack" ColSpanMd="4">
                         <Template>
-                            <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
+                            <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
@@ -631,7 +631,7 @@
                     }
                     <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
                         <Template>
-                            <DxCheckBox Checked="@Popup.IsInclusive" CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))" Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
+                            <DxCheckBox Checked="@Popup.IsInclusive" CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))" Enabled="@(CanEditDocument && !PopupInclusiveLocked)" CheckedExpression="@(() => Popup.IsInclusive)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Line tax" ColSpanMd="6">
@@ -645,7 +645,7 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         Enabled="@CanEditDocument"
                                         NullText="Use header tax"
-                                        CssClass="w-100" />
+                                        CssClass="w-100" ValueExpression="@(() => Popup.TaxGrCode)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Classification" ColSpanMd="6">
@@ -782,7 +782,7 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         Enabled="@(!SoPickerLoading)"
                                         NullText="Select a sales order"
-                                        CssClass="w-100" />
+                                        CssClass="w-100" ValueExpression="@(() => SelectedSourceSoNo)" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>

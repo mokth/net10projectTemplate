@@ -66,7 +66,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="PO no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@PoNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@PoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -76,18 +76,18 @@
                                                 DateChanged="@((DateTime? d) => { PoDate = d?.Date; MarkDirtyOnly(); })"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
-                                                InputCssClass="required-field" />
+                                                InputCssClass="required-field" DateExpression="@(() => PoDate)" />
                                     @FieldError("PoDate")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From supplier/numbering" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From supplier/numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -134,7 +134,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field" />
+                                                CssClass="w-100 required-field" ValueExpression="@(() => CurCode)" />
                                     @FieldError("CurCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -184,7 +184,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select project"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => ProjId)" />
                                     @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
@@ -231,7 +231,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select department"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => DeptCode)" />
                                     @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -304,7 +304,7 @@
                                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                         Enabled="@CanEditDocument"
                                                         NullText="Select ship-to address"
-                                                        CssClass="w-100" />
+                                                        CssClass="w-100" ValueExpression="@(() => ShipToLine)" />
                                         </Template>
                                     </DxFormLayoutItem>
                                     <DxFormLayoutItem Caption="Ship name" ColSpanMd="6">
@@ -639,7 +639,7 @@
                                             ValueChanged="@((decimal v) => { Popup.PoPurQty = v; OnPopupQtyOrPriceChanged(); })"
                                             Increment="1m"
                                             Enabled="@CanEditDocument"
-                                            InputCssClass="required-field" />
+                                            InputCssClass="required-field" ValueExpression="@(() => Popup.PoPurQty)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
@@ -647,7 +647,7 @@
                                 <DxSpinEdit Value="@Popup.PackSz"
                                             ValueChanged="@((decimal v) => { Popup.PackSz = v; OnPopupQtyOrPriceChanged(); })"
                                             Increment="0.0001m"
-                                            Enabled="@CanEditPopupIdentity" />
+                                            Enabled="@CanEditPopupIdentity" ValueExpression="@(() => Popup.PackSz)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="3">
@@ -667,7 +667,7 @@
                                     <DxSpinEdit Value="@Popup.PoUnitPrice"
                                                 ValueChanged="@((decimal v) => { Popup.PoUnitPrice = v; OnPopupQtyOrPriceChanged(); })"
                                                 Increment="0.01m"
-                                                Enabled="@CanEditDocument" />
+                                                Enabled="@CanEditDocument" ValueExpression="@(() => Popup.PoUnitPrice)" />
                                 </Template>
                             </DxFormLayoutItem>
                         }
@@ -681,14 +681,14 @@
                                             SearchMode="ListSearchMode.AutoSearch"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                             Enabled="@CanEditDocument"
-                                            NullText="Select tax group" />
+                                            NullText="Select tax group" ValueExpression="@(() => Popup.TaxGroup)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
                             <Template>
                                 <DxCheckBox Checked="@Popup.IsInclusive"
                                             CheckedChanged="@((bool v) => { Popup.IsInclusive = v; OnPopupTaxChanged(); })"
-                                            Enabled="@CanEditDocument" />
+                                            Enabled="@CanEditDocument" CheckedExpression="@(() => Popup.IsInclusive)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Warehouse" ColSpanMd="3">
@@ -708,7 +708,7 @@
                                 <DxSpinEdit Value="@Popup.ItemDiscount"
                                             ValueChanged="@((decimal v) => { Popup.ItemDiscount = v; RecalcPopupDerived(); })"
                                             Increment="0.1m"
-                                            Enabled="@CanEditDocument" />
+                                            Enabled="@CanEditDocument" ValueExpression="@(() => Popup.ItemDiscount)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc type 1" ColSpanMd="3">
@@ -721,7 +721,7 @@
                                 <DxSpinEdit Value="@Popup.ItemDiscount1"
                                             ValueChanged="@((decimal v) => { Popup.ItemDiscount1 = v; RecalcPopupDerived(); })"
                                             Increment="0.1m"
-                                            Enabled="@CanEditDocument" />
+                                            Enabled="@CanEditDocument" ValueExpression="@(() => Popup.ItemDiscount1)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc type 2" ColSpanMd="3">
@@ -731,7 +731,7 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="PR ref" ColSpanMd="4">
                             <Template>
-                                <DxTextBox Text="@Popup.PrReference" ReadOnly="true" NullText="None" />
+                                <DxTextBox Text="@Popup.PrReference" ReadOnly="true" NullText="None" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="CJ no." ColSpanMd="4">
@@ -750,10 +750,10 @@
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Received" ColSpanMd="3">
-                            <Template><DxSpinEdit Value="@Popup.RecvQty" ReadOnly="true" Increment="0.0001m" /></Template>
+                            <Template><DxSpinEdit Value="@Popup.RecvQty" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" /></Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Balance" ColSpanMd="3">
-                            <Template><DxSpinEdit Value="@Popup.BalanceQty" ReadOnly="true" Increment="0.0001m" /></Template>
+                            <Template><DxSpinEdit Value="@Popup.BalanceQty" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" /></Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Remarks" ColSpanMd="6">
                             <Template>

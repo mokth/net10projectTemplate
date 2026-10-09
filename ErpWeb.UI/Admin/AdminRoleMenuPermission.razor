@@ -220,11 +220,12 @@ else
                             @{
                                 var row = (RolePermissionMatrixRow)context.DataItem;
                             }
-                            <DxCheckBox Checked="@IsGranted(row.MenuId, col.PermissionId)"
+<DxCheckBox Checked="@IsGranted(row.MenuId, col.PermissionId)"
                                         CheckedChanged="@((bool value) => OnGrantChanged(row.MenuId, col.PermissionId, value))"
                                         AllowIndeterminateState="false"
                                         Enabled="@CanEditMatrix"
-                                        CssClass="justify-content-center" />
+                                        CssClass="justify-content-center"
+                                        ValidationEnabled="false" />
                         </CellDisplayTemplate>
                     </DxGridDataColumn>
                 }

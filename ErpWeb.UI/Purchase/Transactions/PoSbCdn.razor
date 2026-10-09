@@ -48,7 +48,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Doc no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -61,12 +61,12 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -87,7 +87,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Name" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Model.VendorName ?? string.Empty)" ReadOnly="true" />
+                                    <DxTextBox Text="@(Model.VendorName ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Origin invoice" ColSpanMd="12">
@@ -102,7 +102,7 @@
                                                 ValueChanged="@(async (string? v) => await OnOriginChangedAsync(v))"
                                                 Enabled="@(IsEditable && !string.IsNullOrWhiteSpace(Model.VendorCode))"
                                                 NullText="Select a valid self-billed invoice"
-                                                CssClass="w-100 required-field" />
+                                                CssClass="w-100 required-field" ValueExpression="@(() => Model.OriginSbInvNo)" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -122,7 +122,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@IsEditable"
                                                 NullText="Inherits from the origin"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => Model.Currency)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Rate" ColSpanMd="12">

@@ -94,13 +94,14 @@
                         <Items>
                             <DxFormLayoutItem Caption="SO no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@SoNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@SoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@SoDate"
                                                 DateChanged="@(async (DateTime d) => await OnSoDateChanged(d))"
+                                                DateExpression="@(() => SoDate)"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
                                                 InputCssClass="required-field" />
@@ -108,12 +109,12 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -136,7 +137,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" />
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" />
                                     @if (HasCustomer && !CurrRateValid)
                                     {
                                         <p class="sdoc-field-error">Valid FX rate is required.</p>
@@ -162,6 +163,7 @@
                                                 ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
                                                 Value="@TaxGrCode"
                                                 ValueChanged="@(async (string? v) => await OnTaxGrCodeChanged(v))"
+                                                ValueExpression="@(() => TaxGrCode)"
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
@@ -307,6 +309,7 @@
                                                         ValueFieldName="@nameof(SaCustAddressVm.Line)"
                                                         Value="@ShipToLine"
                                                         ValueChanged="@OnShipToLineChanged"
+                                                        ValueExpression="@(() => _shipToLine)"
                                                         SearchMode="ListSearchMode.AutoSearch"
                                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                         Enabled="@CanEditAddresses"
@@ -569,6 +572,7 @@
                             <Template>
                                 <DxSpinEdit Value="@Popup.OrderQty"
                                             ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
+                                            ValueExpression="@(() => Popup.OrderQty)"
                                             Increment="1m"
                                             Enabled="@CanEditDocument"
                                             InputCssClass="required-field" />
@@ -576,7 +580,7 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Pack" ColSpanMd="3">
                             <Template>
-                                <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
+                                <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                         @if (IsEditingLine && PopupAllocatedFloor > 0m)
@@ -617,7 +621,11 @@
                         <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                             <Template>
                                 @* Phase 4: an operator without PRICE_OVERRIDE sees the resolved price read-only. *@
-                                <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@(CanEditDocument && CanOverridePrice)" />
+                                <DxSpinEdit Value="@Popup.UnitPrice"
+                                            ValueChanged="@((decimal v) => OnPopupUnitPriceChangedAsync(v))"
+                                            ValueExpression="@(() => Popup.UnitPrice)"
+                                            Increment="0.01m"
+                                            Enabled="@(CanEditDocument && CanOverridePrice)" />
                             </Template>
                         </DxFormLayoutItem>
                         @if (!string.IsNullOrWhiteSpace(_priceHint))
@@ -625,6 +633,14 @@
                             <DxFormLayoutItem Caption="" ColSpanMd="8">
                                 <Template>
                                     <p class="sdoc-field-hint">Price source: @_priceHint</p>
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && CanOverridePrice)
+                        {
+                            <DxFormLayoutItem Caption="" ColSpanMd="8">
+                                <Template>
+                                    <p class="sdoc-field-hint">Enter a positive unit price and an override reason to continue.</p>
                                 </Template>
                             </DxFormLayoutItem>
                         }
@@ -646,6 +662,7 @@
                             <Template>
                                 <DxCheckBox Checked="@Popup.IsInclusive"
                                             CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))"
+                                            CheckedExpression="@(() => Popup.IsInclusive)"
                                             Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
                             </Template>
                         </DxFormLayoutItem>
@@ -656,6 +673,7 @@
                                             ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
                                             Value="@Popup.TaxGrCode"
                                             ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
+                                            ValueExpression="@(() => Popup.TaxGrCode)"
                                             SearchMode="ListSearchMode.AutoSearch"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                             Enabled="@CanEditDocument"

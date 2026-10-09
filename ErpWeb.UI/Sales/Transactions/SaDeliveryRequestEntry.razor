@@ -78,7 +78,7 @@
                         <HeaderContentTemplate>Document</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="Request no." ColSpanMd="12">
-                                <Template><DxTextBox Text="@DocumentNoDisplay" ReadOnly="true" /></Template>
+                                <Template><DxTextBox Text="@DocumentNoDisplay" ReadOnly="true" ValidationEnabled="false" /></Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Required date" ColSpanMd="12">
                                 <Template>
@@ -93,7 +93,7 @@
                             @if (Detail is not null)
                             {
                                 <DxFormLayoutItem Caption="Status" ColSpanMd="12">
-                                    <Template><DxTextBox Text="@StatusDisplay" ReadOnly="true" /></Template>
+                                    <Template><DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" /></Template>
                                 </DxFormLayoutItem>
                             }
                         </Items>
@@ -113,12 +113,12 @@
                                     }
                                     else
                                     {
-                                        <DxTextBox Text="@ProductCode" ReadOnly="true" />
+                                        <DxTextBox Text="@ProductCode" ReadOnly="true" ValidationEnabled="false" />
                                     }
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Production UOM" ColSpanMd="12">
-                                <Template><DxTextBox Text="@ProductionUom" ReadOnly="true" /></Template>
+                                <Template><DxTextBox Text="@ProductionUom" ReadOnly="true" ValidationEnabled="false" /></Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Product definition" ColSpanMd="12">
                                 <Template>
@@ -133,7 +133,7 @@
                                     }
                                     else
                                     {
-                                        <DxTextBox Text="@DefinitionCode" ReadOnly="true" MaxLength="30" />
+                                        <DxTextBox Text="@DefinitionCode" ReadOnly="true" MaxLength="30" ValidationEnabled="false" />
                                     }
                                 </Template>
                             </DxFormLayoutItem>
@@ -234,7 +234,7 @@
                                                     ValueChanged="@((decimal value) => OnSourceQuantityChanged(source, value))"
                                                     Increment="0.0001m"
                                                     ShowSpinButtons="false"
-                                                    InputCssClass="dr-qty" />
+                                                    InputCssClass="dr-qty" ValueExpression="@(() => source.Quantity)" />
                                     }
                                     else
                                     {

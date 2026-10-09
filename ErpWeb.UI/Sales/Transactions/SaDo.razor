@@ -56,7 +56,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="DO no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@DoNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@DoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -64,17 +64,17 @@
                                     <DxDateEdit Date="@DoDate"
                                                 DateChanged="@(async (DateTime d) => await OnDoDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" />
+                                                Enabled="@CanEditDocument" DateExpression="@(() => DoDate)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -97,7 +97,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" />
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" />
                                     @if (HasCustomer && !CurrRateValid)
                                     {
                                         <p class="sdoc-field-error">Valid FX rate is required.</p>
@@ -127,7 +127,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" ValueExpression="@(() => TaxGrCode)" />
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -255,7 +255,7 @@
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                     Enabled="@CanEditAddresses"
                                                     NullText="Select ship-to address"
-                                                    CssClass="w-100" />
+                                                    CssClass="w-100" ValueExpression="@(() => ShipToLine)" />
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Ship name" ColSpanMd="6">
@@ -527,12 +527,12 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Qty" ColSpanMd="6">
                         <Template>
-                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" />
+                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" ValueExpression="@(() => Popup.Qty)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Pack" ColSpanMd="6">
                         <Template>
-                            <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" />
+                            <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
@@ -592,7 +592,7 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         Enabled="@(!SoPickerLoading)"
                                         NullText="Select a sales order"
-                                        CssClass="w-100" />
+                                        CssClass="w-100" ValueExpression="@(() => SelectedSourceSoNo)" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>

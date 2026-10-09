@@ -44,12 +44,12 @@
                         <Items>
                             <DxFormLayoutItem Caption="PR no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@PrNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@PrNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Create date" ColSpanMd="12">
@@ -58,7 +58,7 @@
                                                 DateChanged="@((DateTime d) => { CreateDt = d.Date; OnHeaderChanged(); })"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
-                                                InputCssClass="required-field" />
+                                                InputCssClass="required-field" DateExpression="@(() => CreateDt)" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -89,7 +89,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select department"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => DeptCode)" />
                                     @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -101,7 +101,7 @@
                                                 Value="@PrType"
                                                 ValueChanged="@((string? v) => OnPrTypeChanged(v))"
                                                 Enabled="@CanEditDocument"
-                                                CssClass="w-100 required-field" />
+                                                CssClass="w-100 required-field" ValueExpression="@(() => PrType)" />
                                     @FieldError("PrType")
                                 </Template>
                             </DxFormLayoutItem>
@@ -122,18 +122,18 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select project"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => ProjId)" />
                                     @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Location" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(LocationCode ?? string.Empty)" ReadOnly="true" NullText="From write scope" />
+                                    <DxTextBox Text="@(LocationCode ?? string.Empty)" ReadOnly="true" NullText="From write scope" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(CurrencyDisplay ?? string.Empty)" ReadOnly="true" NullText="From lowest line" />
+                                    <DxTextBox Text="@(CurrencyDisplay ?? string.Empty)" ReadOnly="true" NullText="From lowest line" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -153,7 +153,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => CheckedBy)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Authorised by" ColSpanMd="4">
@@ -167,7 +167,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => AuthorisedBy)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="2nd authoriser" ColSpanMd="4">
@@ -181,7 +181,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => AuthorisedBy2nd)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
@@ -491,8 +491,7 @@
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="One-time vendor" ColSpanMd="4">
                             <Template>
-                                <DxCheckBox Checked="@(Popup.OneTimeVendor == true)"
-                                            CheckedChanged="@((bool v) => { Popup.OneTimeVendor = v; })"
+                                <DxCheckBox @bind-Checked="@Popup.OneTimeVendor"
                                             Enabled="@(!PopupReadOnly)" />
                             </Template>
                         </DxFormLayoutItem>
@@ -541,7 +540,7 @@
                                     <DxSpinEdit Value="@Popup.UnitPrice"
                                                 ValueChanged="@((decimal v) => { Popup.UnitPrice = v; OnPopupQtyOrPriceChanged(); })"
                                                 Increment="0.01m"
-                                                Enabled="@(!PopupReadOnly)" />
+                                                Enabled="@(!PopupReadOnly)" ValueExpression="@(() => Popup.UnitPrice)" />
                                 </Template>
                             </DxFormLayoutItem>
                         }
@@ -551,7 +550,7 @@
                                             ValueChanged="@((decimal v) => { Popup.PurchaseQty = v; OnPopupQtyOrPriceChanged(); })"
                                             Increment="1m"
                                             Enabled="@(!PopupReadOnly)"
-                                            InputCssClass="required-field" />
+                                            InputCssClass="required-field" ValueExpression="@(() => Popup.PurchaseQty)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="4">
@@ -564,12 +563,12 @@
                                 <DxSpinEdit Value="@Popup.PackSz"
                                             ValueChanged="@((decimal v) => { Popup.PackSz = v; OnPopupQtyOrPriceChanged(); })"
                                             Increment="0.0001m"
-                                            Enabled="@(!PopupReadOnly)" />
+                                            Enabled="@(!PopupReadOnly)" ValueExpression="@(() => Popup.PackSz)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Std qty" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit Value="@Popup.StdQty" ReadOnly="true" Increment="0.0001m" />
+                                <DxSpinEdit Value="@Popup.StdQty" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Std UOM" ColSpanMd="4">
@@ -588,14 +587,14 @@
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                             Enabled="@(!PopupReadOnly)"
                                             NullText="Select tax group"
-                                            CssClass="w-100" />
+                                            CssClass="w-100" ValueExpression="@(() => Popup.TaxGroup)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="4">
                             <Template>
                                 <DxCheckBox Checked="@Popup.IsInclusive"
                                             CheckedChanged="@((bool v) => { Popup.IsInclusive = v; OnPopupTaxChanged(); })"
-                                            Enabled="@(!PopupReadOnly && !PopupInclusiveLocked)" />
+                                            Enabled="@(!PopupReadOnly && !PopupInclusiveLocked)" CheckedExpression="@(() => Popup.IsInclusive)" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="To warehouse" ColSpanMd="4">

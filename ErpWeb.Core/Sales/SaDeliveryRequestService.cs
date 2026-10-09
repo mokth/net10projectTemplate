@@ -11,6 +11,7 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ErpWeb.Core.Sales;
 
@@ -820,6 +821,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         }
 
         var scope = auth.Scope!;
+        long savedDeliveryRequestId = 0;
 
         for (var attempt = 1; attempt <= MaxRetries; attempt++)
         {
@@ -967,18 +969,15 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                     TouchSqliteRowVersions(db);
                     await db.SaveChangesAsync(cancellationToken);
                     await tx.CommitAsync(cancellationToken);
-
-                    await using var readDb = await _dbFactory.CreateDbContextAsync(cancellationToken);
-                    var saved = await readDb.SaDeliveryRequests.AsNoTracking()
-                        .SingleAsync(x => x.Uid == header.Uid, cancellationToken);
-                    return IvMasterOperationResult<SaDeliveryRequestDetail>.Ok(
-                        await BuildDetailAsync(readDb, saved, cancellationToken));
+                    savedDeliveryRequestId = header.Uid;
                 }
                 catch
                 {
-                    await tx.RollbackAsync(cancellationToken);
+                    await RollbackIfActiveAsync(tx, cancellationToken);
                     throw;
                 }
+
+                break;
             }
             catch (DeliveryRequestCommandException ex)
             {
@@ -1010,6 +1009,15 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             }
         }
 
+        if (savedDeliveryRequestId > 0)
+        {
+            await using var readDb = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var saved = await readDb.SaDeliveryRequests.AsNoTracking()
+                .SingleAsync(x => x.Uid == savedDeliveryRequestId, cancellationToken);
+            return IvMasterOperationResult<SaDeliveryRequestDetail>.Ok(
+                await BuildDetailAsync(readDb, saved, cancellationToken));
+        }
+
         return IvMasterOperationResult<SaDeliveryRequestDetail>.Fail(
             IvMasterErrorCode.Concurrency, "The Delivery Request could not be saved because another transaction kept the demand locked.");
     }
@@ -1033,6 +1041,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
             await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+            var transactionCommitted = false;
             try
             {
                 var header = await LockDeliveryRequestAsync(db, scope, request.Uid, cancellationToken)
@@ -1134,12 +1143,16 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
                 TouchSqliteRowVersions(db);
                 await db.SaveChangesAsync(cancellationToken);
                 await tx.CommitAsync(cancellationToken);
+                transactionCommitted = true;
                 return IvMasterOperationResult<SaDeliveryRequestDetail>.Ok(
                     await BuildDetailAsync(db, header, cancellationToken));
             }
             catch
             {
-                await tx.RollbackAsync(cancellationToken);
+                if (!transactionCommitted)
+                {
+                    await RollbackIfActiveAsync(tx, cancellationToken);
+                }
                 throw;
             }
         }
@@ -1213,7 +1226,7 @@ public sealed class SaDeliveryRequestService : ISaDeliveryRequestService
             }
             catch
             {
-                await tx.RollbackAsync(cancellationToken);
+                await RollbackIfActiveAsync(tx, cancellationToken);
                 throw;
             }
         }
@@ -2112,6 +2125,23 @@ ORDER BY DeliveryRequestID")
 
     private static bool IsSqlite(AppDbContext db) =>
         db.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static async Task RollbackIfActiveAsync(
+        IDbContextTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        // SQL Server marks a transaction as completed when it aborts a deadlock
+        // or when a commit has already completed. RollbackAsync then throws the
+        // misleading "transaction has completed" exception and hides the real
+        // database error, so only roll back while the provider still has a live
+        // connection attached to the transaction.
+        if (transaction.GetDbTransaction().Connection is null)
+        {
+            return;
+        }
+
+        await transaction.RollbackAsync(cancellationToken);
+    }
 
     private static bool IsSqlServer(AppDbContext db) =>
         db.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;

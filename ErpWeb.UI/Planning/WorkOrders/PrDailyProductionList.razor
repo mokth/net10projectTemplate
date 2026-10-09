@@ -46,7 +46,7 @@
                                TextChanged="OnSearchTextChanged"
                                NullText="Search document, output item or lot…"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" />
+                               CssClass="w-100" TextExpression="@(() => SearchText)" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

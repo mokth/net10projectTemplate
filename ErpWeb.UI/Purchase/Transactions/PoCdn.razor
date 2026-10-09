@@ -50,7 +50,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Doc no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -58,25 +58,25 @@
                                     <DxDateEdit Date="@DocDate"
                                                 DateChanged="@(async (DateTime d) => await OnDocDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" />
+                                                Enabled="@CanEditDocument" DateExpression="@(() => DocDate)" />
                                     @FieldError("DocDate")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             @if (VrBatchNo is not null)
                             {
                                 <DxFormLayoutItem Caption="Vendor return" ColSpanMd="12">
                                     <Template>
-                                        <DxTextBox Text="@($"VR batch {VrBatchNo}")" ReadOnly="true" />
+                                        <DxTextBox Text="@($"VR batch {VrBatchNo}")" ReadOnly="true" ValidationEnabled="false" />
                                     </Template>
                                 </DxFormLayoutItem>
                             }
@@ -99,7 +99,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" />
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" />
                                     @if (HasVendor && !CurrRateValid)
                                     {
                                         <p class="sdoc-field-error">Valid FX rate is required.</p>
@@ -163,7 +163,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select reason"
-                                                CssClass="w-100 required-field" />
+                                                CssClass="w-100 required-field" ValueExpression="@(() => ReasonCode)" />
                                     @if (SelectedReasonInfo is not null)
                                     {
                                         <p class="sdoc-field-hint">
@@ -523,7 +523,7 @@
                                 else
                                 {
                                     <DxTextBox Text="@($"{Popup.PoNo} / {Popup.PoRelNo} / {Popup.PoLineNo}")"
-                                               ReadOnly="true" />
+                                               ReadOnly="true" ValidationEnabled="false" />
                                 }
                             </Template>
                         </DxFormLayoutItem>

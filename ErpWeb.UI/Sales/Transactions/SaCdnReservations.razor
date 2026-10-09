@@ -43,7 +43,7 @@
                                TextChanged="OnCustCodeChanged"
                                NullText="Customer code"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" />
+                               CssClass="w-100" TextExpression="@(() => CustCode)" />
                 </div>
                 <DxCheckBox @bind-Checked="@DraftsOnly" @bind-Checked:after="OnFilterChanged">Drafts only</DxCheckBox>
                 <DxCheckBox @bind-Checked="@OverReservedOnly" @bind-Checked:after="OnFilterChanged">Over-reserved only</DxCheckBox>

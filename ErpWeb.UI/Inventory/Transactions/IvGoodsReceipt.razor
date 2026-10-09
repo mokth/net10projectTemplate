@@ -61,12 +61,12 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="3">
                         <Template>
-                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+<DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Receipt type" ColSpanMd="3">
                         <Template>
-                            <DxComboBox Data="@TrxTypeOptions"
+<DxComboBox Data="@TrxTypeOptions"
                                         TData="IvGoodsReceiptTrxTypeOption"
                                         TValue="string"
                                         TextFieldName="@nameof(IvGoodsReceiptTrxTypeOption.Label)"
@@ -75,7 +75,7 @@
                                         ValueChanged="@OnTrxTypeChangedAsync"
                                         Enabled="@CanEditDocument"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
-                                        NullText="Select type" />
+                                        NullText="Select type" ValueExpression="@(() => TrxTypeDisplay)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="3">
@@ -272,11 +272,11 @@
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form">
                     <DxFormLayoutItem Caption="Search PO lines" ColSpanMd="12">
                         <Template>
-                            <DxTextBox Text="@PoPickerSearchText"
+<DxTextBox Text="@PoPickerSearchText"
                                        TextChanged="@OnPoPickerSearchChangedAsync"
                                        NullText="PO no, vendor, item code or description…"
                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                       Enabled="@(!PoPickerLoading)" />
+                                       Enabled="@(!PoPickerLoading)" TextExpression="@(() => PoPickerSearchText)" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>
@@ -353,29 +353,29 @@
                         <Items>
                             <DxFormLayoutItem Caption="PO" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@($"{LinePopup.PoNo}/{LinePopup.PoRelNo}")" ReadOnly="true" />
+<DxTextBox Text="@($"{LinePopup.PoNo}/{LinePopup.PoRelNo}")" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="PO line" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox Text="@LinePopup.PoLineNo.ToString()" ReadOnly="true" />
+<DxTextBox Text="@LinePopup.PoLineNo.ToString()" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Balance qty" ColSpanMd="4">
                                 <Template>
-                                    <DxSpinEdit Value="@LinePopup.FrPurQty"
+<DxSpinEdit Value="@LinePopup.FrPurQty"
                                                 DisplayFormat="n4"
-                                                ReadOnly="true" />
+                                                ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Item" ColSpanMd="6">
                                 <Template>
-                                    <DxTextBox Text="@LinePopup.ICode" ReadOnly="true" />
+<DxTextBox Text="@LinePopup.ICode" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Description" ColSpanMd="6">
                                 <Template>
-                                    <DxTextBox Text="@LinePopup.IDesc" ReadOnly="true" />
+<DxTextBox Text="@LinePopup.IDesc" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -397,7 +397,7 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="UOM" ColSpanMd="6">
                                 <Template>
-                                    <DxTextBox Text="@LinePopup.Uom" ReadOnly="true" />
+<DxTextBox Text="@LinePopup.Uom" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>

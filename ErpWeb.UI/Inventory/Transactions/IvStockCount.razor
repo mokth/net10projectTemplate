@@ -65,7 +65,7 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="3">
                         <Template>
-                            <DxTextBox Text="@StatusDisplay" ReadOnly="true" />
+<DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Counted by" ColSpanMd="3">
@@ -75,7 +75,7 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Posted batch" ColSpanMd="3">
                         <Template>
-                            <DxTextBox Text="@BatchDisplay" ReadOnly="true" />
+<DxTextBox Text="@BatchDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
@@ -259,12 +259,12 @@
                                         @{
                                             var line = (IvStockCountLineVm)context.DataItem;
                                         }
-                                        <DxSpinEdit Value="@line.PhysicalQty"
+<DxSpinEdit Value="@line.PhysicalQty"
                                                     ValueChanged="@((decimal? v) => OnPhysicalQtyChanged(line, v))"
                                                     MinValue="0m"
                                                     Increment="1m"
                                                     DisplayFormat="n4"
-                                                    CssClass="w-100" />
+                                                    CssClass="w-100" ValueExpression="@(() => line.PhysicalQty)" />
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                             }

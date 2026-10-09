@@ -81,13 +81,13 @@
                                            TextChanged="@(v => row.FromText = v)"
                                            NullText="From HH:mm"
                                            CssClass="shift-breaks__input"
-                                           InputCssClass="code-style" />
+                                           InputCssClass="code-style" TextExpression="@(() => row.FromText)" />
                                 <span class="shift-breaks__to">TO</span>
                                 <DxTextBox Text="@row.ToText"
                                            TextChanged="@(v => row.ToText = v)"
                                            NullText="To HH:mm"
                                            CssClass="shift-breaks__input"
-                                           InputCssClass="code-style" />
+                                           InputCssClass="code-style" TextExpression="@(() => row.ToText)" />
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                                           IconCssClass="fa-solid fa-trash"
                                           CssClass="shift-breaks__remove"

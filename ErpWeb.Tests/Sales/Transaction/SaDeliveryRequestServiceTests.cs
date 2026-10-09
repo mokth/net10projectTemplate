@@ -74,6 +74,24 @@ public sealed class SaDeliveryRequestServiceTests : IAsyncLifetime
     public Task DisposeAsync() => _connection.DisposeAsync().AsTask();
 
     [Fact]
+    public void Stock_reservation_maps_to_delivery_request_id_without_shadow_foreign_key()
+    {
+        using var db = _factory.CreateDbContext();
+        var reservationType = db.Model.FindEntityType(typeof(SaDeliveryRequestStockReservation));
+
+        Assert.NotNull(reservationType);
+        var deliveryRequestForeignKeys = reservationType!.GetForeignKeys()
+            .Where(x => x.PrincipalEntityType.ClrType == typeof(SaDeliveryRequest))
+            .ToList();
+
+        var foreignKey = Assert.Single(deliveryRequestForeignKeys);
+        Assert.Equal(nameof(SaDeliveryRequestStockReservation.DeliveryRequestId),
+            Assert.Single(foreignKey.Properties).Name);
+        Assert.Equal(nameof(SaDeliveryRequest.StockReservations), foreignKey.PrincipalToDependent?.Name);
+        Assert.DoesNotContain(reservationType.GetProperties(), x => x.Name == "SaDeliveryRequestUid");
+    }
+
+    [Fact]
     public async Task Create_uses_current_so_std_demand_and_audits_lineage()
     {
         var result = await Service().CreateDraftAsync(new SaDeliveryRequestDraftRequest

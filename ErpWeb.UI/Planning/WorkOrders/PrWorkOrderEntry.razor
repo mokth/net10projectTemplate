@@ -202,7 +202,7 @@
                     </div>
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Product description</label>
-                        <DxTextBox Text="@CurrentProductDescription" ReadOnly="true" NullText="From Stock Master / snapshot" />
+                        <DxTextBox Text="@CurrentProductDescription" ReadOnly="true" NullText="From Stock Master / snapshot" ValidationEnabled="false" />
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Planned quantity</label>
@@ -215,7 +215,7 @@
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Output UOM</label>
-                        <DxTextBox Text="@CurrentOutputUom" ReadOnly="true" InputCssClass="code-style" />
+                        <DxTextBox Text="@CurrentOutputUom" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
                     </div>
                     <div class="iv-field pwo-span-2">
                         <label class="iv-field__label">Product Definition</label>
@@ -227,11 +227,11 @@
                                         Value="@Request.DefinitionCode"
                                         ValueChanged="@((string? v) => OnDefinitionCodeChanged(v))"
                                         Enabled="@CanEditDefinition"
-                                        NullText="Select ACTIVE definition" />
+                                        NullText="Select ACTIVE definition" ValueExpression="@(() => Request.DefinitionCode)" />
                         }
                         else
                         {
-                            <DxTextBox Text="@DefinitionDisplayLabel" ReadOnly="true" InputCssClass="code-style" />
+                            <DxTextBox Text="@DefinitionDisplayLabel" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
                         }
                         @if (CurrentBomVersion is int resolvedVersion)
                         {
@@ -970,7 +970,7 @@
                                 Value="@SelectedChangeDefinitionCode"
                                 ValueChanged="@((string? v) => OnChangeDefinitionTargetChanged(v))"
                                 NullText="Select target definition"
-                                Enabled="@(!IsSubmitting)" />
+                                Enabled="@(!IsSubmitting)" ValueExpression="@(() => SelectedChangeDefinitionCode)" />
                 </div>
                 @if (ChangeDefinitionPreviewModel is not null)
                 {

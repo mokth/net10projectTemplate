@@ -29,7 +29,7 @@ public sealed class SaDeliveryRequestStockReservationConfiguration
         builder.Property(x => x.RowVersion).IsRowVersion();
 
         builder.HasOne(x => x.DeliveryRequest)
-            .WithMany()
+            .WithMany(x => x.StockReservations)
             .HasForeignKey(x => x.DeliveryRequestId)
             .OnDelete(DeleteBehavior.NoAction);
         builder.HasOne(x => x.DeliveryRequestSource)

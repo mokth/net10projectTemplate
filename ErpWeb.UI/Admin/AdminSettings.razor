@@ -202,13 +202,13 @@
                 <div class="as-editor__grid">
                     <div class="iv-field">
                         <label class="iv-field__label">Stored at</label>
-                        <DxComboBox Data="@EditScopeOptions"
+<DxComboBox Data="@EditScopeOptions"
                                     TextFieldName="@nameof(ScopeOption.Name)"
                                     ValueFieldName="@nameof(ScopeOption.Value)"
                                     Value="@EditScope"
                                     ValueChanged="@((AppSettingScope scope) => OnScopeChanged(scope))"
                                     ReadOnly="@(!CanEdit)"
-                                    CssClass="w-100" />
+                                    CssClass="w-100" ValueExpression="@(() => EditScope)"/>
                         <small class="as-editor__hint">
                             Leave a scope empty to inherit from a broader level (or the code default).
                         </small>

@@ -483,7 +483,7 @@
                                         DisplayFormat="dd/MM/yyyy HH:mm"
                                         TimeSectionVisible="true"
                                         Enabled="@CanEditFields"
-                                        CssClass="w-100" />
+                                        CssClass="w-100" DateExpression="@(() => ProductionDate)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Shift" ColSpanMd="3">
@@ -559,28 +559,28 @@
                         <span class="iv-field__label">Good</span>
                         <DxSpinEdit Value="@GoodQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(v, ScrapQty, RejectQty, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => GoodQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Scrap</span>
                         <DxSpinEdit Value="@ScrapQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, v, RejectQty, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => ScrapQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Reject</span>
                         <DxSpinEdit Value="@RejectQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, v, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => RejectQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Hold</span>
                         <DxSpinEdit Value="@HoldQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, RejectQty, v))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => HoldQty)" />
                         <small>@OutputUom</small>
                     </div>
                 </div>
@@ -636,7 +636,7 @@
                                             MinValue="0m"
                                             Increment="0.0001m"
                                             DisplayFormat="n4"
-                                            ShowSpinButtons="false" />
+                                            ShowSpinButtons="false" ValueExpression="@(() => line.ConsumeQty)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.VarianceQty)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -652,7 +652,7 @@
                                             ValueChanged="@((string? v) => OnReasonChanged(line, v))"
                                             NullText="Select reason"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)" />
+                                            Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)" ValueExpression="@(() => line.VarianceReasonCode)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn Caption="Reason detail" MinWidth="160">
@@ -663,7 +663,7 @@
                                 <DxTextBox Text="@line.VarianceReasonText"
                                            TextChanged="@((string v) => line.VarianceReasonText = v)"
                                            NullText="Required for OTHER"
-                                           Enabled="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))" />
+                                           Enabled="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))" TextExpression="@(() => line.VarianceReasonText)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.AvailableQty)" Caption="Current Available" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />

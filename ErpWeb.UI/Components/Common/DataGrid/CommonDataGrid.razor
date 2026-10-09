@@ -124,7 +124,8 @@
                     <FilterRowCellTemplate>
                         <DxDateEdit Date="(DateTime?)context.FilterRowValue"
                                     DateChanged="(DateTime? v) => context.FilterRowValue = v"
-                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                    ValidationEnabled="false"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" DateExpression="@(() => (DateTime?)context.FilterRowValue)" />
                     </FilterRowCellTemplate>
                 </DxGridDataColumn>
                 break;

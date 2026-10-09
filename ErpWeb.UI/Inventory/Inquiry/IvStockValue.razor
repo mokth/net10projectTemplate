@@ -89,12 +89,12 @@
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
                     <label class="iv-field-label">Group by</label>
-                    <DxComboBox Data="@GroupByOptions"
+<DxComboBox Data="@GroupByOptions"
                                 TextFieldName="@nameof(GroupByOption.Name)"
                                 ValueFieldName="@nameof(GroupByOption.Token)"
                                 Value="@AppliedGroupBy"
                                 ValueChanged="@((string? groupBy) => OnGroupByChanged(groupBy))"
-                                CssClass="iv-card-group-combo" />
+                                CssClass="iv-card-group-combo" ValueExpression="@(() => AppliedGroupBy)" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

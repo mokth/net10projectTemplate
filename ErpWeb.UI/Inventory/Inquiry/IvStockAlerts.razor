@@ -67,12 +67,12 @@
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
                     <label class="iv-field-label">Rule</label>
-                    <DxComboBox Data="@RuleOptions"
+<DxComboBox Data="@RuleOptions"
                                 TextFieldName="@nameof(RuleOption.Name)"
                                 ValueFieldName="@nameof(RuleOption.Token)"
                                 Value="@AppliedRule"
                                 ValueChanged="@((string? rule) => OnRuleChanged(rule))"
-                                CssClass="iv-card-rule-combo" />
+                                CssClass="iv-card-rule-combo" ValueExpression="@(() => AppliedRule)" />
                 </div>
                 <div class="iv-toolbar-row__search">
                     <IvStockMasterPicker ICode="@AppliedICode"

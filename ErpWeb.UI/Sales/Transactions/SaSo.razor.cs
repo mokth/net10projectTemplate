@@ -778,9 +778,21 @@ public partial class SaSo : PageBase, IDisposable
 
     protected Task OnPopupItemClearedAsync()
     {
+        // Clearing the picker must also clear the previous pricing failure. Otherwise a failed
+        // resolution leaves the Add line button disabled even after the operator starts a new line.
+        Interlocked.Increment(ref _priceApplySeq);
+        ClearPopupPriceBlock();
         Popup.ICode = string.Empty;
         Popup.IDesc = null;
-        _priceHint = null;
+        Popup.StdUom = null;
+        Popup.SellingUom = null;
+        Popup.StdPackSize = null;
+        Popup.Classification = null;
+        Popup.PricingSource = null;
+        Popup.PricingRef = null;
+        Popup.OriginalUnitPrice = null;
+        Popup.OverrideReason = null;
+        Popup.UnitPrice = 0m;
         return Task.CompletedTask;
     }
 
@@ -788,6 +800,8 @@ public partial class SaSo : PageBase, IDisposable
     {
         ArgumentNullException.ThrowIfNull(item);
 
+        // A new item is a new pricing attempt. Do not carry a previous item's block/error into it.
+        ClearPopupPriceBlock();
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
@@ -822,6 +836,7 @@ public partial class SaSo : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.OrderQty = qty;
+        ClearPopupPriceBlock();
         await ResolvePopupPriceAsync(assignDiscountSlots: true);
     }
 
@@ -833,13 +848,56 @@ public partial class SaSo : PageBase, IDisposable
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
         Popup.IsInclusive = inclusive;
+        ClearPopupPriceBlock();
         await ResolvePopupPriceAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
         Popup.TaxGrCode = taxGrCode;
+        ClearPopupPriceBlock();
         await ResolvePopupPriceAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// A failed engine resolve can still be completed by an operator who has PRICE_OVERRIDE: the
+    /// operator supplies a positive price and the normal override-reason rule records why it was used.
+    /// Without this explicit callback, the old two-way binding changed <c>UnitPrice</c> but left the
+    /// engine failure in <c>_priceBlockMessage</c>, so Add Line stayed disabled forever.
+    /// </summary>
+    protected Task OnPopupUnitPriceChangedAsync(decimal unitPrice)
+    {
+        Popup.UnitPrice = unitPrice;
+
+        if (!CanOverridePrice)
+        {
+            return Task.CompletedTask;
+        }
+
+        // A manual price entered after a failed resolve uses zero as the synthetic engine baseline.
+        // This keeps the existing permission/reason policy active instead of silently bypassing it.
+        if (Popup.OriginalUnitPrice == 0m && Popup.PricingSource is null)
+        {
+            if (unitPrice <= 0m)
+            {
+                _priceBlockMessage = "Enter a positive unit price when no system price is available.";
+                PopupError = _priceBlockMessage;
+            }
+            else
+            {
+                ClearPopupPriceBlock();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && unitPrice > 0m)
+        {
+            Popup.OriginalUnitPrice = 0m;
+            ClearPopupPriceBlock();
+        }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -850,6 +908,7 @@ public partial class SaSo : PageBase, IDisposable
     {
         if (string.IsNullOrWhiteSpace(Popup.ICode) || string.IsNullOrWhiteSpace(CustCode))
         {
+            ClearPopupPriceBlock();
             return;
         }
 
@@ -924,6 +983,25 @@ public partial class SaSo : PageBase, IDisposable
         _priceBlockMessage = null;
     }
 
+    /// <summary>
+    /// Clears only the UI-side pricing block. The server remains authoritative: the next pricing
+    /// attempt will restore the block if the new item/quantity/basis still has no valid price.
+    /// </summary>
+    private void ClearPopupPriceBlock()
+    {
+        var previousBlock = _priceBlockMessage;
+        _priceBlockMessage = null;
+        _priceHint = null;
+
+        // Preserve a different validation message, but remove the stale pricing message that caused
+        // the button to be disabled.
+        if (!string.IsNullOrWhiteSpace(previousBlock)
+            && string.Equals(PopupError, previousBlock, StringComparison.Ordinal))
+        {
+            PopupError = null;
+        }
+    }
+
     /// <summary>True when the discount fields still hold exactly what the engine last assigned.</summary>
     private bool DiscountSlotsAreUntouched() =>
         _autoDiscountSlots is not { } last
@@ -973,8 +1051,18 @@ public partial class SaSo : PageBase, IDisposable
         // never produced (the legacy defect was RM 0.00).
         if (!string.IsNullOrWhiteSpace(_priceBlockMessage))
         {
-            PopupError = _priceBlockMessage;
-            return;
+            if (CanOverridePrice && Popup.UnitPrice > 0m)
+            {
+                // Keep the server-side override declaration explicit even if the user committed the
+                // spin editor and clicked before its final render cycle cleared the UI block.
+                Popup.OriginalUnitPrice = 0m;
+                ClearPopupPriceBlock();
+            }
+            else
+            {
+                PopupError = _priceBlockMessage;
+                return;
+            }
         }
 
         // Phase 4: a price moved away from the resolved one is an override and needs a reason. Checked

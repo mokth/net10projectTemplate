@@ -45,7 +45,7 @@
                                     NullText="All customers" />
                     <DxTextBox NullText="Search customers"
                                maxlength="40"
-                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" ValidationEnabled="false" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

@@ -63,7 +63,7 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
                         <Template>
-                            <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" />
+<DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="4">
@@ -76,7 +76,7 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Vendor" ColSpanMd="6">
                         <Template>
-                                    <DxComboBox Data="@Vendors"
+<DxComboBox Data="@Vendors"
                                                 TextFieldName="@nameof(IvMiscReceiptVendorLookupRow.DisplayText)"
                                                 ValueFieldName="@nameof(IvMiscReceiptVendorLookupRow.SuppCode)"
                                                 Value="@Header.VendCode"
@@ -85,14 +85,14 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Optional — leave blank if unknown"
-                                                CssClass="w-100" />
+                                                CssClass="w-100" ValueExpression="@(() => Header.VendCode)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Vendor name" ColSpanMd="6">
                         <Template>
-                            <DxTextBox Text="@(Header.VendName ?? string.Empty)"
+<DxTextBox Text="@(Header.VendName ?? string.Empty)"
                                        ReadOnly="true"
-                                       NullText="Selected from vendor master" />
+                                       NullText="Selected from vendor master" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Supplier DO" ColSpanMd="6">

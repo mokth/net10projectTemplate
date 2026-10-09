@@ -32,7 +32,7 @@
                     <DxTextBox Text="@CustomerSearch"
                                NullText="Search customers"
                                maxlength="40"
-                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" />
+                               TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" TextExpression="@(() => CustomerSearch)" />
                 </div>
                 <div class="iv-field">
                     <label class="iv-field__label code-style">Item</label>
