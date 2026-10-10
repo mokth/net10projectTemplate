@@ -1,7 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using ErpWeb.Core.Menus;
+using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -21,6 +24,7 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
     private const int CopyBufferSize = 80 * 1024;
 
     private readonly IIvStockMasterRepository _stockMasters;
+    private readonly IDbContextFactory<AppDbContext>? _dbFactory;
     private readonly IInventoryTenantContext _tenant;
     private readonly IAccessRightService _accessRights;
     private readonly ItemImageStorageOptions _options;
@@ -33,9 +37,11 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
         IAccessRightService accessRights,
         IOptions<ItemImageStorageOptions> options,
         IHostEnvironment environment,
-        ILogger<IvStockMasterImageService> logger)
+        ILogger<IvStockMasterImageService> logger,
+        IDbContextFactory<AppDbContext>? dbFactory = null)
     {
         _stockMasters = stockMasters;
+        _dbFactory = dbFactory;
         _tenant = tenant;
         _accessRights = accessRights;
         _options = options.Value;
@@ -262,6 +268,7 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
 
     public async Task<IvMasterOperationResult<IvStockMasterImageReadResult>> OpenReadAsync(
         string itemCode,
+        long? imageId = null,
         CancellationToken cancellationToken = default)
     {
         var scope = _tenant.TryCompanyScope();
@@ -287,12 +294,35 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
         }
 
         var entity = await _stockMasters.GetByCodeAsync(scope.CompanyCode, code, cancellationToken);
-        if (entity is null || string.IsNullOrWhiteSpace(entity.ImagePath))
+        if (entity is null)
         {
             return Fail<IvStockMasterImageReadResult>("Item image was not found.", IvMasterErrorCode.NotFound);
         }
 
-        if (!TryResolveManagedPath(entity.ImagePath, scope.CompanyCode, entity.ICode, out var absolutePath)
+        var imagePath = entity.ImagePath;
+        if (imageId.HasValue)
+        {
+            if (imageId.Value <= 0 || _dbFactory is null)
+            {
+                return Fail<IvStockMasterImageReadResult>("Item image was not found.", IvMasterErrorCode.NotFound);
+            }
+
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            imagePath = await db.IvStockMasterImages
+                .AsNoTracking()
+                .Where(x => x.Uid == imageId.Value
+                    && x.CompanyCode == scope.CompanyCode
+                    && x.ICode == code)
+                .Select(x => x.ImagePath)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return Fail<IvStockMasterImageReadResult>("Item image was not found.", IvMasterErrorCode.NotFound);
+        }
+
+        if (!TryResolveManagedPath(imagePath, scope.CompanyCode, entity.ICode, out var absolutePath)
             || !File.Exists(absolutePath))
         {
             _logger.LogWarning(
@@ -336,6 +366,75 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
                 "read");
             throw;
         }
+    }
+
+    public async Task<IvMasterOperationResult<IReadOnlyList<IvStockMasterImageRow>>> ListAsync(
+        string itemCode,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return Fail<IReadOnlyList<IvStockMasterImageRow>>(
+                "Invalid company or branch context.",
+                IvMasterErrorCode.InvalidScope);
+        }
+
+        if (!await _accessRights.CanAsync(
+                MenuCodes.InventoryItemMaster,
+                PermissionCodes.Access,
+                cancellationToken))
+        {
+            return Fail<IReadOnlyList<IvStockMasterImageRow>>("Not authorized.", IvMasterErrorCode.AccessDenied);
+        }
+
+        var code = (itemCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return Fail<IReadOnlyList<IvStockMasterImageRow>>("Item code is required.");
+        }
+
+        var item = await _stockMasters.GetByCodeAsync(scope.CompanyCode, code, cancellationToken);
+        if (item is null)
+        {
+            return Fail<IReadOnlyList<IvStockMasterImageRow>>("Item was not found.", IvMasterErrorCode.NotFound);
+        }
+
+        if (_dbFactory is null)
+        {
+            return Fail<IReadOnlyList<IvStockMasterImageRow>>(
+                "Item image storage is unavailable.",
+                IvMasterErrorCode.Validation);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await db.IvStockMasterImages
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.ICode == code)
+            .OrderBy(x => x.SortOrder)
+            .Select(x => new { x.Uid, x.SortOrder, x.ImagePath })
+            .ToListAsync(cancellationToken);
+
+        if ((!string.IsNullOrWhiteSpace(item.ImagePath)
+                && !rows.Any(x => string.Equals(x.ImagePath, item.ImagePath, StringComparison.Ordinal)))
+            || (rows.Count > 0 && string.IsNullOrWhiteSpace(item.ImagePath)))
+        {
+            _logger.LogWarning(
+                "Stock Master image gallery invariant mismatch for company {CompanyCode}, item {ItemCode}, operation {Operation}",
+                scope.CompanyCode,
+                code,
+                "gallery-list");
+        }
+
+        IReadOnlyList<IvStockMasterImageRow> result = rows
+            .Select(x => new IvStockMasterImageRow
+            {
+                Uid = x.Uid,
+                SortOrder = x.SortOrder,
+                IsPrimary = string.Equals(x.ImagePath, item.ImagePath, StringComparison.Ordinal)
+            })
+            .ToList();
+        return IvMasterOperationResult<IReadOnlyList<IvStockMasterImageRow>>.Ok(result);
     }
 
     public Task TryDeleteManagedFileAsync(

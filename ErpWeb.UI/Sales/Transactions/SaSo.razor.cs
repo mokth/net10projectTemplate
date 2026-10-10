@@ -101,8 +101,8 @@ public partial class SaSo : PageBase, IDisposable
     /// </summary>
     private string? _priceBlockMessage;
 
-    /// <summary>Operator-facing provenance of the resolved price, e.g. "Customer item price (MOQ=100)".</summary>
-    private string? _priceHint;
+    private SaPriceInfoContext? _priceInfoContext;
+    private bool _priceInfoVisible;
 
     /// <summary>
     /// The discount slots the ENGINE last wrote. Used to tell an untouched auto-assigned discount from
@@ -731,7 +731,6 @@ public partial class SaSo : PageBase, IDisposable
         PopupDiscountIsAmount = false;
         PopupError = null;
         _priceBlockMessage = null;
-        _priceHint = null;
         _autoDiscountSlots = null;
         PopupVisible = true;
     }
@@ -755,7 +754,6 @@ public partial class SaSo : PageBase, IDisposable
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
         PopupError = null;
         _priceBlockMessage = null;
-        _priceHint = null;
 
         // Re-opening a DRAFT line deliberately does NOT re-price it: the price is re-resolved only when
         // a pricing input actually changes, so editing an unrelated field can never silently move the
@@ -1024,7 +1022,6 @@ public partial class SaSo : PageBase, IDisposable
 
         if (!result.Succeeded || result.Data is null)
         {
-            _priceHint = null;
             // A blocked line must not keep a stale provenance from an earlier successful resolve, and
             // it must not keep a stale override baseline either — there is nothing left to compare to.
             Popup.PricingSource = null;
@@ -1045,7 +1042,6 @@ public partial class SaSo : PageBase, IDisposable
         Popup.OverrideReason = null;
         Popup.PricingSource = priced.PricingSourceToken;
         Popup.PricingRef = priced.PricingRef;
-        _priceHint = priced.Describe();
 
         if (assignDiscountSlots && DiscountSlotsAreUntouched())
         {
@@ -1074,7 +1070,6 @@ public partial class SaSo : PageBase, IDisposable
     {
         var previousBlock = _priceBlockMessage;
         _priceBlockMessage = null;
-        _priceHint = null;
 
         // Preserve a different validation message, but remove the stale pricing message that caused
         // the button to be disabled.
@@ -1436,6 +1431,45 @@ public partial class SaSo : PageBase, IDisposable
         SaInvoiceCalc.CalculateLine(state, ResolveTaxPercent(Popup.TaxGrCode), _decPoint, _discountMethod);
         return state;
     }
+
+    protected string PopupPriceInfoTooltip => SaPriceInfoPresentation.Tooltip(BuildPriceInfo(Popup));
+
+    protected string PriceInfoTooltip(SaSoLineVm line) => SaPriceInfoPresentation.Tooltip(BuildPriceInfo(line));
+
+    protected void OpenPriceInfo(SaSoLineVm line)
+    {
+        _priceInfoContext = BuildPriceInfo(line);
+        _priceInfoVisible = true;
+    }
+
+    protected void OpenPopupPriceInfo()
+    {
+        _priceInfoContext = BuildPriceInfo(Popup);
+        _priceInfoVisible = true;
+    }
+
+    protected void OnPriceInfoVisibleChanged(bool visible) => _priceInfoVisible = visible;
+
+    private SaPriceInfoContext BuildPriceInfo(SaSoLineVm line) => new()
+    {
+        DocumentType = "Sales Order",
+        DocumentNo = SoNoDisplay,
+        LineNo = line.Line > 0 ? line.Line : null,
+        CustCode = CustCode ?? string.Empty,
+        ItemCode = line.ICode,
+        ItemDescription = line.IDesc,
+        Uom = !string.IsNullOrWhiteSpace(line.SellingUom) ? line.SellingUom! : line.StdUom ?? string.Empty,
+        Qty = line.OrderQty,
+        DocDate = SoDate,
+        Currency = Currency,
+        UnitPrice = line.UnitPrice,
+        PricingSource = line.PricingSource,
+        PricingRef = line.PricingRef,
+        OriginalUnitPrice = line.OriginalUnitPrice,
+        OverrideReason = line.OverrideReason,
+        IsInclusive = line.IsInclusive,
+        TaxPercent = ResolveTaxPercent(line.TaxGrCode)
+    };
 
     private decimal ResolveTaxPercent(string? lineTax)
     {

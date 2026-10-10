@@ -1,0 +1,196 @@
+@using ErpWeb.Core.Sales
+
+<DxPopup HeaderText="Selling Price Information"
+         Visible="@Visible"
+         VisibleChanged="@OnVisibleChangedAsync"
+         ShowCloseButton="false"
+         CloseOnOutsideClick="true"
+         Width="min(780px, 96vw)"
+         CssClass="sa-price-info-popup common-popup">
+    <Content>
+        @if (Context is not null)
+        {
+            var status = SaPriceInfoPresentation.Classify(Context);
+            <div class="sa-price-info">
+                <div class="sa-price-info__body">
+                    <section class="sa-price-info__section" aria-label="Recorded price information">
+                        <h2 class="sa-price-info__eyebrow">RECORDED PRICE INFORMATION</h2>
+
+                        @if (status == SaPriceInfoStatus.ManualOverride)
+                        {
+                            <div class="sa-price-info__notice sa-price-info__notice--override" role="status">
+                                <strong>PRICE OVERRIDDEN</strong>
+                                <span>The current line price differs from the system-resolved price.</span>
+                            </div>
+                        }
+
+                        <dl class="sa-price-info__facts">
+                            <dt>Price status</dt>
+                            <dd>@SaPriceInfoPresentation.StatusLabel(status)</dd>
+
+                            @if (status == SaPriceInfoStatus.ManualOverride && Context.OriginalUnitPrice is { } original)
+                            {
+                                <dt>System-resolved price</dt>
+                                <dd>@SaPriceInfoPresentation.FormatPrice(original, Context.Currency)</dd>
+                            }
+
+                            <dt>Current line price</dt>
+                            <dd class="sa-price-info__price">@SaPriceInfoPresentation.FormatPrice(Context.UnitPrice, Context.Currency)</dd>
+
+                            @if (status == SaPriceInfoStatus.ManualOverride)
+                            {
+                                var difference = SaPriceInfoPresentation.Difference(Context);
+                                var percent = SaPriceInfoPresentation.DifferencePercent(Context);
+                                <dt>Difference</dt>
+                                <dd>
+                                    @if (difference is { } amount)
+                                    {
+                                        <span>@SaPriceInfoPresentation.FormatPrice(amount, Context.Currency)</span>
+                                    }
+                                    @if (percent is { } percentage)
+                                    {
+                                        <span>(@percentage.ToString("+0.00;-0.00;0.00")%)</span>
+                                    }
+                                </dd>
+                            }
+
+                            @if (status == SaPriceInfoStatus.ManualPriceWithoutSystemSource)
+                            {
+                                <dt>System price</dt>
+                                <dd>No usable system price was available</dd>
+                            }
+                            else
+                            {
+                                <dt>@(status == SaPriceInfoStatus.ManualOverride ? "Original source" : "Price source")</dt>
+                                <dd>@SaPriceInfoPresentation.SourceLabel(Context.PricingSource)</dd>
+                                <dt>Price reference</dt>
+                                <dd>@SaPriceInfoPresentation.ReferenceLabel(Context)</dd>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(Context.OverrideReason))
+                            {
+                                <dt>@(status == SaPriceInfoStatus.ManualPriceWithoutSystemSource ? "Reason" : "Override reason")</dt>
+                                <dd>@Context.OverrideReason</dd>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(Context.SourceDocumentNo))
+                            {
+                                <dt>Source document</dt>
+                                <dd>@SourceDocumentDescription</dd>
+                            }
+
+                            <dt>Customer</dt>
+                            <dd>@Display(Context.CustCode)</dd>
+                            <dt>Item</dt>
+                            <dd>
+                                @Display(Context.ItemCode)
+                                @if (!string.IsNullOrWhiteSpace(Context.ItemDescription))
+                                {
+                                    <span> · @Context.ItemDescription</span>
+                                }
+                            </dd>
+                            <dt>UOM / Quantity</dt>
+                            <dd>@Display(Context.Uom) · @Context.Qty.ToString("n4")</dd>
+                            <dt>Document date</dt>
+                            <dd>@Context.DocDate.ToString("dd/MM/yyyy")</dd>
+                            @if (!string.IsNullOrWhiteSpace(Context.DocumentType) || !string.IsNullOrWhiteSpace(Context.DocumentNo))
+                            {
+                                <dt>Document</dt>
+                                <dd>
+                                    @Display(Context.DocumentType)
+                                    @if (!string.IsNullOrWhiteSpace(Context.DocumentNo))
+                                    {
+                                        <span> · @Context.DocumentNo</span>
+                                    }
+                                    @if (Context.LineNo is > 0)
+                                    {
+                                        <span> · Line @Context.LineNo</span>
+                                    }
+                                </dd>
+                            }
+                        </dl>
+                    </section>
+
+                    <section class="sa-price-info__section sa-price-info__current" aria-label="Current pricing rule check">
+                        <h2 class="sa-price-info__eyebrow">CURRENT PRICING RULE CHECK</h2>
+                        <p class="sa-price-info__muted">
+                            Current master data is evaluated for this document's customer, item, UOM, quantity, and date.
+                            It may differ from the price information originally recorded on this line.
+                        </p>
+
+                        @if (_isChecking)
+                        {
+                            <p class="sa-price-info__loading" role="status" aria-busy="true">Checking current pricing rules…</p>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+                        {
+                            <p class="sa-price-info__error" role="alert">@_errorMessage</p>
+                        }
+
+                        @if (_explanation is not null)
+                        {
+                            <div class="sa-price-info__comparison" role="status">
+                                <strong>@ComparisonHeading</strong>
+                                @if (_explanation.Found)
+                                {
+                                    <p>Recorded line: @SaPriceInfoPresentation.FormatPrice(Context.UnitPrice, Context.Currency) · @SaPriceInfoPresentation.SourceLabel(Context.PricingSource)</p>
+                                    <p>Current rule check: @FormatCurrentPrice() · @SaPriceInfoPresentation.SourceLabel(_explanation.WinningSource)</p>
+                                }
+                                else
+                                {
+                                    <p>Recorded line: @SaPriceInfoPresentation.FormatPrice(Context.UnitPrice, Context.Currency) · @SaPriceInfoPresentation.SourceLabel(Context.PricingSource)</p>
+                                    <p>Current rule check: no usable price found.</p>
+                                }
+                                <p class="sa-price-info__unchanged">The document price has NOT been changed.</p>
+                            </div>
+
+                            <div class="sa-price-info__table-wrap">
+                                <table class="sa-price-info__table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Source</th>
+                                            <th scope="col">Result</th>
+                                            <th scope="col">Price</th>
+                                            <th scope="col">Basis / Reference</th>
+                                            <th scope="col">Explanation</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var level in _explanation.Levels)
+                                        {
+                                            <tr>
+                                                <th scope="row">@SaPriceInfoPresentation.SourceLabel(level.Source)</th>
+                                                <td>@LevelResult(level)</td>
+                                                <td>@FormatLevelPrice(level)</td>
+                                                <td>@SaPriceInfoPresentation.Basis(level)</td>
+                                                <td>@(level.Reason ?? "Applied by current rules.")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </section>
+                </div>
+
+                <div class="sa-price-info__actions">
+                    <span class="sa-price-info__action-hint">
+                        @if (!CanCheckCurrentRules)
+                        {
+                            <span>Customer, item, and UOM are required for a current-rule check.</span>
+                        }
+                    </span>
+                    <div class="sa-price-info__buttons">
+                        <DxButton Text="CHECK CURRENT PRICING RULES"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@CheckCurrentPricingRulesAsync"
+                                  Enabled="@(CanCheckCurrentRules && !_isChecking)" />
+                        <DxButton Text="Close"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@CloseAsync" />
+                    </div>
+                </div>
+            </div>
+        }
+    </Content>
+</DxPopup>

@@ -29,9 +29,13 @@ public partial class IvStockMasterEntry : PageBase
     private string _cleanSnapshot = string.Empty;
     private bool _lookupsLoaded;
     private string? _loadedKey;
-    private IvPreparedStockImage? _pendingImage;
-    private bool _pendingImageRemoval;
-    private string? _pendingImagePreviewDataUrl;
+    private readonly List<IvStockMasterImageRow> _persistedImages = [];
+    private readonly List<IvPendingStockImage> _pendingImages = [];
+    private readonly HashSet<long> _pendingImageRemovals = [];
+    private long? _selectedExistingImageId;
+    private Guid? _selectedPendingImageToken;
+    private long? _requestedPrimaryExistingImageId;
+    private Guid? _requestedPrimaryPendingImageToken;
     private string? _imageError;
     private bool _isPreparingImage;
     private int _imageInputKey;
@@ -103,46 +107,62 @@ public partial class IvStockMasterEntry : PageBase
         && (!string.Equals(_cleanSnapshot, Snapshot(Model), StringComparison.Ordinal)
             || HasPendingImageChange);
 
-    protected bool HasPendingImage => _pendingImage is not null;
-    protected bool HasPendingImageRemoval => _pendingImageRemoval;
-    protected bool HasPendingImageChange => HasPendingImage || HasPendingImageRemoval;
+    protected bool HasPendingImageChange => _pendingImages.Count > 0
+        || _pendingImageRemovals.Count > 0
+        || (_requestedPrimaryExistingImageId is long requestedExisting
+            && _persistedImages.All(x => x.Uid != requestedExisting || !x.IsPrimary))
+        || _requestedPrimaryPendingImageToken is not null;
     protected bool IsPreparingImage => _isPreparingImage;
     protected string? ImageError => _imageError;
     protected long MaxImageUploadBytes => ItemImageOptions.Value.MaxUploadBytes;
+    protected int MaxImagesPerItem => ItemImageOptions.Value.MaxImagesPerItem;
+    protected long MaxPendingGalleryBytes => ItemImageOptions.Value.MaxPendingGalleryBytes;
+    protected int GalleryCount => _persistedImages.Count(x => IsImageAvailable(x.Uid)) + _pendingImages.Count;
+    protected int RemainingImageSlots => Math.Max(0, MaxImagesPerItem - GalleryCount);
+    protected bool CanModifyGallery => !IsViewMode && !IsSubmitting && (IsNewMode ? CanAdd : CanEdit);
     protected bool CanChooseImage =>
-        !IsViewMode
-        && !IsSubmitting
+        CanModifyGallery
         && !_isPreparingImage
-        && (IsNewMode ? CanAdd : CanEdit);
-    protected bool CanRemoveImage =>
-        !IsNewMode
-        && Model.HasImage
-        && !HasPendingImage
-        && !_pendingImageRemoval
-        && !IsSubmitting
-        && CanEdit;
+        && RemainingImageSlots > 0;
+    protected bool CanRemoveSelectedImage => CanModifyGallery
+        && (_selectedPendingImageToken is not null
+            || (_selectedExistingImageId is long id && IsImageAvailable(id)));
+    protected bool CanSetSelectedPrimary => CanModifyGallery
+        && (_selectedPendingImageToken is not null || _selectedExistingImageId is not null)
+        && !IsSelectedImagePrimary;
+    protected bool IsSelectedImagePrimary =>
+        (_selectedExistingImageId is long existingId && IsPrimaryImage(existingId))
+        || (_selectedPendingImageToken is Guid pendingToken && IsPrimaryImage(pendingToken));
+    protected string GalleryCountLabel => $"{GalleryCount} / {MaxImagesPerItem} images";
     protected bool HasImagePreview => !string.IsNullOrWhiteSpace(ImagePreviewUrl);
     protected string? ImagePreviewUrl
     {
         get
         {
-            if (_pendingImageRemoval)
+            if (_selectedPendingImageToken is Guid pendingToken
+                && FindPendingImage(pendingToken) is { } pending)
             {
-                return null;
+                return ToDataUrl(pending.Image);
             }
 
-            if (!string.IsNullOrWhiteSpace(_pendingImagePreviewDataUrl))
+            if (_selectedExistingImageId is long selectedId && IsImageAvailable(selectedId))
             {
-                return _pendingImagePreviewDataUrl;
+                return ImageUrl(selectedId);
             }
 
-            if (!Model.HasImage || string.IsNullOrWhiteSpace(Model.ICode))
+            if (EffectivePrimaryPending is { } primaryPending)
             {
-                return null;
+                return ToDataUrl(primaryPending.Image);
             }
 
-            return Navigation.Resolve(
-                $"/inventory/item-image?iCode={Uri.EscapeDataString(Model.ICode)}");
+            if (EffectivePrimaryPersisted is { } primaryImage)
+            {
+                return ImageUrl(primaryImage.Uid);
+            }
+
+            return Model.HasImage && !string.IsNullOrWhiteSpace(Model.ICode)
+                ? Navigation.Resolve($"/inventory/item-image?iCode={Uri.EscapeDataString(Model.ICode)}")
+                : null;
         }
     }
 
@@ -150,7 +170,7 @@ public partial class IvStockMasterEntry : PageBase
         ? $"Item {Model.ICode}"
         : $"{Model.ICode} — {Model.IDesc}";
 
-    protected string ImageActionLabel => IsNewMode ? "CHOOSE IMAGE" : "REPLACE IMAGE";
+    protected string ImageActionLabel => "ADD IMAGES";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -228,7 +248,7 @@ public partial class IvStockMasterEntry : PageBase
             var result = await StockMasters.SaveAsync(
                 Model,
                 IsNewMode,
-                BuildImageChange());
+                BuildGalleryChanges());
             if (result.Succeeded)
             {
                 ClearPendingImageState();
@@ -315,6 +335,7 @@ public partial class IvStockMasterEntry : PageBase
 
         Model = Clone(result.Data);
         ClearPendingImageState();
+        await LoadGalleryAsync(code, clearPending: true);
         ValidationErrors.Clear();
         ErrorMessage = null;
         StatusMessage = "Loaded latest version.";
@@ -341,10 +362,7 @@ public partial class IvStockMasterEntry : PageBase
         // Keep field edits; adopt latest RowVersion so the next save can overwrite.
         Model.RowVersion = result.Data.RowVersion;
         Model.HasImage = result.Data.HasImage;
-        if (!result.Data.HasImage && _pendingImage is null)
-        {
-            _pendingImageRemoval = false;
-        }
+        await LoadGalleryAsync(code, clearPending: false);
         StatusMessage = "Kept your changes. Save again to overwrite.";
         await Task.CompletedTask;
     }
@@ -360,39 +378,66 @@ public partial class IvStockMasterEntry : PageBase
         }
 
         _imageError = null;
-        var file = args.File;
-        if (file is null || file.Size <= 0)
-        {
-            _imageError = "The selected file is empty.";
-            return;
-        }
-
         _imageInputKey++;
-        if (file.Size > MaxImageUploadBytes)
+        var remaining = RemainingImageSlots;
+        if (args.FileCount > remaining)
         {
-            _imageError = $"Image exceeds the {MaxImageUploadBytes / (1024 * 1024)} MB upload limit.";
+            _imageError = $"Maximum {MaxImagesPerItem} images per item. You can add {remaining} more.";
             return;
         }
 
+        var files = args.GetMultipleFiles(args.FileCount);
+        var existingPendingBytes = _pendingImages.Sum(x => (long)x.Image.Content.Length);
+        var preparedImages = new List<IvPendingStockImage>(files.Count);
+        var preparedBytes = 0L;
         _isPreparingImage = true;
         try
         {
-            await using var stream = file.OpenReadStream(MaxImageUploadBytes);
-            var result = await StockMasterImages.PrepareAsync(
-                file.Name,
-                file.ContentType,
-                stream,
-                file.Size);
-            if (!result.Succeeded || result.Data is null)
+            foreach (var file in files)
             {
-                _imageError = result.Message ?? "The selected image could not be prepared.";
-                return;
+                if (file.Size <= 0)
+                {
+                    _imageError = $"{file.Name}: the selected file is empty.";
+                    return;
+                }
+
+                if (file.Size > MaxImageUploadBytes)
+                {
+                    _imageError = $"{file.Name}: image exceeds the {MaxImageUploadBytes / (1024 * 1024)} MB upload limit.";
+                    return;
+                }
+
+                await using var stream = file.OpenReadStream(MaxImageUploadBytes);
+                var result = await StockMasterImages.PrepareAsync(
+                    file.Name,
+                    file.ContentType,
+                    stream,
+                    file.Size);
+                if (!result.Succeeded || result.Data is null)
+                {
+                    _imageError = $"{file.Name}: {result.Message ?? "The selected image could not be prepared."}";
+                    return;
+                }
+
+                preparedBytes += result.Data.Content.LongLength;
+                if (existingPendingBytes + preparedBytes > MaxPendingGalleryBytes)
+                {
+                    _imageError = $"Pending images exceed the {MaxPendingGalleryBytes / (1024 * 1024)} MB gallery memory limit.";
+                    return;
+                }
+
+                preparedImages.Add(new IvPendingStockImage
+                {
+                    Token = Guid.NewGuid(),
+                    Image = result.Data
+                });
             }
 
-            _pendingImage = result.Data;
-            _pendingImageRemoval = false;
-            _pendingImagePreviewDataUrl =
-                $"data:{result.Data.ContentType};base64,{Convert.ToBase64String(result.Data.Content)}";
+            _pendingImages.AddRange(preparedImages);
+            if (_selectedExistingImageId is null && _selectedPendingImageToken is null)
+            {
+                EnsureSelectedImage();
+            }
         }
         catch (IOException)
         {
@@ -408,30 +453,73 @@ public partial class IvStockMasterEntry : PageBase
         }
     }
 
-    protected void RemoveImage()
+    protected void RemoveSelectedImage()
     {
-        if (!CanRemoveImage)
+        if (!CanRemoveSelectedImage)
         {
             return;
         }
 
-        _pendingImage = null;
-        _pendingImagePreviewDataUrl = null;
-        _pendingImageRemoval = true;
+        if (_selectedPendingImageToken is Guid pendingToken)
+        {
+            _pendingImages.RemoveAll(x => x.Token == pendingToken);
+            if (_requestedPrimaryPendingImageToken == pendingToken)
+            {
+                _requestedPrimaryPendingImageToken = null;
+            }
+        }
+        else if (_selectedExistingImageId is long imageId)
+        {
+            _pendingImageRemovals.Add(imageId);
+            if (_requestedPrimaryExistingImageId == imageId)
+            {
+                _requestedPrimaryExistingImageId = null;
+            }
+        }
+
+        _selectedExistingImageId = null;
+        _selectedPendingImageToken = null;
         _imageError = null;
+        EnsureSelectedImage();
     }
 
-    protected void UndoImageChange()
+    protected void SelectExistingImage(IvStockMasterImageRow image)
     {
-        if (IsSubmitting)
+        if (IsImageAvailable(image.Uid))
+        {
+            _selectedExistingImageId = image.Uid;
+            _selectedPendingImageToken = null;
+        }
+    }
+
+    protected void SelectPendingImage(Guid token)
+    {
+        if (FindPendingImage(token) is not null)
+        {
+            _selectedPendingImageToken = token;
+            _selectedExistingImageId = null;
+        }
+    }
+
+    protected void SetSelectedPrimary()
+    {
+        if (!CanSetSelectedPrimary)
         {
             return;
         }
 
-        _pendingImage = null;
-        _pendingImagePreviewDataUrl = null;
-        _pendingImageRemoval = false;
-        _imageError = null;
+        if (_selectedExistingImageId is long imageId)
+        {
+            _requestedPrimaryExistingImageId = _persistedImages.Any(x => x.Uid == imageId && x.IsPrimary)
+                ? null
+                : imageId;
+            _requestedPrimaryPendingImageToken = null;
+        }
+        else if (_selectedPendingImageToken is Guid token)
+        {
+            _requestedPrimaryPendingImageToken = token;
+            _requestedPrimaryExistingImageId = null;
+        }
     }
 
     protected static string FormatUtc(DateTime? value) =>
@@ -514,6 +602,7 @@ public partial class IvStockMasterEntry : PageBase
             }
 
             Model = Clone(result.Data);
+            await LoadGalleryAsync(code, clearPending: true);
             await AfterModelLoadedAsync(preservePending: true);
             CaptureCleanSnapshot();
         }
@@ -616,21 +705,179 @@ public partial class IvStockMasterEntry : PageBase
 
     private void CaptureCleanSnapshot() => _cleanSnapshot = Snapshot(Model);
 
-    private IvStockMasterImageChange? BuildImageChange() =>
-        _pendingImage is not null
-            ? new IvStockMasterImageChange { Replacement = _pendingImage }
-            : _pendingImageRemoval
-                ? new IvStockMasterImageChange { RemoveExisting = true }
-                : null;
+    private IvStockMasterImageGalleryChangeSet? BuildGalleryChanges()
+    {
+        if (_pendingImages.Count == 0
+            && _pendingImageRemovals.Count == 0
+            && _requestedPrimaryExistingImageId is null
+            && _requestedPrimaryPendingImageToken is null)
+        {
+            return null;
+        }
+
+        IvStockMasterPrimarySelection? selection = null;
+        if (_requestedPrimaryExistingImageId is long existingImageId)
+        {
+            selection = new IvStockMasterPrimarySelection { ExistingImageId = existingImageId };
+        }
+        else if (_requestedPrimaryPendingImageToken is Guid pendingToken)
+        {
+            selection = new IvStockMasterPrimarySelection { PendingImageToken = pendingToken };
+        }
+
+        return new IvStockMasterImageGalleryChangeSet
+        {
+            Additions = _pendingImages.ToArray(),
+            RemoveImageIds = _pendingImageRemovals.ToArray(),
+            PrimarySelection = selection
+        };
+    }
 
     private void ClearPendingImageState()
     {
-        _pendingImage = null;
-        _pendingImageRemoval = false;
-        _pendingImagePreviewDataUrl = null;
+        _persistedImages.Clear();
+        _pendingImages.Clear();
+        _pendingImageRemovals.Clear();
+        _selectedExistingImageId = null;
+        _selectedPendingImageToken = null;
+        _requestedPrimaryExistingImageId = null;
+        _requestedPrimaryPendingImageToken = null;
         _imageError = null;
         _isPreparingImage = false;
         _imageInputKey++;
+    }
+
+    private async Task LoadGalleryAsync(string itemCode, bool clearPending)
+    {
+        var result = await StockMasterImages.ListAsync(itemCode);
+        if (!result.Succeeded || result.Data is null)
+        {
+            _persistedImages.Clear();
+            ErrorMessage = result.Message ?? "Unable to load item images.";
+            return;
+        }
+
+        _persistedImages.Clear();
+        _persistedImages.AddRange(result.Data.OrderBy(x => x.SortOrder));
+        if (clearPending)
+        {
+            _pendingImages.Clear();
+            _pendingImageRemovals.Clear();
+            _requestedPrimaryExistingImageId = null;
+            _requestedPrimaryPendingImageToken = null;
+            _selectedExistingImageId = null;
+            _selectedPendingImageToken = null;
+        }
+        else
+        {
+            _pendingImageRemovals.IntersectWith(_persistedImages.Select(x => x.Uid));
+            if (_requestedPrimaryExistingImageId is long requestedId
+                && _persistedImages.All(x => x.Uid != requestedId))
+            {
+                _requestedPrimaryExistingImageId = null;
+            }
+
+            if (_selectedExistingImageId is long selectedId
+                && _persistedImages.All(x => x.Uid != selectedId))
+            {
+                _selectedExistingImageId = null;
+            }
+        }
+
+        EnsureSelectedImage();
+    }
+
+    private bool IsImageAvailable(long imageId) =>
+        !_pendingImageRemovals.Contains(imageId)
+        && _persistedImages.Any(x => x.Uid == imageId);
+
+    private bool IsImageAvailable(IvStockMasterImageRow image) => IsImageAvailable(image.Uid);
+
+    private bool IsPrimaryImage(long imageId) => EffectivePrimaryPersisted?.Uid == imageId;
+
+    private bool IsPrimaryImage(Guid token) => EffectivePrimaryPending?.Token == token;
+
+    private bool IsSelectedImage(IvStockMasterImageRow image) => _selectedExistingImageId == image.Uid;
+
+    private bool IsSelectedImage(Guid token) => _selectedPendingImageToken == token;
+
+    private string ThumbnailClass(bool selected, bool primary) =>
+        $"iv-stock-image-thumb{(selected ? " is-selected" : string.Empty)}{(primary ? " is-primary" : string.Empty)}";
+
+    private string ThumbnailLabel(string label, bool primary) => primary ? $"{label}, Primary" : label;
+
+    private string ImageThumbnailLabel(IvStockMasterImageRow image) =>
+        ThumbnailLabel($"Image {image.SortOrder}", IsPrimaryImage(image.Uid));
+
+    private string PendingImageThumbnailLabel(IvPendingStockImage image) =>
+        ThumbnailLabel("New image", IsPrimaryImage(image.Token));
+
+    private string? ThumbnailUrl(IvStockMasterImageRow image) => ImageUrl(image.Uid);
+
+    private string PendingThumbnailUrl(IvPendingStockImage image) => ToDataUrl(image.Image);
+
+    private string ImageUrl(long imageId) => Navigation.Resolve(
+        $"/inventory/item-image?iCode={Uri.EscapeDataString(Model.ICode)}&imageId={imageId}");
+
+    private static string ToDataUrl(IvPreparedStockImage image) =>
+        $"data:{image.ContentType};base64,{Convert.ToBase64String(image.Content)}";
+
+    private IvPendingStockImage? FindPendingImage(Guid token) =>
+        _pendingImages.FirstOrDefault(x => x.Token == token);
+
+    private IvStockMasterImageRow? EffectivePrimaryPersisted
+    {
+        get
+        {
+            if (_requestedPrimaryExistingImageId is long requestedId)
+            {
+                return _persistedImages.FirstOrDefault(x => x.Uid == requestedId && IsImageAvailable(x.Uid));
+            }
+
+            if (_requestedPrimaryPendingImageToken is not null)
+            {
+                return null;
+            }
+
+            return _persistedImages.FirstOrDefault(x => x.IsPrimary && IsImageAvailable(x.Uid))
+                ?? _persistedImages.Where(x => IsImageAvailable(x.Uid)).OrderBy(x => x.SortOrder).FirstOrDefault();
+        }
+    }
+
+    private IvPendingStockImage? EffectivePrimaryPending
+    {
+        get
+        {
+            if (_requestedPrimaryPendingImageToken is Guid requestedToken)
+            {
+                return FindPendingImage(requestedToken);
+            }
+
+            if (_requestedPrimaryExistingImageId is not null
+                || _persistedImages.Any(x => x.IsPrimary && IsImageAvailable(x.Uid))
+                || _persistedImages.Any(x => IsImageAvailable(x.Uid)))
+            {
+                return null;
+            }
+
+            return _pendingImages.FirstOrDefault();
+        }
+    }
+
+    private void EnsureSelectedImage()
+    {
+        if (_selectedExistingImageId is long existingId && IsImageAvailable(existingId))
+        {
+            return;
+        }
+
+        if (_selectedPendingImageToken is Guid pendingToken && FindPendingImage(pendingToken) is not null)
+        {
+            return;
+        }
+
+        _selectedExistingImageId = EffectivePrimaryPersisted?.Uid;
+        _selectedPendingImageToken = EffectivePrimaryPending?.Token;
     }
 
     private static string Snapshot(IvStockMasterEditVm model) =>

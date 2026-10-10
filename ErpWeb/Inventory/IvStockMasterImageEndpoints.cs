@@ -16,11 +16,12 @@ public static class IvStockMasterImageEndpoints
 
     private static async Task<IResult> ReadAsync(
         [FromQuery] string? iCode,
+        [FromQuery] long? imageId,
         HttpResponse response,
         [FromServices] IIvStockMasterImageService imageService,
         CancellationToken cancellationToken)
     {
-        var result = await imageService.OpenReadAsync(iCode ?? string.Empty, cancellationToken);
+        var result = await imageService.OpenReadAsync(iCode ?? string.Empty, imageId, cancellationToken);
         if (!result.Succeeded || result.Data is null)
         {
             return result.ErrorCode switch

@@ -89,6 +89,7 @@ public class AppDbContext : DbContext
     public DbSet<MsUom> MsUoms => Set<MsUom>();
     public DbSet<MsLhdnUom> MsLhdnUoms => Set<MsLhdnUom>();
     public DbSet<IvStockMaster> IvStockMasters => Set<IvStockMaster>();
+    public DbSet<IvStockMasterImage> IvStockMasterImages => Set<IvStockMasterImage>();
     public DbSet<IvItemUomConversion> IvItemUomConversions => Set<IvItemUomConversion>();
     public DbSet<IvLot> IvLots => Set<IvLot>();
     public DbSet<IvBalLoc> IvBalLocs => Set<IvBalLoc>();
@@ -143,6 +144,15 @@ public class AppDbContext : DbContext
     public DbSet<SaDeliveryRequestSource> SaDeliveryRequestSources => Set<SaDeliveryRequestSource>();
     public DbSet<SaDeliveryRequestAuditEvent> SaDeliveryRequestAuditEvents => Set<SaDeliveryRequestAuditEvent>();
     public DbSet<SaDeliveryRequestStockReservation> SaDeliveryRequestStockReservations => Set<SaDeliveryRequestStockReservation>();
+    public DbSet<SaDeliveryDriver> SaDeliveryDrivers => Set<SaDeliveryDriver>();
+    public DbSet<SaDeliveryVehicle> SaDeliveryVehicles => Set<SaDeliveryVehicle>();
+    public DbSet<SaDeliveryTrip> SaDeliveryTrips => Set<SaDeliveryTrip>();
+    public DbSet<SaDeliveryTripStop> SaDeliveryTripStops => Set<SaDeliveryTripStop>();
+    public DbSet<SaDeliveryTripStopDo> SaDeliveryTripStopDos => Set<SaDeliveryTripStopDo>();
+    public DbSet<SaDeliveryAttempt> SaDeliveryAttempts => Set<SaDeliveryAttempt>();
+    public DbSet<SaDeliveryAttemptDo> SaDeliveryAttemptDos => Set<SaDeliveryAttemptDo>();
+    public DbSet<SaDeliveryPodAttachment> SaDeliveryPodAttachments => Set<SaDeliveryPodAttachment>();
+    public DbSet<SaDeliveryExceptionReason> SaDeliveryExceptionReasons => Set<SaDeliveryExceptionReason>();
     public DbSet<SaQt> SaQts => Set<SaQt>();
     public DbSet<SaQtDetail> SaQtDetails => Set<SaQtDetail>();
     public DbSet<SaEInvoiceLog> SaEInvoiceLogs => Set<SaEInvoiceLog>();

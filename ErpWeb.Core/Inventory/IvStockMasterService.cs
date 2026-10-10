@@ -6,6 +6,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -19,6 +20,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
     private readonly IIvStockCommonRepository _common;
     private readonly IIvStockMasterImageService? _imageService;
     private readonly ILogger<IvStockMasterService>? _logger;
+    private readonly int _maxImagesPerItem;
+    private readonly long _maxPendingGalleryBytes;
 
     public IvStockMasterService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -28,7 +31,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         IIvStockMasterRepository stockMasters,
         IIvStockCommonRepository common,
         IIvStockMasterImageService? imageService = null,
-        ILogger<IvStockMasterService>? logger = null)
+        ILogger<IvStockMasterService>? logger = null,
+        IOptions<ItemImageStorageOptions>? imageOptions = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -38,6 +42,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         _common = common;
         _imageService = imageService;
         _logger = logger;
+        _maxImagesPerItem = imageOptions?.Value.MaxImagesPerItem ?? 6;
+        _maxPendingGalleryBytes = imageOptions?.Value.MaxPendingGalleryBytes ?? 12L * 1024 * 1024;
     }
 
     public async Task<IvMasterOperationResult<IvStockMasterListPage>> SearchAsync(
@@ -99,12 +105,74 @@ public sealed class IvStockMasterService : IIvStockMasterService
         IvStockMasterEditVm model,
         bool isNew,
         CancellationToken cancellationToken = default) =>
-        await SaveAsync(model, isNew, imageChange: null, cancellationToken: cancellationToken);
+        await SaveAsync(
+            model,
+            isNew,
+            galleryChanges: (IvStockMasterImageGalleryChangeSet?)null,
+            cancellationToken: cancellationToken);
+
+    public Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
+        IvStockMasterEditVm model,
+        bool isNew,
+        IvStockMasterImageChange? imageChange,
+        CancellationToken cancellationToken = default)
+    {
+        if (imageChange is not null && imageChange.Replacement is not null && imageChange.RemoveExisting)
+        {
+            return Task.FromResult(Fail<IvStockMasterEditVm>(
+                IvMasterErrorCode.Validation,
+                "Item image change is invalid."));
+        }
+
+        if (isNew && imageChange?.RemoveExisting == true)
+        {
+            return Task.FromResult(Fail<IvStockMasterEditVm>(
+                IvMasterErrorCode.Validation,
+                "A new item does not have an existing image to remove."));
+        }
+
+        if (imageChange?.HasChange != true)
+        {
+            return SaveAsync(
+                model,
+                isNew,
+                galleryChanges: (IvStockMasterImageGalleryChangeSet?)null,
+                cancellationToken: cancellationToken);
+        }
+
+        IvPendingStockImage[] additions = [];
+        IvStockMasterPrimarySelection? selection = null;
+        var replaceAll = false;
+        var removeAll = false;
+        if (imageChange.Replacement is not null)
+        {
+            var token = Guid.NewGuid();
+            additions = [new IvPendingStockImage { Token = token, Image = imageChange.Replacement }];
+            selection = new IvStockMasterPrimarySelection { PendingImageToken = token };
+            replaceAll = !isNew;
+        }
+        else if (imageChange.RemoveExisting)
+        {
+            removeAll = !isNew;
+        }
+
+        return SaveAsync(
+            model,
+            isNew,
+            new IvStockMasterImageGalleryChangeSet
+            {
+                Additions = additions,
+                PrimarySelection = selection,
+                ReplaceAllExisting = replaceAll,
+                RemoveAllExisting = removeAll
+            },
+            cancellationToken);
+    }
 
     public async Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
         IvStockMasterEditVm model,
         bool isNew,
-        IvStockMasterImageChange? imageChange,
+        IvStockMasterImageGalleryChangeSet? galleryChanges,
         CancellationToken cancellationToken = default)
     {
         if (model is null)
@@ -112,12 +180,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
             return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "Save model is required.");
         }
 
-        if (imageChange is not null && imageChange.Replacement is not null && imageChange.RemoveExisting)
-        {
-            return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "Item image change is invalid.");
-        }
-
-        if (imageChange?.HasChange == true && _imageService is null)
+        if (galleryChanges?.HasChange == true && _imageService is null)
         {
             return Fail<IvStockMasterEditVm>(
                 IvMasterErrorCode.Validation,
@@ -367,41 +430,63 @@ public sealed class IvStockMasterService : IIvStockMasterService
 
         var now = _dates.Now;
         var userId = Truncate(writeScope.UserId, 10);
-        string? newImagePath = null;
-        string? oldImagePath = null;
+        var newImagePaths = new List<string>();
         var databaseSaved = false;
 
         try
         {
             if (isNew)
             {
-                if (imageChange?.RemoveExisting == true)
+                var galleryError = TryValidateGalleryChanges(
+                    galleryChanges,
+                    true,
+                    [],
+                    null,
+                    context.CompanyCode!,
+                    code,
+                    out var removeIds,
+                    out var additions);
+                if (galleryError is not null)
+                {
+                    return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, galleryError);
+                }
+
+                if (removeIds.Count > 0)
+                {
+                    return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "A new item has no gallery images to remove.");
+                }
+
+                var stored = await StoreGalleryAdditionsAsync(
+                    additions,
+                    context.CompanyCode!,
+                    code,
+                    newImagePaths,
+                    cancellationToken);
+                if (!stored.Succeeded || stored.Data is null)
                 {
                     return Fail<IvStockMasterEditVm>(
-                        IvMasterErrorCode.Validation,
-                        "A new item does not have an existing image to remove.");
+                        stored.ErrorCode == IvMasterErrorCode.None ? IvMasterErrorCode.Validation : stored.ErrorCode,
+                        stored.Message ?? "The item images could not be stored.");
                 }
 
-                if (imageChange?.Replacement is not null)
-                {
-                    var storedImage = await _imageService!.StorePreparedAsync(
-                        context.CompanyCode!,
-                        code,
-                        imageChange.Replacement,
-                        cancellationToken);
-                    if (!storedImage.Succeeded || storedImage.Data is null)
-                    {
-                        return ImageFailure(storedImage);
-                    }
-
-                    newImagePath = storedImage.Data.RelativePath;
-                }
+                var newImages = BuildGalleryRows(
+                    additions,
+                    stored.Data,
+                    [],
+                    context.CompanyCode!,
+                    code,
+                    now,
+                    userId);
 
                 var entity = new IvStockMaster
                 {
                     CompanyCode = context.CompanyCode!,
                     ICode = code,
-                    ImagePath = newImagePath,
+                    ImagePath = ResolvePrimaryImagePath(
+                        newImages,
+                        currentPrimaryPath: null,
+                        galleryChanges,
+                        stored.Data),
                     CreatedDate = now,
                     CreatedBy = userId,
                     ModifiedDate = now,
@@ -424,6 +509,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     expiryControl);
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
+                db.IvStockMasterImages.AddRange(newImages);
                 AddItemDefaultPriceAudit(
                     db,
                     context.CompanyCode!,
@@ -478,23 +564,51 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, structuralError);
             }
 
-            oldImagePath = existing.ImagePath;
+            List<IvStockMasterImage> currentImages = galleryChanges?.HasChange == true
+                ? await db.IvStockMasterImages
+                    .Where(x => x.CompanyCode == context.CompanyCode! && x.ICode == code)
+                    .OrderBy(x => x.SortOrder)
+                    .ToListAsync(cancellationToken)
+                : new List<IvStockMasterImage>();
+            var galleryValidationError = TryValidateGalleryChanges(
+                galleryChanges,
+                false,
+                currentImages,
+                existing.ImagePath,
+                context.CompanyCode!,
+                code,
+                out var removalIds,
+                out var pendingAdditions);
+            if (galleryValidationError is not null)
+            {
+                return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, galleryValidationError);
+            }
+
             var oldSellingPrice = existing.SellingPrice;
             var oldSellingUom = existing.SellingUom;
-            if (imageChange?.Replacement is not null)
+            var storedGallery = await StoreGalleryAdditionsAsync(
+                pendingAdditions,
+                context.CompanyCode!,
+                code,
+                newImagePaths,
+                cancellationToken);
+            if (!storedGallery.Succeeded || storedGallery.Data is null)
             {
-                var storedImage = await _imageService!.StorePreparedAsync(
-                    context.CompanyCode!,
-                    code,
-                    imageChange.Replacement,
-                    cancellationToken);
-                if (!storedImage.Succeeded || storedImage.Data is null)
-                {
-                    return ImageFailure(storedImage);
-                }
-
-                newImagePath = storedImage.Data.RelativePath;
+                return Fail<IvStockMasterEditVm>(
+                    storedGallery.ErrorCode == IvMasterErrorCode.None ? IvMasterErrorCode.Validation : storedGallery.ErrorCode,
+                    storedGallery.Message ?? "The item images could not be stored.");
             }
+
+            var addedImages = BuildGalleryRows(
+                pendingAdditions,
+                storedGallery.Data,
+                currentImages,
+                context.CompanyCode!,
+                code,
+                now,
+                userId);
+            var removedImages = currentImages.Where(x => removalIds.Contains(x.Uid)).ToList();
+            var finalImages = currentImages.Where(x => !removalIds.Contains(x.Uid)).Concat(addedImages).ToList();
 
             var entry = db.Entry(existing);
             entry.Property(x => x.RowVersion).OriginalValue = model.RowVersion!;
@@ -513,13 +627,15 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 defLoc,
                 classification,
                 expiryControl);
-            if (imageChange?.Replacement is not null)
+            if (galleryChanges?.HasChange == true)
             {
-                existing.ImagePath = newImagePath;
-            }
-            else if (imageChange?.RemoveExisting == true)
-            {
-                existing.ImagePath = null;
+                existing.ImagePath = ResolvePrimaryImagePath(
+                    finalImages,
+                    existing.ImagePath,
+                    galleryChanges,
+                    storedGallery.Data);
+                db.IvStockMasterImages.RemoveRange(removedImages);
+                db.IvStockMasterImages.AddRange(addedImages);
             }
 
             // Leftover BranchCode / LocationCode: do not touch on update.
@@ -541,13 +657,16 @@ public sealed class IvStockMasterService : IIvStockMasterService
             await db.SaveChangesAsync(cancellationToken);
             databaseSaved = true;
             await db.Entry(existing).ReloadAsync(cancellationToken);
-            if (imageChange?.HasChange == true && !PathsEqual(oldImagePath, newImagePath))
+            foreach (var oldImagePath in removedImages
+                         .Select(x => x.ImagePath)
+                         .Where(x => !string.IsNullOrWhiteSpace(x))
+                         .Distinct(StringComparer.Ordinal))
             {
                 await TryCleanupImageAsync(
                     oldImagePath,
                     context.CompanyCode!,
                     code,
-                    "item-replace-or-remove");
+                    "item-remove");
             }
 
             return IvMasterOperationResult<IvStockMasterEditVm>.Ok(MapEditVm(existing));
@@ -556,7 +675,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             if (!databaseSaved)
             {
-                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+                await CleanupNewImageFilesAsync(newImagePaths, context.CompanyCode!, code, "item-save-rollback");
             }
 
             return Fail<IvStockMasterEditVm>(
@@ -567,7 +686,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             if (!databaseSaved)
             {
-                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+                await CleanupNewImageFilesAsync(newImagePaths, context.CompanyCode!, code, "item-save-rollback");
             }
 
             return Fail<IvStockMasterEditVm>(
@@ -582,7 +701,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             if (!databaseSaved)
             {
-                await TryCleanupImageAsync(newImagePath, context.CompanyCode!, code, "item-save-rollback");
+                await CleanupNewImageFilesAsync(newImagePaths, context.CompanyCode!, code, "item-save-rollback");
             }
 
             throw;
@@ -775,6 +894,12 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 codes.Add(code);
                 entities.Add(entity);
                 imagePaths.Add((code, entity.ImagePath));
+                var galleryPaths = await db.IvStockMasterImages
+                    .AsNoTracking()
+                    .Where(x => x.CompanyCode == context.CompanyCode! && x.ICode == code)
+                    .Select(x => x.ImagePath)
+                    .ToListAsync(cancellationToken);
+                imagePaths.AddRange(galleryPaths.Select(path => (code, (string?)path)));
             }
 
             if (stale > 0)
@@ -835,7 +960,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
             db.IvStockMasters.RemoveRange(entities);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
-            foreach (var (code, imagePath) in imagePaths)
+            foreach (var (code, imagePath) in imagePaths
+                         .Where(x => !string.IsNullOrWhiteSpace(x.Path))
+                         .Distinct())
             {
                 await TryCleanupImageAsync(imagePath, context.CompanyCode!, code, "item-delete");
             }
@@ -1130,6 +1257,243 @@ public sealed class IvStockMasterService : IIvStockMasterService
             result.ErrorCode == IvMasterErrorCode.None ? IvMasterErrorCode.Validation : result.ErrorCode,
             result.Message ?? "The item image could not be stored.",
             result.ValidationErrors);
+
+    private string? TryValidateGalleryChanges(
+        IvStockMasterImageGalleryChangeSet? changes,
+        bool isNew,
+        IReadOnlyList<IvStockMasterImage> currentImages,
+        string? currentPrimaryPath,
+        string companyCode,
+        string itemCode,
+        out HashSet<long> removalIds,
+        out IReadOnlyList<IvPendingStockImage> additions)
+    {
+        removalIds = [];
+        additions = [];
+        if (changes?.HasChange != true)
+        {
+            return null;
+        }
+
+        if (changes.ReplaceAllExisting && changes.RemoveAllExisting)
+        {
+            return "Item image gallery change is invalid.";
+        }
+
+        if (isNew && (changes.RemoveAllExisting
+            || changes.ReplaceAllExisting
+            || (changes.RemoveImageIds?.Count ?? 0) > 0))
+        {
+            return "A new item has no gallery images to remove.";
+        }
+
+        if (!isNew)
+        {
+            var primaryMatches = !string.IsNullOrWhiteSpace(currentPrimaryPath)
+                && currentImages.Any(x => string.Equals(x.ImagePath, currentPrimaryPath, StringComparison.Ordinal));
+            var emptyIsConsistent = currentImages.Count == 0 && string.IsNullOrWhiteSpace(currentPrimaryPath);
+            if (!primaryMatches && !emptyIsConsistent)
+            {
+                _logger?.LogWarning(
+                    "Stock Master image gallery invariant mismatch for company {CompanyCode}, item {ItemCode}, operation {Operation}",
+                    companyCode,
+                    itemCode,
+                    "gallery-mutation");
+                return "The item image gallery is inconsistent. Run the approved image backfill script before changing images.";
+            }
+        }
+
+        if (currentImages.Count > _maxImagesPerItem)
+        {
+            return $"The item gallery already exceeds the {_maxImagesPerItem} image limit.";
+        }
+
+        var pending = changes.Additions?.ToList();
+        if (pending is null || pending.Any(x => x is null
+                || x.Image is null
+                || x.Image.Content is null
+                || x.Image.Content.Length == 0
+                || x.Token == Guid.Empty))
+        {
+            return "Item image additions are invalid.";
+        }
+
+        if (pending.Select(x => x.Token).Distinct().Count() != pending.Count)
+        {
+            return "Item image additions contain a duplicate token.";
+        }
+
+        var pendingBytes = pending.Aggregate(0L, (total, image) =>
+            total > _maxPendingGalleryBytes - image.Image.Content.LongLength
+                ? _maxPendingGalleryBytes + 1
+                : total + image.Image.Content.LongLength);
+        if (pendingBytes > _maxPendingGalleryBytes)
+        {
+            return $"Pending images exceed the {_maxPendingGalleryBytes / (1024 * 1024)} MB gallery memory limit.";
+        }
+
+        additions = pending;
+        var requestedRemovals = changes.RemoveImageIds ?? Array.Empty<long>();
+        removalIds = changes.ReplaceAllExisting || changes.RemoveAllExisting
+            ? currentImages.Select(x => x.Uid).ToHashSet()
+            : requestedRemovals.Distinct().ToHashSet();
+
+        if (requestedRemovals.Any(uid => currentImages.All(x => x.Uid != uid)))
+        {
+            return "One or more selected images do not belong to this item.";
+        }
+
+        var finalCount = currentImages.Count - removalIds.Count + additions.Count;
+        if (finalCount < 0)
+        {
+            return "Item image gallery change is invalid.";
+        }
+
+        if (finalCount > _maxImagesPerItem)
+        {
+            return $"Maximum {_maxImagesPerItem} images per item. Remove an image before adding another.";
+        }
+
+        var selection = changes.PrimarySelection;
+        if (selection?.ExistingImageId is not null && selection.PendingImageToken is not null)
+        {
+            return "Choose one primary image.";
+        }
+
+        if (selection?.ExistingImageId is long selectedExistingId
+            && (removalIds.Contains(selectedExistingId)
+                || currentImages.All(x => x.Uid != selectedExistingId)))
+        {
+            return "The selected primary image does not belong to this item or is being removed.";
+        }
+
+        if (selection?.PendingImageToken is Guid selectedPendingToken
+            && additions.All(x => x.Token != selectedPendingToken))
+        {
+            return "The selected primary image is not part of this Save.";
+        }
+
+        if (selection is not null
+            && selection.ExistingImageId is null
+            && selection.PendingImageToken is null
+            && finalCount > 0)
+        {
+            return "An item with images must have a primary image.";
+        }
+
+        return null;
+    }
+
+    private async Task<IvMasterOperationResult<IReadOnlyDictionary<Guid, string>>> StoreGalleryAdditionsAsync(
+        IReadOnlyList<IvPendingStockImage> additions,
+        string companyCode,
+        string itemCode,
+        List<string> newlyStoredPaths,
+        CancellationToken cancellationToken)
+    {
+        var paths = new Dictionary<Guid, string>();
+        if (additions.Count == 0)
+        {
+            return IvMasterOperationResult<IReadOnlyDictionary<Guid, string>>.Ok(paths);
+        }
+
+        if (_imageService is null)
+        {
+            return IvMasterOperationResult<IReadOnlyDictionary<Guid, string>>.Fail(
+                IvMasterErrorCode.Validation,
+                "Item image storage is unavailable.");
+        }
+
+        foreach (var addition in additions)
+        {
+            var stored = await _imageService.StorePreparedAsync(
+                companyCode,
+                itemCode,
+                addition.Image,
+                cancellationToken);
+            if (!stored.Succeeded || stored.Data is null)
+            {
+                await CleanupNewImageFilesAsync(newlyStoredPaths, companyCode, itemCode, "item-gallery-store-rollback");
+                return IvMasterOperationResult<IReadOnlyDictionary<Guid, string>>.Fail(
+                    stored.ErrorCode == IvMasterErrorCode.None ? IvMasterErrorCode.Validation : stored.ErrorCode,
+                    stored.Message ?? "The item image could not be stored.",
+                    stored.ValidationErrors);
+            }
+
+            paths.Add(addition.Token, stored.Data.RelativePath);
+            newlyStoredPaths.Add(stored.Data.RelativePath);
+        }
+
+        return IvMasterOperationResult<IReadOnlyDictionary<Guid, string>>.Ok(paths);
+    }
+
+    private static List<IvStockMasterImage> BuildGalleryRows(
+        IReadOnlyList<IvPendingStockImage> additions,
+        IReadOnlyDictionary<Guid, string> storedPaths,
+        IReadOnlyList<IvStockMasterImage> currentImages,
+        string companyCode,
+        string itemCode,
+        DateTime createdDate,
+        string createdBy)
+    {
+        var sortOrder = currentImages.Select(x => x.SortOrder).DefaultIfEmpty(0).Max();
+        var rows = new List<IvStockMasterImage>(additions.Count);
+        foreach (var addition in additions)
+        {
+            rows.Add(new IvStockMasterImage
+            {
+                CompanyCode = companyCode,
+                ICode = itemCode,
+                ImagePath = storedPaths[addition.Token],
+                SortOrder = ++sortOrder,
+                CreatedDate = createdDate,
+                CreatedBy = createdBy
+            });
+        }
+
+        return rows;
+    }
+
+    private static string? ResolvePrimaryImagePath(
+        IReadOnlyList<IvStockMasterImage> finalImages,
+        string? currentPrimaryPath,
+        IvStockMasterImageGalleryChangeSet? changes,
+        IReadOnlyDictionary<Guid, string> pendingPaths)
+    {
+        var selection = changes?.PrimarySelection;
+        if (selection?.ExistingImageId is long existingImageId)
+        {
+            return finalImages.FirstOrDefault(x => x.Uid == existingImageId)?.ImagePath;
+        }
+
+        if (selection?.PendingImageToken is Guid pendingToken)
+        {
+            return pendingPaths.TryGetValue(pendingToken, out var pendingPath) ? pendingPath : null;
+        }
+
+        if (selection is not null)
+        {
+            return null;
+        }
+
+        return finalImages.FirstOrDefault(x =>
+                   string.Equals(x.ImagePath, currentPrimaryPath, StringComparison.Ordinal))?.ImagePath
+               ?? finalImages.OrderBy(x => x.SortOrder).FirstOrDefault()?.ImagePath;
+    }
+
+    private async Task CleanupNewImageFilesAsync(
+        List<string> newlyStoredPaths,
+        string companyCode,
+        string itemCode,
+        string operation)
+    {
+        foreach (var imagePath in newlyStoredPaths.ToArray())
+        {
+            await TryCleanupImageAsync(imagePath, companyCode, itemCode, operation);
+        }
+
+        newlyStoredPaths.Clear();
+    }
 
     private async Task TryCleanupImageAsync(
         string? relativePath,

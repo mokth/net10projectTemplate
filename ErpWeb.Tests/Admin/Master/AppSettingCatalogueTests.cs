@@ -154,6 +154,20 @@ public class AppSettingCatalogueTests
     }
 
     [Fact]
+    public void Delivery_tracking_is_an_optional_company_branch_flag()
+    {
+        var definition = AppSettingCatalogue.SalesDeliveryTrackingEnabled;
+
+        Assert.Equal(AppSettingCatalogue.SalesKeys.DeliveryTrackingEnabled, definition.Key);
+        Assert.Equal(AppSettingModules.Sales, definition.Module);
+        Assert.Equal(AppSettingType.Flag, definition.Type);
+        Assert.Equal(AppSettingScope.Company | AppSettingScope.Branch, definition.AllowedScopes);
+        Assert.Equal("false", definition.DefaultValue);
+        Assert.Contains(definition, AppSettingCatalogue.All);
+        Assert.Equal(AppSettingBacking.Registry, definition.Backing);
+    }
+
+    [Fact]
     public void Column_backed_definitions_are_exactly_the_read_only_ones()
     {
         Assert.Contains(AppSettingCatalogue.SalesPriceMethod, AppSettingCatalogue.ColumnBacked);

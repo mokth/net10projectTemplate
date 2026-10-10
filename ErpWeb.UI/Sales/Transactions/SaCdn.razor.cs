@@ -98,8 +98,8 @@ public partial class SaCdn : PageBase, IDisposable
     /// </summary>
     private string? _priceBlockMessage;
 
-    /// <summary>Operator-facing provenance of the resolved price, e.g. "Customer item price (MOQ=100)".</summary>
-    private string? _priceHint;
+    private SaPriceInfoContext? _priceInfoContext;
+    private bool _priceInfoVisible;
 
     /// <summary>
     /// The discount slots the ENGINE last wrote, so re-resolving never clobbers a manual entry.
@@ -676,7 +676,6 @@ public partial class SaCdn : PageBase, IDisposable
         PopupDiscountIsAmount = false;
         PopupError = null;
         _priceBlockMessage = null;
-        _priceHint = null;
         _autoDiscountSlots = null;
         PopupVisible = true;
     }
@@ -695,7 +694,6 @@ public partial class SaCdn : PageBase, IDisposable
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m;
         PopupError = null;
         _priceBlockMessage = null;
-        _priceHint = null;
 
         // Re-opening a draft line deliberately does NOT re-price it: the price is re-resolved only when
         // a pricing input actually changes, so editing an unrelated field can never silently move the
@@ -718,7 +716,6 @@ public partial class SaCdn : PageBase, IDisposable
     {
         Popup.ICode = string.Empty;
         Popup.IDesc = null;
-        _priceHint = null;
         return Task.CompletedTask;
     }
 
@@ -812,7 +809,6 @@ public partial class SaCdn : PageBase, IDisposable
 
         if (!result.Succeeded || result.Data is null)
         {
-            _priceHint = null;
             // A blocked line must not keep a stale provenance from an earlier successful resolve, and
             // it must not keep a stale override baseline either - there is nothing left to compare to.
             Popup.PricingSource = null;
@@ -833,7 +829,6 @@ public partial class SaCdn : PageBase, IDisposable
         Popup.OverrideReason = null;
         Popup.PricingSource = priced.PricingSourceToken;
         Popup.PricingRef = priced.PricingRef;
-        _priceHint = priced.Describe();
 
         if (assignDiscountSlots && DiscountSlotsAreUntouched())
         {
@@ -1193,6 +1188,48 @@ public partial class SaCdn : PageBase, IDisposable
         SaInvoiceCalc.CalculateLine(state, ResolveTaxPercent(Popup.TaxGrCode), _decPoint, _discountMethod);
         return state;
     }
+
+    protected string PopupPriceInfoTooltip => SaPriceInfoPresentation.Tooltip(BuildPriceInfo(Popup));
+
+    protected string PriceInfoTooltip(SaCdnLineVm line) => SaPriceInfoPresentation.Tooltip(BuildPriceInfo(line));
+
+    protected void OpenPriceInfo(SaCdnLineVm line)
+    {
+        _priceInfoContext = BuildPriceInfo(line);
+        _priceInfoVisible = true;
+    }
+
+    protected void OpenPopupPriceInfo()
+    {
+        _priceInfoContext = BuildPriceInfo(Popup);
+        _priceInfoVisible = true;
+    }
+
+    protected void OnPriceInfoVisibleChanged(bool visible) => _priceInfoVisible = visible;
+
+    private SaPriceInfoContext BuildPriceInfo(SaCdnLineVm line) => new()
+    {
+        DocumentType = IsCreditNote ? "Credit Note" : "Debit Note",
+        DocumentNo = DocNoDisplay,
+        LineNo = line.Line > 0 ? line.Line : null,
+        CustCode = CustCode ?? string.Empty,
+        ItemCode = line.ICode,
+        ItemDescription = line.IDesc,
+        Uom = line.StdUom ?? string.Empty,
+        Qty = line.Qty,
+        DocDate = DocDate,
+        Currency = Currency,
+        UnitPrice = line.UnitPrice,
+        PricingSource = line.PricingSource,
+        PricingRef = line.PricingRef,
+        OriginalUnitPrice = line.OriginalUnitPrice,
+        OverrideReason = line.OverrideReason,
+        IsInclusive = line.IsInclusive,
+        TaxPercent = ResolveTaxPercent(line.TaxGrCode),
+        SourceDocumentType = string.IsNullOrWhiteSpace(InvNo) ? null : "Invoice",
+        SourceDocumentNo = InvNo,
+        SourceDocumentLine = line.SourceInvLine
+    };
 
     private decimal ResolveTaxPercent(string? lineTax)
     {

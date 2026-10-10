@@ -26,3 +26,39 @@ public sealed class IvStockMasterImageChange
 
     public bool HasChange => Replacement is not null || RemoveExisting;
 }
+
+public sealed class IvStockMasterImageRow
+{
+    public long Uid { get; init; }
+    public int SortOrder { get; init; }
+    public bool IsPrimary { get; init; }
+}
+
+public sealed class IvStockMasterImageGalleryChangeSet
+{
+    public IReadOnlyList<IvPendingStockImage> Additions { get; init; } = Array.Empty<IvPendingStockImage>();
+    public IReadOnlyList<long> RemoveImageIds { get; init; } = Array.Empty<long>();
+    public IvStockMasterPrimarySelection? PrimarySelection { get; init; }
+
+    // Compatibility adapter for the former replace/remove command. The normal write path is the gallery change set.
+    internal bool ReplaceAllExisting { get; init; }
+    internal bool RemoveAllExisting { get; init; }
+
+    public bool HasChange => Additions is { Count: > 0 }
+        || RemoveImageIds is { Count: > 0 }
+        || PrimarySelection is not null
+        || ReplaceAllExisting
+        || RemoveAllExisting;
+}
+
+public sealed class IvPendingStockImage
+{
+    public Guid Token { get; init; }
+    public required IvPreparedStockImage Image { get; init; }
+}
+
+public sealed class IvStockMasterPrimarySelection
+{
+    public long? ExistingImageId { get; init; }
+    public Guid? PendingImageToken { get; init; }
+}

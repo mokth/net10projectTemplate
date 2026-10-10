@@ -1,0 +1,19 @@
+<span class="sa-price-info-trigger @(IsEditor ? "sa-price-info-trigger--editor" : null)">
+    <span class="sa-price-info-trigger__value">@ChildContent</span>
+    <button type="button"
+            class="sa-price-info-trigger__button"
+            title="@Tooltip"
+            aria-label="@Tooltip"
+            @onclick="OnClick"
+            @onclick:stopPropagation="true"
+            @onpointerdown:stopPropagation="true">
+        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    </button>
+</span>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter, EditorRequired] public string Tooltip { get; set; } = "Price information";
+    [Parameter] public EventCallback OnClick { get; set; }
+    [Parameter] public bool IsEditor { get; set; }
+}

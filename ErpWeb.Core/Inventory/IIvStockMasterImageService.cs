@@ -15,7 +15,12 @@ public interface IIvStockMasterImageService : IIvStockMasterImageFileCleanup
         IvPreparedStockImage image,
         CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<IReadOnlyList<IvStockMasterImageRow>>> ListAsync(
+        string itemCode,
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<IvStockMasterImageReadResult>> OpenReadAsync(
         string itemCode,
+        long? imageId = null,
         CancellationToken cancellationToken = default);
 }

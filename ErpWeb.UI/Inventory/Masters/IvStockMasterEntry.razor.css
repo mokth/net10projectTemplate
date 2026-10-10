@@ -138,8 +138,67 @@
 }
 
 .iv-stock-image-actions {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 6px;
+    min-width: 0;
+}
+
+.iv-stock-image-thumbnails {
+    display: flex;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 2px 1px 5px;
+    scrollbar-width: thin;
+}
+
+.iv-stock-image-thumb {
+    position: relative;
+    display: grid;
+    flex: 0 0 50px;
+    place-items: center;
+    width: 50px;
+    height: 50px;
+    overflow: hidden;
+    padding: 2px;
+    border: 1px solid var(--iv-line);
+    border-radius: 8px;
+    background: var(--iv-soft);
+    cursor: pointer;
+}
+
+.iv-stock-image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.iv-stock-image-thumb:hover,
+.iv-stock-image-thumb:focus-visible {
+    border-color: var(--accent, #2f6fed);
+    outline: 2px solid color-mix(in srgb, var(--accent, #2f6fed) 28%, transparent);
+    outline-offset: 1px;
+}
+
+.iv-stock-image-thumb.is-selected {
+    border: 2px solid var(--accent, #2f6fed);
+}
+
+.iv-stock-image-thumb__badge {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #2f6fed);
+    color: #fff;
+    font-size: 0.68rem;
+    line-height: 1;
 }
 
 .iv-stock-image-picker,
@@ -223,6 +282,16 @@
         grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
         align-items: start;
         column-gap: 14px;
+    }
+
+    .iv-stock-image-thumbnails,
+    .iv-stock-image-actions,
+    .iv-stock-image-panel > .iv-stock-image-caption {
+        grid-column: 1 / -1;
+    }
+
+    .iv-stock-image-actions {
+        display: flex;
     }
 
     .iv-stock-image-caption,

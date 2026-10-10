@@ -493,7 +493,16 @@
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.ConvertedQty)" Caption="Converted" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.RemainingQty)" Caption="Remaining" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.DeliveryDate)" Caption="Delivery" Width="110px" MinWidth="105" DisplayFormat="dd/MM/yyyy" />
-                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.UnitPrice)" Caption="Price" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                        <DxGridDataColumn FieldName="@nameof(SaQtLineVm.UnitPrice)" Caption="Price" Width="135px" MinWidth="120" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right">
+                            <CellDisplayTemplate>
+                                @{
+                                    var priceLine = (SaQtLineVm)context.DataItem;
+                                }
+                                <SaPriceInfoTrigger Tooltip="@PriceInfoTooltip(priceLine)" OnClick="@(() => OpenPriceInfo(priceLine))">
+                                    @priceLine.UnitPrice.ToString("n4")
+                                </SaPriceInfoTrigger>
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.Amount)" Caption="Amount" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.TaxAmt)" Caption="Tax" Width="90px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
                         <DxGridDataColumn FieldName="@nameof(SaQtLineVm.NetAmount)" Caption="Net" Width="100px" DisplayFormat="n2" TextAlignment="GridTextAlignment.Right" />
@@ -670,17 +679,11 @@
                             <Template>
                                 @* Plan Phase 4: the price is editable only with PRICE_OVERRIDE. Locked rather than
                                    hidden, so an operator without the right still SEES the resolved price. *@
-                                <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@CanEditLinePrice" />
+                                <SaPriceInfoTrigger IsEditor="true" Tooltip="@PopupPriceInfoTooltip" OnClick="@OpenPopupPriceInfo">
+                                    <DxSpinEdit @bind-Value="@Popup.UnitPrice" Increment="0.01m" Enabled="@CanEditLinePrice" />
+                                </SaPriceInfoTrigger>
                             </Template>
                         </DxFormLayoutItem>
-                        @if (!string.IsNullOrWhiteSpace(_priceHint))
-                        {
-                            <DxFormLayoutItem Caption="" ColSpanMd="8">
-                                <Template>
-                                    <p class="sdoc-field-hint">Price source: @_priceHint</p>
-                                </Template>
-                            </DxFormLayoutItem>
-                        }
                         @if (IsPriceOverridden())
                         {
                             <DxFormLayoutItem Caption="" ColSpanMd="12" BeginRow="true">
@@ -899,6 +902,9 @@
                 </div>
             </Content>
         </DxPopup>
+        <SaPriceInfoDialog Context="@_priceInfoContext"
+                           Visible="@_priceInfoVisible"
+                           VisibleChanged="@OnPriceInfoVisibleChanged" />
     </SaDocPage>
 </MenuAuthorize>
 

@@ -25,6 +25,7 @@ public static class AppSettingCatalogue
         public const string PriceMethod = "PRICE_METHOD";
         public const string AllowBelowCost = "ALLOW_BELOW_COST";
         public const string QuoteValidDays = "QUOTE_VALID_DAYS";
+        public const string DeliveryTrackingEnabled = "DELIVERY_TRACKING_ENABLED";
     }
 
     public static class InventoryKeys
@@ -93,6 +94,14 @@ public static class AppSettingCatalogue
         AppSettingScope.Company,
         "30",
         Description: "Default validity, in days, applied to a new quotation.");
+
+    public static readonly AppSettingDefinition SalesDeliveryTrackingEnabled = new(
+        AppSettingModules.Sales,
+        SalesKeys.DeliveryTrackingEnabled,
+        AppSettingType.Flag,
+        AppSettingScope.Company | AppSettingScope.Branch,
+        "false",
+        Description: "Enable optional physical delivery trip, attempt, and proof-of-delivery tracking.");
 
     public static readonly AppSettingDefinition InventoryAllowNegativeStock = new(
         AppSettingModules.Inventory,
@@ -174,6 +183,7 @@ public static class AppSettingCatalogue
         SalesPriceMethod,
         SalesAllowBelowCost,
         SalesQuoteValidDays,
+        SalesDeliveryTrackingEnabled,
 
         ProcurementAllowOverReceipt,
         ProcurementRequirePrApproval,

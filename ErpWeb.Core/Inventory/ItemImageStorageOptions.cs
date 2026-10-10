@@ -13,6 +13,8 @@ public sealed class ItemImageStorageOptions
     public int MaxDimension { get; set; } = 1024;
     public int MaxProcessedBytes { get; set; } = 4 * 1024 * 1024;
     public int WebpQuality { get; set; } = 85;
+    public int MaxImagesPerItem { get; set; } = 6;
+    public long MaxPendingGalleryBytes { get; set; } = 12L * 1024 * 1024;
 }
 
 public sealed class ItemImageStorageOptionsValidator : IValidateOptions<ItemImageStorageOptions>
@@ -55,6 +57,17 @@ public sealed class ItemImageStorageOptionsValidator : IValidateOptions<ItemImag
         if (options.WebpQuality is < 1 or > 100)
         {
             errors.Add("ItemImages:WebpQuality must be between 1 and 100.");
+        }
+
+        if (options.MaxImagesPerItem is < 1 or > 10)
+        {
+            errors.Add("ItemImages:MaxImagesPerItem must be between 1 and 10.");
+        }
+
+        if (options.MaxPendingGalleryBytes <= 0
+            || options.MaxPendingGalleryBytes > 64L * 1024 * 1024)
+        {
+            errors.Add("ItemImages:MaxPendingGalleryBytes must be between 1 byte and 64 MB.");
         }
 
         return errors.Count == 0

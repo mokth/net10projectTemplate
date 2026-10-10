@@ -46,6 +46,7 @@ public class IvStockMaster
     public string? ModifiedBy { get; set; }
     public byte[] RowVersion { get; set; } = [];
 
+    public ICollection<IvStockMasterImage> Images { get; set; } = new List<IvStockMasterImage>();
     public ICollection<IvBalLoc> Balances { get; set; } = new List<IvBalLoc>();
     public ICollection<IvLot> Lots { get; set; } = new List<IvLot>();
     public ICollection<IvItemUomConversion> UomConversions { get; set; } = new List<IvItemUomConversion>();

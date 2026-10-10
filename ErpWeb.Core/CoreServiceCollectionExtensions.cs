@@ -5,6 +5,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Sales;
+using ErpWeb.Core.Sales.Delivery;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
@@ -317,6 +318,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
         services.AddScoped<ISaPriceMaintenanceService, SaPriceMaintenanceService>();
         services.AddScoped<ISaPriceChangeHistoryService, SaPriceChangeHistoryService>();
+        services.AddScoped<ISaDeliveryTrackingFeatureGate, SaDeliveryTrackingFeatureGate>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();
         services.AddScoped<ISaDoService, SaDoService>();
