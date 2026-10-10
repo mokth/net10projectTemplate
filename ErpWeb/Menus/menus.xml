@@ -117,6 +117,8 @@
             Icon="fa-solid fa-tags" />
       <Menu Code="SA_PRICE_INQUIRY" Name="Price Inquiry" Route="/sales/price-inquiry" SortOrder="21"
             Icon="fa-solid fa-magnifying-glass-dollar" />
+      <Menu Code="SA_PRICE_MAINTENANCE" Name="Price Review &amp; Update" Route="/sales/pricing/review" SortOrder="22"
+            Icon="fa-solid fa-sliders" />
     </Menu>
     <Menu Code="SA_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
       <Menu Code="SA_QT" Name="Sales Quotation" Route="/sales/quotations" SortOrder="1"
@@ -173,6 +175,8 @@
             Icon="fa-solid fa-tags" />
       <Menu Code="SA_EINV_INQUIRY" Name="e-Invoice Status" Route="/sales/inquiry/einvoice" SortOrder="10"
             Icon="fa-solid fa-file-signature" />
+      <Menu Code="SA_PRICE_CHANGE_HISTORY" Name="Price Change History" Route="/sales/inquiry/price-change-history" SortOrder="11"
+            Icon="fa-solid fa-clock-rotate-left" />
     </Menu>
     <!-- Sales Monitor (plan-salesDecisionSupport.prompt.md): read-only decision-support views. The
          Inquiry group above stays the raw row-level detail; these screens answer "what needs doing". -->

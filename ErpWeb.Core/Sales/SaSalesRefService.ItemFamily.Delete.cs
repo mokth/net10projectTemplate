@@ -22,7 +22,8 @@ public sealed partial class SaSalesRefService
         Func<AppDbContext, string, IReadOnlyList<string>, CancellationToken, Task<IReadOnlyList<TEntity>>> load,
         Func<TEntity, string, bool> match,
         Func<AppDbContext, string, IReadOnlyList<string>, CancellationToken, Task<IReadOnlyDictionary<string, IReadOnlyList<IvReferenceCount>>>> probe,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<AppDbContext, IReadOnlyList<TEntity>, string, CancellationToken, Task>? beforeDeleteAudit = null)
         where TEntity : class
     {
         var ctx = await RequireCompanyScopeAsync(menuCode, PermissionCodes.Delete, cancellationToken);
@@ -89,6 +90,11 @@ public sealed partial class SaSalesRefService
                     IvMasterErrorCode.InUse,
                     check.Message ?? "One or more records are in use.",
                     deleteCheck: check);
+            }
+
+            if (beforeDeleteAudit is not null)
+            {
+                await beforeDeleteAudit(db, entities, company, cancellationToken);
             }
 
             foreach (var entity in entities)

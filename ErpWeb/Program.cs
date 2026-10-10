@@ -160,6 +160,8 @@ try
     app.MapSaMasterRefExportEndpoints();
     app.MapSaAnalysisExportEndpoints();
     app.MapSaInquiryExportEndpoints();
+    app.MapSaPriceMaintenanceExportEndpoints();
+    app.MapSaPriceChangeHistoryExportEndpoints();
     app.MapPoInquiryExportEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();

@@ -415,4 +415,10 @@ public sealed class SaSalesPriceHistoryRow
     public string? Uom { get; set; }
     public string? SalesmanCode { get; set; }
     public string? FrWarehouse { get; set; }
+
+    public string? PricingSource { get; set; }
+    public string? PricingRef { get; set; }
+    public decimal? OriginalUnitPrice { get; set; }
+    public bool HasPriceOverride => OriginalUnitPrice.HasValue;
+    public string? OverrideReason { get; set; }
 }

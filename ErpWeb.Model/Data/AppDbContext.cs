@@ -166,6 +166,8 @@ public class AppDbContext : DbContext
     public DbSet<IvCustPrice> IvCustPrices => Set<IvCustPrice>();
     public DbSet<SaItemCust> SaItemCusts => Set<SaItemCust>();
     public DbSet<SaDisGroupItem> SaDisGroupItems => Set<SaDisGroupItem>();
+    public DbSet<SaPriceChangeBatch> SaPriceChangeBatches => Set<SaPriceChangeBatch>();
+    public DbSet<SaPriceChangeLine> SaPriceChangeLines => Set<SaPriceChangeLine>();
 
     public DbSet<PoOrder> PoOrders => Set<PoOrder>();
     public DbSet<PoOrderDetail> PoOrderDetails => Set<PoOrderDetail>();

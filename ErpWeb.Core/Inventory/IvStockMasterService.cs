@@ -1,4 +1,5 @@
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Pricing;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -423,6 +424,17 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     expiryControl);
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
+                AddItemDefaultPriceAudit(
+                    db,
+                    context.CompanyCode!,
+                    userId,
+                    entity,
+                    _dates.Today,
+                    oldPrice: null,
+                    newPrice: entity.SellingPrice,
+                    oldUom: null,
+                    newUom: entity.SellingUom,
+                    changeKind: SalesPriceChangeKinds.Create);
                 await db.SaveChangesAsync(cancellationToken);
                 databaseSaved = true;
                 await db.Entry(entity).ReloadAsync(cancellationToken);
@@ -467,6 +479,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
             }
 
             oldImagePath = existing.ImagePath;
+            var oldSellingPrice = existing.SellingPrice;
+            var oldSellingUom = existing.SellingUom;
             if (imageChange?.Replacement is not null)
             {
                 var storedImage = await _imageService!.StorePreparedAsync(
@@ -511,6 +525,18 @@ public sealed class IvStockMasterService : IIvStockMasterService
             // Leftover BranchCode / LocationCode: do not touch on update.
             existing.ModifiedDate = now;
             existing.ModifiedBy = userId;
+
+            AddItemDefaultPriceAudit(
+                db,
+                context.CompanyCode!,
+                userId,
+                existing,
+                _dates.Today,
+                oldSellingPrice,
+                existing.SellingPrice,
+                oldSellingUom,
+                existing.SellingUom,
+                changeKind: SalesPriceChangeKinds.Update);
 
             await db.SaveChangesAsync(cancellationToken);
             databaseSaved = true;
@@ -718,6 +744,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
             return Fail<object>(IvMasterErrorCode.Validation, "No records selected.");
         }
 
+        var userId = Truncate(context.UserId ?? string.Empty, 10);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -788,6 +815,21 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     IvMasterErrorCode.InUse,
                     check.Message!,
                     deleteCheck: check);
+            }
+
+            foreach (var entity in entities)
+            {
+                AddItemDefaultPriceAudit(
+                    db,
+                    context.CompanyCode!,
+                    userId,
+                    entity,
+                    _dates.Today,
+                    entity.SellingPrice,
+                    newPrice: null,
+                    oldUom: entity.SellingUom,
+                    newUom: null,
+                    changeKind: SalesPriceChangeKinds.Delete);
             }
 
             db.IvStockMasters.RemoveRange(entities);
@@ -959,6 +1001,51 @@ public sealed class IvStockMasterService : IIvStockMasterService
         entity.Classification = TruncateOptional(classification, 50);
         entity.Size = TruncateOptional(model.Size, 50);
         entity.Color = TruncateOptional(model.Color, 50);
+    }
+
+    private static void AddItemDefaultPriceAudit(
+        AppDbContext db,
+        string companyCode,
+        string changedBy,
+        IvStockMaster item,
+        DateTime effectiveDate,
+        decimal? oldPrice,
+        decimal? newPrice,
+        string? oldUom,
+        string? newUom,
+        string changeKind)
+    {
+        if (oldPrice == newPrice && string.Equals(oldUom, newUom, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (oldPrice is null && newPrice is null)
+        {
+            return;
+        }
+
+        db.SaPriceChangeBatches.Add(
+            SalesPriceChangeAuditFactory.BuildBatch(
+                new SalesPriceChangeAuditContext(
+                    companyCode,
+                    SalesPriceChangeAuditOrigins.ItemMaster,
+                    SalesPriceChangeAuditTargets.ItemDefault,
+                    effectiveDate,
+                    changedBy,
+                    AdjustmentMethod: SalesPriceChangeAuditAdjustmentMethods.DirectEdit),
+                [new SalesPriceChangeAuditLine(
+                    changeKind,
+                    item.ICode,
+                    item.IDesc,
+                    item.IType,
+                    item.IClassCode,
+                    item.ISubClassCode,
+                    item.Brand,
+                    OldUom: oldUom,
+                    NewUom: newUom,
+                    OldPrice: oldPrice,
+                    NewPrice: newPrice)]));
     }
 
     private static IvStockMasterListRow MapListRow(IvStockMaster x) =>

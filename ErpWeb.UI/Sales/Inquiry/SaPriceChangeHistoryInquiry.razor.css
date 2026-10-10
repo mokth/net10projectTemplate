@@ -1,0 +1,105 @@
+.sa-price-history__filters,
+.sa-price-history__results {
+    margin-top: 1rem;
+}
+
+.sa-price-history__section-title {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.sa-price-history__section-title h2 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.sa-price-history__section-title p {
+    margin: .3rem 0 0;
+    color: var(--iv-muted, #6b7280);
+    font-size: .86rem;
+}
+
+.sa-price-history__actions,
+.sa-price-history__pager,
+.sa-price-history__batch-pager {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+}
+
+.sa-price-history__filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.sa-price-history__grid,
+.sa-price-history__batch-grid {
+    min-height: 250px;
+}
+
+.sa-price-history__batch-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .8rem;
+    padding: .8rem;
+    margin-bottom: 1rem;
+    border-radius: .5rem;
+    background: #f8fafc;
+}
+
+.sa-price-history__batch-summary div {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+}
+
+.sa-price-history__batch-summary span {
+    color: var(--iv-muted, #6b7280);
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.sa-price-history__batch-summary strong {
+    overflow-wrap: anywhere;
+}
+
+.sa-price-history__batch-pager {
+    justify-content: space-between;
+    margin-bottom: .75rem;
+    color: var(--iv-muted, #6b7280);
+    font-size: .85rem;
+}
+
+.sa-price-history__batch-pager > div {
+    display: flex;
+    gap: .5rem;
+}
+
+@media (max-width: 1100px) {
+    .sa-price-history__filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sa-price-history__batch-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .sa-price-history__filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sa-price-history__section-title,
+    .sa-price-history__actions,
+    .sa-price-history__pager,
+    .sa-price-history__batch-pager {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}

@@ -1,0 +1,241 @@
+@page "/sales/inquiry/price-change-history"
+@inherits PageBase
+
+<PageTitle>Price Change History</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesPriceChangeHistory">
+    <div class="iv-page sa-price-history">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-clock-rotate-left"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Inquiry</p>
+                <h1 class="iv-title">Price Change History</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Company-scoped</span>
+                    <span class="iv-chip">Master-price audit trail</span>
+                    <span class="iv-chip">Server-paged</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card sa-price-history__filters">
+            <div class="sa-price-history__section-title">
+                <div>
+                    <h2>Filters</h2>
+                    <p>Filters use persisted snapshots, so history remains readable after master records change.</p>
+                </div>
+                <div class="sa-price-history__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="SEARCH"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              Click="@SearchAsync"
+                              Enabled="@(!IsLoading)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="EXPORT CSV"
+                              IconCssClass="fa-solid fa-file-csv"
+                              Click="@Export"
+                              Enabled="@(!IsLoading && CanExport)" />
+                </div>
+            </div>
+
+            <div class="sa-price-history__filter-grid">
+                <div class="iv-field">
+                    <label class="iv-field__label">Changed from</label>
+                    <DxDateEdit @bind-Date="@Query.ChangedDateFromUtc"
+                                DisplayFormat="dd/MM/yyyy"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Changed to</label>
+                    <DxDateEdit @bind-Date="@Query.ChangedDateToUtc"
+                                DisplayFormat="dd/MM/yyyy"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Effective from</label>
+                    <DxDateEdit @bind-Date="@Query.EffectiveDateFrom"
+                                DisplayFormat="dd/MM/yyyy"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Effective to</label>
+                    <DxDateEdit @bind-Date="@Query.EffectiveDateTo"
+                                DisplayFormat="dd/MM/yyyy"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Origin</label>
+                    <IvCodeComboBox Data="@OriginOptions" @bind-Value="@Query.Origin" NullText="All origins" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Target</label>
+                    <IvCodeComboBox Data="@TargetOptions" @bind-Value="@Query.TargetType" NullText="All targets" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Change kind</label>
+                    <IvCodeComboBox Data="@ChangeKindOptions" @bind-Value="@Query.ChangeKind" NullText="All kinds" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item</label>
+                    <DxTextBox @bind-Text="@Query.ItemCode" NullText="Exact item code" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item type</label>
+                    <DxTextBox @bind-Text="@Query.ItemType" NullText="Exact item type" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item class</label>
+                    <DxTextBox @bind-Text="@Query.ItemClass" NullText="Exact item class" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item subclass</label>
+                    <DxTextBox @bind-Text="@Query.ItemSubClass" NullText="Exact item subclass" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Brand</label>
+                    <DxTextBox @bind-Text="@Query.Brand" NullText="Exact brand" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer</label>
+                    <DxTextBox @bind-Text="@Query.CustCode" NullText="Exact customer code" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer type</label>
+                    <DxTextBox @bind-Text="@Query.CustType" NullText="Exact customer type" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Customer group</label>
+                    <DxTextBox @bind-Text="@Query.CustGroup" NullText="Exact customer group" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Price list</label>
+                    <DxTextBox @bind-Text="@Query.CustPriceCode" NullText="Exact price list" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Changed by</label>
+                    <DxTextBox @bind-Text="@Query.ChangedBy" NullText="Exact user" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Reason contains</label>
+                    <DxTextBox @bind-Text="@Query.ReasonSearch" NullText="Search reason text" />
+                </div>
+            </div>
+        </section>
+
+        <section class="iv-card sa-price-history__results">
+            <div class="sa-price-history__section-title">
+                <div>
+                    <h2>Audit rows</h2>
+                    <p>@PageSummary</p>
+                </div>
+                <div class="sa-price-history__pager">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Previous" Click="@PreviousPageAsync" Enabled="@(!IsLoading && CurrentPage > 1)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Next" Click="@NextPageAsync" Enabled="@(!IsLoading && CurrentPage < TotalPages)" />
+                </div>
+            </div>
+
+            <DxGrid Data="@Rows"
+                    KeyFieldName="@nameof(SaPriceChangeHistoryRow.PriceChangeLineId)"
+                    PageSize="@PageSize"
+                    PagerVisible="false"
+                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                    TextWrapEnabled="false"
+                    CssClass="sa-price-history__grid">
+                <Columns>
+                    <DxGridDataColumn Caption="" Width="75px">
+                        <CellDisplayTemplate Context="cell">
+                            @{ var row = (SaPriceChangeHistoryRow)cell.DataItem; }
+                            <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                      Text="View"
+                                      IconCssClass="fa-solid fa-eye"
+                                      Click="@(() => OpenBatchAsync(row))" />
+                        </CellDisplayTemplate>
+                    </DxGridDataColumn>
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.BatchReference)" Caption="Batch" Width="125px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedAtUtc)" Caption="Changed at" DisplayFormat="yyyy-MM-dd HH:mm" Width="155px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.EffectiveDate)" Caption="Effective" DisplayFormat="dd/MM/yyyy" Width="105px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Origin)" Caption="Origin" Width="150px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.TargetType)" Caption="Target" Width="115px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangeKind)" Caption="Kind" Width="95px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemCode)" Caption="Item" Width="125px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemDescription)" Caption="Description" Width="190px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Uom)" Caption="UOM" Width="70px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustCode)" Caption="Customer" Width="125px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustPriceCode)" Caption="Price list" Width="125px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.OldPrice)" Caption="Old price" DisplayFormat="n4" Width="105px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.NewPrice)" Caption="New price" DisplayFormat="n4" Width="105px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="110px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Reason)" Caption="Reason" Width="220px" />
+                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedBy)" Caption="Changed by" Width="125px" />
+                </Columns>
+            </DxGrid>
+        </section>
+    </div>
+
+    <DxPopup @bind-Visible="@BatchPopupVisible"
+             HeaderText="Price change batch"
+             CloseOnOutsideClick="false"
+             Width="1180px"
+             CssClass="common-popup">
+        <Content>
+            @if (IsBatchLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                </div>
+            }
+            else if (SelectedBatch is not null)
+            {
+                <div class="sa-price-history__batch-summary">
+                    <div><span>Batch</span><strong>@SelectedBatch.BatchReference</strong></div>
+                    <div><span>Origin</span><strong>@SelectedBatch.Origin</strong></div>
+                    <div><span>Target</span><strong>@SelectedBatch.TargetType</strong></div>
+                    <div><span>Changed by</span><strong>@SelectedBatch.ChangedBy</strong></div>
+                    <div><span>Reason</span><strong>@(SelectedBatch.Reason ?? "—")</strong></div>
+                </div>
+                <div class="sa-price-history__batch-pager">
+                    <span>@BatchPageSummary</span>
+                    <div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Previous" Click="@PreviousBatchPageAsync" Enabled="@(!IsBatchLoading && BatchPage > 1)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Next" Click="@NextBatchPageAsync" Enabled="@(!IsBatchLoading && BatchPage < BatchTotalPages)" />
+                    </div>
+                </div>
+                <DxGrid Data="@SelectedBatch.Lines"
+                        KeyFieldName="@nameof(SaPriceChangeHistoryRow.PriceChangeLineId)"
+                        PageSize="@BatchPageSize"
+                        PagerVisible="false"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        TextWrapEnabled="false"
+                        CssClass="sa-price-history__batch-grid">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangeKind)" Caption="Kind" Width="95px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemCode)" Caption="Item" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemDescription)" Caption="Description" Width="190px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Uom)" Caption="UOM" Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustCode)" Caption="Customer" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustPriceCode)" Caption="Price list" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.OldPrice)" Caption="Old price" DisplayFormat="n4" Width="105px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.NewPrice)" Caption="New price" DisplayFormat="n4" Width="105px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
+                    </Columns>
+                </DxGrid>
+            }
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

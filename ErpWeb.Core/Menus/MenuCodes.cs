@@ -142,6 +142,8 @@ public static class MenuCodes
     /// other levels did not apply, so it needs ACCESS and nothing else.
     /// </summary>
     public const string SalesPriceInquiry = "SA_PRICE_INQUIRY";
+    public const string SalesPriceMaintenance = "SA_PRICE_MAINTENANCE";
+    public const string SalesPriceChangeHistory = "SA_PRICE_CHANGE_HISTORY";
 
     // Sales-analysis Phase 1 (docs/sales-analysis-phase1). Read-only aggregate inquiries over posted
     // invoices, company-wide sales-rep targets and quotation conversion. The parent carries no route.

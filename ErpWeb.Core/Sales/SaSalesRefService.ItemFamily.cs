@@ -115,55 +115,16 @@ public sealed partial class SaSalesRefService
     /// </summary>
     /// <returns>An operator-facing message for the first ambiguity, or null when the set is clean.</returns>
     private static string? FindOverlappingPriceLines(IReadOnlyList<NormalizedPriceLine> lines)
-    {
-        for (var i = 0; i < lines.Count; i++)
-        {
-            for (var j = i + 1; j < lines.Count; j++)
-            {
-                var a = lines[i];
-                var b = lines[j];
-
-                if (!KeysEqual(a.ICode, b.ICode) || !KeysEqual(a.UOM, b.UOM))
-                {
-                    continue;
-                }
-
-                // Currency is part of the overlap identity: a MYR tier and a USD tier over the same band
-                // may coexist, because the resolver filters by currency before it ranks.
-                if (!string.Equals(
-                        a.CurrencyCode ?? string.Empty,
-                        b.CurrencyCode ?? string.Empty,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                // A NULL ceiling means infinity, so an open-ended band overlaps everything at or above
-                // its floor.
-                if (!SaItemFamilyRuleMatch.BandsOverlap(
-                        a.MinQty, a.MaxQty ?? decimal.MaxValue,
-                        b.MinQty, b.MaxQty ?? decimal.MaxValue))
-                {
-                    continue;
-                }
-
-                if (!SaItemFamilyRuleMatch.WindowsOverlap(a.ValidFrom, a.ValidTo, b.ValidFrom, b.ValidTo))
-                {
-                    continue;
-                }
-
-                var band = a.MaxQty is null
-                    ? $"quantity {a.MinQty:0.####} and above"
-                    : $"quantity {a.MinQty:0.####} to {a.MaxQty:0.####}";
-
-                return $"Item {a.ICode} / UOM {a.UOM} already has a price for {band} effective "
-                     + $"{a.ValidFrom:yyyy-MM-dd} that also applies here. Adjust the quantity band or the "
-                     + "validity window so only one line can match.";
-            }
-        }
-
-        return null;
-    }
+        => SaPriceListOverlapValidator.FindConflict(
+            lines.Select(x => new SaPriceListOverlapLine(
+                x.Id,
+                x.ICode,
+                x.UOM,
+                x.MinQty,
+                x.MaxQty,
+                x.ValidFrom,
+                x.ValidTo,
+                x.CurrencyCode)).ToList());
 
     private async Task<HashSet<string>> ActiveItemCodesAsync(AppDbContext db, string company, CancellationToken cancellationToken) =>
         (await db.IvStockMasters.AsNoTracking()
@@ -600,6 +561,17 @@ public sealed partial class SaSalesRefService
             }
 
             await db.SaveChangesAsync(cancellationToken);
+            await AddPriceListAuditAsync(
+                db,
+                company,
+                user,
+                _dates.Today,
+                code,
+                desc,
+                storedLines,
+                normalizedLines,
+                cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
@@ -970,6 +942,11 @@ public sealed partial class SaSalesRefService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var existingBefore = isNew
+            ? null
+            : await db.SaItemCusts.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.CompanyCode == company && x.CustCode == custCode && x.ICode == iCode
+                                          && x.SellingUOM == uom && x.MOQ == model.MOQ, cancellationToken);
         var exists = await db.SaItemCusts.AsNoTracking()
             .AnyAsync(x => x.CompanyCode == company && x.CustCode == custCode && x.ICode == iCode
                            && x.SellingUOM == uom && x.MOQ == model.MOQ, cancellationToken);
@@ -1032,12 +1009,13 @@ public sealed partial class SaSalesRefService
 
         var now = DateTime.UtcNow;
         var user = ctx.UserId!;
+        SaItemCust? savedEntity = null;
 
         try
         {
             if (isNew)
             {
-                var entity = new SaItemCust
+                savedEntity = new SaItemCust
                 {
                     CompanyCode = company,
                     CustCode = custCode,
@@ -1061,21 +1039,21 @@ public sealed partial class SaSalesRefService
                     ModifiedDate = now,
                     ModifiedBy = user
                 };
-                InventoryLeftoverSite.Apply(entity, writeScope);
-                db.SaItemCusts.Add(entity);
+                InventoryLeftoverSite.Apply(savedEntity, writeScope);
+                db.SaItemCusts.Add(savedEntity);
             }
             else
             {
-                var entity = await db.SaItemCusts
+                savedEntity = await db.SaItemCusts
                     .FirstOrDefaultAsync(x => x.CompanyCode == company && x.CustCode == custCode && x.ICode == iCode
                                               && x.SellingUOM == uom && x.MOQ == model.MOQ, cancellationToken)
                     ?? null!;
-                if (entity is null)
+                if (savedEntity is null)
                 {
                     return FailVm<SaItemCustEditVm>(IvMasterErrorCode.NotFound, "Customer item not found.");
                 }
 
-                var entry = db.Entry(entity);
+                var entry = db.Entry(savedEntity);
                 var current = entry.Property("RowVersion").CurrentValue as byte[];
                 if (!RowVersionsEqual(current, model.RowVersion))
                 {
@@ -1083,20 +1061,28 @@ public sealed partial class SaSalesRefService
                 }
 
                 entry.Property("RowVersion").OriginalValue = model.RowVersion;
-                entity.IDesc = model.IDesc?.Trim().ToUpperInvariant();
-                entity.CustICode = custICode;
-                entity.InvDesc = string.IsNullOrWhiteSpace(model.InvDesc) ? null : model.InvDesc.Trim();
-                entity.UnitPrice = UnscaleLegacyMoney(effectiveUnitPrice);
-                entity.Currency = currency.Length == 0 ? null : currency;
-                entity.StdCustPSize = UnscaleLegacyMoney(model.StdCustPSize);
-                entity.DG = model.DG;
-                entity.SG = model.SG;
-                entity.ProjID = model.ProjID;
-                entity.CustModel = model.CustModel;
-                entity.ModifiedDate = now;
-                entity.ModifiedBy = user;
+                savedEntity.IDesc = model.IDesc?.Trim().ToUpperInvariant();
+                savedEntity.CustICode = custICode;
+                savedEntity.InvDesc = string.IsNullOrWhiteSpace(model.InvDesc) ? null : model.InvDesc.Trim();
+                savedEntity.UnitPrice = UnscaleLegacyMoney(effectiveUnitPrice);
+                savedEntity.Currency = currency.Length == 0 ? null : currency;
+                savedEntity.StdCustPSize = UnscaleLegacyMoney(model.StdCustPSize);
+                savedEntity.DG = model.DG;
+                savedEntity.SG = model.SG;
+                savedEntity.ProjID = model.ProjID;
+                savedEntity.CustModel = model.CustModel;
+                savedEntity.ModifiedDate = now;
+                savedEntity.ModifiedBy = user;
             }
 
+            await AddCustomerItemAuditAsync(
+                db,
+                company,
+                user,
+                _dates.Today,
+                existingBefore,
+                savedEntity!,
+                cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
@@ -1133,10 +1119,17 @@ public sealed partial class SaSalesRefService
             "No module consumes customer items yet, so no reference check is possible. The row will be deleted.");
     }
 
-    public Task<IvMasterOperationResult<object>> DeleteItemCustsAsync(
+    public async Task<IvMasterOperationResult<object>> DeleteItemCustsAsync(
         IReadOnlyList<SaItemFamilyKeyToken> items,
-        CancellationToken cancellationToken = default) =>
-        DeleteItemFamilyAsync<SaItemCust>(
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = await RequireCompanyScopeAsync(MenuCodes.SalesItemCust, PermissionCodes.Delete, cancellationToken);
+        if (ctx.Error is not null)
+        {
+            return FailObj(ctx.Error.Value);
+        }
+
+        return await DeleteItemFamilyAsync<SaItemCust>(
             MenuCodes.SalesItemCust,
             items,
             async (db, company, codes, ct) =>
@@ -1158,5 +1151,13 @@ public sealed partial class SaSalesRefService
             (entity, key) => KeysEqual(EncodeItemFamilyKey(entity.CustCode, entity.ICode, entity.SellingUOM, entity.MOQ), key),
             (_, _, _, _) => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<IvReferenceCount>>>(
                 new Dictionary<string, IReadOnlyList<IvReferenceCount>>(StringComparer.OrdinalIgnoreCase)),
-            cancellationToken);
+            cancellationToken,
+            (db, entities, company, ct) => AddCustomerItemDeleteAuditAsync(
+                db,
+                company,
+                ctx.UserId!,
+                _dates.Today,
+                entities,
+                ct));
+    }
 }

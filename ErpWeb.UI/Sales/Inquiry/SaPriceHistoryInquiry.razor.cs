@@ -32,7 +32,12 @@ public partial class SaPriceHistoryInquiry : SaInquiryPageBase
         new() { Caption = "Net unit", FieldName = nameof(SaSalesPriceHistoryRow.NetUnitPrice), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 12 },
         new() { Caption = "Currency", FieldName = nameof(SaSalesPriceHistoryRow.Currency), Width = "90px", VisibleIndex = 13 },
         new() { Caption = "Salesman", FieldName = nameof(SaSalesPriceHistoryRow.SalesmanCode), Width = "100px", VisibleIndex = 14 },
-        new() { Caption = "Warehouse", FieldName = nameof(SaSalesPriceHistoryRow.FrWarehouse), Width = "110px", VisibleIndex = 15 }
+        new() { Caption = "Warehouse", FieldName = nameof(SaSalesPriceHistoryRow.FrWarehouse), Width = "110px", VisibleIndex = 15 },
+        new() { Caption = "Price source", FieldName = nameof(SaSalesPriceHistoryRow.PricingSource), Width = "130px", VisibleIndex = 16 },
+        new() { Caption = "Price ref", FieldName = nameof(SaSalesPriceHistoryRow.PricingRef), Width = "130px", VisibleIndex = 17 },
+        new() { Caption = "Original price", FieldName = nameof(SaSalesPriceHistoryRow.OriginalUnitPrice), DataType = "decimal", DisplayFormat = "n4", Width = "120px", VisibleIndex = 18 },
+        new() { Caption = "Override?", FieldName = nameof(SaSalesPriceHistoryRow.HasPriceOverride), DataType = "boolean", Width = "90px", VisibleIndex = 19 },
+        new() { Caption = "Override reason", FieldName = nameof(SaSalesPriceHistoryRow.OverrideReason), Width = "180px", VisibleIndex = 20 }
     ];
 
     protected override async Task OnInquiryInitializedAsync()

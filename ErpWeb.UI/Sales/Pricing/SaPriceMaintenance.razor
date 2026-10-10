@@ -1,0 +1,419 @@
+@page "/sales/pricing/review"
+@inherits PageBase
+
+<PageTitle>Price Review &amp; Update</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesPriceMaintenance">
+    <div class="iv-page sa-price-review">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-sliders"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Pricing</p>
+                <h1 class="iv-title">Price Review &amp; Update</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Company-scoped</span>
+                    <span class="iv-chip">1. Choose scope</span>
+                    <span class="iv-chip">2. Load items</span>
+                    <span class="iv-chip">3. Select → preview → apply</span>
+                    <span class="iv-chip">Maximum @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card sa-price-review__controls">
+            <div class="sa-price-review__section-title">
+                <div>
+                    <h2>Review scope</h2>
+                    <p>Choose one official price source and keep the filter narrow enough to inspect safely.</p>
+                </div>
+                <div class="sa-price-review__toolbar-actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="EXPORT XLSX"
+                              IconCssClass="fa-solid fa-file-excel"
+                              Click="@ExportWorkbookAsync"
+                              Enabled="@(!IsBusy && CanExport)" />
+                    @if (CanImport)
+                    {
+                        <label class="sa-price-review__import">
+                            <span>IMPORT XLSX</span>
+                            <InputFile OnChange="@ImportWorkbookAsync" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                        </label>
+                    }
+                </div>
+            </div>
+
+            <div class="sa-price-review__grid sa-price-review__grid--scope">
+                <div class="iv-field">
+                    <label class="iv-field__label">Target</label>
+                    <IvCodeComboBox Data="@TargetOptions"
+                                    Value="@Query.TargetType"
+                                    ValueChanged="@OnTargetChangedAsync"
+                                    NullText="Select target" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item</label>
+                    <IvStockMasterPicker ICode="@Query.ItemCode"
+                                         ICodeChanged="@OnItemCodeChangedAsync"
+                                         Selected="@OnItemSelectedAsync"
+                                         NullText="All items" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item search</label>
+                    <DxTextBox @bind-Text="@Query.ItemSearch" NullText="Code or description" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item type</label>
+                    <IvCodeComboBox Data="@ItemTypes" @bind-Value="@Query.ItemType" NullText="All types" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item class</label>
+                    <IvCodeComboBox Data="@ItemClasses"
+                                    Value="@Query.ItemClass"
+                                    ValueChanged="@OnItemClassChangedAsync"
+                                    NullText="All classes" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Item subclass</label>
+                    <IvCodeComboBox Data="@ItemSubClasses" @bind-Value="@Query.ItemSubClass" NullText="All subclasses" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Brand</label>
+                    <DxTextBox @bind-Text="@Query.Brand" NullText="All brands" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">UOM</label>
+                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Query.Uom" NullText="All UOMs" />
+                </div>
+
+                @if (IsPriceList)
+                {
+                    <div class="iv-field">
+                        <label class="iv-field__label">Price list</label>
+                        <IvCodeComboBox Data="@PriceLists" @bind-Value="@Query.CustPriceCode" NullText="Select price list" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Customer group</label>
+                        <IvCodeComboBox Data="@CustomerGroups" @bind-Value="@Query.CustGroupCode" NullText="All customer groups" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Review as of</label>
+                        <DxDateEdit @bind-Date="@Query.ReviewAsOf" DisplayFormat="dd/MM/yyyy" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Currency</label>
+                        <DxTextBox @bind-Text="@Query.CurrencyCode" NullText="All currencies" />
+                    </div>
+                }
+
+                @if (IsCustomerItem)
+                {
+                    <div class="iv-field">
+                        <label class="iv-field__label">Customer</label>
+                        <SaCustomerPicker CustCode="@Query.CustCode"
+                                          CustCodeChanged="@OnCustomerCodeChangedAsync"
+                                          NullText="All customers" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Customer type</label>
+                        <IvCodeComboBox Data="@CustomerTypes" @bind-Value="@Query.CustType" NullText="All customer types" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Customer group</label>
+                        <IvCodeComboBox Data="@CustomerGroups" @bind-Value="@Query.CustGroup" NullText="All customer groups" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">MOQ</label>
+                        <DxSpinEdit T="int?" @bind-Value="@Query.Moq" MinValue="0" ShowSpinButtons="false" />
+                    </div>
+                }
+
+                <div class="sa-price-review__checks">
+                    <DxCheckBox @bind-Checked="@Query.ActiveItemsOnly" AllowIndeterminateState="false">Active items only</DxCheckBox>
+                    @if (IsItemDefault)
+                    {
+                        <DxCheckBox @bind-Checked="@Query.LoadAllActiveItems" AllowIndeterminateState="false">Review all active item defaults</DxCheckBox>
+                    }
+                    @if (IsCustomerItem)
+                    {
+                        <DxCheckBox @bind-Checked="@Query.ActiveCustomersOnly" AllowIndeterminateState="false">Active customers only</DxCheckBox>
+                    }
+                </div>
+            </div>
+            @if (IsItemDefault && Query.LoadAllActiveItems)
+            {
+                <div class="iv-toast iv-toast--warn" role="alert">
+                    Loading all active item defaults can stage up to @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows. Confirm the scope before loading.
+                </div>
+            }
+
+            <div class="sa-price-review__load-action">
+                <div class="sa-price-review__load-copy">
+                    <span class="sa-price-review__load-icon" aria-hidden="true"><i class="fa-solid fa-cloud-arrow-down"></i></span>
+                    <div>
+                        <strong>Ready to load pricing rows?</strong>
+                        <p>Set a target and at least one scope filter, or review all active item defaults, then load the matching items into the grid.</p>
+                    </div>
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          CssClass="sa-price-review__load-button"
+                          Text="LOAD ITEMS"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          Click="@RequestSearchAsync"
+                          Enabled="@(!IsBusy)" />
+            </div>
+        </section>
+
+        <section class="iv-card sa-price-review__controls">
+            <div class="sa-price-review__section-title">
+                <div>
+                    <h2>Adjustment</h2>
+                    <p>Choose the adjustment, then Preview changes will calculate any blank proposals and validate the selected rows on the server.</p>
+                </div>
+            </div>
+            <div class="sa-price-review__grid sa-price-review__grid--adjustment">
+                <div class="iv-field">
+                    <label class="iv-field__label">Method</label>
+                    <IvCodeComboBox Data="@AdjustmentOptions" @bind-Value="@QueryAdjustmentMethod" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Adjustment value</label>
+                    <DxSpinEdit @bind-Value="@AdjustmentValue" MinValue="0m" ShowSpinButtons="false" DisplayFormat="n4" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Decimal places</label>
+                    <DxComboBox Data="@DecimalPlaceOptions" @bind-Value="@DecimalPlaces" />
+                </div>
+                <div class="iv-field">
+                    <label class="iv-field__label">Rounding</label>
+                    <IvCodeComboBox Data="@RoundingOptions" @bind-Value="@RoundingMode" />
+                </div>
+                @if (IsPriceList)
+                {
+                    <div class="iv-field">
+                        <label class="iv-field__label">Update mode</label>
+                        <IvCodeComboBox Data="@PriceListUpdateOptions" @bind-Value="@PriceListUpdateMode" />
+                    </div>
+                    <div class="iv-field">
+                        <label class="iv-field__label">Effective from</label>
+                        <DxDateEdit @bind-Date="@EffectiveFrom" DisplayFormat="dd/MM/yyyy" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                }
+            </div>
+            <div class="sa-price-review__actions">
+                <span class="sa-price-review__selection-count">@SelectedCount.ToString("N0") selected</span>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="PREVIEW CHANGES" IconCssClass="fa-solid fa-list-check" Click="@PreviewChangesAsync" Enabled="@(!IsBusy && HasRows)" />
+            </div>
+        </section>
+
+        <section class="iv-card sa-price-review__results">
+            <div class="sa-price-review__section-title">
+                <div>
+                    <h2>Review rows</h2>
+                    <p>@(TotalCount == 0 ? "No rows loaded." : $"Showing {Rows.Count:N0} of {TotalCount:N0} matching row(s).")</p>
+                </div>
+                @if (LastPreview is not null)
+                {
+                    <div class="sa-price-review__summary">
+                        <span>@LastPreview.Summary.Changing changing</span>
+                        <span>@LastPreview.Summary.Unchanged unchanged</span>
+                        <span class="@(LastPreview.Summary.Blocked > 0 ? "is-danger" : string.Empty)">@LastPreview.Summary.Blocked blocked</span>
+                    </div>
+                }
+            </div>
+
+            @if (ImportPreview is { IsValid: false })
+            {
+                <div class="iv-toast iv-toast--err" role="alert">
+                    <strong>Workbook validation details</strong>
+                    <ul>
+                        @foreach (var importRow in ImportPreview.Rows.Where(x => !string.IsNullOrWhiteSpace(x.Error)).Take(8))
+                        {
+                            <li>Row @importRow.RowNumber: @importRow.Error</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (IsBusy && !HasRows)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                </div>
+            }
+            else if (!HasRows)
+            {
+                <div class="sa-price-review__empty" role="status">
+                    <div class="sa-price-review__empty-icon" aria-hidden="true"><i class="fa-solid fa-table-list"></i></div>
+                    <h3>@(HasLoaded ? "No matching items" : "No items loaded yet")</h3>
+                    <p>@(HasLoaded
+                        ? "No pricing rows match the current scope. Adjust the filters and load again."
+                        : "Choose your scope above, then click Load items to populate this review.")</p>
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="LOAD ITEMS"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              Click="@RequestSearchAsync"
+                              Enabled="@(!IsBusy)" />
+                </div>
+            }
+            else
+            {
+                <DxGrid Data="@Rows"
+                        KeyFieldName="@nameof(SaPriceReviewRow.ReviewRowKey)"
+                        SelectionMode="GridSelectionMode.Multiple"
+                        AllowSelectRowByClick="true"
+                        SelectAllCheckboxMode="GridSelectAllCheckboxMode.AllPages"
+                        SelectedDataItems="@SelectedDataItems"
+                        SelectedDataItemsChanged="@OnSelectedDataItemsChanged"
+                        PageSize="25"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        TextWrapEnabled="false"
+                        CssClass="sa-price-review__grid-table">
+                    <Columns>
+                        <DxGridSelectionColumn Width="48px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemCode)" Caption="Item" Width="130px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemDescription)" Caption="Description" Width="220px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Uom)" Caption="UOM" Width="80px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemType)" Caption="Item type" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemClass)" Caption="Item class" Width="110px" />
+                        @if (IsPriceList)
+                        {
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CustPriceCode)" Caption="Price list" Width="130px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.MinQty)" Caption="Min qty" DisplayFormat="n4" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ValidFrom)" Caption="Valid from" DisplayFormat="dd/MM/yyyy" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ValidTo)" Caption="Valid to" DisplayFormat="dd/MM/yyyy" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CurrencyCode)" Caption="Currency" Width="90px" />
+                        }
+                        @if (IsCustomerItem)
+                        {
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CustCode)" Caption="Customer" Width="130px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CustomerName)" Caption="Customer name" Width="180px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Moq)" Caption="MOQ" Width="80px" />
+                            <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CurrencyCode)" Caption="Currency" Width="90px" />
+                        }
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.CurrentPrice)" Caption="Current" DisplayFormat="n4" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ProposedPrice)" Caption="Proposed" Width="135px">
+                            <CellDisplayTemplate Context="cell">
+                                @{ var row = (SaPriceReviewRow)cell.DataItem; }
+                                <DxSpinEdit @bind-Value="@row.ProposedPrice"
+                                            @bind-Value:after="@(() => OnProposedPriceChangedAsync(row))"
+                                            MinValue="0m"
+                                            ShowSpinButtons="false"
+                                            DisplayFormat="n4" />
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="120px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Status)" Caption="Status" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Warning)" Caption="Warning" Width="260px" />
+                    </Columns>
+                </DxGrid>
+            }
+        </section>
+
+        <section class="iv-card sa-price-review__apply">
+            <div class="sa-price-review__section-title">
+                <div>
+                    <h2>Apply</h2>
+                    <p>Apply becomes available after a successful preview, no blocked rows, and EDIT permission.</p>
+                </div>
+            </div>
+            <div class="sa-price-review__apply-row">
+                <div class="iv-field sa-price-review__reason">
+                    <label class="iv-field__label">Reason (required, max @SaPriceMaintenanceLimits.MaxReasonLength)</label>
+                    <DxMemo @bind-Text="@Reason" Rows="3" MaxLength="@SaPriceMaintenanceLimits.MaxReasonLength" NullText="Why is this price change being made?" />
+                </div>
+                <div class="sa-price-review__apply-action">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="APPLY PRICE CHANGE"
+                              IconCssClass="fa-solid fa-check"
+                              Click="@RequestApplyAsync"
+                              Enabled="@(!IsBusy && CanApply && LastPreview is not null && LastPreview.Summary.Changing > 0 && !HasBlockedRows)" />
+                    @if (LastApply is null)
+                    {
+                        <span class="sa-price-review__apply-hint">@ApplyStateHint</span>
+                    }
+                    @if (LastApply is not null)
+                    {
+                        <span class="sa-price-review__batch">Batch @LastApply.BatchReference</span>
+                    }
+                </div>
+            </div>
+            @if (LastApply is not null)
+            {
+                <div class="sa-price-review__success" role="status" aria-live="polite">
+                    <div class="sa-price-review__success-icon" aria-hidden="true"><i class="fa-solid fa-circle-check"></i></div>
+                    <div class="sa-price-review__success-copy">
+                        <strong>@(LastApply.ChangedRowCount > 0 ? "Price change applied successfully" : "Apply completed with no price changes")</strong>
+                        <p>
+                            @(LastApply.ChangedRowCount > 0
+                                ? $"{LastApply.ChangedRowCount:N0} price row(s) were updated in the official price master."
+                                : "The selected values were unchanged, so no price rows were updated.")
+                        </p>
+                        @if (!string.IsNullOrWhiteSpace(LastApply.BatchReference))
+                        {
+                            <div class="sa-price-review__success-reference">
+                                <span>Audit batch</span>
+                                <code>@LastApply.BatchReference</code>
+                            </div>
+                        }
+                    </div>
+                    <div class="sa-price-review__success-actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="VIEW HISTORY"
+                                  IconCssClass="fa-solid fa-clock-rotate-left"
+                                  Click="@OpenPriceHistoryAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="START NEW REVIEW"
+                                  IconCssClass="fa-solid fa-rotate"
+                                  Click="@StartNewReviewAsync" />
+                    </div>
+                </div>
+            }
+        </section>
+
+        <DxPopup @bind-Visible="@ShowLoadConfirmation"
+                 HeaderText="Confirm broad item review"
+                 Width="480px"
+                 CloseOnOutsideClick="false"
+                 ShowFooter="true"
+                 CssClass="common-popup">
+            <BodyContentTemplate>
+                <p>Load all active item defaults into the review? This may stage up to @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows and requires you to select the rows before any change can be previewed or applied.</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ShowLoadConfirmation = false)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Load review" Click="@ConfirmLoadAsync" Enabled="@(!IsBusy)" />
+            </FooterContentTemplate>
+        </DxPopup>
+
+        <DxPopup @bind-Visible="@ShowApplyConfirmation"
+                 HeaderText="Confirm price change"
+                 Width="520px"
+                 CloseOnOutsideClick="false"
+                 ShowFooter="true"
+                 CssClass="common-popup">
+            <BodyContentTemplate>
+                <p>Apply @SelectedCount.ToString("N0") selected price row(s) using the reviewed values? This writes the official price master and an immutable price-change history batch.</p>
+                <p><strong>Reason:</strong> @Reason</p>
+            </BodyContentTemplate>
+            <FooterContentTemplate>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ShowApplyConfirmation = false)" Enabled="@(!IsBusy)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply price change" Click="@ConfirmApplyAsync" Enabled="@(!IsBusy && CanApply && LastPreview is not null && LastPreview.Summary.Changing > 0)" />
+            </FooterContentTemplate>
+        </DxPopup>
+    </div>
+</MenuAuthorize>

@@ -519,7 +519,8 @@ public static class SaInquiryExportEndpoints
             new[]
             {
                 "Date", "Invoice no.", "Customer", "Customer name", "Item", "Description", "Qty", "UOM",
-                "Unit price", "Discount", "Net amount", "Net unit", "Currency", "Salesman", "Warehouse"
+                "Unit price", "Discount", "Net amount", "Net unit", "Currency", "Salesman", "Warehouse",
+                "Price source", "Price ref", "Original price", "Override?", "Override reason"
             }
         };
         rows.AddRange(page.Rows.Select(x => new[]
@@ -538,7 +539,12 @@ public static class SaInquiryExportEndpoints
             x.NetUnitPrice is decimal n ? Qty(n) : string.Empty,
             x.Currency ?? string.Empty,
             x.SalesmanCode ?? string.Empty,
-            x.FrWarehouse ?? string.Empty
+            x.FrWarehouse ?? string.Empty,
+            x.PricingSource ?? string.Empty,
+            x.PricingRef ?? string.Empty,
+            x.OriginalUnitPrice is decimal original ? Qty(original) : string.Empty,
+            x.OriginalUnitPrice.HasValue ? "Yes" : "No",
+            x.OverrideReason ?? string.Empty
         }));
 
         return Csv(rows, "SaSalesPriceHistory");

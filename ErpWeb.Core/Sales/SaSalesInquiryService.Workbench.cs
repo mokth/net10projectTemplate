@@ -291,7 +291,11 @@ public sealed partial class SaSalesInquiryService
                 x.h.Currency,
                 x.l.StdUom,
                 x.h.SalesmanCode,
-                x.l.FrWarehouse
+                x.l.FrWarehouse,
+                x.l.PricingSource,
+                x.l.PricingRef,
+                x.l.OriginalUnitPrice,
+                x.l.OverrideReason
             })
             .ToListAsync(cancellationToken);
 
@@ -311,7 +315,11 @@ public sealed partial class SaSalesInquiryService
             Currency = x.Currency,
             Uom = x.StdUom,
             SalesmanCode = x.SalesmanCode,
-            FrWarehouse = x.FrWarehouse
+            FrWarehouse = x.FrWarehouse,
+            PricingSource = x.PricingSource,
+            PricingRef = x.PricingRef,
+            OriginalUnitPrice = x.OriginalUnitPrice,
+            OverrideReason = x.OverrideReason
         }).ToList();
 
         return IvMasterOperationResult<SaInquiryPage<SaSalesPriceHistoryRow>>.Ok(
