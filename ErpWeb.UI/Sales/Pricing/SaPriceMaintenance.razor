@@ -26,7 +26,7 @@
                     <span class="iv-chip">Company-scoped</span>
                     <span class="iv-chip">1. Choose scope</span>
                     <span class="iv-chip">2. Load items</span>
-                    <span class="iv-chip">3. Select → preview → apply</span>
+                    <span class="iv-chip">3. Select → review → apply</span>
                     <span class="iv-chip">Maximum @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows</span>
                 </div>
             </div>
@@ -205,7 +205,7 @@
             <div class="sa-price-review__section-title">
                 <div>
                     <h2>Adjustment</h2>
-                    <p>Choose the adjustment, then Preview changes will calculate any blank proposals and validate the selected rows on the server.</p>
+                    <p>Choose the adjustment, then Review Changes will calculate blank proposals and validate the selected rows on the server.</p>
                 </div>
             </div>
             <div class="sa-price-review__grid sa-price-review__grid--adjustment">
@@ -239,12 +239,11 @@
             </div>
             <div class="sa-price-review__actions">
                 <span class="sa-price-review__selection-count">@SelectedCount.ToString("N0") selected</span>
-                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                          Text="CALCULATE NEW PRICES"
-                          IconCssClass="fa-solid fa-calculator"
-                          Click="@CalculateChangesAsync"
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="REVIEW CHANGES"
+                          IconCssClass="fa-solid fa-list-check"
+                          Click="@ReviewChangesAsync"
                           Enabled="@(!IsBusy && HasRows && SelectedCount > 0)" />
-                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="PREVIEW CHANGES" IconCssClass="fa-solid fa-list-check" Click="@PreviewChangesAsync" Enabled="@(!IsBusy && HasRows)" />
             </div>
         </section>
 
@@ -261,7 +260,7 @@
                         <span>@LastPreview.Summary.Selected selected</span>
                         <span>@LastPreview.Summary.Changing changing</span>
                         <span>@LastPreview.Summary.Unchanged unchanged</span>
-                        <span class="@(LastPreview.Summary.Blocked > 0 ? "is-danger" : string.Empty)">@LastPreview.Summary.Blocked blocked</span>
+                        <span class="@(LastPreview.Summary.Blocked > 0 ? "is-danger" : string.Empty)">@LastPreview.Summary.Blocked need attention</span>
                         <span>@LastPreview.Summary.ItemsAffected items</span>
                         <span>@LastPreview.Summary.CustomersAffected customers</span>
                         <span>@LastPreview.Summary.PriceListsAffected price lists</span>
@@ -324,7 +323,12 @@
                         <DxGridSelectionColumn Width="48px" />
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemCode)" Caption="Item" Width="130px" />
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemDescription)" Caption="Description" Width="220px" />
-                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Uom)" Caption="UOM" Width="80px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Uom)" Caption="UOM" Width="80px">
+                            <CellDisplayTemplate Context="cell">
+                                @{ var uom = ((SaPriceReviewRow)cell.DataItem).Uom; }
+                                @(string.IsNullOrWhiteSpace(uom) ? "—" : uom)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemType)" Caption="Item type" Width="110px" />
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.ItemClass)" Caption="Item class" Width="110px" />
                         @if (IsPriceList)
@@ -355,7 +359,11 @@
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="120px" />
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
-                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Status)" Caption="Status" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Status)" Caption="Status" Width="110px">
+                            <CellDisplayTemplate Context="cell">
+                                @DisplayStatus((SaPriceReviewRow)cell.DataItem)
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(SaPriceReviewRow.Warning)" Caption="Warning" Width="260px" />
                     </Columns>
                 </DxGrid>
@@ -366,7 +374,7 @@
             <div class="sa-price-review__section-title">
                 <div>
                     <h2>Apply</h2>
-                    <p>Apply becomes available after a successful preview, no blocked rows, and EDIT permission.</p>
+                    <p>Apply becomes available after a successful review, no rows needing attention, and EDIT permission.</p>
                 </div>
             </div>
             <div class="sa-price-review__apply-row">
@@ -430,7 +438,7 @@
                  ShowFooter="true"
                  CssClass="common-popup">
             <BodyContentTemplate>
-                <p>Load all active item defaults into the review? This may stage up to @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows and requires you to select the rows before any change can be previewed or applied.</p>
+                <p>Load all active item defaults into the review? This may stage up to @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows. Select rows before reviewing or applying a change.</p>
             </BodyContentTemplate>
             <FooterContentTemplate>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ShowLoadConfirmation = false)" />

@@ -12,6 +12,12 @@ namespace ErpWeb.UI.Sales.Pricing;
 
 public partial class SaPriceMaintenance : PageBase
 {
+    private const string NeedsInitialItemDefaultPriceWarning =
+        "No current Item Default price. Enter the initial selling price in Proposed, then Review Changes again.";
+
+    private const string MissingItemDefaultUomWarning =
+        "Item has no Selling UOM or Standard UOM. Fix Item Master UOM before relying on this Item Default price.";
+
     [Inject] private ISaPriceMaintenanceService Maintenance { get; set; } = default!;
     [Inject] private ISaCustLookupService CustomerLookups { get; set; } = default!;
     [Inject] private IIvInventoryLookupService InventoryLookups { get; set; } = default!;
@@ -250,7 +256,7 @@ public partial class SaPriceMaintenance : PageBase
         return Task.CompletedTask;
     }
 
-    protected async Task PreviewChangesAsync()
+    protected async Task ReviewChangesAsync()
     {
         if (IsBusy)
         {
@@ -265,7 +271,7 @@ public partial class SaPriceMaintenance : PageBase
         var selected = SelectedRows().ToList();
         if (selected.Count == 0)
         {
-            ErrorMessage = "Select at least one row before previewing changes.";
+            ErrorMessage = "Select at least one row before reviewing changes.";
             return;
         }
 
@@ -280,34 +286,27 @@ public partial class SaPriceMaintenance : PageBase
         await PreviewAsync();
     }
 
-    protected Task CalculateChangesAsync()
-    {
-        if (IsBusy)
-        {
-            return Task.CompletedTask;
-        }
-
-        ErrorMessage = null;
-        LastPreview = null;
-        LastApply = null;
-        ImportPreview = null;
-
-        var selected = SelectedRows().ToList();
-        if (selected.Count == 0)
-        {
-            ErrorMessage = "Select at least one row before calculating new prices.";
-            return Task.CompletedTask;
-        }
-
-        CalculateProposals(selected);
-        StatusMessage = $"Calculated proposed prices for {selected.Count:N0} selected row(s). Review or edit the proposed values, then preview.";
-        return Task.CompletedTask;
-    }
-
     private void CalculateProposals(IReadOnlyList<SaPriceReviewRow> rows)
     {
         foreach (var row in rows)
         {
+            row.Selected = true;
+            if (IsItemDefault
+                && row.CurrentPrice is null
+                && !string.Equals(
+                    QueryAdjustmentMethod?.Trim(),
+                    SaPriceAdjustmentMethods.SetPrice,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                row.ProposedPrice = null;
+                row.Warning = JoinWarnings(
+                    NeedsInitialItemDefaultPriceWarning,
+                    ItemDefaultUomWarning(row));
+                row.Status = SaPriceReviewStatuses.Blocked;
+                UpdateDifference(row);
+                continue;
+            }
+
             var calculation = SaPriceAdjustmentCalculator.Calculate(
                 row.CurrentPrice,
                 QueryAdjustmentMethod,
@@ -315,9 +314,8 @@ public partial class SaPriceMaintenance : PageBase
                 DecimalPlaces,
                 RoundingMode);
 
-            row.Selected = true;
             row.ProposedPrice = calculation.NewPrice;
-            row.Warning = calculation.Error;
+            row.Warning = JoinWarnings(calculation.Error, ItemDefaultUomWarning(row));
             row.Status = calculation.Succeeded
                 ? PriceStatusFor(row.CurrentPrice, row.ProposedPrice)
                 : SaPriceReviewStatuses.Blocked;
@@ -334,7 +332,7 @@ public partial class SaPriceMaintenance : PageBase
 
         if (SelectedRows().Count == 0)
         {
-            ErrorMessage = "Select at least one row before previewing.";
+            ErrorMessage = "Select at least one row before reviewing changes.";
             return;
         }
 
@@ -348,7 +346,7 @@ public partial class SaPriceMaintenance : PageBase
             if (!result.Succeeded || result.Data is null)
             {
                 LastPreview = null;
-                ErrorMessage = result.Message ?? "Unable to preview the price change.";
+                ErrorMessage = result.Message ?? "Unable to review the price change.";
                 return;
             }
 
@@ -356,7 +354,7 @@ public partial class SaPriceMaintenance : PageBase
             Rows = result.Data.Rows.ToList();
             TotalCount = Rows.Count;
             SelectedDataItems = Rows.Where(x => x.Selected).Cast<object>().ToList();
-            StatusMessage = $"Preview ready: {result.Data.Summary.Changing:N0} changing, {result.Data.Summary.Unchanged:N0} unchanged, {result.Data.Summary.Blocked:N0} blocked.";
+            StatusMessage = $"Review ready: {result.Data.Summary.Changing:N0} changing, {result.Data.Summary.Unchanged:N0} unchanged, {result.Data.Summary.Blocked:N0} need attention.";
         }
         finally
         {
@@ -373,19 +371,19 @@ public partial class SaPriceMaintenance : PageBase
 
         if (LastPreview is null)
         {
-            ErrorMessage = "Run Preview before applying a price change.";
+            ErrorMessage = "Run Review Changes before applying a price change.";
             return Task.CompletedTask;
         }
 
         if (LastPreview.Summary.Changing == 0)
         {
-            ErrorMessage = "There are no changing rows in this preview.";
+            ErrorMessage = "There are no changing rows in this review.";
             return Task.CompletedTask;
         }
 
         if (HasBlockedRows)
         {
-            ErrorMessage = "Resolve the blocked rows shown in the preview before applying a price change.";
+            ErrorMessage = "Resolve the rows that need attention, then Review Changes again.";
             return Task.CompletedTask;
         }
 
@@ -423,21 +421,21 @@ public partial class SaPriceMaintenance : PageBase
         if (LastPreview is null)
         {
             ShowApplyConfirmation = false;
-            ErrorMessage = "Run Preview before applying a price change.";
+            ErrorMessage = "Run Review Changes before applying a price change.";
             return;
         }
 
         if (LastPreview.Summary.Changing == 0)
         {
             ShowApplyConfirmation = false;
-            ErrorMessage = "There are no changing rows in this preview.";
+            ErrorMessage = "There are no changing rows in this review.";
             return;
         }
 
         if (HasBlockedRows)
         {
             ShowApplyConfirmation = false;
-            ErrorMessage = "Resolve the blocked rows shown in the preview before applying a price change.";
+            ErrorMessage = "Resolve the rows that need attention, then Review Changes again.";
             return;
         }
 
@@ -513,14 +511,12 @@ public partial class SaPriceMaintenance : PageBase
         LastPreview = null;
         LastApply = null;
         ImportPreview = null;
-        row.Warning = null;
         row.Status = row.ProposedPrice.HasValue
             ? PriceStatusFor(row.CurrentPrice, row.ProposedPrice)
             : SaPriceReviewStatuses.Blocked;
-        if (!row.ProposedPrice.HasValue)
-        {
-            row.Warning = "Enter a proposed price.";
-        }
+        row.Warning = JoinWarnings(
+            row.ProposedPrice.HasValue ? null : "Enter a proposed price.",
+            ItemDefaultUomWarning(row));
 
         UpdateDifference(row);
         return Task.CompletedTask;
@@ -614,7 +610,7 @@ public partial class SaPriceMaintenance : PageBase
             }
 
             SelectedDataItems = Rows.Where(x => x.Selected).Cast<object>().ToList();
-            StatusMessage = $"Imported {result.Data.AcceptedRowCount:N0} workbook row(s). Review the staged values, then preview.";
+            StatusMessage = $"Imported {result.Data.AcceptedRowCount:N0} workbook row(s). Review the staged values, then click Review Changes.";
         }
         catch (IOException)
         {
@@ -638,17 +634,41 @@ public partial class SaPriceMaintenance : PageBase
     protected bool CanSchedule => IsPriceList;
     protected bool HasRows => Rows.Count > 0;
     protected bool HasBlockedRows => Rows.Any(x => x.Status == SaPriceReviewStatuses.Blocked);
+
+    protected string DisplayStatus(SaPriceReviewRow row)
+    {
+        if (row.Status == SaPriceReviewStatuses.Blocked
+            && string.Equals(row.TargetType, SaPriceMaintenanceTargets.ItemDefault, StringComparison.OrdinalIgnoreCase)
+            && row.CurrentPrice is null
+            && row.ProposedPrice is null
+            && !string.Equals(
+                QueryAdjustmentMethod?.Trim(),
+                SaPriceAdjustmentMethods.SetPrice,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return "Needs Price";
+        }
+
+        return row.Status switch
+        {
+            SaPriceReviewStatuses.Ready => "Ready",
+            SaPriceReviewStatuses.Unchanged => "No Change",
+            SaPriceReviewStatuses.Blocked => "Check Warning",
+            _ => row.Status
+        };
+    }
+
     protected string ApplyStateHint =>
         IsBusy
             ? "Working..."
             : !CanApply
                 ? "Apply unavailable: your account needs EDIT permission for Price Review & Update."
                 : LastPreview is null
-                    ? "Run Preview changes before applying."
+                    ? "Run Review Changes before applying."
                     : LastPreview.Summary.Changing == 0
-                        ? "There are no changing rows in this preview."
+                        ? "There are no changing rows in this review."
                     : HasBlockedRows
-                        ? "Resolve the blocked rows shown in the preview before applying."
+                        ? "Resolve the rows that need attention, then Review Changes again."
                         : string.IsNullOrWhiteSpace(Reason)
                             ? "Enter a reason, then click Apply price change."
                             : "Ready to apply the reviewed price change.";
@@ -806,6 +826,22 @@ public partial class SaPriceMaintenance : PageBase
         current.HasValue && proposed.HasValue && current.Value == proposed.Value
             ? SaPriceReviewStatuses.Unchanged
             : SaPriceReviewStatuses.Ready;
+
+    private static string? ItemDefaultUomWarning(SaPriceReviewRow row) =>
+        string.Equals(row.TargetType, SaPriceMaintenanceTargets.ItemDefault, StringComparison.OrdinalIgnoreCase)
+        && string.IsNullOrWhiteSpace(row.Uom)
+            ? MissingItemDefaultUomWarning
+            : null;
+
+    private static string? JoinWarnings(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first))
+        {
+            return string.IsNullOrWhiteSpace(second) ? null : second;
+        }
+
+        return string.IsNullOrWhiteSpace(second) ? first : $"{first} {second}";
+    }
 
     private static void UpdateDifference(SaPriceReviewRow row)
     {

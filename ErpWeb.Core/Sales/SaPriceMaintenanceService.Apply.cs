@@ -99,8 +99,8 @@ public sealed partial class SaPriceMaintenanceService
                     change.Entity.IClassCode,
                     change.Entity.ISubClassCode,
                     change.Entity.Brand,
-                    OldUom: change.Entity.SellingUom,
-                    NewUom: change.Entity.SellingUom,
+                    OldUom: EffectiveItemDefaultUom(change.Entity.SellingUom, change.Entity.StdUom),
+                    NewUom: EffectiveItemDefaultUom(change.Entity.SellingUom, change.Entity.StdUom),
                     OldPrice: change.OldPrice,
                     NewPrice: change.NewPrice));
             }

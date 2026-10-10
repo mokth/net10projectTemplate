@@ -14,6 +14,12 @@ namespace ErpWeb.Core.Sales;
 
 public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceService
 {
+    private const string NeedsInitialItemDefaultPriceWarning =
+        "No current Item Default price. Enter the initial selling price in Proposed, then Review Changes again.";
+
+    private const string MissingItemDefaultUomWarning =
+        "Item has no Selling UOM or Standard UOM. Fix Item Master UOM before relying on this Item Default price.";
+
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly ITenantScopeContext _tenant;
     private readonly IAccessRightService _accessRights;
@@ -144,26 +150,44 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
         }
 
         var take = NormalizeTake(query.Take);
-        var rows = await source
+        var items = await source
             .OrderBy(x => x.ICode)
             .Skip(Math.Max(0, query.Skip))
             .Take(take)
-            .Select(x => new SaPriceReviewRow
+            .Select(x => new
             {
-                ReviewRowKey = $"{SaPriceMaintenanceTargets.ItemDefault}|{x.ICode}",
-                TargetType = SaPriceMaintenanceTargets.ItemDefault,
-                ItemCode = x.ICode,
-                ItemDescription = x.IDesc,
-                ItemType = x.IType,
-                ItemClass = x.IClassCode,
-                ItemSubClass = x.ISubClassCode,
-                Brand = x.Brand,
-                Uom = x.SellingUom,
-                CurrentPrice = x.SellingPrice,
-                Status = SaPriceReviewStatuses.Ready,
-                RowVersion = x.RowVersion
+                x.ICode,
+                x.IDesc,
+                x.IType,
+                x.IClassCode,
+                x.ISubClassCode,
+                x.Brand,
+                x.SellingUom,
+                x.StdUom,
+                x.SellingPrice,
+                x.RowVersion
             })
             .ToListAsync(cancellationToken);
+        var rows = items.Select(item =>
+        {
+            var uom = EffectiveItemDefaultUom(item.SellingUom, item.StdUom);
+            return new SaPriceReviewRow
+            {
+                ReviewRowKey = $"{SaPriceMaintenanceTargets.ItemDefault}|{item.ICode}",
+                TargetType = SaPriceMaintenanceTargets.ItemDefault,
+                ItemCode = item.ICode,
+                ItemDescription = item.IDesc,
+                ItemType = item.IType,
+                ItemClass = item.IClassCode,
+                ItemSubClass = item.ISubClassCode,
+                Brand = item.Brand,
+                Uom = uom,
+                CurrentPrice = item.SellingPrice,
+                Status = SaPriceReviewStatuses.Ready,
+                Warning = ItemDefaultUomWarning(uom),
+                RowVersion = item.RowVersion
+            };
+        }).ToList();
 
         return Page(SaPriceMaintenanceTargets.ItemDefault, rows, total);
     }
@@ -413,7 +437,11 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
             var warning = ValidateSelectionBaseline(row, selection);
             if (warning is null && selection.NewPrice is null)
             {
-                warning = "New price is required.";
+                warning = target == SaPriceMaintenanceTargets.ItemDefault
+                          && row.CurrentPrice is null
+                          && NormalizeToken(request.AdjustmentMethod) != SaPriceAdjustmentMethods.SetPrice
+                    ? NeedsInitialItemDefaultPriceWarning
+                    : "New price is required.";
             }
 
             if (warning is null && selection.NewPrice < 0m)
@@ -448,6 +476,9 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
                 ? null
                 : proposed.ProposedPrice.Value - proposed.CurrentPrice.Value;
             proposed.DifferencePercent = CalculatePercent(proposed.CurrentPrice, proposed.ProposedPrice);
+            proposed.Warning = JoinWarnings(
+                warning,
+                target == SaPriceMaintenanceTargets.ItemDefault ? ItemDefaultUomWarning(row.Uom) : null);
             rows.Add(proposed);
         }
 
@@ -497,7 +528,7 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
                         ItemClass = item.IClassCode,
                         ItemSubClass = item.ISubClassCode,
                         Brand = item.Brand,
-                        Uom = item.SellingUom,
+                        Uom = EffectiveItemDefaultUom(item.SellingUom, item.StdUom),
                         CurrentPrice = item.SellingPrice,
                         RowVersion = item.RowVersion
                     };
@@ -1055,6 +1086,25 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
 
     private static string NormalizeToken(string? value) =>
         (value ?? string.Empty).Trim().ToUpperInvariant();
+
+    private static string? EffectiveItemDefaultUom(string? sellingUom, string? standardUom)
+    {
+        var value = string.IsNullOrWhiteSpace(sellingUom) ? standardUom : sellingUom;
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? ItemDefaultUomWarning(string? uom) =>
+        string.IsNullOrWhiteSpace(uom) ? MissingItemDefaultUomWarning : null;
+
+    private static string? JoinWarnings(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first))
+        {
+            return string.IsNullOrWhiteSpace(second) ? null : second;
+        }
+
+        return string.IsNullOrWhiteSpace(second) ? first : $"{first} {second}";
+    }
 
     private static string? ValidateAdjustmentContract(SaPriceChangeRequestBase request)
     {
