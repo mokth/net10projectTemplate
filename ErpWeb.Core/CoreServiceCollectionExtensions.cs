@@ -315,7 +315,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IPoSbCdnService, PoSbCdnService>();
 
         services.AddScoped<ISaSalesRefService, SaSalesRefService>();
-          services.AddScoped<ISaPriceMaintenanceService, SaPriceMaintenanceService>();
+        services.AddScoped<ISaPriceMaintenanceService, SaPriceMaintenanceService>();
         services.AddScoped<ISaPriceChangeHistoryService, SaPriceChangeHistoryService>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();

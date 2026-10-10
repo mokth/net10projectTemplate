@@ -146,42 +146,66 @@
                 </div>
             </div>
 
-            <DxGrid Data="@Rows"
-                    KeyFieldName="@nameof(SaPriceChangeHistoryRow.PriceChangeLineId)"
-                    PageSize="@PageSize"
-                    PagerVisible="false"
-                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
-                    TextWrapEnabled="false"
-                    CssClass="sa-price-history__grid">
-                <Columns>
-                    <DxGridDataColumn Caption="" Width="75px">
-                        <CellDisplayTemplate Context="cell">
-                            @{ var row = (SaPriceChangeHistoryRow)cell.DataItem; }
-                            <DxButton RenderStyle="ButtonRenderStyle.Link"
-                                      Text="View"
-                                      IconCssClass="fa-solid fa-eye"
-                                      Click="@(() => OpenBatchAsync(row))" />
-                        </CellDisplayTemplate>
-                    </DxGridDataColumn>
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.BatchReference)" Caption="Batch" Width="125px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedAtUtc)" Caption="Changed at" DisplayFormat="yyyy-MM-dd HH:mm" Width="155px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.EffectiveDate)" Caption="Effective" DisplayFormat="dd/MM/yyyy" Width="105px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Origin)" Caption="Origin" Width="150px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.TargetType)" Caption="Target" Width="115px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangeKind)" Caption="Kind" Width="95px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemCode)" Caption="Item" Width="125px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemDescription)" Caption="Description" Width="190px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Uom)" Caption="UOM" Width="70px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustCode)" Caption="Customer" Width="125px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustPriceCode)" Caption="Price list" Width="125px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.OldPrice)" Caption="Old price" DisplayFormat="n4" Width="105px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.NewPrice)" Caption="New price" DisplayFormat="n4" Width="105px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="110px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Reason)" Caption="Reason" Width="220px" />
-                    <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedBy)" Caption="Changed by" Width="125px" />
-                </Columns>
-            </DxGrid>
+            @if (IsLoading)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                </div>
+            }
+            else if (Rows.Count == 0)
+            {
+                <div class="sa-price-history__empty" role="status">
+                    <div class="sa-price-history__empty-icon" aria-hidden="true"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                    <h3>No price-change history found</h3>
+                    <p>Adjust the filters and search again, or wait for an approved price change to be applied.</p>
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="SEARCH AGAIN"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              Click="@SearchAsync"
+                              Enabled="@(!IsLoading)" />
+                </div>
+            }
+            else
+            {
+                <DxGrid Data="@Rows"
+                        KeyFieldName="@nameof(SaPriceChangeHistoryRow.PriceChangeLineId)"
+                        PageSize="@PageSize"
+                        PagerVisible="false"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        TextWrapEnabled="false"
+                        CssClass="sa-price-history__grid">
+                    <Columns>
+                        <DxGridDataColumn Caption="" Width="75px">
+                            <CellDisplayTemplate Context="cell">
+                                @{ var row = (SaPriceChangeHistoryRow)cell.DataItem; }
+                                <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                          Text="View"
+                                          IconCssClass="fa-solid fa-eye"
+                                          Click="@(() => OpenBatchAsync(row))" />
+                            </CellDisplayTemplate>
+                        </DxGridDataColumn>
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.BatchReference)" Caption="Batch" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedAtUtc)" Caption="Changed at" DisplayFormat="yyyy-MM-dd HH:mm" Width="155px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.EffectiveDate)" Caption="Effective" DisplayFormat="dd/MM/yyyy" Width="105px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Origin)" Caption="Origin" Width="150px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.TargetType)" Caption="Target" Width="115px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangeKind)" Caption="Kind" Width="95px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemCode)" Caption="Item" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ItemDescription)" Caption="Description" Width="190px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Uom)" Caption="UOM" Width="70px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustCode)" Caption="Customer" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.CustPriceCode)" Caption="Price list" Width="125px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.OldPrice)" Caption="Old price" DisplayFormat="n4" Width="105px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.NewPrice)" Caption="New price" DisplayFormat="n4" Width="105px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferenceAmount)" Caption="Difference" DisplayFormat="n4" Width="110px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.DifferencePercent)" Caption="Change %" DisplayFormat="n2" Width="100px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.Reason)" Caption="Reason" Width="220px" />
+                        <DxGridDataColumn FieldName="@nameof(SaPriceChangeHistoryRow.ChangedBy)" Caption="Changed by" Width="125px" />
+                    </Columns>
+                </DxGrid>
+            }
         </section>
     </div>
 
@@ -203,10 +227,16 @@
             {
                 <div class="sa-price-history__batch-summary">
                     <div><span>Batch</span><strong>@SelectedBatch.BatchReference</strong></div>
+                    <div><span>Changed at</span><strong>@SelectedBatch.ChangedAtUtc.ToString("yyyy-MM-dd HH:mm 'UTC'")</strong></div>
+                    <div><span>Effective date</span><strong>@SelectedBatch.EffectiveDate.ToString("dd/MM/yyyy")</strong></div>
+                    <div><span>Changed rows</span><strong>@SelectedBatch.ChangedRowCount.ToString("N0")</strong></div>
                     <div><span>Origin</span><strong>@SelectedBatch.Origin</strong></div>
                     <div><span>Target</span><strong>@SelectedBatch.TargetType</strong></div>
+                    <div><span>Adjustment</span><strong>@FormatBatchAdjustment(SelectedBatch)</strong></div>
+                    <div><span>Rounding / precision</span><strong>@FormatBatchRounding(SelectedBatch)</strong></div>
                     <div><span>Changed by</span><strong>@SelectedBatch.ChangedBy</strong></div>
                     <div><span>Reason</span><strong>@(SelectedBatch.Reason ?? "—")</strong></div>
+                    <div class="sa-price-history__batch-summary-wide"><span>Filter summary</span><strong>@FormatBatchFilters(SelectedBatch)</strong></div>
                 </div>
                 <div class="sa-price-history__batch-pager">
                     <span>@BatchPageSummary</span>

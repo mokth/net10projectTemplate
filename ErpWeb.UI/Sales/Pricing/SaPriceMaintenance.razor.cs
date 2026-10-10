@@ -23,6 +23,7 @@ public partial class SaPriceMaintenance : PageBase
     protected IReadOnlyList<object> SelectedDataItems { get; private set; } = [];
     protected SaPricePreviewResult? LastPreview { get; private set; }
     protected SaPriceApplyResult? LastApply { get; private set; }
+    protected SaPriceListImpactSummary? PriceListImpact { get; private set; }
     protected int TotalCount { get; private set; }
     protected bool HasLoaded { get; private set; }
     protected string? StatusMessage { get; private set; }
@@ -128,6 +129,7 @@ public partial class SaPriceMaintenance : PageBase
         SelectedDataItems = [];
         LastPreview = null;
         LastApply = null;
+        PriceListImpact = null;
         ImportPreview = null;
         ErrorMessage = null;
         StatusMessage = null;
@@ -162,6 +164,16 @@ public partial class SaPriceMaintenance : PageBase
     {
         Query.CustCode = Clean(value);
         return Task.CompletedTask;
+    }
+
+    protected async Task OnPriceListChangedAsync(string? value)
+    {
+        Query.CustPriceCode = Clean(value);
+        PriceListImpact = null;
+        if (IsPriceList && !string.IsNullOrWhiteSpace(Query.CustPriceCode))
+        {
+            await LoadPriceListImpactAsync();
+        }
     }
 
     protected Task RequestSearchAsync()
@@ -218,6 +230,7 @@ public partial class SaPriceMaintenance : PageBase
             Rows = result.Data.Rows.ToList();
             TotalCount = result.Data.TotalCount;
             HasLoaded = true;
+            await LoadPriceListImpactAsync();
             StatusMessage = $"{TotalCount:N0} matching row(s) loaded. Select the rows to stage.";
         }
         finally
@@ -265,6 +278,30 @@ public partial class SaPriceMaintenance : PageBase
         }
 
         await PreviewAsync();
+    }
+
+    protected Task CalculateChangesAsync()
+    {
+        if (IsBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        ErrorMessage = null;
+        LastPreview = null;
+        LastApply = null;
+        ImportPreview = null;
+
+        var selected = SelectedRows().ToList();
+        if (selected.Count == 0)
+        {
+            ErrorMessage = "Select at least one row before calculating new prices.";
+            return Task.CompletedTask;
+        }
+
+        CalculateProposals(selected);
+        StatusMessage = $"Calculated proposed prices for {selected.Count:N0} selected row(s). Review or edit the proposed values, then preview.";
+        return Task.CompletedTask;
     }
 
     private void CalculateProposals(IReadOnlyList<SaPriceReviewRow> rows)
@@ -346,6 +383,12 @@ public partial class SaPriceMaintenance : PageBase
             return Task.CompletedTask;
         }
 
+        if (HasBlockedRows)
+        {
+            ErrorMessage = "Resolve the blocked rows shown in the preview before applying a price change.";
+            return Task.CompletedTask;
+        }
+
         if (!CanApply)
         {
             ErrorMessage = "EDIT permission is required to apply a price change.";
@@ -388,6 +431,13 @@ public partial class SaPriceMaintenance : PageBase
         {
             ShowApplyConfirmation = false;
             ErrorMessage = "There are no changing rows in this preview.";
+            return;
+        }
+
+        if (HasBlockedRows)
+        {
+            ShowApplyConfirmation = false;
+            ErrorMessage = "Resolve the blocked rows shown in the preview before applying a price change.";
             return;
         }
 
@@ -618,8 +668,21 @@ public partial class SaPriceMaintenance : PageBase
         Rows = result.Data.Rows.ToList();
         TotalCount = result.Data.TotalCount;
         HasLoaded = true;
+        await LoadPriceListImpactAsync();
         SelectedDataItems = [];
         return true;
+    }
+
+    private async Task LoadPriceListImpactAsync()
+    {
+        if (!IsPriceList || string.IsNullOrWhiteSpace(Query.CustPriceCode))
+        {
+            PriceListImpact = null;
+            return;
+        }
+
+        var result = await Maintenance.GetPriceListImpactAsync(Query.CustPriceCode);
+        PriceListImpact = result.Succeeded ? result.Data : null;
     }
 
     private IReadOnlyList<SaPriceReviewRow> SelectedRows() =>

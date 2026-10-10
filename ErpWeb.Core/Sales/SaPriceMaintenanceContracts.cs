@@ -76,6 +76,14 @@ public sealed class SaPriceReviewPage
     public int TotalCount { get; init; }
 }
 
+public sealed class SaPriceListImpactSummary
+{
+    public string CustPriceCode { get; init; } = string.Empty;
+    public string? PriceListDescription { get; init; }
+    public int CustomersAssignedDirectly { get; init; }
+    public int CustomerGroupsUsingAsDefault { get; init; }
+}
+
 public sealed class SaPriceReviewRow
 {
     public string ReviewRowKey { get; init; } = string.Empty;

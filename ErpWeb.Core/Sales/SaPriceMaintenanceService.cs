@@ -70,14 +70,71 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
         };
     }
 
+    public async Task<IvMasterOperationResult<SaPriceListImpactSummary>> GetPriceListImpactAsync(
+        string custPriceCode,
+        CancellationToken cancellationToken = default)
+    {
+        var check = await CheckReadAsync(cancellationToken);
+        if (check.ErrorCode is not null)
+        {
+            return IvMasterOperationResult<SaPriceListImpactSummary>.Fail(check.ErrorCode.Value, check.Message!);
+        }
+
+        var company = check.Scope!.CompanyCode;
+
+        var code = custPriceCode?.Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return IvMasterOperationResult<SaPriceListImpactSummary>.Fail(
+                IvMasterErrorCode.Validation,
+                "Select a Price List before loading its assignment impact.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var priceList = await db.IvCustPriceGroups.AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.CompanyCode == company
+                     && x.CustPriceCode == code,
+                cancellationToken);
+        if (priceList is null || !priceList.IsActive)
+        {
+            return IvMasterOperationResult<SaPriceListImpactSummary>.Fail(
+                IvMasterErrorCode.NotFound,
+                $"Price List {code} was not found or is inactive.");
+        }
+
+        var directCustomerCount = await db.SaCusts.AsNoTracking()
+            .CountAsync(
+                x => x.CompanyCode == company
+                     && x.CustPriceCode == priceList.CustPriceCode,
+                cancellationToken);
+        var customerGroupCount = await db.SaCustGroups.AsNoTracking()
+            .CountAsync(
+                x => x.CompanyCode == company
+                     && x.CustPriceCode == priceList.CustPriceCode,
+                cancellationToken);
+
+        return IvMasterOperationResult<SaPriceListImpactSummary>.Ok(new SaPriceListImpactSummary
+        {
+            CustPriceCode = priceList.CustPriceCode,
+            PriceListDescription = priceList.CustPriceDesc,
+            CustomersAssignedDirectly = directCustomerCount,
+            CustomerGroupsUsingAsDefault = customerGroupCount
+        });
+    }
+
     private async Task<IvMasterOperationResult<SaPriceReviewPage>> SearchItemDefaultsAsync(
         AppDbContext db,
         string company,
         SaPriceReviewQuery query,
         CancellationToken cancellationToken)
     {
+        // "Load all active items" is an explicit safety override, not a second way to request an
+        // unbounded item-master scan. Keep it active-only even if a caller also sends
+        // ActiveItemsOnly=false.
+        var activeOnly = query.LoadAllActiveItems || query.ActiveItemsOnly;
         var source = db.IvStockMasters.AsNoTracking()
-            .Where(x => x.CompanyCode == company && (!query.ActiveItemsOnly || x.IsActive));
+            .Where(x => x.CompanyCode == company && (!activeOnly || x.IsActive));
         source = ApplyItemFilters(source, query);
 
         var total = await source.CountAsync(cancellationToken);
@@ -856,19 +913,35 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
 
     private static string? ValidateSearchScope(SaPriceReviewQuery query, string target)
     {
-        var hasMeaningfulFilter =
+        var hasCommonItemFilter =
             !string.IsNullOrWhiteSpace(query.ItemCode)
             || !string.IsNullOrWhiteSpace(query.ItemSearch)
             || !string.IsNullOrWhiteSpace(query.ItemType)
             || !string.IsNullOrWhiteSpace(query.ItemClass)
             || !string.IsNullOrWhiteSpace(query.ItemSubClass)
-            || !string.IsNullOrWhiteSpace(query.Brand)
-            || !string.IsNullOrWhiteSpace(query.CustPriceCode)
-            || !string.IsNullOrWhiteSpace(query.CustGroupCode)
-            || !string.IsNullOrWhiteSpace(query.CustCode)
-            || !string.IsNullOrWhiteSpace(query.CustType)
-            || !string.IsNullOrWhiteSpace(query.CustGroup);
+            || !string.IsNullOrWhiteSpace(query.Brand);
 
+        var hasTargetFilter = target switch
+        {
+            SaPriceMaintenanceTargets.ItemDefault => false,
+            SaPriceMaintenanceTargets.PriceList =>
+                !string.IsNullOrWhiteSpace(query.CustPriceCode)
+                || !string.IsNullOrWhiteSpace(query.CustGroupCode)
+                || !string.IsNullOrWhiteSpace(query.Uom)
+                || !string.IsNullOrWhiteSpace(query.CurrencyCode),
+            SaPriceMaintenanceTargets.CustomerItem =>
+                !string.IsNullOrWhiteSpace(query.CustCode)
+                || !string.IsNullOrWhiteSpace(query.CustType)
+                || !string.IsNullOrWhiteSpace(query.CustGroup)
+                || !string.IsNullOrWhiteSpace(query.Uom)
+                || query.Moq.HasValue,
+            _ => false
+        };
+
+        var hasMeaningfulFilter = hasCommonItemFilter || hasTargetFilter;
+
+        // These fields belong to another target and must not accidentally turn an Item Default
+        // review into an unbounded item-master load.
         if (target == SaPriceMaintenanceTargets.ItemDefault && query.LoadAllActiveItems)
         {
             return null;
@@ -936,7 +1009,17 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
     {
         if (!string.IsNullOrWhiteSpace(query.CustPriceCode))
         {
-            return (query.CustPriceCode!.Trim(), null);
+            var requestedCode = query.CustPriceCode!.Trim();
+            var requestedList = await db.IvCustPriceGroups.AsNoTracking()
+                .FirstOrDefaultAsync(
+                    x => x.CompanyCode == company && x.CustPriceCode == requestedCode,
+                    cancellationToken);
+            if (requestedList is null || !requestedList.IsActive)
+            {
+                return (null, $"Price List {requestedCode} was not found or is inactive.");
+            }
+
+            return (requestedList.CustPriceCode, null);
         }
 
         var groupCode = query.CustGroupCode?.Trim();
@@ -954,7 +1037,17 @@ public sealed partial class SaPriceMaintenanceService : ISaPriceMaintenanceServi
             return (null, $"Customer Group {groupCode} has no default price list. Select a Price List directly.");
         }
 
-        return (group.CustPriceCode.Trim(), null);
+        var groupPriceCode = group.CustPriceCode.Trim();
+        var groupPriceList = await db.IvCustPriceGroups.AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.CompanyCode == company && x.CustPriceCode == groupPriceCode,
+                cancellationToken);
+        if (groupPriceList is null || !groupPriceList.IsActive)
+        {
+            return (null, $"Customer Group {groupCode} default Price List {groupPriceCode} was not found or is inactive. Select a Price List directly.");
+        }
+
+        return (groupPriceList.CustPriceCode, null);
     }
 
     private static int NormalizeTake(int take) =>

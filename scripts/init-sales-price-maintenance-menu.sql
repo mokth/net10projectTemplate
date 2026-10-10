@@ -16,8 +16,14 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
-DECLARE @saMasterId int = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_MASTER');
-DECLARE @saInquiryId int = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'SA_INQUIRY');
+DECLARE @saMasterId int = NULL;
+DECLARE @saInquiryId int = NULL;
+
+IF OBJECT_ID(N'dbo.Menu', N'U') IS NOT NULL
+BEGIN
+    SELECT @saMasterId = MenuId FROM dbo.Menu WHERE MenuCode = N'SA_MASTER';
+    SELECT @saInquiryId = MenuId FROM dbo.Menu WHERE MenuCode = N'SA_INQUIRY';
+END
 
 IF OBJECT_ID(N'dbo.Menu', N'U') IS NULL OR @saMasterId IS NULL OR @saInquiryId IS NULL
 BEGIN
@@ -51,82 +57,122 @@ BEGIN
 END
 GO
 
-IF EXISTS (
-    SELECT 1
-    FROM (VALUES (N'ACCESS'), (N'EDIT'), (N'VIEW_PRICE'), (N'EXPORT'), (N'IMPORT')) required(PermissionCode)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM dbo.Permission p
-        WHERE p.PermissionCode = required.PermissionCode
-          AND p.IsActive = 1))
+IF OBJECT_ID(N'dbo.Menu', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.Permission', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.MenuPermission', N'U') IS NULL
 BEGIN
-    SELECT MissingPermission = required.PermissionCode
-    FROM (VALUES (N'ACCESS'), (N'EDIT'), (N'VIEW_PRICE'), (N'EXPORT'), (N'IMPORT')) required(PermissionCode)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM dbo.Permission p
-        WHERE p.PermissionCode = required.PermissionCode
-          AND p.IsActive = 1);
-    PRINT N'Expected built-in permission rows are missing or inactive. MenuPermission grants were NOT completed.';
+    PRINT N'dbo.Menu, dbo.Permission, or dbo.MenuPermission is missing. MenuPermission grants were NOT completed.';
 END
 ELSE
 BEGIN
-    INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
-    SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
-    FROM dbo.Menu m
-    INNER JOIN dbo.Permission p
-        ON p.PermissionCode IN (N'ACCESS', N'EDIT', N'VIEW_PRICE', N'EXPORT', N'IMPORT')
-    WHERE m.MenuCode = N'SA_PRICE_MAINTENANCE'
-      AND NOT EXISTS (
-          SELECT 1 FROM dbo.MenuPermission mp
-          WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+    IF EXISTS (
+        SELECT 1
+        FROM (VALUES (N'ACCESS'), (N'EDIT'), (N'VIEW_PRICE'), (N'EXPORT'), (N'IMPORT')) required(PermissionCode)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo.Permission p
+            WHERE p.PermissionCode = required.PermissionCode
+              AND p.IsActive = 1))
+    BEGIN
+        SELECT MissingMaintenancePermission = required.PermissionCode
+        FROM (VALUES (N'ACCESS'), (N'EDIT'), (N'VIEW_PRICE'), (N'EXPORT'), (N'IMPORT')) required(PermissionCode)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo.Permission p
+            WHERE p.PermissionCode = required.PermissionCode
+              AND p.IsActive = 1);
+        PRINT N'Expected maintenance permission rows are missing or inactive. Price-maintenance grants were NOT completed.';
+    END
+    ELSE
+    BEGIN
+        INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+        SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+        FROM dbo.Menu m
+        INNER JOIN dbo.Permission p
+            ON p.PermissionCode IN (N'ACCESS', N'EDIT', N'VIEW_PRICE', N'EXPORT', N'IMPORT')
+        WHERE m.MenuCode = N'SA_PRICE_MAINTENANCE'
+          AND NOT EXISTS (
+              SELECT 1 FROM dbo.MenuPermission mp
+              WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 
-    INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
-    SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
-    FROM dbo.Menu m
-    INNER JOIN dbo.Permission p
-        ON p.PermissionCode IN (N'ACCESS', N'VIEW_PRICE', N'EXPORT')
-    WHERE m.MenuCode = N'SA_PRICE_CHANGE_HISTORY'
-      AND NOT EXISTS (
-          SELECT 1 FROM dbo.MenuPermission mp
-          WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+        UPDATE mp
+        SET IsActive = 1
+        FROM dbo.MenuPermission mp
+        INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
+        INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
+        WHERE m.MenuCode = N'SA_PRICE_MAINTENANCE'
+          AND p.PermissionCode IN (N'ACCESS', N'EDIT', N'VIEW_PRICE', N'EXPORT', N'IMPORT');
+    END
 
-    UPDATE mp
-    SET IsActive = 1
-    FROM dbo.MenuPermission mp
-    INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
-    INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
-    WHERE m.MenuCode = N'SA_PRICE_MAINTENANCE'
-      AND p.PermissionCode IN (N'ACCESS', N'EDIT', N'VIEW_PRICE', N'EXPORT', N'IMPORT');
+    IF EXISTS (
+        SELECT 1
+        FROM (VALUES (N'ACCESS'), (N'VIEW_PRICE'), (N'EXPORT')) required(PermissionCode)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo.Permission p
+            WHERE p.PermissionCode = required.PermissionCode
+              AND p.IsActive = 1))
+    BEGIN
+        SELECT MissingHistoryPermission = required.PermissionCode
+        FROM (VALUES (N'ACCESS'), (N'VIEW_PRICE'), (N'EXPORT')) required(PermissionCode)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo.Permission p
+            WHERE p.PermissionCode = required.PermissionCode
+              AND p.IsActive = 1);
+        PRINT N'Expected history permission rows are missing or inactive. Price-history grants were NOT completed.';
+    END
+    ELSE
+    BEGIN
+        INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+        SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+        FROM dbo.Menu m
+        INNER JOIN dbo.Permission p
+            ON p.PermissionCode IN (N'ACCESS', N'VIEW_PRICE', N'EXPORT')
+        WHERE m.MenuCode = N'SA_PRICE_CHANGE_HISTORY'
+          AND NOT EXISTS (
+              SELECT 1 FROM dbo.MenuPermission mp
+              WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 
-    UPDATE mp
-    SET IsActive = 1
-    FROM dbo.MenuPermission mp
-    INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
-    INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
-    WHERE m.MenuCode = N'SA_PRICE_CHANGE_HISTORY'
-      AND p.PermissionCode IN (N'ACCESS', N'VIEW_PRICE', N'EXPORT');
+        UPDATE mp
+        SET IsActive = 1
+        FROM dbo.MenuPermission mp
+        INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
+        INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
+        WHERE m.MenuCode = N'SA_PRICE_CHANGE_HISTORY'
+          AND p.PermissionCode IN (N'ACCESS', N'VIEW_PRICE', N'EXPORT');
+    END
 END
 GO
 
-SELECT
-    m.MenuCode,
-    m.MenuName,
-    m.Route,
-    m.SortOrder,
-    m.IsActive,
-    Parent = parent.MenuCode
-FROM dbo.Menu m
-LEFT JOIN dbo.Menu parent ON parent.MenuId = m.ParentMenuId
-WHERE m.MenuCode IN (N'SA_PRICE_MAINTENANCE', N'SA_PRICE_CHANGE_HISTORY')
-ORDER BY m.MenuCode;
+IF OBJECT_ID(N'dbo.Menu', N'U') IS NOT NULL
+BEGIN
+    SELECT
+        m.MenuCode,
+        m.MenuName,
+        m.Route,
+        m.SortOrder,
+        m.IsActive,
+        Parent = parent.MenuCode
+    FROM dbo.Menu m
+    LEFT JOIN dbo.Menu parent ON parent.MenuId = m.ParentMenuId
+    WHERE m.MenuCode IN (N'SA_PRICE_MAINTENANCE', N'SA_PRICE_CHANGE_HISTORY')
+    ORDER BY m.MenuCode;
+END
+ELSE
+    PRINT N'dbo.Menu is missing - menu verification was skipped.';
 GO
 
-SELECT
-    m.MenuCode,
-    p.PermissionCode,
-    mp.IsActive
-FROM dbo.Menu m
-INNER JOIN dbo.MenuPermission mp ON mp.MenuId = m.MenuId
-INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
-WHERE m.MenuCode IN (N'SA_PRICE_MAINTENANCE', N'SA_PRICE_CHANGE_HISTORY')
-ORDER BY m.MenuCode, p.PermissionCode;
+IF OBJECT_ID(N'dbo.Menu', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.MenuPermission', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.Permission', N'U') IS NOT NULL
+BEGIN
+    SELECT
+        m.MenuCode,
+        p.PermissionCode,
+        mp.IsActive
+    FROM dbo.Menu m
+    INNER JOIN dbo.MenuPermission mp ON mp.MenuId = m.MenuId
+    INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
+    WHERE m.MenuCode IN (N'SA_PRICE_MAINTENANCE', N'SA_PRICE_CHANGE_HISTORY')
+    ORDER BY m.MenuCode, p.PermissionCode;
+END
+ELSE
+    PRINT N'One or more permission tables are missing - permission verification was skipped.';
 GO

@@ -9,6 +9,10 @@ public interface ISaPriceMaintenanceService
         SaPriceReviewQuery query,
         CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<SaPriceListImpactSummary>> GetPriceListImpactAsync(
+        string custPriceCode,
+        CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<SaPricePreviewResult>> PreviewAsync(
         SaPricePreviewRequest request,
         CancellationToken cancellationToken = default);

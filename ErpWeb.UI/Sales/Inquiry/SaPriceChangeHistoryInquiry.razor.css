@@ -68,6 +68,48 @@
     overflow-wrap: anywhere;
 }
 
+.sa-price-history__batch-summary-wide {
+    grid-column: 1 / -1;
+}
+
+.sa-price-history__empty {
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 260px;
+    padding: 2.5rem 1rem;
+    border: 1px dashed var(--iv-border, #d1d5db);
+    border-radius: .5rem;
+    text-align: center;
+}
+
+.sa-price-history__empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    margin-bottom: .75rem;
+    border-radius: 50%;
+    background: #f1f5f9;
+    color: #64748b;
+    font-size: 1.1rem;
+}
+
+.sa-price-history__empty h3 {
+    margin: 0;
+    color: var(--iv-text, #374151);
+    font-size: 1rem;
+}
+
+.sa-price-history__empty p {
+    max-width: 34rem;
+    margin: .45rem 0 1rem;
+    color: var(--iv-muted, #6b7280);
+    font-size: .88rem;
+}
+
 .sa-price-history__batch-pager {
     justify-content: space-between;
     margin-bottom: .75rem;

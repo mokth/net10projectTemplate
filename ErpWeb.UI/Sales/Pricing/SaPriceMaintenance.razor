@@ -92,16 +92,22 @@
                     <label class="iv-field__label">Brand</label>
                     <DxTextBox @bind-Text="@Query.Brand" NullText="All brands" />
                 </div>
-                <div class="iv-field">
-                    <label class="iv-field__label">UOM</label>
-                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Query.Uom" NullText="All UOMs" />
-                </div>
+                @if (IsPriceList || IsCustomerItem)
+                {
+                    <div class="iv-field">
+                        <label class="iv-field__label">UOM</label>
+                        <IvCodeComboBox Data="@Uoms" @bind-Value="@Query.Uom" NullText="All UOMs" />
+                    </div>
+                }
 
                 @if (IsPriceList)
                 {
                     <div class="iv-field">
                         <label class="iv-field__label">Price list</label>
-                        <IvCodeComboBox Data="@PriceLists" @bind-Value="@Query.CustPriceCode" NullText="Select price list" />
+                        <IvCodeComboBox Data="@PriceLists"
+                                        Value="@Query.CustPriceCode"
+                                        ValueChanged="@OnPriceListChangedAsync"
+                                        NullText="Select price list" />
                     </div>
                     <div class="iv-field">
                         <label class="iv-field__label">Customer group</label>
@@ -155,6 +161,26 @@
             {
                 <div class="iv-toast iv-toast--warn" role="alert">
                     Loading all active item defaults can stage up to @SaPriceMaintenanceLimits.MaxReviewRows.ToString("N0") rows. Confirm the scope before loading.
+                </div>
+            }
+            @if (IsItemDefault)
+            {
+                <div class="iv-toast iv-toast--info" role="note">
+                    Item Default is the final fallback price in the current pricing engine and may affect customers without a more specific customer or price-list price.
+                </div>
+            }
+            @if (IsCustomerItem)
+            {
+                <div class="iv-toast iv-toast--info" role="note">
+                    Only existing negotiated customer-item prices will be updated. Missing customer-item prices will not be created.
+                </div>
+            }
+            @if (IsPriceList && PriceListImpact is not null)
+            {
+                <div class="iv-toast iv-toast--info" role="note">
+                    <strong>Assignment impact for @PriceListImpact.CustPriceCode:</strong>
+                    @PriceListImpact.CustomersAssignedDirectly.ToString("N0") customer(s) assigned directly ·
+                    @PriceListImpact.CustomerGroupsUsingAsDefault.ToString("N0") customer group(s) using this as their default.
                 </div>
             }
 
@@ -213,6 +239,11 @@
             </div>
             <div class="sa-price-review__actions">
                 <span class="sa-price-review__selection-count">@SelectedCount.ToString("N0") selected</span>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="CALCULATE NEW PRICES"
+                          IconCssClass="fa-solid fa-calculator"
+                          Click="@CalculateChangesAsync"
+                          Enabled="@(!IsBusy && HasRows && SelectedCount > 0)" />
                 <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="PREVIEW CHANGES" IconCssClass="fa-solid fa-list-check" Click="@PreviewChangesAsync" Enabled="@(!IsBusy && HasRows)" />
             </div>
         </section>
@@ -226,9 +257,16 @@
                 @if (LastPreview is not null)
                 {
                     <div class="sa-price-review__summary">
+                        <span>@LastPreview.Summary.Matched matched</span>
+                        <span>@LastPreview.Summary.Selected selected</span>
                         <span>@LastPreview.Summary.Changing changing</span>
                         <span>@LastPreview.Summary.Unchanged unchanged</span>
                         <span class="@(LastPreview.Summary.Blocked > 0 ? "is-danger" : string.Empty)">@LastPreview.Summary.Blocked blocked</span>
+                        <span>@LastPreview.Summary.ItemsAffected items</span>
+                        <span>@LastPreview.Summary.CustomersAffected customers</span>
+                        <span>@LastPreview.Summary.PriceListsAffected price lists</span>
+                        <span>difference @((LastPreview.Summary.MinimumDifference?.ToString("N4") ?? "—")) to @((LastPreview.Summary.MaximumDifference?.ToString("N4") ?? "—"))</span>
+                        <span>average @((LastPreview.Summary.AveragePercentChange?.ToString("N2") ?? "—"))%</span>
                     </div>
                 }
             </div>
@@ -412,7 +450,7 @@
             </BodyContentTemplate>
             <FooterContentTemplate>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ShowApplyConfirmation = false)" Enabled="@(!IsBusy)" />
-                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply price change" Click="@ConfirmApplyAsync" Enabled="@(!IsBusy && CanApply && LastPreview is not null && LastPreview.Summary.Changing > 0)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply price change" Click="@ConfirmApplyAsync" Enabled="@(!IsBusy && CanApply && LastPreview is not null && LastPreview.Summary.Changing > 0 && !HasBlockedRows)" />
             </FooterContentTemplate>
         </DxPopup>
     </div>

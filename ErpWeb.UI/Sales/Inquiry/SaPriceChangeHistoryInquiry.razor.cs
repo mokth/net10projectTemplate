@@ -153,6 +153,69 @@ public partial class SaPriceChangeHistoryInquiry : PageBase
     protected int BatchTotalPages =>
         Math.Max(1, (int)Math.Ceiling(BatchTotalCount / (double)BatchPageSize));
 
+    protected static string FormatBatchAdjustment(SaPriceChangeHistoryBatch batch)
+    {
+        var label = batch.AdjustmentMethod switch
+        {
+            SaPriceAdjustmentMethods.SetPrice => "Set price",
+            SaPriceAdjustmentMethods.IncreasePercent => "Increase by %",
+            SaPriceAdjustmentMethods.DecreasePercent => "Decrease by %",
+            SaPriceAdjustmentMethods.IncreaseAmount => "Increase amount",
+            SaPriceAdjustmentMethods.DecreaseAmount => "Decrease amount",
+            _ => string.IsNullOrWhiteSpace(batch.AdjustmentMethod) ? "Direct edit" : batch.AdjustmentMethod
+        };
+
+        if (!batch.AdjustmentValue.HasValue)
+        {
+            return label;
+        }
+
+        var suffix = batch.AdjustmentMethod is SaPriceAdjustmentMethods.IncreasePercent
+            or SaPriceAdjustmentMethods.DecreasePercent
+            ? $"{batch.AdjustmentValue.Value:N2}%"
+            : batch.AdjustmentValue.Value.ToString("N4");
+        return $"{label}: {suffix}";
+    }
+
+    protected static string FormatBatchRounding(SaPriceChangeHistoryBatch batch)
+    {
+        var rounding = batch.RoundingMode switch
+        {
+            SaPriceRoundingModes.Normal => "Normal",
+            SaPriceRoundingModes.Up => "Round up",
+            SaPriceRoundingModes.Down => "Round down",
+            _ => string.IsNullOrWhiteSpace(batch.RoundingMode) ? "Not applicable" : batch.RoundingMode
+        };
+        return batch.DecimalPlaces.HasValue
+            ? $"{rounding} · {batch.DecimalPlaces.Value} dp"
+            : rounding;
+    }
+
+    protected static string FormatBatchFilters(SaPriceChangeHistoryBatch batch)
+    {
+        var filters = new List<string>();
+        AddFilter(filters, "Item", batch.ItemSearchFilter);
+        AddFilter(filters, "Type", batch.ItemTypeFilter);
+        AddFilter(filters, "Class", batch.ItemClassFilter);
+        AddFilter(filters, "Subclass", batch.ItemSubClassFilter);
+        AddFilter(filters, "Brand", batch.BrandFilter);
+        AddFilter(filters, "Customer", batch.CustCodeFilter);
+        AddFilter(filters, "Customer type", batch.CustTypeFilter);
+        AddFilter(filters, "Customer group", batch.CustGroupFilter);
+        AddFilter(filters, "Price list", batch.CustPriceCodeFilter);
+        AddFilter(filters, "Currency", batch.CurrencyFilter);
+        AddFilter(filters, "UOM", batch.UomFilter);
+        return filters.Count == 0 ? "No additional filters" : string.Join(" · ", filters);
+    }
+
+    private static void AddFilter(List<string> filters, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            filters.Add($"{label}: {value.Trim()}");
+        }
+    }
+
     private async Task LoadAsync()
     {
         if (IsLoading)
