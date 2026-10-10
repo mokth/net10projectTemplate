@@ -1,0 +1,141 @@
+@page "/sales/delivery/board"
+@inherits PageBase
+@using DevExpress.Blazor
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Sales.Delivery
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>Sales Delivery Board</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SalesDeliveryBoard">
+    <div class="iv-page delivery-board">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-truck-fast"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Sales · Delivery Operations</p>
+                <h1 class="iv-title">Daily Delivery Board</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@SelectedDate.ToString("dddd, dd MMM yyyy")</span>
+                    @if (!string.IsNullOrWhiteSpace(StatusFilter))
+                    {
+                        <button type="button" class="iv-chip delivery-board__clear" @onclick="ClearStatusFilter">
+                            @StatusLabel(StatusFilter) ×
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Trips matching filters</span>
+                <strong>@MatchingTripCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        @if (FeatureEnabled == false)
+        {
+            <section class="iv-card delivery-board__notice" role="status">
+                <h2>Delivery tracking is turned off</h2>
+                <p>Enable <code>DELIVERY_TRACKING_ENABLED</code> in Sales settings to use trip planning and delivery tracking.</p>
+            </section>
+        }
+        else
+        {
+            <section class="delivery-board__kpis" aria-label="Delivery totals">
+                @foreach (var tile in KpiTiles)
+                {
+                    <button type="button"
+                            class="delivery-board__kpi @(StatusFilter == tile.Filter ? "is-selected" : string.Empty)"
+                            aria-pressed="@(StatusFilter == tile.Filter)"
+                            @onclick="() => SelectStatusFilterAsync(tile.Filter)">
+                        <span>@tile.Label</span>
+                        <strong>@tile.Value.ToString("N0")</strong>
+                    </button>
+                }
+            </section>
+
+            <section class="iv-card delivery-board__content">
+                <div class="delivery-board__filters">
+                    <div>
+                        <label for="delivery-board-date">Trip date</label>
+                        <DxDateEdit Id="delivery-board-date" @bind-Date="SelectedDate" DisplayFormat="dd/MM/yyyy" />
+                    </div>
+                    <div class="delivery-board__search">
+                        <label for="delivery-board-search">Search trip, customer, driver or vehicle</label>
+                        <DxTextBox Id="delivery-board-search" @bind-Text="SearchText"
+                                   NullText="Trip no, customer name/code, driver or registration"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <DxButton Text="APPLY" IconCssClass="fa-solid fa-filter" RenderStyle="ButtonRenderStyle.Secondary"
+                              Click="ReloadAsync" Enabled="@(!IsLoading)" />
+                    @if (!string.IsNullOrWhiteSpace(SearchText) || SelectedDate.Date != DateTime.Today)
+                    {
+                        <DxButton Text="TODAY" RenderStyle="ButtonRenderStyle.Link" Click="ResetFiltersAsync" />
+                    }
+                </div>
+
+                @if (IsLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true">
+                        <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                        <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                        <div class="iv-skeleton__line"></div>
+                    </div>
+                }
+                else if (Trips.Count == 0)
+                {
+                    <div class="delivery-board__empty">
+                        <i class="fa-solid fa-route" aria-hidden="true"></i>
+                        <h2>No delivery trips found</h2>
+                        <p>There are no trips matching this date and filter.</p>
+                    </div>
+                }
+                else
+                {
+                    @if (MatchingTripCount > Trips.Count)
+                    {
+                        <p class="delivery-board__limit">Showing the first @Trips.Count of @MatchingTripCount trips. Narrow the search to see a specific trip.</p>
+                    }
+                    <div class="delivery-board__trips" aria-busy="@IsLoading">
+                        @foreach (var trip in Trips)
+                        {
+                            var progress = trip.StopCount == 0 ? 0 : (int)Math.Round(100d * trip.DeliveredCount / trip.StopCount);
+                            <article class="delivery-board__trip">
+                                <div class="delivery-board__trip-head">
+                                    <div>
+                                        <p class="delivery-board__eyebrow">@trip.TripDate.ToString("dd MMM yyyy")</p>
+                                        <h2>@trip.TripNo</h2>
+                                    </div>
+                                    <span class="iv-status @TripStatusClass(trip.Status)">@StatusLabel(trip.Status)</span>
+                                </div>
+                                <div class="delivery-board__details">
+                                    <div><span>Driver</span><strong>@Display(trip.DriverName)</strong></div>
+                                    <div><span>Vehicle</span><strong>@Display(trip.VehicleRegistration)</strong></div>
+                                    <div><span>Departure</span><strong>@DepartureLabel(trip)</strong></div>
+                                </div>
+                                <div class="delivery-board__progress-label">
+                                    <span>@trip.DeliveredCount of @trip.StopCount stops delivered</span>
+                                    <strong>@progress%</strong>
+                                </div>
+                                <div class="delivery-board__progress" role="progressbar" aria-label="Trip delivery progress"
+                                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="@progress">
+                                    <span style="width: @($"{progress}%")"></span>
+                                </div>
+                                <div class="delivery-board__counts">
+                                    <span>Stops <b>@trip.StopCount</b></span>
+                                    <span>Delivered <b>@trip.DeliveredCount</b></span>
+                                    <span>Partial <b>@trip.PartialCount</b></span>
+                                    <span>Failed <b>@trip.FailedCount</b></span>
+                                    <span>Outstanding <b>@trip.OutstandingCount</b></span>
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            </section>
+        }
+    </div>
+</MenuAuthorize>

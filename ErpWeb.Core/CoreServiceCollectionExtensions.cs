@@ -13,6 +13,7 @@ using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
+using ErpWeb.Core.Traceability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -197,6 +198,7 @@ public static class CoreServiceCollectionExtensions
         // (plans/plan-inventoryInquirySuite.prompt.md §Phase 2).
         services.AddScoped<IIvStockAlertService, IvStockAlertService>();
         services.AddScoped<IIvLotInquiryService, IvLotInquiryService>();
+        services.AddScoped<ILotGenealogyService, LotGenealogyService>();
         services.AddScoped<IIvStockSummaryService, IvStockSummaryService>();
 
         // Inventory period close (month end) — the close/reopen workflow + stored closing balances
@@ -319,6 +321,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<ISaPriceMaintenanceService, SaPriceMaintenanceService>();
         services.AddScoped<ISaPriceChangeHistoryService, SaPriceChangeHistoryService>();
         services.AddScoped<ISaDeliveryTrackingFeatureGate, SaDeliveryTrackingFeatureGate>();
+        services.AddScoped<ISaDeliveryBoardService, SaDeliveryBoardService>();
 
         services.AddScoped<ISaInvoiceService, SaInvoiceService>();
         services.AddScoped<ISaDoService, SaDoService>();

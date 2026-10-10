@@ -51,6 +51,9 @@ public static class MenuCodes
     /// </summary>
     public const string InventoryLotInquiry = "INV_LOT_INQUIRY";
 
+    /// <summary>Read-only end-to-end inventory and production lot genealogy inquiry.</summary>
+    public const string InventoryLotTrace = "INV_LOT_TRACE";
+
     /// <summary>
     /// Stock summary — server-side GROUP BY over the balance slice with an Item / Warehouse /
     /// Item×Warehouse / Class selector (plan-inventoryInquirySuite Phase 2, D16).
@@ -184,6 +187,8 @@ public static class MenuCodes
 
     public const string SalesInvoice = "SA_INVOICE";
     public const string SalesDeliveryOrder = "SA_DO";
+    public const string SalesDeliveryManagement = "SA_DELIVERY_MGMT";
+    public const string SalesDeliveryBoard = "SA_DELIVERY_BOARD";
     public const string SalesOrder = "SA_SO";
     public const string SalesDeliveryRequest = "SA_DR";
     /// <summary>Sales Quotation — the commercial offer that precedes a Sales Order.</summary>

@@ -112,6 +112,10 @@
                         <strong>@SelectedLot.ICode</strong>
                         <span class="iv-subtitle"> — lot @SelectedLot.LotNo</span>
                     </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="TRACE LOT"
+                              IconCssClass="fa-solid fa-diagram-project"
+                              Click="@OpenGenealogy" />
                 </div>
                 <div class="iv-chips">
                     <span class="iv-chip">Source: @(SelectedLot.SourceType ?? "—") @(SelectedLot.SourceDocNo ?? string.Empty)</span>

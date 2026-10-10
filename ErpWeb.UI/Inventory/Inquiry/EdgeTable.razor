@@ -1,0 +1,88 @@
+@using ErpWeb.Core.Traceability
+@using ErpWeb.UI.Components.Common.DataGrid
+
+@if (Rows.Count == 0)
+{
+    <p class="lot-trace-muted">@EmptyText</p>
+}
+else
+{
+    <div class="lot-trace-grid">
+        <CommonDataGridEx T="EdgeGridRow"
+                          Columns="@Columns"
+                          KeyName="@nameof(EdgeGridRow.RowId)"
+                          GridKey="@GridKey"
+                          Title="Trace relationships"
+                          GridData="@Rows"
+                          OnButtonEventHandle="@OnGridButtonAsync"
+                          ShowToolbarText="true"
+                          ShowResetLayoutButton="true"
+                          UseBuiltInExport="false"
+                          ShowSearchBox="true"
+                          ShowFilterRow="false"
+                          ShowGroupPanel="false"
+                          allowSelect="false" />
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<LotGenealogyEdge> Edges { get; set; } = [];
+    [Parameter] public IReadOnlyList<LotGenealogyNode> Nodes { get; set; } = [];
+    [Parameter] public string GridKey { get; set; } = "inv-lot-genealogy-edges";
+    [Parameter] public EventCallback OnRefreshTrace { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "No trace edges.";
+
+    private List<EdgeGridRow> Rows { get; set; } = [];
+
+    private static List<GridColumnData> Columns =>
+    [
+        new() { Caption = "From", FieldName = nameof(EdgeGridRow.FromTitle), Width = "240px", VisibleIndex = 1 },
+        new() { Caption = "Relationship", FieldName = nameof(EdgeGridRow.Relationship), Width = "180px", VisibleIndex = 2 },
+        new() { Caption = "To", FieldName = nameof(EdgeGridRow.ToTitle), Width = "240px", VisibleIndex = 3 },
+        new() { Caption = "Evidence", FieldName = nameof(EdgeGridRow.EvidenceState), Width = "160px", VisibleIndex = 4 },
+        new() { Caption = "Explanation", FieldName = nameof(EdgeGridRow.Explanation), Width = "260px", VisibleIndex = 5 },
+        new() { Caption = "Exact base qty", FieldName = nameof(EdgeGridRow.ExactBaseQty), DataType = "decimal", DisplayFormat = "n4", Width = "130px", VisibleIndex = 6 },
+        new() { Caption = "UOM", FieldName = nameof(EdgeGridRow.BaseUom), Width = "80px", VisibleIndex = 7 },
+        new() { Caption = "Date", FieldName = nameof(EdgeGridRow.EventDate), DataType = "datetime", DisplayFormat = "dd/MM/yyyy", Width = "120px", VisibleIndex = 8 },
+        new() { Caption = "Impact", FieldName = nameof(EdgeGridRow.Impact), Width = "180px", VisibleIndex = 9 }
+    ];
+
+    protected override void OnParametersSet()
+    {
+        Rows = Edges.Select((edge, index) => new EdgeGridRow
+        {
+            RowId = index,
+            FromTitle = NodeTitle(edge.FromNodeId),
+            Relationship = edge.Relationship,
+            ToTitle = NodeTitle(edge.ToNodeId),
+            EvidenceState = edge.EvidenceState,
+            Explanation = edge.Explanation,
+            ExactBaseQty = edge.ExactBaseQty,
+            BaseUom = edge.BaseUom,
+            EventDate = edge.EventDate,
+            Impact = edge.IsActiveImpact ? "Active" : "Historical / incomplete"
+        }).ToList();
+
+    }
+
+    private Task OnGridButtonAsync(SelectedButtonInfo<EdgeGridRow> info) =>
+        string.Equals(info.SelectedButton.Text, "REFRESH", StringComparison.OrdinalIgnoreCase)
+            ? OnRefreshTrace.InvokeAsync()
+            : Task.CompletedTask;
+
+    private string NodeTitle(string id) => Nodes.FirstOrDefault(x => x.Id == id)?.Title ?? id;
+
+    private sealed class EdgeGridRow
+    {
+        public int RowId { get; init; }
+        public string FromTitle { get; init; } = string.Empty;
+        public string Relationship { get; init; } = string.Empty;
+        public string ToTitle { get; init; } = string.Empty;
+        public string EvidenceState { get; init; } = string.Empty;
+        public string? Explanation { get; init; }
+        public decimal? ExactBaseQty { get; init; }
+        public string? BaseUom { get; init; }
+        public DateTime? EventDate { get; init; }
+        public string Impact { get; init; } = string.Empty;
+    }
+}

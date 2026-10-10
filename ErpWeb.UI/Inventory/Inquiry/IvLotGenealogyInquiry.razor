@@ -1,0 +1,196 @@
+@page "/inventory/lot-traceability"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Traceability
+@using ErpWeb.UI.Components.Common.DataGrid
+
+<PageTitle>Lot Traceability</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryLotTrace">
+    <div class="iv-page lot-trace-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero lot-trace-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-diagram-project"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Inventory · Inquiry</p>
+                <h1 class="iv-title">Lot Traceability</h1>
+                <p class="iv-subtitle">Trace posted lot evidence from supplier receipt through production and shipment to customer.</p>
+                <div class="iv-chips">
+                    <span class="iv-chip">Backward: finished lot to supplier</span>
+                    <span class="iv-chip">Forward: material lot to customer</span>
+                    <span class="iv-chip">Branch: @CurrentBranchLabel</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card lot-trace-search">
+            <div class="iv-toolbar-row lot-trace-search__row">
+                <div class="iv-toolbar-row__search">
+                    <label class="iv-field-label lot-trace-search__label">Search item, lot, Work Order, PO/GR, DO, supplier, or customer</label>
+                    <DxTextBox Text="@SearchText"
+                               TextChanged="@OnSearchTextChanged"
+                               TextExpression="@(() => SearchText)"
+                               NullText="Enter at least two characters"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               BindValueMode="BindValueMode.OnInput"
+                               CssClass="w-100"
+                               @onkeydown="OnSearchKeyDownAsync" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsSearching ? "SEARCHING…" : "SEARCH")"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          Enabled="@(!IsBusy)"
+                          Click="@SearchAsync" />
+            </div>
+
+            @if (CandidateRows.Count > 0)
+            {
+                <div class="lot-trace-grid">
+                    <CommonDataGridEx T="LotGenealogyCandidateGridRow"
+                                      Columns="@CandidateColumns"
+                                      ActionButtons="@CandidateActions"
+                                      OnActionEventHandle="@OnCandidateActionAsync"
+                                      OnButtonEventHandle="@OnCandidateGridButtonAsync"
+                                      KeyName="@nameof(LotGenealogyCandidateGridRow.Id)"
+                                      GridKey="inv-lot-genealogy-candidates"
+                                      Title="Matching roots"
+                                      GridData="@CandidateRows"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false" />
+                </div>
+            }
+            else if (HasSearched && !IsSearching)
+            {
+                <p class="lot-trace-muted">No visible roots matched this search.</p>
+            }
+        </section>
+
+        @if (Result is not null)
+        {
+            <section class="iv-card lot-trace-summary">
+                <div>
+                    <p class="iv-eyebrow">Selected root</p>
+                    <h2>@Result.Root.Title</h2>
+                    <p>@Result.Root.Detail</p>
+                </div>
+                <div class="lot-trace-summary__stats">
+                    <div><span>Trace status</span><strong class="@CompletenessClass">@Result.Completeness</strong></div>
+                    <div><span>Current on hand · @Result.CurrentBranch</span><strong>@(Result.CurrentBranchOnHandQty?.ToString("N4") ?? "—")</strong></div>
+                    <div><span>Affected FG lots</span><strong>@Result.AffectedFinishedGoodLotCount.ToString("N0")</strong></div>
+                    <div><span>Customers shipped</span><strong>@Result.CustomersShippedCount.ToString("N0")</strong></div>
+                </div>
+            </section>
+
+            <section class="iv-card">
+                <nav class="lot-trace-tabs" aria-label="Trace sections">
+                    @foreach (var tab in Tabs)
+                    {
+                        <DxButton RenderStyle="@(ActiveTab == tab ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                  Text="@tab"
+                                  CssClass="lot-trace-tab-button"
+                                  Click="@(() => SelectTab(tab))" />
+                    }
+                </nav>
+
+                @if (ActiveTab == "Overview")
+                {
+                    <div class="lot-trace-overview">
+                        <p>Every relationship below comes from persisted inventory history, production movement, dependency/allocation, FG receipt, or posted shipment evidence.</p>
+                        @if (Result.Warnings.Count > 0)
+                        {
+                            <div class="lot-trace-warnings" role="status">
+                                <strong>Trace limitations</strong>
+                                <ul>@foreach (var warning in Result.Warnings) { <li>@warning</li> }</ul>
+                            </div>
+                        }
+                        @if (Result.WasTruncated)
+                        {
+                            <p class="lot-trace-warning">The configured traversal limit was reached. The result is partial.</p>
+                        }
+                        @if (Result.Nodes.Count == 1)
+                        {
+                            <p class="lot-trace-muted">No linked posted evidence was found in the visible branch.</p>
+                        }
+                    </div>
+                }
+                else if (ActiveTab == "Backward Trace")
+                {
+                    <EdgeTable Edges="@Result.BackwardEdges" Nodes="@Result.Nodes" GridKey="inv-lot-genealogy-backward" OnRefreshTrace="@RefreshTraceAsync" EmptyText="No proven backward links were found." />
+                }
+                else if (ActiveTab == "Forward Trace / Customer Impact")
+                {
+                    <EdgeTable Edges="@Result.ForwardEdges" Nodes="@Result.Nodes" GridKey="inv-lot-genealogy-forward" OnRefreshTrace="@RefreshTraceAsync" EmptyText="No proven forward links were found." />
+                }
+                else if (ActiveTab == "Movements")
+                {
+                    @if (MovementNodes.Count == 0)
+                    {
+                        <p class="lot-trace-muted">No movement rows are available.</p>
+                    }
+                    else
+                    {
+                        <div class="lot-trace-grid">
+                            <CommonDataGridEx T="LotGenealogyNode"
+                                              Columns="@MovementColumns"
+                                              OnButtonEventHandle="@OnMovementGridButtonAsync"
+                                              KeyName="@nameof(LotGenealogyNode.Id)"
+                                              GridKey="inv-lot-genealogy-movements"
+                                              Title="Movement evidence"
+                                              GridData="@MovementNodes"
+                                              ShowToolbarText="true"
+                                              ShowResetLayoutButton="true"
+                                              UseBuiltInExport="false"
+                                              ShowSearchBox="true"
+                                              ShowFilterRow="false"
+                                              ShowGroupPanel="false"
+                                              allowSelect="false" />
+                        </div>
+                    }
+                }
+                else if (ActiveTab == "Cost Evidence")
+                {
+                    <p class="lot-trace-muted">This view shows persisted valuation status and basis only. It does not calculate or change cost.</p>
+                    @if (Result.CostEvidence.Count == 0)
+                    {
+                        <p class="lot-trace-muted">No production valuation evidence rows were reached.</p>
+                    }
+                    else
+                    {
+                        <div class="lot-trace-grid">
+                            <CommonDataGridEx T="LotGenealogyCostEvidence"
+                                              Columns="@CostEvidenceColumns"
+                                              OnButtonEventHandle="@OnCostEvidenceGridButtonAsync"
+                                              KeyName="@nameof(LotGenealogyCostEvidence.MovementId)"
+                                              GridKey="inv-lot-genealogy-cost-evidence"
+                                              Title="Cost evidence"
+                                              GridData="@Result.CostEvidence"
+                                              ShowToolbarText="true"
+                                              ShowResetLayoutButton="true"
+                                              UseBuiltInExport="false"
+                                              ShowSearchBox="false"
+                                              ShowFilterRow="false"
+                                              ShowGroupPanel="false"
+                                              allowSelect="false" />
+                        </div>
+                    }
+                }
+            </section>
+        }
+        else if (IsTracing)
+        {
+            <section class="iv-card"><p class="lot-trace-muted">Loading bounded genealogy evidence…</p></section>
+        }
+    </div>
+</MenuAuthorize>

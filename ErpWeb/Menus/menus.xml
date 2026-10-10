@@ -55,17 +55,19 @@
             Icon="fa-solid fa-triangle-exclamation" />
       <Menu Code="INV_LOT_INQUIRY" Name="Lot / Batch Inquiry" Route="/inventory/lots" SortOrder="5"
             Icon="fa-solid fa-barcode" />
-      <Menu Code="INV_STOCK_SUMMARY" Name="Stock Summary" Route="/inventory/stock-summary" SortOrder="6"
+      <Menu Code="INV_LOT_TRACE" Name="Lot Traceability" Route="/inventory/lot-traceability" SortOrder="6"
+            Icon="fa-solid fa-diagram-project" />
+      <Menu Code="INV_STOCK_SUMMARY" Name="Stock Summary" Route="/inventory/stock-summary" SortOrder="7"
             Icon="fa-solid fa-layer-group" />
-      <Menu Code="INV_STOCK_COUNT_VAR" Name="Stock Count Variance" Route="/inventory/stock-count-variance" SortOrder="7"
+      <Menu Code="INV_STOCK_COUNT_VAR" Name="Stock Count Variance" Route="/inventory/stock-count-variance" SortOrder="8"
             Icon="fa-solid fa-scale-unbalanced" />
-      <Menu Code="INV_STOCK_VALUE" Name="Est. Inventory Value" Route="/inventory/valuation" SortOrder="8"
+      <Menu Code="INV_STOCK_VALUE" Name="Est. Inventory Value" Route="/inventory/valuation" SortOrder="9"
             Icon="fa-solid fa-sack-dollar" />
-      <Menu Code="INV_RECONCILIATION" Name="Reconciliation" Route="/inventory/reconciliation" SortOrder="9"
+      <Menu Code="INV_RECONCILIATION" Name="Reconciliation" Route="/inventory/reconciliation" SortOrder="10"
             Icon="fa-solid fa-stethoscope" />
-      <Menu Code="INV_PERIOD_CLOSE_INQ" Name="Period Close Balances" Route="/inventory/period-close-inquiry" SortOrder="10"
+      <Menu Code="INV_PERIOD_CLOSE_INQ" Name="Period Close Balances" Route="/inventory/period-close-inquiry" SortOrder="11"
             Icon="fa-solid fa-lock-open" />
-      <Menu Code="INV_COSTING_CENTER" Name="Costing Diagnostic &amp; Repair Center" Route="/inventory/costing-center" SortOrder="11"
+      <Menu Code="INV_COSTING_CENTER" Name="Costing Diagnostic &amp; Repair Center" Route="/inventory/costing-center" SortOrder="12"
             Icon="fa-solid fa-stethoscope" />
     </Menu>
   </Menu>
@@ -190,6 +192,10 @@
             Icon="fa-solid fa-calendar-xmark" />
       <Menu Code="SA_EINV_ACTION" Name="e-Invoice Action Queue" Route="/sales/monitor/einvoice-action" SortOrder="4"
             Icon="fa-solid fa-list-check" />
+    </Menu>
+    <Menu Code="SA_DELIVERY_MGMT" Name="Delivery Management" SortOrder="6" Icon="fa-solid fa-truck-fast">
+      <Menu Code="SA_DELIVERY_BOARD" Name="Daily Delivery Board" Route="/sales/delivery/board" SortOrder="1"
+            Icon="fa-solid fa-route" />
     </Menu>
   </Menu>
 

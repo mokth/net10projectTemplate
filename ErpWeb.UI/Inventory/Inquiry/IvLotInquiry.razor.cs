@@ -25,6 +25,7 @@ public partial class IvLotInquiry : PageBase
 {
     [Inject] private IIvLotInquiryService Lots { get; set; } = default!;
     [Inject] private ICurrentDateService Dates { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
 
     private DxGrid? _grid;
 
@@ -262,6 +263,12 @@ public partial class IvLotInquiry : PageBase
     protected void DismissStatus() => StatusMessage = null;
 
     protected void DismissError() => ErrorMessage = null;
+
+    protected void OpenGenealogy()
+    {
+        if (SelectedLot is not null)
+            Navigation.NavigateTo($"/inventory/lot-traceability?lotId={SelectedLot.LotId}");
+    }
 
     private async Task ReloadGridAsync()
     {
