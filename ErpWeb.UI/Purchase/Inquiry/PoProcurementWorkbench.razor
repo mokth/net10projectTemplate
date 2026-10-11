@@ -1,0 +1,199 @@
+@page "/purchase/inquiry/workbench"
+@inherits PoInquiryPageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Purchase
+@using ErpWeb.UI.Components.Common.DataGrid
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>Procurement Workbench</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseWorkbench">
+    @if (!IsFeatureEnabled)
+    {
+        <div class="iv-page">
+            <div class="iv-toast iv-toast--warn" role="status">
+                Procurement Workbench is not enabled yet.
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="iv-page proc-workbench">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="iv-toast iv-toast--err" role="alert">
+                    <span>@ErrorMessage</span>
+                    <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+                </div>
+            }
+
+            <header class="iv-hero">
+                <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-list-check"></i></div>
+                <div class="iv-hero__copy">
+                    <p class="iv-eyebrow">Purchase · Daily operations</p>
+                    <h1 class="iv-title">Procurement Workbench</h1>
+                    <div class="iv-chips">
+                        <span class="iv-chip">Branch: @(CurrentUser.BranchCode ?? "Unavailable")</span>
+                        <span class="iv-chip">As of: @AsOfDate.ToString("dd/MM/yyyy")</span>
+                        @if (LastRefreshed is DateTime refreshed)
+                        {
+                            <span class="iv-chip">Refreshed: @refreshed.ToString("dd/MM/yyyy HH:mm")</span>
+                        }
+                    </div>
+                </div>
+            </header>
+
+            <section class="proc-workbench-cards" aria-label="Procurement action counts">
+                @foreach (var card in Cards)
+                {
+                    <button type="button"
+                            class="proc-workbench-card @(SelectedMetric == card.Key ? "proc-workbench-card--selected" : "")"
+                            disabled="@(!card.Count.HasValue)"
+                            aria-pressed="@(SelectedMetric == card.Key)"
+                            @onclick="@(() => SelectMetricAsync(card.Key))">
+                        <span class="proc-workbench-card__title">@card.Title</span>
+                        <strong class="proc-workbench-card__count">
+                            @if (SummaryLoading)
+                            {
+                                <span>…</span>
+                            }
+                            else if (card.Count is int count)
+                            {
+                                @count.ToString("N0")
+                            }
+                            else
+                            {
+                                <span>Unavailable</span>
+                            }
+                        </strong>
+                        <span class="proc-workbench-card__definition">@card.Definition</span>
+                        @if (card.Count is null && !SummaryLoading)
+                        {
+                            <span class="proc-workbench-card__hint">@card.UnavailableReason</span>
+                        }
+                    </button>
+                }
+            </section>
+
+            <section class="iv-card">
+                <div class="iv-toolbar-row proc-workbench-filters">
+                    <DxTextBox @bind-Text="DraftSupplier"
+                               NullText="Supplier code · all suppliers"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    <DxTextBox @bind-Text="DraftBuyer"
+                               NullText="Buyer code · all buyers"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="APPLY"
+                              IconCssClass="fa-solid fa-filter"
+                              Click="ApplyWorkbenchFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="REFRESH"
+                              IconCssClass="fa-solid fa-rotate"
+                              Click="RefreshAsync" />
+                </div>
+                <p class="iv-subtitle proc-workbench-note">
+                    Open PR Lines means remaining PR quantity after non-cancelled PO consumption. PO ETA is the current PO revision.
+                    Received Not Invoiced is an inquiry count, not an AP balance. Currency-mixed PO values are not shown.
+                </p>
+                @if (!string.IsNullOrWhiteSpace(GridErrorMessage))
+                {
+                    <div class="iv-toast iv-toast--warn" role="status">@GridErrorMessage</div>
+                }
+
+                @if (SelectedMetric is null)
+                {
+                    <div class="proc-workbench-empty">Select a count above to review its matching lines.</div>
+                }
+                else if (SelectedCount == 0)
+                {
+                    <div class="proc-workbench-empty">No matching lines for this branch and filter.</div>
+                }
+                else if (SelectedMetric == "pr")
+                {
+                    <CommonDataGridEx T="PoPrStatusRow"
+                                      Columns="@PrColumns"
+                                      Buttons="@GridButtons"
+                                      ActionButtons="@OpenButtons"
+                                      KeyName="@nameof(PoPrStatusRow.PrNo)"
+                                      GridKey="po-procurement-workbench-pr"
+                                      Title="Open PR lines"
+                                      CustomDataSource="@PrDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnWorkbenchGridInstance"
+                                      OnButtonEventHandle="@OnPrButtonClick"
+                                      OnActionEventHandle="@OnPrActionClick" />
+                }
+                else if (SelectedMetric == "overdue")
+                {
+                    <CommonDataGridEx T="PoOrderOutstandingRow"
+                                      Columns="@PoColumns"
+                                      Buttons="@GridButtons"
+                                      ActionButtons="@OpenButtons"
+                                      KeyName="@nameof(PoOrderOutstandingRow.PoNo)"
+                                      GridKey="po-procurement-workbench-overdue"
+                                      Title="Overdue PO lines"
+                                      CustomDataSource="@OverdueDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnWorkbenchGridInstance"
+                                      OnButtonEventHandle="@OnPoButtonClick"
+                                      OnActionEventHandle="@OnPoActionClick" />
+                }
+                else if (SelectedMetric == "due")
+                {
+                    <CommonDataGridEx T="PoOrderOutstandingRow"
+                                      Columns="@PoColumns"
+                                      Buttons="@GridButtons"
+                                      ActionButtons="@OpenButtons"
+                                      KeyName="@nameof(PoOrderOutstandingRow.PoNo)"
+                                      GridKey="po-procurement-workbench-due"
+                                      Title="PO lines due in seven days"
+                                      CustomDataSource="@DueSoonDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnWorkbenchGridInstance"
+                                      OnButtonEventHandle="@OnDueButtonClick"
+                                      OnActionEventHandle="@OnPoActionClick" />
+                }
+                else if (SelectedMetric == "rni")
+                {
+                    <CommonDataGridEx T="PoMatchingRow"
+                                      Columns="@MatchingColumns"
+                                      Buttons="@GridButtons"
+                                      ActionButtons="@OpenButtons"
+                                      KeyName="@nameof(PoMatchingRow.PoNo)"
+                                      GridKey="po-procurement-workbench-rni"
+                                      Title="Received not invoiced"
+                                      CustomDataSource="@RniDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnWorkbenchGridInstance"
+                                      OnButtonEventHandle="@OnRniButtonClick"
+                                      OnActionEventHandle="@OnRniActionClick" />
+                }
+            </section>
+        </div>
+    }
+</MenuAuthorize>

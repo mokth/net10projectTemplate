@@ -236,6 +236,8 @@
             Icon="fa-solid fa-file-circle-question" />
     </Menu>
     <Menu Code="PO_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
+      <Menu Code="PO_WORKBENCH" Name="Procurement Workbench" Route="/purchase/inquiry/workbench" SortOrder="0"
+            IsActive="false" Icon="fa-solid fa-list-check" />
       <Menu Code="PO_ORDER_OUTSTANDING" Name="PO Outstanding" Route="/purchase/inquiry/po-outstanding" SortOrder="1"
             Icon="fa-solid fa-boxes-stacked" />
       <Menu Code="PO_PR_STATUS" Name="PR Status / Outstanding" Route="/purchase/inquiry/pr-status" SortOrder="2"
@@ -256,6 +258,10 @@
             Icon="fa-solid fa-scale-balanced" />
       <Menu Code="PO_DELIVERY_PERF" Name="Supplier Delivery Performance" Route="/purchase/inquiry/delivery-performance" SortOrder="10"
             Icon="fa-solid fa-truck-fast" />
+      <Menu Code="PO_DELIVERY_FOLLOWUP" Name="Supplier Delivery Follow-up" Route="/purchase/inquiry/delivery-follow-up" SortOrder="12"
+              IsActive="false" Icon="fa-solid fa-phone" />
+      <Menu Code="PO_PROC_KPI" Name="Procurement KPI" Route="/purchase/inquiry/kpi" SortOrder="11"
+            IsActive="false" Icon="fa-solid fa-chart-column" />
     </Menu>
   </Menu>
 

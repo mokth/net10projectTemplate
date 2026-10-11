@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Model.Entities.Production;
 
 namespace ErpWeb.Core.Production;
 
@@ -38,6 +39,9 @@ public interface IProductionOutputService
 
     Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
         long outputId, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<ProductionSharedWipSourceInquiry>> GetSharedWipSourceInquiryAsync(
+        ProductionSharedWipSourceInquiryRequest request, CancellationToken cancellationToken = default);
 }
 
 public class ProductionOutputCreateRequest
@@ -106,6 +110,7 @@ public sealed record ProductionOutputDetail
     public string DocumentNo { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public long WorkOrderId { get; init; }
+    public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
     public string WorkOrderNo { get; init; } = string.Empty;
     public string ProductCode { get; init; } = string.Empty;
     public string? ProductDescription { get; init; }
@@ -149,6 +154,7 @@ public sealed class ProductionOutputListRow
     public long Uid { get; init; }
     public string DocumentNo { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
+    public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
     public string WorkOrderNo { get; init; } = string.Empty;
     public string OperationCode { get; init; } = string.Empty;
     public DateTime ProductionDate { get; init; }
@@ -212,7 +218,58 @@ public sealed record ProductionOutputChoice(string Code, string Label);
 public sealed class ProductionOutputWorkspace
 {
     public ProductionEligibleOperationRow Operation { get; init; } = null!;
+    public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
     public IReadOnlyList<ProductionOutputMaterialLine> Materials { get; init; } = [];
+}
+
+public sealed class ProductionSharedWipSourceInquiryRequest
+{
+    public long WorkOrderMaterialId { get; init; }
+    public long? ProductionOutputId { get; init; }
+    public DateTime? ProductionDate { get; init; }
+    public decimal? ConsumeQty { get; init; }
+}
+
+public sealed class ProductionSharedWipSourceInquiry
+{
+    public string ConsumingDocumentNo { get; init; } = string.Empty;
+    public string ConsumingWorkOrderNo { get; init; } = string.Empty;
+    public decimal ConsumingQty { get; init; }
+    public string ConsumingUom { get; init; } = string.Empty;
+    public string ComponentCode { get; init; } = string.Empty;
+    public string BaseUom { get; init; } = string.Empty;
+    public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
+    public bool IsHistorical { get; init; }
+    public bool IsReversed { get; init; }
+    public bool CanViewCost { get; init; }
+    public string? Message { get; init; }
+    public IReadOnlyList<ProductionSharedWipSourceRow> Sources { get; init; } = [];
+}
+
+public sealed class ProductionSharedWipSourceRow
+{
+    public long ProductionBalLotId { get; init; }
+    public string LotNo { get; init; } = string.Empty;
+    public string SourceWorkOrderNo { get; init; } = string.Empty;
+    public int? SourceRouteStageSequence { get; init; }
+    public string? SourceWorkCentreCode { get; init; }
+    public DateTime? LastMovementDate { get; init; }
+    public decimal AvailableBaseQty { get; init; }
+    public decimal ConsumedBaseQty { get; init; }
+    /// <summary>Actual pooled-average consumption value; omitted unless the caller has View Cost permission.</summary>
+    public decimal? ActualPooledConsumptionCost { get; init; }
+    public IReadOnlyList<ProductionSharedWipReceiptRow> Receipts { get; init; } = [];
+}
+
+public sealed class ProductionSharedWipReceiptRow
+{
+    public string ProducerDocumentNo { get; init; } = string.Empty;
+    public string ProducerWorkOrderNo { get; init; } = string.Empty;
+    public int? ProducerRouteStageSequence { get; init; }
+    public string? ProducerWorkCentreCode { get; init; }
+    public decimal? ReceiptBaseQty { get; init; }
+    /// <summary>Genealogy quantity allocated to this output's consume movement, when recorded.</summary>
+    public decimal? AllocatedBaseQty { get; init; }
 }
 
 public sealed class ProductionOutputMaterialLine

@@ -26,7 +26,9 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
         MenuCodes.PurchaseSbEInvoiceInquiry,
         MenuCodes.PurchasePriceHistory,
         MenuCodes.PurchaseMatching,
-        MenuCodes.PurchaseDeliveryPerformance
+        MenuCodes.PurchaseDeliveryPerformance,
+        MenuCodes.PurchaseWorkbench,
+        MenuCodes.PurchaseKpi
     };
 
     private const int DefaultPageSize = 50;
@@ -99,6 +101,7 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
                 x.Header.VendCode,
                 x.Header.VendName,
                 x.Header.Buyer,
+                x.Header.CurCode,
                 x.Line.Line,
                 x.Line.ICode,
                 x.Line.IDesc,
@@ -108,6 +111,7 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
                 x.Line.BalanceQty,
                 x.Line.InvoicedQty,
                 x.Line.NetAmount,
+                x.Line.PurchaseUom,
                 x.Line.EtaDate,
                 x.Line.ToWarehouse
             })
@@ -115,9 +119,9 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
 
         var rows = projected.Select(x => MapPoOutstandingRow(
             x.PoNo, x.PoRelNo, x.PoDate, x.Status,
-            x.VendCode, x.VendName, x.Buyer, x.Line, x.ICode, x.IDesc,
+            x.VendCode, x.VendName, x.Buyer, x.CurCode, x.Line, x.ICode, x.IDesc,
             x.PoPurQty, x.RecvQty, x.ReturnQty, x.BalanceQty, x.InvoicedQty, x.NetAmount, x.EtaDate,
-            x.ToWarehouse, asOf)).ToList();
+            x.PurchaseUom, x.ToWarehouse, asOf)).ToList();
 
         return IvMasterOperationResult<PoInquiryPage<PoOrderOutstandingRow>>.Ok(
             new PoInquiryPage<PoOrderOutstandingRow> { Rows = rows, TotalCount = total });
@@ -151,17 +155,56 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
         var openSlice = baseSlice.Where(x => x.Line.BalanceQty > 0m);
         var openCount = await openSlice.CountAsync(cancellationToken);
         var overdueCount = await openSlice
-            .Where(x => x.Line.EtaDate != null && x.Line.EtaDate < asOf)
+            .Where(x => x.Line.EtaDate != null && x.Line.EtaDate.Value.Date < asOf)
             .CountAsync(cancellationToken);
         var partialCount = await openSlice
             .Where(x => x.Line.RecvQty > 0m)
             .CountAsync(cancellationToken);
 
-        // OutstandingValue: allocate NetAmount by Balance/PoPurQty (server-side sum).
-        // Evidence: PoOrderDetail.NetAmount is commercial net after discounts (PoOrderCalc.ApplyTwoLevelDiscount).
-        var outstandingValue = await openSlice
-            .Where(x => x.Line.PoPurQty > 0m)
-            .SumAsync(x => (decimal?)(x.Line.NetAmount * x.Line.BalanceQty / x.Line.PoPurQty), cancellationToken) ?? 0m;
+        var dueSoonCount = await openSlice
+            .Where(x => x.Line.EtaDate.HasValue
+                        && x.Line.EtaDate.Value.Date >= asOf
+                        && x.Line.EtaDate.Value.Date < asOf.AddDays(7))
+            .CountAsync(cancellationToken);
+        var dueNext14DaysCount = await openSlice
+            .Where(x => x.Line.EtaDate.HasValue
+                        && x.Line.EtaDate.Value.Date >= asOf
+                        && x.Line.EtaDate.Value.Date < asOf.AddDays(14))
+            .CountAsync(cancellationToken);
+        var noEtaCount = await openSlice
+            .Where(x => x.Line.EtaDate == null)
+            .CountAsync(cancellationToken);
+        var currencylessValueLineCount = await openSlice
+            .Where(x => x.Line.PoPurQty > 0m
+                        && (x.Header.CurCode == null || x.Header.CurCode == string.Empty))
+            .CountAsync(cancellationToken);
+
+        // PO net amounts use the header currency. Keep totals separate by currency instead of
+        // producing an invalid aggregate such as MYR + USD + SGD. Unknown currencies are omitted.
+        var currencyValues = await openSlice
+            .Where(x => x.Line.PoPurQty > 0m
+                        && x.Header.CurCode != null
+                        && x.Header.CurCode != string.Empty)
+            .GroupBy(x => x.Header.CurCode)
+            .Select(g => new
+            {
+                Currency = g.Key,
+                OutstandingValue = g.Sum(x => x.Line.NetAmount * x.Line.BalanceQty / x.Line.PoPurQty),
+                OverdueValue = g.Sum(x => x.Line.EtaDate.HasValue && x.Line.EtaDate.Value.Date < asOf
+                    ? x.Line.NetAmount * x.Line.BalanceQty / x.Line.PoPurQty
+                    : 0m)
+            })
+            .ToListAsync(cancellationToken);
+
+        var valueRows = currencyValues
+            .Select(x => new PoOutstandingCurrencyValue
+            {
+                Currency = string.IsNullOrWhiteSpace(x.Currency) ? "—" : x.Currency.Trim(),
+                OutstandingValue = PoOrderCalc.RoundMoney(x.OutstandingValue),
+                OverdueValue = PoOrderCalc.RoundMoney(x.OverdueValue)
+            })
+            .OrderBy(x => x.Currency, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         // UNBILLED = ComputeInvoiceable > 0 (RecvQty - ReturnQty - InvoicedQty > 0).
         var unbilledCount = await baseSlice
@@ -174,7 +217,116 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
             OverdueLineCount = overdueCount,
             PartialLineCount = partialCount,
             UnbilledLineCount = unbilledCount,
-            OutstandingValue = PoOrderCalc.RoundMoney(outstandingValue)
+            DueSoonLineCount = dueSoonCount,
+            DueNext14DaysLineCount = dueNext14DaysCount,
+            NoEtaLineCount = noEtaCount,
+            CurrencylessValueLineCount = currencylessValueLineCount,
+            // Keep the old scalar meaningful only when exactly one currency is present.
+            OutstandingValue = valueRows.Count == 1 ? valueRows[0].OutstandingValue : 0m,
+            OverdueValue = valueRows.Count == 1 ? valueRows[0].OverdueValue : 0m,
+            CurrencyValues = valueRows
+        });
+    }
+
+    /// <summary>
+    /// Open latest-revision PO lines due from the company-local as-of date through the next six
+    /// calendar dates. The upper bound is exclusive at as-of + 7 days. This view reuses the
+    /// canonical outstanding slice and does not alter existing PO inquiry presets.
+    /// </summary>
+    public async Task<IvMasterOperationResult<PoInquiryPage<PoOrderOutstandingRow>>> GetPoDueSoonAsync(
+        string menuCode,
+        PoInquiryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = await GateAsync(menuCode, cancellationToken);
+        if (!gate.Succeeded)
+        {
+            return Fail<PoInquiryPage<PoOrderOutstandingRow>>(gate);
+        }
+
+        var prepared = query ?? new PoInquiryQuery();
+        var (skip, take) = Page(prepared);
+        var asOf = prepared.AsOfDate?.Date ?? DateTime.Today;
+        var untilExclusive = asOf.AddDays(7);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var slice = BuildPoOutstandingSlice(
+                db, gate.CompanyCode!, gate.BranchCode!, prepared, applyPreset: false)
+            .Where(x => x.Line.BalanceQty > 0m
+                && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date >= asOf
+                && x.Line.EtaDate.Value.Date < untilExclusive);
+
+        var total = await slice.CountAsync(cancellationToken);
+        var projected = await slice
+            .OrderBy(x => x.Line.EtaDate)
+            .ThenByDescending(x => x.Header.PoDate)
+            .ThenByDescending(x => x.Header.PoNo)
+            .ThenBy(x => x.Line.Line)
+            .Skip(skip)
+            .Take(take)
+            .Select(x => new
+            {
+                x.Header.PoNo,
+                x.Header.PoRelNo,
+                x.Header.PoDate,
+                x.Header.Status,
+                x.Header.VendCode,
+                x.Header.VendName,
+                x.Header.Buyer,
+                x.Header.CurCode,
+                x.Line.Line,
+                x.Line.ICode,
+                x.Line.IDesc,
+                x.Line.PoPurQty,
+                x.Line.RecvQty,
+                x.Line.ReturnQty,
+                x.Line.BalanceQty,
+                x.Line.InvoicedQty,
+                x.Line.NetAmount,
+                x.Line.PurchaseUom,
+                x.Line.EtaDate,
+                x.Line.ToWarehouse
+            })
+            .ToListAsync(cancellationToken);
+
+        var rows = projected.Select(x => MapPoOutstandingRow(
+            x.PoNo, x.PoRelNo, x.PoDate, x.Status,
+            x.VendCode, x.VendName, x.Buyer, x.CurCode, x.Line, x.ICode, x.IDesc,
+            x.PoPurQty, x.RecvQty, x.ReturnQty, x.BalanceQty, x.InvoicedQty,
+            x.NetAmount, x.EtaDate, x.PurchaseUom, x.ToWarehouse, asOf)).ToList();
+
+        return IvMasterOperationResult<PoInquiryPage<PoOrderOutstandingRow>>.Ok(
+            new PoInquiryPage<PoOrderOutstandingRow> { Rows = rows, TotalCount = total });
+    }
+
+    public async Task<IvMasterOperationResult<PoDueSoonSummary>> GetPoDueSoonSummaryAsync(
+        string menuCode,
+        PoInquiryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = await GateAsync(menuCode, cancellationToken);
+        if (!gate.Succeeded)
+        {
+            return Fail<PoDueSoonSummary>(gate);
+        }
+
+        var prepared = query ?? new PoInquiryQuery();
+        var asOf = prepared.AsOfDate?.Date ?? DateTime.Today;
+        var untilExclusive = asOf.AddDays(7);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var count = await BuildPoOutstandingSlice(
+                db, gate.CompanyCode!, gate.BranchCode!, prepared, applyPreset: false)
+            .Where(x => x.Line.BalanceQty > 0m
+                && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date >= asOf
+                && x.Line.EtaDate.Value.Date < untilExclusive)
+            .CountAsync(cancellationToken);
+
+        return IvMasterOperationResult<PoDueSoonSummary>.Ok(new PoDueSoonSummary
+        {
+            DueSoonLineCount = count
         });
     }
 
@@ -233,11 +385,36 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
         return preset switch
         {
             PoInquiryWorkbenchPresets.Overdue => slice.Where(x =>
-                x.Line.BalanceQty > 0m && x.Line.EtaDate != null && x.Line.EtaDate < asOf),
+                x.Line.BalanceQty > 0m && x.Line.EtaDate != null && x.Line.EtaDate.Value.Date < asOf),
             PoInquiryWorkbenchPresets.Partial => slice.Where(x =>
                 x.Line.BalanceQty > 0m && x.Line.RecvQty > 0m),
             PoInquiryWorkbenchPresets.Unbilled => slice.Where(x =>
                 (x.Line.RecvQty - x.Line.ReturnQty - x.Line.InvoicedQty) > 0m),
+            PoInquiryWorkbenchPresets.DueNext7Days => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date >= asOf && x.Line.EtaDate.Value.Date < asOf.AddDays(7)),
+            PoInquiryWorkbenchPresets.DueNext14Days => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date >= asOf && x.Line.EtaDate.Value.Date < asOf.AddDays(14)),
+            PoInquiryWorkbenchPresets.NoEta => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate == null),
+            PoInquiryWorkbenchPresets.AgeNotDue => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue && x.Line.EtaDate.Value.Date >= asOf),
+            PoInquiryWorkbenchPresets.Age1To7 => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date < asOf && x.Line.EtaDate.Value.Date >= asOf.AddDays(-7)),
+            PoInquiryWorkbenchPresets.Age8To14 => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date < asOf.AddDays(-7) && x.Line.EtaDate.Value.Date >= asOf.AddDays(-14)),
+            PoInquiryWorkbenchPresets.Age15To30 => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date < asOf.AddDays(-14) && x.Line.EtaDate.Value.Date >= asOf.AddDays(-30)),
+            PoInquiryWorkbenchPresets.Age31To60 => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date < asOf.AddDays(-30) && x.Line.EtaDate.Value.Date >= asOf.AddDays(-60)),
+            PoInquiryWorkbenchPresets.AgeOver60 => slice.Where(x =>
+                x.Line.BalanceQty > 0m && x.Line.EtaDate.HasValue
+                && x.Line.EtaDate.Value.Date < asOf.AddDays(-60)),
             _ => slice.Where(x => x.Line.BalanceQty > 0m)
         };
     }
@@ -250,10 +427,10 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
 
     private static PoOrderOutstandingRow MapPoOutstandingRow(
         string poNo, short poRelNo, DateTime? poDate, string? status,
-        string? vendCode, string? vendName, string? buyer, short line,
+        string? vendCode, string? vendName, string? buyer, string? currency, short line,
         string? iCode, string? iDesc, decimal poPurQty, decimal recvQty, decimal returnQty,
         decimal balanceQty, decimal invoicedQty, decimal netAmount, DateTime? etaDate,
-        string? toWarehouse, DateTime asOf)
+        string? purchaseUom, string? toWarehouse, DateTime asOf)
     {
         var invoiceable = PoOrderCalc.ComputeInvoiceable(recvQty, returnQty, invoicedQty);
         var outstandingValue = poPurQty > 0m
@@ -280,10 +457,13 @@ public sealed partial class PoPurchaseInquiryService : IPoPurchaseInquiryService
             PoPurQty = poPurQty,
             RecvQty = recvQty,
             ReturnQty = returnQty,
+            NetReceivedQty = PoOrderCalc.ComputeNetReceived(recvQty, returnQty),
             BalanceQty = balanceQty,
             InvoicedQty = invoicedQty,
             InvoiceableQty = invoiceable,
             OutstandingValue = outstandingValue,
+            Currency = currency,
+            PurchaseUom = purchaseUom,
             EtaDate = etaDate,
             DaysOverdue = daysOverdue,
             ToWarehouse = toWarehouse

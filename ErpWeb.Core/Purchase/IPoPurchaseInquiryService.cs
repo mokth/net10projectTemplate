@@ -14,6 +14,12 @@ public interface IPoPurchaseInquiryService
     Task<IvMasterOperationResult<PoOrderOutstandingSummary>> GetPoOutstandingSummaryAsync(
         string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
 
+    Task<IvMasterOperationResult<PoInquiryPage<PoOrderOutstandingRow>>> GetPoDueSoonAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<PoDueSoonSummary>> GetPoDueSoonSummaryAsync(
+        string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
+
     Task<IvMasterOperationResult<PoInquiryPage<PoPrStatusRow>>> GetPrStatusAsync(
         string menuCode, PoInquiryQuery query, CancellationToken cancellationToken = default);
 

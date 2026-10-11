@@ -39,16 +39,44 @@
                             @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.Partial))">
                         Partial: @(SummaryLoading ? "…" : Summary.PartialLineCount.ToString("N0"))
                     </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.DueNext7Days)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.DueNext7Days))">
+                        Due next 7 days: @(SummaryLoading ? "…" : Summary.DueSoonLineCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.DueNext14Days)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.DueNext14Days))">
+                        Due next 14 days: @(SummaryLoading ? "…" : Summary.DueNext14DaysLineCount.ToString("N0"))
+                    </button>
+                    <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.NoEta)"
+                            @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.NoEta))">
+                        No ETA: @(SummaryLoading ? "…" : Summary.NoEtaLineCount.ToString("N0"))
+                    </button>
                     <button type="button" class="@ChipClass(PoInquiryWorkbenchPresets.Unbilled)"
                             @onclick="@(() => OnPresetClick(PoInquiryWorkbenchPresets.Unbilled))">
                         Unbilled: @(SummaryLoading ? "…" : Summary.UnbilledLineCount.ToString("N0"))
                     </button>
-                    <span class="iv-chip">
-                        Outstanding: @(SummaryLoading ? "…" : Summary.OutstandingValue.ToString("N2"))
-                    </span>
+                    @foreach (var values in Summary.CurrencyValues)
+                    {
+                        <span class="iv-chip">Outstanding net (@values.Currency): @(SummaryLoading ? "…" : values.OutstandingValue.ToString("N2"))</span>
+                        <span class="iv-chip">Overdue net (@values.Currency): @(SummaryLoading ? "…" : values.OverdueValue.ToString("N2"))</span>
+                    }
+                    @if (Summary.CurrencylessValueLineCount > 0)
+                    {
+                        <span class="iv-chip">Value omitted for missing currency: @Summary.CurrencylessValueLineCount.ToString("N0") lines</span>
+                    }
                     @if (!string.IsNullOrWhiteSpace(ScopeBranchCode))
                     {
                         <span class="iv-chip">Branch: @ScopeBranchCode</span>
+                    }
+                </div>
+                <div class="iv-chips" aria-label="Outstanding ageing">
+                    <span class="iv-chip">Ageing:</span>
+                    @foreach (var bucket in AgeingOptions)
+                    {
+                        <button type="button" class="@ChipClass(bucket.Key)"
+                                @onclick="@(() => OnPresetClick(bucket.Key))">
+                            @bucket.Name
+                        </button>
                     }
                 </div>
             </div>
@@ -83,7 +111,7 @@
                                       Columns="@Columns"
                                       Buttons="@Buttons"
                                       ActionButtons="@ActionButtons"
-                                      KeyName="@nameof(PoOrderOutstandingRow.PoNo)"
+                                      KeyName="@nameof(PoOrderOutstandingRow.RowKey)"
                                       GridKey="po-order-outstanding"
                                       Title="Purchase order outstanding"
                                       CustomDataSource="@DataSource"
@@ -105,12 +133,17 @@
                         <span class="iv-chip">@SelectedRow.PoNo / @SelectedRow.PoRelNo line @SelectedRow.Line</span>
                         <span class="iv-chip">Ordered: @SelectedRow.PoPurQty.ToString("N4")</span>
                         <span class="iv-chip">Received: @SelectedRow.RecvQty.ToString("N4")</span>
+                        <span class="iv-chip">Net received: @SelectedRow.NetReceivedQty.ToString("N4") @SelectedRow.PurchaseUom</span>
                         <span class="iv-chip">Balance: @SelectedRow.BalanceQty.ToString("N4")</span>
                         <span class="iv-chip">Invoiceable: @SelectedRow.InvoiceableQty.ToString("N4")</span>
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                                   Text="OPEN"
                                   IconCssClass="fa-solid fa-up-right-from-square"
                                   Click="@OpenSelected" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="RECEIPTS"
+                                  IconCssClass="fa-solid fa-list"
+                                  Click="@OpenReceiptsAsync" />
                     </div>
                 }
             }
@@ -118,7 +151,8 @@
 
         <p class="iv-subtitle">
             Balance quantity is the persisted outstanding quantity maintained by the document engine —
-            it is shown, never recomputed. Cancelled orders never appear here. Click a chip to focus exceptions.
+            it is shown, never recomputed. Outstanding values use PO net amounts and remain grouped by currency.
+            Ageing is measured from ETA; no-ETA lines remain available in the operational inquiry.
         </p>
     </div>
 
@@ -175,6 +209,66 @@
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="Apply"
                               Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="@ReceiptPopupTitle"
+             CloseOnOutsideClick="true"
+             Width="900px"
+             CssClass="common-popup"
+             @bind-Visible="@ReceiptPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                @if (ReceiptLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line"></div></div>
+                }
+                else if (ReceiptRows.Count == 0)
+                {
+                    <p class="iv-subtitle">No posted GR/NG receipts on or before AsOf.</p>
+                }
+                else
+                {
+                    <DxGrid Data="@ReceiptRows"
+                            PageSize="20"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.BatchNo)"
+                                              Caption="GR batch"
+                                              Width="145px"
+                                              MinWidth="125">
+                                <CellDisplayTemplate Context="receiptContext">
+                                    @{
+                                        var receipt = (PoDeliveryPerformanceReceiptRow)receiptContext.DataItem;
+                                    }
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                              Text="@receipt.BatchNo.ToString()"
+                                              title="Open goods receipt"
+                                              Click="@(() => OpenSelectedGr(receipt.BatchNo))" />
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.TrxDtTime)" Caption="GR date" DisplayFormat="dd/MM/yyyy" Width="120px" MinWidth="105" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.Qty)" Caption="Received qty" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.CumulativeQty)" Caption="Cumulative" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.RemainingQty)" Caption="Remaining" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.DaysVsEta)" Caption="Days vs ETA" Width="120px" MinWidth="105" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.OnTimeOrLate)" Caption="Timing" Width="110px" MinWidth="95" />
+                        </Columns>
+                    </DxGrid>
+                }
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@(() => ReceiptPopupVisible = false)" />
                 </div>
             </div>
         </Content>

@@ -241,6 +241,9 @@ public static class MenuCodes
     public const string PurchasePriceHistory = "PO_PRICE_HISTORY";
     public const string PurchaseMatching = "PO_MATCHING";
     public const string PurchaseDeliveryPerformance = "PO_DELIVERY_PERF";
+    public const string PurchaseWorkbench = "PO_WORKBENCH";
+    public const string PurchaseKpi = "PO_PROC_KPI";
+    public const string PurchaseDeliveryFollowUp = "PO_DELIVERY_FOLLOWUP";
 
     public const string Planning = "PLANNING";
     public const string PlanningMaster = "PLN_MASTER";

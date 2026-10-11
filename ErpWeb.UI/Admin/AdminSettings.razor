@@ -111,7 +111,7 @@
                     <article class="as-setting @(row.IsReadOnly ? "as-setting--readonly" : null) @(row.RejectedReason is not null ? "as-setting--warn" : null)">
                         <div class="as-setting__main">
                             <div class="as-setting__title-row">
-                                <h3 class="as-setting__title">@KeyTitle(row.Key)</h3>
+                                <h3 class="as-setting__title">@(row.DisplayName ?? KeyTitle(row.Key))</h3>
                                 <code class="as-setting__key">@row.Key</code>
                             </div>
                             <p class="as-setting__desc">@(row.Description ?? "No description.")</p>
@@ -183,7 +183,7 @@
 @if (EditRow is not null)
 {
     <DxPopup HeaderCssClass="code-style"
-             HeaderText="@($"{KeyTitle(EditRow.Key)} — {ModuleLabel(EditRow.Module)}")"
+             HeaderText="@($"{EditRow.DisplayName ?? KeyTitle(EditRow.Key)} — {ModuleLabel(EditRow.Module)}")"
              CloseOnOutsideClick="false"
              Width="520px"
              CssClass="common-popup"

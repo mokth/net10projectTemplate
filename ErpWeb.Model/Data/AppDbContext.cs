@@ -181,6 +181,7 @@ public class AppDbContext : DbContext
 
     public DbSet<PoOrder> PoOrders => Set<PoOrder>();
     public DbSet<PoOrderDetail> PoOrderDetails => Set<PoOrderDetail>();
+    public DbSet<PoDeliveryFollowUp> PoDeliveryFollowUps => Set<PoDeliveryFollowUp>();
     public DbSet<PoPr> PoPrs => Set<PoPr>();
     public DbSet<PoPrDetail> PoPrDetails => Set<PoPrDetail>();
     public DbSet<PoInvoice> PoInvoices => Set<PoInvoice>();

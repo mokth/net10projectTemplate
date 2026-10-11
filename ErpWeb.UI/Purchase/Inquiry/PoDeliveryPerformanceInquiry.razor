@@ -89,7 +89,7 @@
                                       Columns="@LineColumns"
                                       Buttons="@Buttons"
                                       ActionButtons="@ActionButtons"
-                                      KeyName="@nameof(PoDeliveryPerformanceLineRow.PoNo)"
+                                      KeyName="@nameof(PoDeliveryPerformanceLineRow.RowKey)"
                                       GridKey="po-delivery-performance-lines"
                                       Title="PO line delivery performance"
                                       CustomDataSource="@LineDataSource"
@@ -123,6 +123,13 @@
                                   Text="RECEIPTS"
                                   IconCssClass="fa-solid fa-list"
                                   Click="@OpenReceiptsAsync" />
+                        @if (CanReadFollowUp)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="FOLLOW UP"
+                                      IconCssClass="fa-solid fa-phone"
+                                      Click="@OpenFollowUpAsync" />
+                        }
                     </div>
                 }
 
@@ -143,6 +150,7 @@
                                       ShowFilterRow="false"
                                       ShowGroupPanel="false"
                                       allowSelect="false"
+                                      OnGridInstance="@OnSummaryGridInstance"
                                       OnButtonEventHandle="@OnSummaryButtonClick"
                                       OnActionEventHandle="@OnSummaryActionClick" />
                 </div>
@@ -150,9 +158,9 @@
         </section>
 
         <p class="iv-subtitle">
-            Complete-delivery OTIF uses posted GR/NG chronology clipped by AsOf.
-            Open/complete uses current PO quantities (BalanceQty / NetReceived).
-            Partial overdue lines show PARTIALLY_RECEIVED with Days late &gt; 0.
+            Supplier KPIs use commitments due within the selected ETA period. OTIF uses posted GR/NG
+            chronology clipped by AsOf; In-Full uses current persisted BalanceQty. Use the row actions
+            to show the exact PO lines behind each KPI. The line grid can also browse by PO date.
         </p>
     </div>
 
@@ -176,6 +184,15 @@
                             <DxDateEdit @bind-Date="@DraftDateTo"
                                         DisplayFormat="dd/MM/yyyy"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Line date basis" ColSpanMd="6">
+                        <Template>
+                            <DxComboBox Data="@DeliveryDateBasisOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftDeliveryDateBasis"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Item" ColSpanMd="6">
@@ -210,8 +227,9 @@
                     </DxFormLayoutItem>
                 </DxFormLayout>
                 <p class="iv-popup-hint">
-                    Date filter applies to <strong>PO date</strong>. Preset and delivery status filters are ANDed.
-                    Empty field = all.
+                    The supplier KPI summary always uses ETA / due date for this range. This selector
+                    controls the line grid only; choose PO date to browse order activity. Preset and
+                    delivery status filters are ANDed.
                 </p>
             </div>
             <div class="iv-popup-footer">
@@ -248,28 +266,138 @@
                 {
                     <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@ReceiptRows" PageSize="20" ShowFilterRow="false" TextWrapEnabled="false">
                         <Columns>
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.BatchNo)" Caption="GRN" Width="90px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.TrxDtTime)" Caption="Date" DisplayFormat="dd/MM/yyyy" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.Qty)" Caption="Qty" DisplayFormat="n4" Width="100px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.CumulativeQty)" Caption="Cumulative" DisplayFormat="n4" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.RemainingQty)" Caption="Remaining" DisplayFormat="n4" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.DaysVsEta)" Caption="Days vs ETA" Width="110px" />
-                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.OnTimeOrLate)" Caption="Vs ETA" Width="100px" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.BatchNo)" Caption="GR batch" Width="145px" MinWidth="125">
+                                <CellDisplayTemplate Context="receiptContext">
+                                    @{
+                                        var receipt = (PoDeliveryPerformanceReceiptRow)receiptContext.DataItem;
+                                    }
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                              Text="@receipt.BatchNo.ToString()"
+                                              title="Open goods receipt"
+                                              Click="@(() => OpenSelectedGr(receipt.BatchNo))" />
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.TrxDtTime)" Caption="Date" DisplayFormat="dd/MM/yyyy" Width="120px" MinWidth="105" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.Qty)" Caption="Received qty" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.CumulativeQty)" Caption="Cumulative" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.RemainingQty)" Caption="Remaining" DisplayFormat="n4" Width="130px" MinWidth="110" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.DaysVsEta)" Caption="Days vs ETA" Width="120px" MinWidth="105" />
+                            <DxGridDataColumn FieldName="@nameof(PoDeliveryPerformanceReceiptRow.OnTimeOrLate)" Caption="Vs ETA" Width="110px" MinWidth="95" />
                         </Columns>
                     </DxGrid>
                 }
             </div>
             <div class="iv-popup-footer">
                 <div class="iv-popup-footer__actions">
-                    @if (SelectedLine?.SingleBatchNo is int batchNo)
-                    {
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="OPEN GR"
-                                  Click="@(() => OpenSelectedGr(batchNo))" />
-                    }
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
                               Text="Close"
                               Click="@(() => ReceiptPopupVisible = false)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Supplier delivery follow-up"
+             CloseOnOutsideClick="false"
+             Width="760px"
+             CssClass="common-popup"
+             @bind-Visible="FollowUpPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                @if (SelectedLine is not null)
+                {
+                    <div class="iv-chips">
+                        <span class="iv-chip">@SelectedLine.PoNo / rev @SelectedLine.PoRelNo / line @SelectedLine.Line</span>
+                        <span class="iv-chip">Supplier: @(SelectedLine.SuppCode ?? "—")</span>
+                        <span class="iv-chip">PO ETA (current revision): @(SelectedLine.EtaDate?.ToString("dd/MM/yyyy") ?? "Not set")</span>
+                        <span class="iv-chip">Outstanding: @SelectedLine.BalanceQty.ToString("N4")</span>
+                    </div>
+                }
+                <p class="iv-popup-hint">
+                    The contact time and user are recorded by the server. Supplier-stated dates do not change the PO ETA.
+                    Resolved closes this follow-up task only.
+                </p>
+
+                @if (CanAddFollowUp)
+                {
+                    <div class="iv-card" style="margin:0.75rem 0">
+                        <div class="row g-2">
+                            <div class="col-md-4">
+                                <label class="form-label" for="followup-outcome">Outcome</label>
+                                <select id="followup-outcome" class="form-select" @bind="FollowUpOutcome">
+                                    @foreach (var outcome in FollowUpOutcomeOptions)
+                                    {
+                                        <option value="@outcome">@outcome</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Supplier-stated date</label>
+                                <DxDateEdit @bind-Date="SupplierStatedDate"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Next follow-up date</label>
+                                <DxDateEdit @bind-Date="NextFollowUpDate"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label" for="followup-note">Note</label>
+                                <textarea id="followup-note" class="form-control" rows="3" maxlength="500"
+                                          @bind="FollowUpNote"></textarea>
+                            </div>
+                        </div>
+                        <div class="iv-popup-footer__actions" style="margin-top:0.75rem">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(FollowUpSaving ? "SAVING…" : "SAVE FOLLOW-UP")"
+                                      Enabled="@(!FollowUpSaving)"
+                                      Click="@SaveFollowUpAsync" />
+                        </div>
+                    </div>
+                }
+
+                <h2 class="iv-subtitle">History · latest first</h2>
+                @if (FollowUpLoading)
+                {
+                    <div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line"></div></div>
+                }
+                else if (FollowUpRows.Count == 0)
+                {
+                    <p class="iv-subtitle">No follow-up entries recorded for this PO revision and line.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead><tr><th>Contacted (UTC)</th><th>Outcome</th><th>Supplier date</th><th>Next action</th><th>By</th></tr></thead>
+                            <tbody>
+                                @foreach (var row in FollowUpRows)
+                                {
+                                    <tr>
+                                        <td>@row.ContactAtUtc.ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td>@row.Outcome</td>
+                                        <td>@(row.SupplierStatedDate?.ToString("dd/MM/yyyy") ?? "—")</td>
+                                        <td>@(row.NextFollowUpDate?.ToString("dd/MM/yyyy") ?? "—")</td>
+                                        <td>@row.CreatedBy</td>
+                                    </tr>
+                                    @if (!string.IsNullOrWhiteSpace(row.Note))
+                                    {
+                                        <tr><td colspan="5" class="text-wrap">@row.Note</td></tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Close"
+                              Click="@(() => FollowUpPopupVisible = false)" />
                 </div>
             </div>
         </Content>

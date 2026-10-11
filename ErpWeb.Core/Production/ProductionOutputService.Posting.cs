@@ -32,6 +32,7 @@ public sealed partial class ProductionOutputService
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
+            var wipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy);
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
@@ -219,9 +220,17 @@ public sealed partial class ProductionOutputService
                 {
                     if (material.ProducingRouteStepId is null)
                         return Fail($"Material {material.ComponentCode} has no producing route step.");
-                    lots = await LockBalLotsAsync(db, scope.CompanyCode, scope.BranchCode!,
-                        ProductionBalLotKinds.Wip, order.Uid, material.ProducingRouteStepId, material.ComponentCode,
-                        cancellationToken);
+                    if (wipConsumptionPolicy == ProductionWipConsumptionPolicies.SharedBomWip)
+                    {
+                        lots = await LockEligibleSharedBomWipLotsAsync(
+                            db, scope, routeStep, material, output.ProductionDate, cancellationToken);
+                    }
+                    else
+                    {
+                        lots = await LockBalLotsAsync(db, scope.CompanyCode, scope.BranchCode!,
+                            ProductionBalLotKinds.Wip, order.Uid, material.ProducingRouteStepId, material.ComponentCode,
+                            cancellationToken);
+                    }
                 }
                 else if (string.Equals(material.IssueMethod, PrMaterialIssueMethods.Manual, StringComparison.OrdinalIgnoreCase)
                          && (material.SupplySource is PrMaterialSupplySources.Purchased or PrMaterialSupplySources.ExternalSupply))
@@ -265,7 +274,10 @@ public sealed partial class ProductionOutputService
                 }
 
                 if (remainingBase > 0m)
-                    return Fail($"Insufficient production balance for {material.ComponentCode}.");
+                    return Fail(wipConsumptionPolicy == ProductionWipConsumptionPolicies.SharedBomWip
+                        && string.Equals(material.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase)
+                            ? $"Insufficient eligible shared BOM WIP for {material.ComponentCode} at this production location and date."
+                            : $"Insufficient production balance for {material.ComponentCode}.");
             }
 
             var consumedLots = consumeFacts
@@ -624,6 +636,7 @@ public sealed partial class ProductionOutputService
                 output.Uid, output.DocumentNo, output.SnapshotRevision,
                 output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty,
                 output.OutputItemCode, output.OutputUom, output.OutputLotNo,
+                WipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy),
                 effectiveAt, reversal, reversesPostingId
             },
             new { output.WorkOrderId, output.WorkOrderOperationId, output.RouteStepId });

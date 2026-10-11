@@ -54,6 +54,7 @@ public static class AppSettingCatalogue
     public static class ProductionKeys
     {
         public const string AllowPartialCompletion = "ALLOW_PARTIAL_COMPLETION";
+        public const string WipConsumptionPolicy = "WIP_CONSUMPTION_POLICY";
     }
 
     public static class QaKeys
@@ -167,6 +168,16 @@ public static class AppSettingCatalogue
         "false",
         Description: "Reserved for the production module.");
 
+    public static readonly AppSettingDefinition ProductionWipConsumptionPolicy = new(
+        AppSettingModules.Production,
+        ProductionKeys.WipConsumptionPolicy,
+        AppSettingType.Token,
+        AppSettingScope.Company,
+        "STRICT",
+        ["STRICT", "SHARED_BOM_WIP"],
+        Description: "STRICT uses this Work Order's route-step WIP. SHARED_BOM_WIP allows eligible stocked BOM WIP from the same company, branch, and production location.",
+        DisplayName: "WIP Consumption Source");
+
     public static readonly AppSettingDefinition QaRequireInspectionOnReceipt = new(
         AppSettingModules.Qa,
         QaKeys.RequireInspectionOnReceipt,
@@ -194,6 +205,7 @@ public static class AppSettingCatalogue
 
         PlanningAllowCapacityOverride,
         ProductionAllowPartialCompletion,
+        ProductionWipConsumptionPolicy,
         QaRequireInspectionOnReceipt
     ];
 

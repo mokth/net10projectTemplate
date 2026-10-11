@@ -195,6 +195,52 @@
     margin-top: 8px;
 }
 
+.pr-dp-shared-policy,
+.pr-dp-source-note {
+    color: var(--iv-muted);
+    font-size: 0.82rem;
+}
+
+.pr-dp-source-action {
+    margin-inline-start: 8px;
+}
+
+.pr-dp-source-summary,
+.pr-dp-source-origin {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.pr-dp-source-summary {
+    align-items: flex-start;
+    margin-bottom: 8px;
+}
+
+.pr-dp-source-origin small,
+.pr-dp-source-receipts span,
+.pr-dp-source-receipts small {
+    display: block;
+    color: var(--iv-muted);
+    font-size: 0.78rem;
+}
+
+.pr-dp-source-receipts {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.pr-dp-source-receipts li + li {
+    margin-top: 6px;
+}
+
+.pr-dp-source-error {
+    padding: 12px;
+    border: 1px solid var(--danger);
+    border-radius: 6px;
+    color: var(--danger);
+}
+
 .code-style {
     font-family: var(--bs-font-monospace);
     font-weight: 700;

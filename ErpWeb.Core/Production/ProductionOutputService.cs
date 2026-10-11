@@ -8,6 +8,7 @@ using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
+using ErpWeb.Core.Settings;
 
 namespace ErpWeb.Core.Production;
 
@@ -22,6 +23,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly IRunningNumberService _runningNumbers;
     private readonly IStockPostingCoordinator _stockCoordinator;
     private readonly IProductionOperationEligibilityService _operationEligibility;
+    private readonly IAppSettingService? _settings;
     private readonly ProductionAbsorbedCostCalculator _absorbedCostCalculator = new();
 
     public ProductionOutputService(
@@ -31,7 +33,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         ICurrentDateService clock,
         IRunningNumberService runningNumbers,
         IStockPostingCoordinator stockCoordinator,
-        IProductionOperationEligibilityService? operationEligibility = null)
+        IProductionOperationEligibilityService? operationEligibility = null,
+        IAppSettingService? settings = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -40,6 +43,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         _runningNumbers = runningNumbers;
         _stockCoordinator = stockCoordinator ?? throw new ArgumentNullException(nameof(stockCoordinator));
         _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
+        _settings = settings;
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputDetail>> CreateAsync(
@@ -75,6 +79,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 await tx.CommitAsync(cancellationToken);
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
             }
+
+        var wipConsumptionPolicy = await ResolveWipConsumptionPolicyAsync(scope.CompanyCode, cancellationToken);
 
         var operation = await LoadOperationGraphAsync(db, scope, request.WorkOrderOperationId, cancellationToken);
         if (operation is null)
@@ -124,6 +130,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             BranchCode = scope.BranchCode!,
             DocumentNo = documentNo,
             Status = ProductionOutputStatuses.New,
+            WipConsumptionPolicy = wipConsumptionPolicy,
             WorkOrderId = order.Uid,
             RouteStepId = routeStep.Uid,
             WorkOrderOperationId = operation.Uid,
@@ -353,6 +360,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 Uid = x.Uid,
                 DocumentNo = x.DocumentNo,
                 Status = x.Status,
+                WipConsumptionPolicy = x.WipConsumptionPolicy,
                 WorkOrderNo = db.ProductionWorkOrders.Where(w => w.Uid == x.WorkOrderId).Select(w => w.WorkOrderNo).FirstOrDefault() ?? "",
                 OperationCode = db.ProductionWorkOrderOperations.Where(o => o.Uid == x.WorkOrderOperationId).Select(o => o.OperationCode).FirstOrDefault() ?? "",
                 ProductionDate = x.ProductionDate,
@@ -537,6 +545,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 DocumentNo = x.DocumentNo,
                 Status = x.Status,
                 WorkOrderId = x.WorkOrderId,
+                WipConsumptionPolicy = x.WipConsumptionPolicy,
                 ProductCode = db.ProductionWorkOrders
                     .Where(w => w.Uid == x.WorkOrderId && w.CompanyCode == scope.CompanyCode && w.BranchCode == scope.BranchCode)
                     .Select(w => w.ProductCode).FirstOrDefault() ?? "",

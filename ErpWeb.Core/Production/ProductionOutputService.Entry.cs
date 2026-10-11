@@ -226,10 +226,13 @@ public sealed partial class ProductionOutputService
             return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
                 IvMasterErrorCode.Validation, sequence.BlockingReason!);
 
+        var wipConsumptionPolicy = await ResolveWipConsumptionPolicyAsync(scope.CompanyCode, cancellationToken);
         return IvMasterOperationResult<ProductionOutputWorkspace>.Ok(
             await BuildWorkspaceAsync(
                 db, scope, operation, productionDate ?? DateTime.Today, processedOverride: null,
-                savedFacts: null, historical: false, cancellationToken));
+                savedFacts: null, historical: false,
+                wipConsumptionPolicy: wipConsumptionPolicy,
+                cancellationToken: cancellationToken));
     }
 
     public async Task<IvMasterOperationResult<ProductionOutputWorkspace>> GetDocumentWorkspaceAsync(
@@ -276,7 +279,8 @@ public sealed partial class ProductionOutputService
                     output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty),
                 savedFacts: output.Materials.ToList(),
                 historical: historical,
-                cancellationToken));
+                wipConsumptionPolicy: ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy),
+                cancellationToken: cancellationToken));
     }
 
     private static IQueryable<ProductionWorkOrderOperation> EligibleOperationsQuery(
@@ -412,6 +416,7 @@ public sealed partial class ProductionOutputService
         decimal? processedOverride,
         IReadOnlyList<ProductionOutputMaterial>? savedFacts,
         bool historical,
+        string wipConsumptionPolicy,
         CancellationToken cancellationToken)
     {
         var processed = processedOverride
@@ -421,7 +426,11 @@ public sealed partial class ProductionOutputService
         {
             var blocking = ProductionOutputMaterialSupport.BlockingReason(material);
             var available = blocking is null
-                ? await AvailableQtyAsync(db, scope, material, productionDate, cancellationToken)
+                ? string.Equals(material.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase)
+                    && wipConsumptionPolicy == ProductionWipConsumptionPolicies.SharedBomWip
+                        ? await AvailableSharedBomWipQtyAsync(
+                            db, scope, operation.RouteStep!, material, productionDate, cancellationToken)
+                        : await AvailableQtyAsync(db, scope, material, productionDate, cancellationToken)
                 : 0m;
             var saved = savedFacts?.FirstOrDefault(x => x.WorkOrderMaterialId == material.Uid);
             var standard = historical && saved is not null
@@ -485,6 +494,7 @@ public sealed partial class ProductionOutputService
         var selectedMachine = SelectedMachine(operation);
         return new ProductionOutputWorkspace
         {
+            WipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(wipConsumptionPolicy),
             Operation = new ProductionEligibleOperationRow
             {
                 WorkOrderOperationId = operation.Uid,

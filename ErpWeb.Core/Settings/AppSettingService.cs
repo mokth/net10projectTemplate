@@ -756,6 +756,7 @@ public sealed class AppSettingService : IAppSettingService
             AllowedScopes = definition.AllowedScopes,
             DefaultValue = definition.DefaultValue,
             Description = definition.Description,
+            DisplayName = definition.DisplayName,
             AllowedTokens = definition.AllowedTokens ?? [],
             IsReadOnly = definition.Backing == AppSettingBacking.ExistingColumn,
             Value = resolution.Value,

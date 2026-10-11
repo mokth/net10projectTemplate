@@ -72,6 +72,7 @@ public enum AppSettingBacking
 /// reported as rejected rather than silently corrected.
 /// </param>
 /// <param name="Description">Shown on the admin screen so an operator can tell what a key affects.</param>
+/// <param name="DisplayName">Optional admin-screen label. When omitted, the key is formatted for display.</param>
 public sealed record AppSettingDefinition(
     string Module,
     string Key,
@@ -81,7 +82,8 @@ public sealed record AppSettingDefinition(
     IReadOnlyList<string>? AllowedTokens = null,
     AppSettingBacking Backing = AppSettingBacking.Registry,
     Func<string?, string?>? Normalize = null,
-    string? Description = null)
+    string? Description = null,
+    string? DisplayName = null)
 {
     /// <summary>
     /// Case-insensitive composite key used for catalogue lookups. Values are persisted with whatever

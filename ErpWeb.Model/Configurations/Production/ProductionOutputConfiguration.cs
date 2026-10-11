@@ -14,6 +14,8 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
                 "[Status] IN ('NEW', 'POSTED', 'REVERSED')");
             table.HasCheckConstraint("CK_PrProductionOutput_Qty",
                 "[GoodQty] >= 0 AND [ScrapQty] >= 0 AND [RejectQty] >= 0 AND [HoldQty] >= 0");
+            table.HasCheckConstraint("CK_PrProductionOutput_WipConsumptionPolicy",
+                "[WipConsumptionPolicy] IN ('STRICT', 'SHARED_BOM_WIP')");
         });
 
         builder.HasKey(x => x.Uid);
@@ -22,6 +24,8 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.DocumentNo).HasMaxLength(30).IsRequired();
         builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.WipConsumptionPolicy).HasMaxLength(30).IsRequired()
+            .HasDefaultValue(ProductionWipConsumptionPolicies.Strict);
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.RouteStepId).HasColumnName("RouteStepID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");

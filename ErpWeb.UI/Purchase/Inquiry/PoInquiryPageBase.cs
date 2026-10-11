@@ -51,6 +51,8 @@ public abstract class PoInquiryPageBase : PageBase
     protected string? DraftItemCode { get; set; }
     protected string? DraftCurrency { get; set; }
     protected string? DraftWarehouse { get; set; }
+    protected string? DeliveryDateBasis { get; set; }
+    protected string? DraftDeliveryDateBasis { get; set; }
 
     protected bool FilterPopupVisible { get; set; }
 
@@ -110,6 +112,7 @@ public abstract class PoInquiryPageBase : PageBase
         ItemCode = Clean(ItemCode),
         Currency = Clean(Currency),
         Warehouse = Clean(Warehouse),
+        DeliveryDateBasis = Clean(DeliveryDateBasis),
         WorkbenchPreset = Clean(WorkbenchPreset),
         AsOfDate = Dates.Now.Date
     };
@@ -130,6 +133,7 @@ public abstract class PoInquiryPageBase : PageBase
         DraftItemCode = ItemCode;
         DraftCurrency = Currency;
         DraftWarehouse = Warehouse;
+        DraftDeliveryDateBasis = DeliveryDateBasis;
         FilterPopupVisible = true;
     }
 
@@ -145,6 +149,7 @@ public abstract class PoInquiryPageBase : PageBase
         ItemCode = DraftItemCode;
         Currency = DraftCurrency;
         Warehouse = DraftWarehouse;
+        DeliveryDateBasis = DraftDeliveryDateBasis;
         FilterPopupVisible = false;
         await ReloadAsync();
     }
@@ -162,6 +167,7 @@ public abstract class PoInquiryPageBase : PageBase
         ItemCode = null;
         Currency = null;
         Warehouse = null;
+        DeliveryDateBasis = null;
 
         DraftDateFrom = DateFrom;
         DraftDateTo = DateTo;
@@ -173,6 +179,7 @@ public abstract class PoInquiryPageBase : PageBase
         DraftItemCode = null;
         DraftCurrency = null;
         DraftWarehouse = null;
+        DraftDeliveryDateBasis = null;
 
         FilterPopupVisible = false;
         await ReloadAsync();
@@ -267,6 +274,7 @@ public abstract class PoInquiryPageBase : PageBase
         AddIfSet(parameters, "itemCode", AppliedQuery.ItemCode);
         AddIfSet(parameters, "currency", AppliedQuery.Currency);
         AddIfSet(parameters, "warehouse", AppliedQuery.Warehouse);
+        AddIfSet(parameters, "deliveryDateBasis", AppliedQuery.DeliveryDateBasis);
         AddIfSet(parameters, "workbenchPreset", AppliedQuery.WorkbenchPreset);
         if (AppliedQuery.AsOfDate is DateTime asOf)
         {
@@ -355,6 +363,7 @@ public sealed class PoInquiryGridDataSource<T> : GridCustomDataSource
         ItemCode = source.ItemCode,
         Currency = source.Currency,
         Warehouse = source.Warehouse,
+        DeliveryDateBasis = source.DeliveryDateBasis,
         WorkbenchPreset = source.WorkbenchPreset,
         AsOfDate = source.AsOfDate,
         Skip = source.Skip,

@@ -342,6 +342,8 @@ public static class CoreServiceCollectionExtensions
 
         // Purchase Inquiry — read-only operational grids (plans/Procurement-Inquiry-Assessment.md Phase 1).
         services.AddScoped<IPoPurchaseInquiryService, PoPurchaseInquiryService>();
+        services.AddScoped<IPoDeliveryFollowUpService, PoDeliveryFollowUpService>();
+        services.AddScoped<IPoProcurementKpiService, PoProcurementKpiService>();
 
         // Sales Dashboard (plan-salesReportsAndInquiries.prompt.md Phase 3).
         services.AddScoped<ISaSalesDashboardService, SaSalesDashboardService>();

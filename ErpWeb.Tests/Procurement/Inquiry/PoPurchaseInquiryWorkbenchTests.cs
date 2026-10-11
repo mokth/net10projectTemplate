@@ -112,6 +112,46 @@ public class PoPurchaseInquiryWorkbenchTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DueSoon_SummaryAndRowsShareInclusiveSevenDayWindowAndLatestRevision()
+    {
+        var asOf = new DateTime(2026, 9, 26);
+        await SeedAsync(db =>
+        {
+            db.PoOrders.Add(Po("DUE0", "2026-09-01", PoOrderStatuses.Open));
+            db.PoOrderDetails.Add(PoLine("DUE0", 1, 1, 5m, 5m, etaDate: asOf.AddHours(23)));
+
+            db.PoOrders.Add(Po("DUE7", "2026-09-02", PoOrderStatuses.Open));
+            db.PoOrderDetails.Add(PoLine("DUE7", 1, 1, 5m, 5m, etaDate: asOf.AddDays(7).AddHours(18)));
+
+            db.PoOrders.Add(Po("AFTER", "2026-09-03", PoOrderStatuses.Open));
+            db.PoOrderDetails.Add(PoLine("AFTER", 1, 1, 5m, 5m, etaDate: asOf.AddDays(8)));
+
+            db.PoOrders.Add(Po("NULL", "2026-09-04", PoOrderStatuses.Open));
+            db.PoOrderDetails.Add(PoLine("NULL", 1, 1, 5m, 5m));
+
+            db.PoOrders.Add(Po("CANCEL", "2026-09-05", PoOrderStatuses.Cancelled));
+            db.PoOrderDetails.Add(PoLine("CANCEL", 1, 1, 5m, 5m, etaDate: asOf.AddDays(2)));
+
+            // The earlier revision is due today; only the latest live revision is authoritative.
+            db.PoOrders.Add(Po("REV", "2026-09-06", PoOrderStatuses.Open, rel: 1));
+            db.PoOrderDetails.Add(PoLine("REV", 1, 1, 5m, 5m, etaDate: asOf));
+            db.PoOrders.Add(Po("REV", "2026-09-06", PoOrderStatuses.Open, rel: 2));
+            db.PoOrderDetails.Add(PoLine("REV", 2, 1, 5m, 5m, etaDate: asOf.AddDays(8)));
+        });
+
+        var query = new PoInquiryQuery { AsOfDate = asOf };
+        var service = CreateSut();
+        var summary = await service.GetPoDueSoonSummaryAsync(MenuCodes.PurchaseWorkbench, query);
+        var page = await service.GetPoDueSoonAsync(MenuCodes.PurchaseWorkbench, query);
+
+        Assert.True(summary.Succeeded, summary.Message);
+        Assert.True(page.Succeeded, page.Message);
+        Assert.Equal(2, summary.Data!.DueSoonLineCount);
+        Assert.Equal(summary.Data.DueSoonLineCount, page.Data!.TotalCount);
+        Assert.Equal(new[] { "DUE0", "DUE7" }, page.Data.Rows.Select(x => x.PoNo).OrderBy(x => x));
+    }
+
+    [Fact]
     public async Task PrUnconverted_Preset_And_Summary_And_LinkedPos()
     {
         await SeedAsync(db =>

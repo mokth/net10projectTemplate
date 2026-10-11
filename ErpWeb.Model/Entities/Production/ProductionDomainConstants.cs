@@ -123,6 +123,18 @@ public static class ProductionOutputStatuses
     public const string Reversed = "REVERSED";
 }
 
+/// <summary>Company policy captured on each Daily Production draft.</summary>
+public static class ProductionWipConsumptionPolicies
+{
+    public const string Strict = "STRICT";
+    public const string SharedBomWip = "SHARED_BOM_WIP";
+
+    public static string NormalizeOrStrict(string? value) =>
+        string.Equals(value?.Trim(), SharedBomWip, StringComparison.OrdinalIgnoreCase)
+            ? SharedBomWip
+            : Strict;
+}
+
 /// <summary>Closed-list reasons for Daily Production consume vs standard variance.</summary>
 public static class ProductionMaterialVarianceReasonCodes
 {

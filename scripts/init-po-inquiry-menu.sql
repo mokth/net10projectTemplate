@@ -78,6 +78,20 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_DELIVERY_PERF')
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
         VALUES (N'PO_DELIVERY_PERF', N'Supplier Delivery Performance', @inquiryId, N'/purchase/inquiry/delivery-performance', 10, 0, 1, SYSUTCDATETIME(), N'SEED');
+
+    -- New features remain inactive until their review and UAT gates are complete.
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_WORKBENCH')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'PO_WORKBENCH', N'Procurement Workbench', @inquiryId, N'/purchase/inquiry/workbench', 0, 0, 0, SYSUTCDATETIME(), N'SEED');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_PROC_KPI')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'PO_PROC_KPI', N'Procurement KPI', @inquiryId, N'/purchase/inquiry/kpi', 11, 0, 0, SYSUTCDATETIME(), N'SEED');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Menu WHERE MenuCode = N'PO_DELIVERY_FOLLOWUP')
+        INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
+        VALUES (N'PO_DELIVERY_FOLLOWUP', N'Supplier Delivery Follow-up', @inquiryId,
+                N'/purchase/inquiry/delivery-performance', 12, 0, 0, SYSUTCDATETIME(), N'SEED');
 END
 GO
 
@@ -127,6 +141,26 @@ WHERE m.MenuCode IN (N'PO_ORDER_OUTSTANDING', N'PO_PR_STATUS', N'PO_SUPP_TRX', N
       WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
 GO
 
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode = N'ACCESS'
+WHERE m.MenuCode IN (N'PO_WORKBENCH', N'PO_PROC_KPI')
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+GO
+
+INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
+SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
+FROM dbo.Menu m
+INNER JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS', N'ADD')
+WHERE m.MenuCode = N'PO_DELIVERY_FOLLOWUP'
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.MenuPermission mp
+      WHERE mp.MenuId = m.MenuId AND mp.PermissionId = p.PermissionId);
+GO
+
 SELECT
     MenuCode  = m.MenuCode,
     MenuName  = m.MenuName,
@@ -138,6 +172,7 @@ FROM dbo.Menu m
 LEFT JOIN dbo.Menu parent ON parent.MenuId = m.ParentMenuId
 WHERE m.MenuCode IN (N'PO_INQUIRY', N'PO_ORDER_OUTSTANDING', N'PO_PR_STATUS', N'PO_SUPP_TRX',
                      N'PO_INV_INQUIRY', N'PO_CDN_INQUIRY', N'PO_DOC_REL', N'PO_SB_EINV_INQUIRY',
-                     N'PO_PRICE_HISTORY', N'PO_MATCHING', N'PO_DELIVERY_PERF')
+                     N'PO_PRICE_HISTORY', N'PO_MATCHING', N'PO_DELIVERY_PERF', N'PO_WORKBENCH', N'PO_PROC_KPI',
+                     N'PO_DELIVERY_FOLLOWUP')
 ORDER BY m.MenuCode;
 GO

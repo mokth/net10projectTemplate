@@ -88,6 +88,7 @@ BEGIN
         BranchCode nvarchar(5) NOT NULL,
         DocumentNo nvarchar(30) NOT NULL,
         Status nvarchar(20) NOT NULL,
+        WipConsumptionPolicy nvarchar(30) NOT NULL CONSTRAINT DF_PrProductionOutput_WipConsumptionPolicy DEFAULT (N'STRICT'),
         WorkOrderID bigint NOT NULL,
         RouteStepID bigint NOT NULL,
         WorkOrderOperationID bigint NOT NULL,
@@ -118,11 +119,34 @@ BEGIN
         RowVersion rowversion NOT NULL,
         CONSTRAINT FK_PrProductionOutput_WorkOrder FOREIGN KEY (WorkOrderID) REFERENCES dbo.PrWorkOrder (UID),
         CONSTRAINT CK_PrProductionOutput_Status CHECK ([Status] IN (N'NEW', N'POSTED', N'REVERSED')),
+        CONSTRAINT CK_PrProductionOutput_WipConsumptionPolicy CHECK ([WipConsumptionPolicy] IN (N'STRICT', N'SHARED_BOM_WIP')),
         CONSTRAINT CK_PrProductionOutput_Qty CHECK ([GoodQty] >= 0 AND [ScrapQty] >= 0 AND [RejectQty] >= 0 AND [HoldQty] >= 0)
     );
     CREATE UNIQUE INDEX UQ_PrProductionOutput_DocumentNo ON dbo.PrProductionOutput (CompanyCode, BranchCode, DocumentNo);
     CREATE UNIQUE INDEX UQ_PrProductionOutput_PostingRequest ON dbo.PrProductionOutput (PostingRequestId);
     CREATE INDEX IX_PrProductionOutput_WorkOrder_Date ON dbo.PrProductionOutput (WorkOrderID, ProductionDate);
+END;
+GO
+
+/* Upgrade an existing Daily Production table. Existing and historical rows remain STRICT. */
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'WipConsumptionPolicy') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrProductionOutput
+        ADD WipConsumptionPolicy nvarchar(30) NOT NULL
+            CONSTRAINT DF_PrProductionOutput_WipConsumptionPolicy DEFAULT (N'STRICT') WITH VALUES;
+END;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.check_constraints
+       WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput')
+         AND name = N'CK_PrProductionOutput_WipConsumptionPolicy')
+BEGIN
+    ALTER TABLE dbo.PrProductionOutput WITH CHECK
+        ADD CONSTRAINT CK_PrProductionOutput_WipConsumptionPolicy
+        CHECK ([WipConsumptionPolicy] IN (N'STRICT', N'SHARED_BOM_WIP'));
 END;
 GO
 

@@ -163,6 +163,7 @@ try
     app.MapSaPriceMaintenanceExportEndpoints();
     app.MapSaPriceChangeHistoryExportEndpoints();
     app.MapPoInquiryExportEndpoints();
+    app.MapPoProcurementKpiEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();
     app.MapPoPrAttachmentEndpoints();

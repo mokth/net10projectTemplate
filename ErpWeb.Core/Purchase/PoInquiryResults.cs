@@ -29,6 +29,9 @@ public sealed class PoInquiryQuery
     /// <summary>Warehouse filter — Matching/Delivery use <c>PoOrderDetail.ToWarehouse</c>. Empty = ALL.</summary>
     public string? Warehouse { get; set; }
 
+    /// <summary>Delivery inquiry date filter basis. Defaults to the committed ETA for delivery KPIs.</summary>
+    public string? DeliveryDateBasis { get; set; }
+
     /// <summary>
     /// Workbench exception preset (<see cref="PoInquiryWorkbenchPresets"/>). Applied in the
     /// canonical service pipeline after base filters / ACCESS / revision rules.
@@ -49,6 +52,15 @@ public static class PoInquiryWorkbenchPresets
     public const string Overdue = "OVERDUE";
     public const string Partial = "PARTIAL";
     public const string Unbilled = "UNBILLED";
+    public const string DueNext7Days = "DUE_NEXT_7_DAYS";
+    public const string DueNext14Days = "DUE_NEXT_14_DAYS";
+    public const string NoEta = "NO_ETA";
+    public const string AgeNotDue = "AGE_NOT_DUE";
+    public const string Age1To7 = "AGE_1_7";
+    public const string Age8To14 = "AGE_8_14";
+    public const string Age15To30 = "AGE_15_30";
+    public const string Age31To60 = "AGE_31_60";
+    public const string AgeOver60 = "AGE_OVER_60";
     public const string Unconverted = "UNCONVERTED";
     public const string SbNotSubmitted = "SB_NOT_SUBMITTED";
     public const string SbInvalid = "SB_INVALID";
@@ -65,6 +77,18 @@ public static class PoInquiryWorkbenchPresets
     // Delivery Performance
     public const string LateCompletion = "LATE_COMPLETION";
     public const string OnTimeCompleted = "ON_TIME_COMPLETED";
+    public const string Completed = "COMPLETED";
+    public const string OtifPass = "OTIF_PASS";
+    public const string OtifFail = "OTIF_FAIL";
+    public const string InFull = "IN_FULL";
+    public const string NotInFull = "NOT_IN_FULL";
+}
+
+/// <summary>Supported delivery inquiry date bases.</summary>
+public static class PoDeliveryDateBases
+{
+    public const string Eta = "ETA";
+    public const string PoDate = "PO_DATE";
 }
 
 /// <summary>Delivery Performance inquiry statuses (independent of <see cref="PoOrderStatuses"/>).</summary>
@@ -100,6 +124,7 @@ public sealed class PoInquiryPage<T>
 /// <summary>Latest-revision PO line with persisted quantity rollups (Step 0.5B/C).</summary>
 public sealed class PoOrderOutstandingRow
 {
+    public string RowKey => $"{PoNo}|{PoRelNo}|{Line}";
     public string PoNo { get; set; } = string.Empty;
     public short PoRelNo { get; set; }
     public DateTime? PoDate { get; set; }
@@ -113,6 +138,7 @@ public sealed class PoOrderOutstandingRow
     public decimal PoPurQty { get; set; }
     public decimal RecvQty { get; set; }
     public decimal ReturnQty { get; set; }
+    public decimal NetReceivedQty { get; set; }
     /// <summary>Persisted outstanding delivery qty — shown as-is, never recomputed.</summary>
     public decimal BalanceQty { get; set; }
     public decimal InvoicedQty { get; set; }
@@ -124,6 +150,8 @@ public sealed class PoOrderOutstandingRow
     /// TotAmnt on PO uses Sum(NetAmount+TaxAmount). Do not use BalanceQty*PoUnitPrice.
     /// </summary>
     public decimal OutstandingValue { get; set; }
+    public string? Currency { get; set; }
+    public string? PurchaseUom { get; set; }
     public DateTime? EtaDate { get; set; }
     /// <summary>Days past ETA when overdue; otherwise null.</summary>
     public int? DaysOverdue { get; set; }
@@ -140,7 +168,27 @@ public sealed class PoOrderOutstandingSummary
     public int OverdueLineCount { get; set; }
     public int PartialLineCount { get; set; }
     public int UnbilledLineCount { get; set; }
+    public int DueSoonLineCount { get; set; }
+    public int DueNext14DaysLineCount { get; set; }
+    public int NoEtaLineCount { get; set; }
+    public int CurrencylessValueLineCount { get; set; }
     public decimal OutstandingValue { get; set; }
+    public decimal OverdueValue { get; set; }
+    public IReadOnlyList<PoOutstandingCurrencyValue> CurrencyValues { get; set; } = [];
+}
+
+/// <summary>Outstanding and overdue commercial net values for one PO currency.</summary>
+public sealed class PoOutstandingCurrencyValue
+{
+    public string Currency { get; set; } = string.Empty;
+    public decimal OutstandingValue { get; set; }
+    public decimal OverdueValue { get; set; }
+}
+
+/// <summary>Open PO lines whose current ETA falls within the next seven calendar days.</summary>
+public sealed class PoDueSoonSummary
+{
+    public int DueSoonLineCount { get; set; }
 }
 
 /// <summary>PR line with derived consumption (Step 0.5A — LivePoConsumedForPrAsync semantics).</summary>
@@ -396,6 +444,7 @@ public sealed class PoMatchingSummary
 /// <summary>PO-line delivery performance workbench row.</summary>
 public sealed class PoDeliveryPerformanceLineRow
 {
+    public string RowKey => $"{PoNo}|{PoRelNo}|{Line}";
     public string? SuppCode { get; set; }
     public string? SuppName { get; set; }
     public string PoNo { get; set; } = string.Empty;
@@ -416,6 +465,7 @@ public sealed class PoDeliveryPerformanceLineRow
     public int? DaysLate { get; set; }
     public int? CompletionDaysLate { get; set; }
     public string DeliveryStatus { get; set; } = string.Empty;
+    public string OtifResult { get; set; } = string.Empty;
     public decimal OnTimeReceivedQty { get; set; }
     public decimal LateReceivedQty { get; set; }
     public int GrBatchCount { get; set; }
@@ -430,8 +480,8 @@ public sealed class PoDeliveryPerformanceReceiptRow
     public decimal Qty { get; set; }
     public decimal CumulativeQty { get; set; }
     public decimal RemainingQty { get; set; }
-    public int DaysVsEta { get; set; }
-    public string OnTimeOrLate { get; set; } = string.Empty;
+    public int? DaysVsEta { get; set; }
+    public string? OnTimeOrLate { get; set; }
 }
 
 /// <summary>Supplier-level delivery performance aggregated from filtered line rows.</summary>
@@ -443,11 +493,20 @@ public sealed class PoDeliveryPerformanceRow
     public int PoLinesEvaluated { get; set; }
     public int CompletedLines { get; set; }
     public int PartialLines { get; set; }
+    public int DueLines { get; set; }
+    public int InFullLines { get; set; }
+    public int OtifLines { get; set; }
+    public int OpenOverdueLines { get; set; }
     public decimal OrderedQty { get; set; }
     public decimal ReceivedQty { get; set; }
     public int OnTimeLines { get; set; }
     public int LateLines { get; set; }
     public decimal? OnTimePct { get; set; }
+    public decimal? CompletedOnTimePct { get; set; }
+    public decimal? InFullPct { get; set; }
+    public decimal? OtifPct { get; set; }
     public decimal? AvgDaysLate { get; set; }
     public int? MaxDaysLate { get; set; }
+    public decimal? AvgCompletedDaysLate { get; set; }
+    public int? MaxCompletedDaysLate { get; set; }
 }

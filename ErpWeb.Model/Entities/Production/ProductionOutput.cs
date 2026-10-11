@@ -8,6 +8,8 @@ public class ProductionOutput
     public string BranchCode { get; set; } = string.Empty;
     public string DocumentNo { get; set; } = string.Empty;
     public string Status { get; set; } = ProductionOutputStatuses.New;
+    /// <summary>Consumption source policy fixed when this draft is created; legacy rows default to STRICT.</summary>
+    public string WipConsumptionPolicy { get; set; } = ProductionWipConsumptionPolicies.Strict;
 
     public long WorkOrderId { get; set; }
     public ProductionWorkOrder? WorkOrder { get; set; }

@@ -35,6 +35,10 @@ public static class PoInquiryExportEndpoints
         endpoints.MapGet("/purchase/inquiry/matching/export", ExportMatchingAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceLinesAsync).RequireAuthorization();
         endpoints.MapGet("/purchase/inquiry/delivery-performance/summary/export", ExportDeliveryPerformanceSummaryAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/workbench/pr-export", ExportWorkbenchPrAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/workbench/overdue-export", ExportWorkbenchOverdueAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/workbench/due-export", ExportWorkbenchDueSoonAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/workbench/rni-export", ExportWorkbenchRniAsync).RequireAuthorization();
         return endpoints;
     }
 
@@ -60,7 +64,7 @@ public static class PoInquiryExportEndpoints
         {
             new[] { "PO no.", "Rev", "Date", "Status", "Supplier", "Supplier name", "Buyer",
              "Line", "Item", "Description", "Ordered", "Received", "Returned", "Invoiced", "Invoiceable",
-             "Balance", "Outstanding value", "ETA", "Days overdue", "Warehouse" }
+             "Balance", "Net received", "Purchase UOM", "Outstanding net", "Currency", "ETA", "Days overdue", "Warehouse" }
         };
         rows.AddRange(page.Rows.Select(x => new[]
         {
@@ -80,13 +84,173 @@ public static class PoInquiryExportEndpoints
             Qty(x.InvoicedQty),
             Qty(x.InvoiceableQty),
             Qty(x.BalanceQty),
+            Qty(x.NetReceivedQty),
+            x.PurchaseUom ?? string.Empty,
             Money(x.OutstandingValue),
+            x.Currency ?? string.Empty,
             x.EtaDate is DateTime eta ? Date(eta) : string.Empty,
             x.DaysOverdue?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             x.ToWarehouse ?? string.Empty
         }));
 
         return Csv(rows, "PoOrderOutstanding");
+    }
+
+    private static async Task<IResult> ExportWorkbenchPrAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue<bool>("Features:ProcurementWorkbench"))
+        {
+            return Results.Problem("Procurement Workbench is not enabled.", statusCode: StatusCodes.Status404NotFound);
+        }
+
+        query.WorkbenchPreset = PoInquiryWorkbenchPresets.Unconverted;
+        var result = await inquiry.GetPrStatusAsync(MenuCodes.PurchaseWorkbench, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[] { "PR no.", "Date", "Status", "Requester", "Line", "Item", "Description", "Purchase qty", "Consumed", "Remaining", "Supplier", "Warehouse", "ETA", "Linked POs" }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.PrNo, Date(x.CreateDt), x.HeaderStatus ?? string.Empty, x.Requester ?? string.Empty,
+            x.Line.ToString(CultureInfo.InvariantCulture), x.ICode ?? string.Empty, x.IDesc ?? string.Empty,
+            Qty(x.PurchaseQty), Qty(x.ConsumedQty), Qty(x.RemainingQty), x.VendorCd ?? string.Empty,
+            x.ToWarehouse ?? string.Empty, x.EtaDt is DateTime eta ? Date(eta) : string.Empty,
+            x.LinkedPoNos ?? string.Empty
+        }));
+
+        return Csv(rows, "PoProcurementWorkbenchOpenPr");
+    }
+
+    private static async Task<IResult> ExportWorkbenchOverdueAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue<bool>("Features:ProcurementWorkbench"))
+        {
+            return Results.Problem("Procurement Workbench is not enabled.", statusCode: StatusCodes.Status404NotFound);
+        }
+
+        query.WorkbenchPreset = PoInquiryWorkbenchPresets.Overdue;
+        var result = await inquiry.GetPoOutstandingAsync(MenuCodes.PurchaseWorkbench, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[] { "PO no.", "Revision", "Supplier", "Supplier name", "Buyer", "Line", "Item", "Description", "Balance", "Current revision ETA", "Days overdue", "Warehouse" }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.PoNo, x.PoRelNo.ToString(CultureInfo.InvariantCulture), x.VendCode ?? string.Empty,
+            x.VendName ?? string.Empty, x.Buyer ?? string.Empty, x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty, x.IDesc ?? string.Empty, Qty(x.BalanceQty),
+            x.EtaDate is DateTime eta ? Date(eta) : string.Empty,
+            x.DaysOverdue?.ToString(CultureInfo.InvariantCulture) ?? string.Empty, x.ToWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "PoProcurementWorkbenchOverdue");
+    }
+
+    private static async Task<IResult> ExportWorkbenchDueSoonAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue<bool>("Features:ProcurementWorkbench"))
+        {
+            return Results.Problem("Procurement Workbench is not enabled.", statusCode: StatusCodes.Status404NotFound);
+        }
+
+        var result = await inquiry.GetPoDueSoonAsync(MenuCodes.PurchaseWorkbench, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[] { "PO no.", "Revision", "Supplier", "Supplier name", "Buyer", "Line", "Item", "Description", "Balance", "Current revision ETA", "Warehouse" }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.PoNo, x.PoRelNo.ToString(CultureInfo.InvariantCulture), x.VendCode ?? string.Empty,
+            x.VendName ?? string.Empty, x.Buyer ?? string.Empty, x.Line.ToString(CultureInfo.InvariantCulture),
+            x.ICode ?? string.Empty, x.IDesc ?? string.Empty, Qty(x.BalanceQty),
+            x.EtaDate is DateTime eta ? Date(eta) : string.Empty, x.ToWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "PoProcurementWorkbenchDueSoon");
+    }
+
+    private static async Task<IResult> ExportWorkbenchRniAsync(
+        [AsParameters] PoInquiryQuery query,
+        [FromServices] IPoPurchaseInquiryService inquiry,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue<bool>("Features:ProcurementWorkbench"))
+        {
+            return Results.Problem("Procurement Workbench is not enabled.", statusCode: StatusCodes.Status404NotFound);
+        }
+
+        query.WorkbenchPreset = PoInquiryWorkbenchPresets.ReceivedNotInvoiced;
+        var result = await inquiry.GetPoMatchingAsync(MenuCodes.PurchaseWorkbench, ForExport(query), cancellationToken);
+        if (!result.Succeeded)
+        {
+            return ToProblem(result.ErrorCode, result.Message);
+        }
+
+        var page = result.Data!;
+        if (page.TotalCount > MaxExportRows)
+        {
+            return TooManyRows(page.TotalCount);
+        }
+
+        var rows = new List<string[]>
+        {
+            new[] { "PO no.", "Revision", "Supplier", "Buyer", "Line", "Item", "Description", "Net received", "Invoiceable", "Status", "Current revision ETA", "Warehouse" }
+        };
+        rows.AddRange(page.Rows.Select(x => new[]
+        {
+            x.PoNo, x.PoRelNo.ToString(CultureInfo.InvariantCulture), x.VendCode ?? string.Empty,
+            x.Buyer ?? string.Empty, x.Line.ToString(CultureInfo.InvariantCulture), x.ICode ?? string.Empty,
+            x.IDesc ?? string.Empty, Qty(x.NetReceivedQty), Qty(x.InvoiceableQty), x.MatchingStatus,
+            x.EtaDate is DateTime eta ? Date(eta) : string.Empty, x.ToWarehouse ?? string.Empty
+        }));
+
+        return Csv(rows, "PoProcurementWorkbenchReceivedNotInvoiced");
     }
 
     private static async Task<IResult> ExportPrStatusAsync(
@@ -525,7 +689,7 @@ public static class PoInquiryExportEndpoints
             {
                 "Supplier", "Name", "PO no.", "Rev", "PO date", "Line", "Item", "Description",
                 "PO qty", "Received", "Outstanding", "Expected", "First GRN", "Last GRN", "Fully received",
-                "Days late", "Completion days late", "Delivery status", "On-time qty", "Late qty",
+                "Days late", "Completion days late", "Delivery status", "OTIF result", "On-time qty", "Late qty",
                 "Buyer", "Warehouse"
             }
         };
@@ -549,6 +713,7 @@ public static class PoInquiryExportEndpoints
             x.DaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             x.CompletionDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             x.DeliveryStatus,
+            x.OtifResult,
             Qty(x.OnTimeReceivedQty),
             Qty(x.LateReceivedQty),
             x.Buyer ?? string.Empty,
@@ -585,9 +750,9 @@ public static class PoInquiryExportEndpoints
         {
             new[]
             {
-                "Supplier", "Name", "Purchase orders", "PO lines", "Completed", "Partial",
-                "Ordered qty", "Received qty", "On-time lines", "Late lines", "On-time %",
-                "Avg days late", "Max days late"
+                "Supplier", "Name", "Purchase orders", "Due lines", "OTIF lines", "OTIF %",
+                "In-full lines", "In-full %", "Completed lines", "Completed on-time %",
+                "Open overdue lines", "Avg completed days late", "Max completed days late"
             }
         };
         rows.AddRange(page.Rows.Select(x => new[]
@@ -595,16 +760,16 @@ public static class PoInquiryExportEndpoints
             x.SuppCode ?? string.Empty,
             x.SuppName ?? string.Empty,
             x.PurchaseOrderCount.ToString(CultureInfo.InvariantCulture),
-            x.PoLinesEvaluated.ToString(CultureInfo.InvariantCulture),
+            x.DueLines.ToString(CultureInfo.InvariantCulture),
+            x.OtifLines.ToString(CultureInfo.InvariantCulture),
+            x.OtifPct is decimal otifPct ? Money(otifPct) : string.Empty,
+            x.InFullLines.ToString(CultureInfo.InvariantCulture),
+            x.InFullPct is decimal inFullPct ? Money(inFullPct) : string.Empty,
             x.CompletedLines.ToString(CultureInfo.InvariantCulture),
-            x.PartialLines.ToString(CultureInfo.InvariantCulture),
-            Qty(x.OrderedQty),
-            Qty(x.ReceivedQty),
-            x.OnTimeLines.ToString(CultureInfo.InvariantCulture),
-            x.LateLines.ToString(CultureInfo.InvariantCulture),
-            x.OnTimePct is decimal pct ? Money(pct) : string.Empty,
-            x.AvgDaysLate is decimal avg ? Money(avg) : string.Empty,
-            x.MaxDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty
+            x.CompletedOnTimePct is decimal completedPct ? Money(completedPct) : string.Empty,
+            x.OpenOverdueLines.ToString(CultureInfo.InvariantCulture),
+            x.AvgCompletedDaysLate is decimal avg ? Money(avg) : string.Empty,
+            x.MaxCompletedDaysLate?.ToString(CultureInfo.InvariantCulture) ?? string.Empty
         }));
 
         return Csv(rows, "PoDeliveryPerformanceSummary");

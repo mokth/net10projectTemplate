@@ -1,0 +1,147 @@
+@page "/purchase/inquiry/kpi"
+@inherits PoInquiryPageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Purchase
+@using ErpWeb.UI.Components.Common.DataGrid
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>Procurement KPI</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseKpi">
+    @if (!IsFeatureEnabled)
+    {
+        <div class="iv-page"><div class="iv-toast iv-toast--warn" role="status">Procurement KPI is not enabled yet.</div></div>
+    }
+    else
+    {
+        <div class="iv-page proc-kpi">
+            <header class="iv-hero">
+                <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-chart-column"></i></div>
+                <div class="iv-hero__copy">
+                    <p class="iv-eyebrow">Purchase · Management</p>
+                    <h1 class="iv-title">Procurement KPI</h1>
+                    <div class="iv-chips">
+                        <span class="iv-chip">Branch: @(CurrentUser.BranchCode ?? "Unavailable")</span>
+                        <span class="iv-chip">Period: @(DateFrom?.ToString("dd/MM/yyyy") ?? "—") to @(DateTo?.ToString("dd/MM/yyyy") ?? "—")</span>
+                        <span class="iv-chip">As of: @AsOfDate.ToString("dd/MM/yyyy")</span>
+                        @if (LastRefreshed is DateTime refreshed)
+                        {
+                            <span class="iv-chip">Refreshed: @refreshed.ToString("dd/MM/yyyy HH:mm")</span>
+                        }
+                    </div>
+                </div>
+            </header>
+
+            <section class="iv-card proc-kpi-filters">
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg-2 col-md-4"><label class="form-label">Date from</label><DxDateEdit @bind-Date="DateFrom" DisplayFormat="dd/MM/yyyy" /></div>
+                    <div class="col-lg-2 col-md-4"><label class="form-label">Date to</label><DxDateEdit @bind-Date="DateTo" DisplayFormat="dd/MM/yyyy" /></div>
+                    <div class="col-lg-2 col-md-4"><label class="form-label">Supplier</label><DxTextBox @bind-Text="SuppCode" NullText="All suppliers" /></div>
+                    <div class="col-lg-2 col-md-4"><label class="form-label">Buyer</label><DxTextBox @bind-Text="BuyerCode" NullText="All buyers" /></div>
+                    <div class="col-lg-2 col-md-4"><label class="form-label">Item for price comparison</label><DxTextBox @bind-Text="ItemCode" NullText="One item code" /></div>
+                    <div class="col-lg-1 col-md-4"><label class="form-label">Currency</label><DxTextBox @bind-Text="Currency" NullText="One currency" /></div>
+                    <div class="col-lg-1 col-md-4"><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="APPLY" Click="ApplyKpiFiltersAsync" /></div>
+                </div>
+                <p class="proc-kpi-note">Date range uses PO date for PO, matching and delivery measures; it uses invoice document date for price movement.</p>
+            </section>
+
+            @if (!string.IsNullOrWhiteSpace(KpiError))
+            {
+                <div class="iv-toast iv-toast--warn" role="status">@KpiError</div>
+            }
+
+            <div class="proc-kpi-grid" aria-label="Procurement KPI cards">
+                <article class="proc-kpi-card">
+                    <h2>Open PO lines</h2>
+                    <strong>@(IsLoading ? "…" : Summary?.OutstandingPoLines?.ToString("N0") ?? "Unavailable")</strong>
+                    <p>Latest live revision with positive persisted balance. Cross-currency outstanding value is unavailable until currency treatment is reconciled.</p>
+                    <a href="/purchase/inquiry/po-outstanding">View transactions</a>
+                    @if (Summary?.OutstandingUnavailableReason is string openError) { <small>@openError</small> }
+                </article>
+                <article class="proc-kpi-card">
+                    <h2>Overdue PO lines</h2>
+                    <strong>@(IsLoading ? "…" : Summary?.OverduePoLines?.ToString("N0") ?? "Unavailable")</strong>
+                    <p>Open lines with current-revision ETA before the company-local as-of date. Lines without ETA are excluded.</p>
+                    <a href="/purchase/inquiry/po-outstanding">View transactions</a>
+                    @if (Summary?.OverdueUnavailableReason is string overdueError) { <small>@overdueError</small> }
+                </article>
+                <article class="proc-kpi-card">
+                    <h2>Supplier delivery on-time</h2>
+                    <strong>
+                        @if (IsLoading) { <span>…</span> }
+                        else if (Summary?.OnTimePercentage is decimal pct) { <span>@pct.ToString("N2")%</span> }
+                        else { <span>Unavailable</span> }
+                    </strong>
+                    <p>
+                        @if (Summary?.OnTimeCompletedLines is int onTime && Summary.CompletedDeliveryLines is int completed)
+                        {
+                            <span>@onTime.ToString("N0") / @completed.ToString("N0") completed PO lines; partials excluded.</span>
+                        }
+                        else { <span>@(Summary?.DeliveryUnavailableReason ?? "No completed lines in this period.")</span> }
+                    </p>
+                    <small>Based on recorded current PO ETA; original-promise history is unavailable. Missing ETA: @(Summary?.MissingEtaLines?.ToString("N0") ?? "Unavailable"); partial lines: @(Summary?.PartialDeliveryLines?.ToString("N0") ?? "Unavailable").</small>
+                    <a href="/purchase/inquiry/delivery-performance">View transactions</a>
+                </article>
+                <article class="proc-kpi-card">
+                    <h2>Received not invoiced</h2>
+                    <strong>@(IsLoading ? "…" : Summary?.ReceivedNotInvoicedLines?.ToString("N0") ?? "Unavailable")</strong>
+                    <p>Existing PO matching count. This is not AP/GL liability or inventory valuation.</p>
+                    <a href="/purchase/inquiry/matching">View transactions</a>
+                    @if (Summary?.ReceivedNotInvoicedUnavailableReason is string rniError) { <small>@rniError</small> }
+                </article>
+                <article class="proc-kpi-card">
+                    <h2>Purchase price movement</h2>
+                    @if (!IsLoading && Summary?.LatestNetUnitPrice is decimal latest && Summary.PreviousNetUnitPrice is decimal previous)
+                    {
+                        <strong>@latest.ToString("N4") @Summary.PriceCurrency / @Summary.PriceUom</strong>
+                        <p>Latest: @Summary.LatestPriceDate?.ToString("dd/MM/yyyy") · Previous: @previous.ToString("N4") @Summary.PriceCurrency / @Summary.PriceUom on @Summary.PreviousPriceDate?.ToString("dd/MM/yyyy")</p>
+                        <small>Posted purchase invoices for item @ItemCode, supplier filter and period. Difference is not a savings claim.</small>
+                    }
+                    else
+                    {
+                        <strong>@(IsLoading ? "…" : "Unavailable")</strong>
+                        <p>@(Summary?.PriceUnavailableReason ?? "Select one item and currency, then apply filters.")</p>
+                    }
+                    <a href="/purchase/inquiry/price-history">View price history</a>
+                </article>
+                <article class="proc-kpi-card proc-kpi-card--unavailable">
+                    <h2>Net posted invoice spend</h2>
+                    <strong>Unavailable</strong>
+                    <p>Requires controlled reconciliation of invoice, CN/DN signs, rollbacks, tax, exchange rates and self-billed documents.</p>
+                    <span>Spend is not reported as RM or a gross invoice sum.</span>
+                </article>
+            </div>
+
+            <section class="iv-card">
+                <div class="proc-kpi-section-head">
+                    <div>
+                        <h2 class="iv-subtitle">Supplier delivery performance</h2>
+                        <p class="proc-kpi-note">Current recorded ETA basis; original-promise history unavailable. Completed line sample size is shown per supplier.</p>
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="EXPORT KPI SUMMARY" IconCssClass="fa-solid fa-file-csv" Click="ExportSummary" />
+                </div>
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="PoDeliveryPerformanceRow"
+                                      Columns="@SupplierColumns"
+                                      Buttons="@SupplierButtons"
+                                      ActionButtons="@SupplierActionButtons"
+                                      KeyName="@nameof(PoDeliveryPerformanceRow.SuppCode)"
+                                      GridKey="po-procurement-kpi-supplier-delivery"
+                                      Title="Supplier delivery performance · selected PO date period"
+                                      CustomDataSource="@SupplierDataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnGridInstance="@OnSupplierGrid"
+                                      OnButtonEventHandle="@OnSupplierButtonClick"
+                                      OnActionEventHandle="@OnSupplierActionClick" />
+                </div>
+                <p class="proc-kpi-note">Counts and delivery measures are scoped to the authorized current branch. Supplier/item/buyer filters apply only where the underlying inquiry supports them.</p>
+            </section>
+        </div>
+    }
+</MenuAuthorize>

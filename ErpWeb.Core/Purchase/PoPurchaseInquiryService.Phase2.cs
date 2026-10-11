@@ -821,11 +821,6 @@ public sealed partial class PoPurchaseInquiryService
         }
 
         var prepared = query ?? new PoInquiryQuery();
-        if (string.IsNullOrWhiteSpace(prepared.WorkbenchPreset))
-        {
-            prepared.WorkbenchPreset = PoInquiryWorkbenchPresets.AllOpen;
-        }
-
         var (skip, take) = Page(prepared);
         var asOf = prepared.AsOfDate?.Date ?? DateTime.Today;
 
@@ -865,8 +860,22 @@ public sealed partial class PoPurchaseInquiryService
         var company = gate.CompanyCode!;
         var branch = gate.BranchCode!;
 
-        // Same post-preset/status filtered line set as the line grid, BEFORE line paging.
-        var lines = await LoadDeliveryPerformanceLinesAsync(db, company, branch, prepared, asOf, cancellationToken);
+        // Supplier KPIs always evaluate ETA within the selected due period and retain every
+        // qualifying due line, independent of the line-grid preset/status filter.
+        var kpiQuery = new PoInquiryQuery
+        {
+            DateFrom = prepared.DateFrom,
+            DateTo = prepared.DateTo,
+            SuppCode = prepared.SuppCode,
+            BuyerCode = prepared.BuyerCode,
+            SearchText = prepared.SearchText,
+            ItemCode = prepared.ItemCode,
+            Warehouse = prepared.Warehouse,
+            DeliveryDateBasis = PoDeliveryDateBases.Eta,
+            WorkbenchPreset = PoInquiryWorkbenchPresets.All,
+            AsOfDate = prepared.AsOfDate
+        };
+        var lines = await LoadDeliveryPerformanceLinesAsync(db, company, branch, kpiQuery, asOf, cancellationToken);
         var grouped = GroupDeliveryPerformanceBySupplier(lines)
             .OrderBy(x => x.SuppCode)
             .ToList();
@@ -912,7 +921,7 @@ public sealed partial class PoPurchaseInquiryService
             .Select(x => new { x.PoPurQty, x.EtaDate })
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (poLine?.EtaDate is null || poLine.PoPurQty <= 0m)
+        if (poLine is null || poLine.PoPurQty <= 0m)
         {
             return IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>.Ok([]);
         }
@@ -921,7 +930,7 @@ public sealed partial class PoPurchaseInquiryService
             db, company, branch, [(no, poRelNo, line)], asOf, cancellationToken);
         var walk = PoDeliveryPerformanceCalc.WalkReceipts(
             poLine.PoPurQty,
-            poLine.EtaDate.Value,
+            poLine.EtaDate,
             movements.GetValueOrDefault((no, poRelNo, line)) ?? []);
 
         return IvMasterOperationResult<IReadOnlyList<PoDeliveryPerformanceReceiptRow>>.Ok(walk.Receipts);
@@ -992,8 +1001,13 @@ public sealed partial class PoPurchaseInquiryService
                 FullyReceivedDate = walk.FullyReceivedDate,
                 DaysLate = PoDeliveryPerformanceCalc.ComputeOpenDaysLate(s.BalanceQty, s.EtaDate, asOf),
                 CompletionDaysLate = PoDeliveryPerformanceCalc.ComputeCompletionDaysLate(
-                    status, walk.FullyReceivedDate, s.EtaDate),
+                    walk.FullyReceivedDate, s.EtaDate),
                 DeliveryStatus = status,
+                OtifResult = walk.FullyReceivedDate is DateTime completedBy
+                             && s.EtaDate is DateTime dueBy
+                             && completedBy.Date <= dueBy.Date
+                    ? "PASS"
+                    : "FAIL",
                 OnTimeReceivedQty = walk.OnTimeReceivedQty,
                 LateReceivedQty = walk.LateReceivedQty,
                 GrBatchCount = walk.GrBatchCount,
@@ -1033,7 +1047,9 @@ public sealed partial class PoPurchaseInquiryService
                   && line.PoPurQty > 0m
             select new { h, line };
 
-        lines = ApplyNullableDate(lines, x => x.h.PoDate, prepared);
+        lines = UsesPoDateBasis(prepared.DeliveryDateBasis)
+            ? ApplyNullableDate(lines, x => x.h.PoDate, prepared)
+            : ApplyNullableDate(lines, x => x.line.EtaDate, prepared);
         lines = ApplyText(lines, x => x.h.VendCode, prepared.SuppCode);
         lines = ApplyText(lines, x => x.h.Buyer, prepared.BuyerCode);
         lines = ApplyText(lines, x => x.line.ICode, prepared.ItemCode);
@@ -1060,6 +1076,12 @@ public sealed partial class PoPurchaseInquiryService
             })
             .ToListAsync(cancellationToken);
     }
+
+    private static bool UsesPoDateBasis(string? dateBasis) =>
+        string.Equals(
+            Normalize(dateBasis),
+            PoDeliveryDateBases.PoDate,
+            StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Posted GR/NG for the filtered PO keys, AsOf-clipped. Uses PoNo set join (not unbounded IN of composites).
@@ -1133,12 +1155,17 @@ public sealed partial class PoPurchaseInquiryService
             .GroupBy(x => NormalizeKey(x.SuppCode), StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
-                var completed = g.Where(x => PoDeliveryPerformanceCalc.IsCompletedOtifStatus(x.DeliveryStatus)).ToList();
+                var dueLines = g.ToList();
+                // A later vendor return can reopen BalanceQty without erasing the historical full
+                // receipt date. Punctuality therefore follows that delivery event, not current status.
+                var completed = dueLines.Where(x => x.FullyReceivedDate is not null).ToList();
                 var onTime = completed.Count(x =>
-                    string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.Early, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.OnTime, StringComparison.OrdinalIgnoreCase));
+                    x.EtaDate is DateTime eta && x.FullyReceivedDate is DateTime fully
+                    && fully.Date <= eta.Date);
                 var late = completed.Count(x =>
-                    string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.Late, StringComparison.OrdinalIgnoreCase));
+                    x.EtaDate is DateTime eta && x.FullyReceivedDate is DateTime fully
+                    && fully.Date > eta.Date);
+                var otif = onTime;
                 var lateDays = completed
                     .Where(x => x.CompletionDaysLate is > 0)
                     .Select(x => x.CompletionDaysLate!.Value)
@@ -1150,19 +1177,34 @@ public sealed partial class PoPurchaseInquiryService
                     SuppCode = g.Key.Length == 0 ? null : g.Key,
                     SuppName = name,
                     PurchaseOrderCount = g.Select(x => x.PoNo).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                    PoLinesEvaluated = g.Count(),
+                    PoLinesEvaluated = dueLines.Count,
+                    DueLines = dueLines.Count,
                     CompletedLines = completed.Count,
                     PartialLines = g.Count(x =>
                         string.Equals(x.DeliveryStatus, PoDeliveryPerformanceStatuses.PartiallyReceived, StringComparison.OrdinalIgnoreCase)),
                     OrderedQty = g.Sum(x => x.PoPurQty),
                     ReceivedQty = g.Sum(x => x.NetReceivedQty),
+                    InFullLines = dueLines.Count(x => x.BalanceQty <= 0m),
+                    OtifLines = otif,
+                    OpenOverdueLines = dueLines.Count(x => x.DaysLate is > 0),
                     OnTimeLines = onTime,
                     LateLines = late,
                     OnTimePct = completed.Count > 0
                         ? (decimal)onTime / completed.Count * 100m
                         : null,
+                    CompletedOnTimePct = completed.Count > 0
+                        ? (decimal)onTime / completed.Count * 100m
+                        : null,
+                    InFullPct = dueLines.Count > 0
+                        ? (decimal)dueLines.Count(x => x.BalanceQty <= 0m) / dueLines.Count * 100m
+                        : null,
+                    OtifPct = dueLines.Count > 0
+                        ? (decimal)otif / dueLines.Count * 100m
+                        : null,
                     AvgDaysLate = lateDays.Count > 0 ? (decimal)lateDays.Average() : null,
-                    MaxDaysLate = lateDays.Count > 0 ? lateDays.Max() : null
+                    MaxDaysLate = lateDays.Count > 0 ? lateDays.Max() : null,
+                    AvgCompletedDaysLate = lateDays.Count > 0 ? (decimal)lateDays.Average() : null,
+                    MaxCompletedDaysLate = lateDays.Count > 0 ? lateDays.Max() : null
                 };
             })
             .ToList();

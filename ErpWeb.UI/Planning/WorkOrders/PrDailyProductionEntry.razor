@@ -592,6 +592,10 @@
                         <p class="iv-eyebrow">Consumption</p>
                         <strong>Materials this post</strong>
                         <small>Standard follows Good + Scrap + Reject + Hold. Override consume only for real materials; previous-process handoff stays locked.</small>
+                        @if (IsSharedBomWipEnabled)
+                        {
+                            <small class="pr-dp-shared-policy">Shared BOM WIP is limited to verified stocked WIP at this company, branch, and production location.</small>
+                        }
                     </div>
                     @if (CanEditFields)
                     {
@@ -620,6 +624,15 @@
                                     var line = (MaterialLineEdit)context.DataItem;
                                 }
                                 <span>@line.SupplySource / @line.IssueMethod</span>
+                                @if (ShowSharedWipSourceAction(line))
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="SOURCE"
+                                              IconCssClass="fa-solid fa-circle-info"
+                                              CssClass="pr-dp-source-action"
+                                              Click="@(() => OpenSharedWipSourceAsync(line))"
+                                              Enabled="@(!IsSubmitting && !IsLoadingSharedWipSources)" />
+                                }
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.WoBomRequiredQty)" Caption="WO BOM Required" Width="130px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -749,5 +762,116 @@
             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" Enabled="@(!IsSubmitting)" />
             <DxButton Text="Rollback" RenderStyle="ButtonRenderStyle.Warning" Click="@RollbackAsync" Enabled="@(!IsSubmitting)" />
         </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup Visible="@SharedWipSourceVisible"
+             HeaderText="Shared BOM WIP Sources"
+             CloseOnOutsideClick="false"
+             ShowCloseButton="true"
+             Width="900px"
+             CssClass="common-popup"
+             Closed="@(() => SharedWipSourceVisible = false)">
+        <BodyContentTemplate>
+            @if (IsLoadingSharedWipSources)
+            {
+                <p>Loading eligible shared WIP sources…</p>
+            }
+            else if (SharedWipSourceInquiry is { } inquiry)
+            {
+                <div class="pr-dp-source-summary">
+                    <span>Daily Production: <strong>@inquiry.ConsumingDocumentNo</strong></span>
+                    <span>Work Order: <strong>@inquiry.ConsumingWorkOrderNo</strong></span>
+                    <span>Consume: <strong>@inquiry.ConsumingQty.ToString("n4") @inquiry.ConsumingUom</strong></span>
+                    <strong>@inquiry.ComponentCode</strong>
+                    <span>Base UOM: @inquiry.BaseUom</span>
+                    @if (inquiry.IsHistorical)
+                    {
+                        <span class="iv-chip">@(inquiry.IsReversed ? "REVERSED HISTORY" : "POSTED HISTORY")</span>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(inquiry.Message))
+                {
+                    <p class="pr-dp-source-note">@inquiry.Message</p>
+                }
+                @if (inquiry.IsHistorical && inquiry.IsReversed)
+                {
+                    <p class="pr-dp-source-note">This reversed document shows its original source movements for traceability.</p>
+                }
+                @if (inquiry.Sources.Count > 0)
+                {
+                    <DxGrid Data="@inquiry.Sources"
+                            KeyFieldName="@nameof(ProductionSharedWipSourceRow.ProductionBalLotId)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="20"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(ProductionSharedWipSourceRow.LotNo)" Caption="WIP lot" Width="140px" />
+                            <DxGridDataColumn Caption="Origin" MinWidth="210">
+                                <CellDisplayTemplate Context="originCell">
+                                    @{
+                                        var source = (ProductionSharedWipSourceRow)originCell.DataItem;
+                                    }
+                                    <div class="pr-dp-source-origin">
+                                        <strong>@source.SourceWorkOrderNo</strong>
+                                        <small>Stage @source.SourceRouteStageSequence · @source.SourceWorkCentreCode</small>
+                                    </div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            @if (inquiry.IsHistorical)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(ProductionSharedWipSourceRow.ConsumedBaseQty)" Caption="Consumed base qty" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" Width="150px" />
+                            }
+                            else
+                            {
+                                <DxGridDataColumn FieldName="@nameof(ProductionSharedWipSourceRow.AvailableBaseQty)" Caption="Current available" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" Width="145px" />
+                                <DxGridDataColumn FieldName="@nameof(ProductionSharedWipSourceRow.LastMovementDate)" Caption="Last movement" DisplayFormat="yyyy-MM-dd" Width="130px" />
+                            }
+                            @if (inquiry.CanViewCost && inquiry.IsHistorical)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(ProductionSharedWipSourceRow.ActualPooledConsumptionCost)" Caption="Actual pooled consumption cost" DisplayFormat="n6" TextAlignment="GridTextAlignment.Right" Width="205px" />
+                            }
+                            <DxGridDataColumn Caption="Producer receipts" MinWidth="260">
+                                <CellDisplayTemplate Context="receiptCell">
+                                    @{
+                                        var source = (ProductionSharedWipSourceRow)receiptCell.DataItem;
+                                    }
+                                    @if (source.Receipts.Count == 0)
+                                    {
+                                        <span>Receipt allocation details unavailable</span>
+                                    }
+                                    else
+                                    {
+                                        <ul class="pr-dp-source-receipts">
+                                            @foreach (var receipt in source.Receipts)
+                                            {
+                                                <li>
+                                                    <strong>@receipt.ProducerDocumentNo</strong>
+                                                    <span>@receipt.ProducerWorkOrderNo · Stage @receipt.ProducerRouteStageSequence · @receipt.ProducerWorkCentreCode</span>
+                                                    @if (inquiry.IsHistorical && receipt.AllocatedBaseQty.HasValue)
+                                                    {
+                                                        <small>Genealogy allocated: @receipt.AllocatedBaseQty.Value.ToString("n4") @inquiry.BaseUom</small>
+                                                    }
+                                                    else if (receipt.ReceiptBaseQty.HasValue)
+                                                    {
+                                                        <small>Producer receipt: @receipt.ReceiptBaseQty.Value.ToString("n4") @inquiry.BaseUom</small>
+                                                    }
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                        </Columns>
+                    </DxGrid>
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(SharedWipSourceError))
+            {
+                <div class="pr-dp-source-error" role="alert">@SharedWipSourceError</div>
+            }
+        </BodyContentTemplate>
     </DxPopup>
 </MenuAuthorize>

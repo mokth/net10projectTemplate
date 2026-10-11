@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
@@ -23,7 +24,11 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool MoreFiltersVisible;
     protected bool PostConfirmationVisible;
     protected bool DeleteConfirmationVisible;
+    protected bool SharedWipSourceVisible;
+    protected bool IsLoadingSharedWipSources;
     protected string? StatusMessage;
+    protected string? SharedWipSourceError;
+    protected ProductionSharedWipSourceInquiry? SharedWipSourceInquiry;
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase)
         || (string.IsNullOrWhiteSpace(Mode) && OutputId is null);
@@ -31,6 +36,10 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool IsViewMode => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
     protected string ModeChip => IsViewMode ? "VIEW" : IsEditMode ? "EDIT" : "NEW";
     protected string PageHeading => IsNewMode ? "New Daily Production" : IsEditMode ? "Edit Daily Production" : "View Daily Production";
+    protected string CurrentWipConsumptionPolicy => ProductionWipConsumptionPolicies.NormalizeOrStrict(
+        Document?.WipConsumptionPolicy ?? Workspace?.WipConsumptionPolicy);
+    protected bool IsSharedBomWipEnabled =>
+        CurrentWipConsumptionPolicy == ProductionWipConsumptionPolicies.SharedBomWip;
 
     protected ProductionOutputDetail? Document;
     protected ProductionOutputWorkspace? Workspace;
@@ -134,6 +143,10 @@ public partial class PrDailyProductionEntry : PageBase
         IsBootstrapping = true;
         ErrorMessage = null;
         StatusMessage = null;
+        SharedWipSourceVisible = false;
+        IsLoadingSharedWipSources = false;
+        SharedWipSourceError = null;
+        SharedWipSourceInquiry = null;
 
         CanAccessAdd = await AccessRights.CanAsync(MenuCodes.PlanningDailyProduction, PermissionCodes.Add);
         CanAccessEdit = await AccessRights.CanAsync(MenuCodes.PlanningDailyProduction, PermissionCodes.Edit);
@@ -346,6 +359,48 @@ public partial class PrDailyProductionEntry : PageBase
             Machines = AddHistoricalChoice(Lookups.Machines, ActualMachineCode),
             Operators = AddHistoricalChoice(Lookups.Operators, OperatorCode),
         };
+    }
+
+    protected bool ShowSharedWipSourceAction(MaterialLineEdit line) =>
+        IsSharedBomWipEnabled
+        && !line.IsHandoff
+        && string.Equals(line.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase);
+
+    protected async Task OpenSharedWipSourceAsync(MaterialLineEdit line)
+    {
+        if (!ShowSharedWipSourceAction(line) || IsLoadingSharedWipSources)
+            return;
+
+        IsLoadingSharedWipSources = true;
+        SharedWipSourceVisible = true;
+        SharedWipSourceError = null;
+        SharedWipSourceInquiry = null;
+        try
+        {
+            var result = await Outputs.GetSharedWipSourceInquiryAsync(new ProductionSharedWipSourceInquiryRequest
+            {
+                WorkOrderMaterialId = line.WorkOrderMaterialId,
+                ProductionOutputId = CurrentOutputId,
+                ProductionDate = ProductionDate,
+                ConsumeQty = line.ConsumeQty,
+            });
+            if (!result.Succeeded || result.Data is null)
+            {
+                SharedWipSourceError = result.Message ?? "Unable to load WIP source information.";
+            }
+            else
+            {
+                SharedWipSourceInquiry = result.Data;
+            }
+        }
+        catch
+        {
+            SharedWipSourceError = "Unable to load WIP source information. Refresh the page and try again.";
+        }
+        finally
+        {
+            IsLoadingSharedWipSources = false;
+        }
     }
 
     private static IReadOnlyList<ProductionOutputChoice> AddHistoricalChoice(

@@ -29,6 +29,7 @@ public sealed class AppSettingListRow
     public AppSettingScope AllowedScopes { get; init; }
     public string? DefaultValue { get; init; }
     public string? Description { get; init; }
+    public string? DisplayName { get; init; }
     public IReadOnlyList<string> AllowedTokens { get; init; } = [];
 
     /// <summary>True for a projection over an existing column: shown disabled, with a link to its own screen.</summary>

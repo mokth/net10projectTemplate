@@ -24,7 +24,7 @@ public static class PoDeliveryPerformanceCalc
     /// </summary>
     public static GrWalkResult WalkReceipts(
         decimal poPurQty,
-        DateTime etaDate,
+        DateTime? etaDate,
         IReadOnlyList<ReceiptMovement> movements)
     {
         if (movements.Count == 0 || poPurQty <= 0m)
@@ -39,7 +39,7 @@ public static class PoDeliveryPerformanceCalc
             .ThenBy(x => x.DetailId)
             .ToList();
 
-        var eta = etaDate.Date;
+        var eta = etaDate?.Date;
         decimal remaining = poPurQty;
         decimal onTime = 0m;
         decimal late = 0m;
@@ -63,11 +63,11 @@ public static class PoDeliveryPerformanceCalc
             var fulfill = remaining > 0m ? Math.Min(qty, remaining) : 0m;
             if (fulfill > 0m)
             {
-                if (date <= eta)
+                if (eta.HasValue && date <= eta.Value)
                 {
                     onTime = PoOrderCalc.RoundQty(onTime + fulfill);
                 }
-                else
+                else if (eta.HasValue)
                 {
                     late = PoOrderCalc.RoundQty(late + fulfill);
                 }
@@ -82,7 +82,6 @@ public static class PoDeliveryPerformanceCalc
 
             var cappedCum = Math.Min(cumulative, poPurQty);
             var remainingQty = Math.Max(0m, PoOrderCalc.RoundQty(poPurQty - cappedCum));
-            var daysVsEta = (date - eta).Days;
             receipts.Add(new PoDeliveryPerformanceReceiptRow
             {
                 BatchNo = m.BatchNo,
@@ -90,10 +89,12 @@ public static class PoDeliveryPerformanceCalc
                 Qty = qty,
                 CumulativeQty = cumulative,
                 RemainingQty = remainingQty,
-                DaysVsEta = daysVsEta,
-                OnTimeOrLate = date <= eta
-                    ? PoDeliveryPerformanceStatuses.OnTime
-                    : PoDeliveryPerformanceStatuses.Late
+                DaysVsEta = eta is DateTime dueDate ? (date - dueDate).Days : null,
+                OnTimeOrLate = eta is not DateTime etaForStatus
+                    ? null
+                    : date <= etaForStatus
+                        ? PoDeliveryPerformanceStatuses.OnTime
+                        : PoDeliveryPerformanceStatuses.Late
             });
         }
 
@@ -172,8 +173,21 @@ public static class PoDeliveryPerformanceCalc
     public static int? ComputeCompletionDaysLate(string status, DateTime? fullyReceivedDate, DateTime? etaDate)
     {
         if (!IsCompletedOtifStatus(status)
-            || fullyReceivedDate is not DateTime fully
-            || etaDate is not DateTime eta)
+            || fullyReceivedDate is not DateTime
+            || etaDate is not DateTime)
+        {
+            return null;
+        }
+
+        return ComputeCompletionDaysLate(fullyReceivedDate, etaDate);
+    }
+
+    /// <summary>
+    /// Historical completion timing remains available when a later return reopens the PO balance.
+    /// </summary>
+    public static int? ComputeCompletionDaysLate(DateTime? fullyReceivedDate, DateTime? etaDate)
+    {
+        if (fullyReceivedDate is not DateTime fully || etaDate is not DateTime eta)
         {
             return null;
         }
@@ -214,11 +228,20 @@ public static class PoDeliveryPerformanceCalc
             PoInquiryWorkbenchPresets.Partial =>
                 netReceivedQty > 0m && balanceQty > 0m,
             PoInquiryWorkbenchPresets.LateCompletion =>
-                balanceQty <= 0m && fullyReceivedDate is DateTime f && etaDate is DateTime eta
+                fullyReceivedDate is DateTime f && etaDate is DateTime eta
                 && f.Date > eta.Date,
             PoInquiryWorkbenchPresets.OnTimeCompleted =>
-                balanceQty <= 0m && fullyReceivedDate is DateTime f2 && etaDate is DateTime eta2
+                fullyReceivedDate is DateTime f2 && etaDate is DateTime eta2
                 && f2.Date <= eta2.Date,
+            PoInquiryWorkbenchPresets.Completed => fullyReceivedDate is not null,
+            PoInquiryWorkbenchPresets.OtifPass =>
+                fullyReceivedDate is DateTime passDate && etaDate is DateTime passEta
+                && passDate.Date <= passEta.Date,
+            PoInquiryWorkbenchPresets.OtifFail =>
+                etaDate is DateTime failEta
+                && (fullyReceivedDate is not DateTime failDate || failDate.Date > failEta.Date),
+            PoInquiryWorkbenchPresets.InFull => balanceQty <= 0m,
+            PoInquiryWorkbenchPresets.NotInFull => balanceQty > 0m,
             _ => balanceQty > 0m
         };
     }
