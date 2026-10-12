@@ -52,6 +52,8 @@ public static class ProductionAuditEventTypes
     public const string Refreshed = "REFRESHED";
     public const string DefinitionChanged = "DEFINITION_CHANGED";
     public const string ScheduleRecalculated = "SCHEDULE_RECALCULATED";
+    public const string ScheduleChanged = "SCHEDULE_CHANGED";
+    public const string ScheduleAllocationBackfilled = "SCHEDULE_ALLOCATION_BACKFILLED";
     public const string MachineSelected = "MACHINE_SELECTED";
     public const string MaterialSubstituted = "MATERIAL_SUBSTITUTED";
     public const string MaterialIssued = "MATERIAL_ISSUED";

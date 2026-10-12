@@ -5,7 +5,7 @@
 @using ErpWeb.Model.Entities.Production
 @using ErpWeb.UI.Components.Pages
 @inherits PageBase
-<PageTitle>Machine Schedule Planner</PageTitle>
+<PageTitle>Machine Schedule</PageTitle>
 
 <MenuAuthorize MenuCode="@MenuCodes.PlanningMachineSchedulePlanner">
     <div class="iv-page pr-machine-schedule-page" aria-busy="@IsLoading">
@@ -13,8 +13,12 @@
             <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-week"></i></div>
             <div class="iv-hero__copy">
                 <span class="iv-hero__eyebrow">Planning · Production</span>
-                <h1>Machine Schedule Planner</h1>
-                <p>Review Work Order loading, machine availability, and planned maintenance.</p>
+                <h1>Machine Schedule</h1>
+                <p>@HeaderInstructions</p>
+            </div>
+            <div class="pr-machine-schedule-mode" role="status">
+                <i class="fa-solid @(IsReschedulingEnabled ? "fa-calendar-check" : "fa-lock")" aria-hidden="true"></i>
+                <span>@ScheduleModeText</span>
             </div>
             <div class="iv-hero__kpi">
                 <span>Scheduled operations</span>
@@ -31,64 +35,118 @@
             <div class="pr-machine-schedule-feedback pr-machine-schedule-feedback--info" role="status">@StatusMessage</div>
         }
 
-        @if (Board?.Readiness is { IsWriteReady: false } readiness)
+        @if (!IsReschedulingEnabled)
         {
             <section class="pr-machine-schedule-readonly" role="status">
-                <div class="pr-machine-schedule-readonly__icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></div>
+                <i class="fa-solid fa-lock" aria-hidden="true"></i>
                 <div>
-                    <strong>Scheduling changes are temporarily read-only</strong>
-                    <p>Planner writes remain disabled until active allocations, calendar freshness, and release readiness are verified.</p>
-                    @if (readiness.BlockingReasons.Count > 0)
+                    <strong>View only</strong>
+                    <span>Scheduling changes are not enabled for this company.</span>
+                    @if (CanEditSchedule)
                     {
-                        <details>
-                            <summary>Readiness details</summary>
-                            <ul>
-                                @foreach (var reason in readiness.BlockingReasons)
-                                {
-                                    <li>@reason</li>
-                                }
-                            </ul>
-                        </details>
+                        <DxButton Text="Dry-run allocations" RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="PreviewAllocationBackfillAsync" Enabled="@(!IsBackfillBusy)" />
                     }
                 </div>
             </section>
         }
 
         <section class="iv-card pr-machine-schedule-toolbar" aria-label="Schedule planner controls">
-            <div class="pr-machine-schedule-toolbar__nav">
-                <DxButton Text="Previous" RenderStyle="ButtonRenderStyle.Secondary" Click="PreviousPeriodAsync" />
-                <DxButton Text="Today" RenderStyle="ButtonRenderStyle.Secondary" Click="TodayAsync" />
-                <DxButton Text="Next" RenderStyle="ButtonRenderStyle.Secondary" Click="NextPeriodAsync" />
-                <span class="pr-machine-schedule-period">@PeriodLabel</span>
+            <div class="pr-machine-schedule-toolbar__top">
+                <div class="pr-machine-schedule-toolbar__nav">
+                    <DxButton Text="Previous" RenderStyle="ButtonRenderStyle.Secondary" Click="PreviousPeriodAsync" />
+                    <DxButton Text="Today" RenderStyle="ButtonRenderStyle.Secondary" Click="TodayAsync" />
+                    <DxButton Text="Next" RenderStyle="ButtonRenderStyle.Secondary" Click="NextPeriodAsync" />
+                    <span class="pr-machine-schedule-period">@PeriodLabel</span>
+                </div>
+                <div class="pr-machine-schedule-toolbar__views" role="group" aria-label="Timeline range">
+                    <DxButton Text="Day" RenderStyle="@ViewButtonStyle(PlannerView.Day)" Click="@(() => ChangeViewAsync(PlannerView.Day))" />
+                    <DxButton Text="Week" RenderStyle="@ViewButtonStyle(PlannerView.Week)" Click="@(() => ChangeViewAsync(PlannerView.Week))" />
+                    <DxButton Text="Month" RenderStyle="@ViewButtonStyle(PlannerView.Month)" Click="@(() => ChangeViewAsync(PlannerView.Month))" />
+                </div>
+                <div class="pr-machine-schedule-toolbar__zoom" role="group" aria-label="Timeline zoom">
+                    <span>Zoom</span>
+                    <DxButton Text="−" Title="Zoom out" RenderStyle="ButtonRenderStyle.Secondary" Click="ZoomOut" Enabled="@(ZoomLevel > MinimumZoomLevel)" />
+                    <DxButton Text="+" Title="Zoom in" RenderStyle="ButtonRenderStyle.Secondary" Click="ZoomIn" Enabled="@(ZoomLevel < 3)" />
+                    <DxButton Text="Reset" RenderStyle="ButtonRenderStyle.Secondary" Click="ResetZoom" Enabled="@(ZoomLevel != 0)" />
+                </div>
             </div>
-            <div class="pr-machine-schedule-toolbar__views" role="group" aria-label="Timeline range">
-                <DxButton Text="Day" RenderStyle="@ViewButtonStyle(PlannerView.Day)" Click="@(() => ChangeViewAsync(PlannerView.Day))" />
-                <DxButton Text="Week" RenderStyle="@ViewButtonStyle(PlannerView.Week)" Click="@(() => ChangeViewAsync(PlannerView.Week))" />
-                <DxButton Text="Month" RenderStyle="@ViewButtonStyle(PlannerView.Month)" Click="@(() => ChangeViewAsync(PlannerView.Month))" />
-            </div>
-            <div class="pr-machine-schedule-toolbar__filters">
-                <DxComboBox Data="@WorkCentreOptions"
-                            TextFieldName="@nameof(PlannerFilterOption.Name)"
-                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
-                            @bind-Value="SelectedWorkCentre"
-                            NullText="All work centres"
-                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                <DxComboBox Data="@MachineOptions"
-                            TextFieldName="@nameof(PlannerFilterOption.Name)"
-                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
-                            @bind-Value="SelectedMachine"
-                            NullText="All machines"
-                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                <DxComboBox Data="@StatusOptions"
-                            TextFieldName="@nameof(PlannerFilterOption.Name)"
-                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
-                            @bind-Value="SelectedStatus"
-                            NullText="All statuses"
-                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                <DxTextBox @bind-Text="SearchText"
-                           NullText="Search Work Order or product"
-                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                <DxButton Text="Refresh" RenderStyle="ButtonRenderStyle.Primary" Click="ReloadAsync" Enabled="@(!IsLoading)" />
+
+            <div class="pr-machine-schedule-toolbar__filters" aria-label="Schedule filters">
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--centre">
+                    <span>Work Centre</span>
+                    <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"
+                                CustomData="@LoadWorkCentreOptionsAsync"
+                                TextFieldName="@nameof(MachineSchedulePlannerLookupOption.DisplayText)"
+                                ValueFieldName="@nameof(MachineSchedulePlannerLookupOption.Key)"
+                                @bind-Value="SelectedWorkCentre" @bind-Value:after="ReloadAsync"
+                                NullText="All work centres" SearchMode="ListSearchMode.AutoSearch"
+                                ListRenderMode="ListRenderMode.Virtual"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--machine">
+                    <span>Machine</span>
+                    <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"
+                                CustomData="@LoadMachineOptionsAsync"
+                                TextFieldName="@nameof(MachineSchedulePlannerLookupOption.DisplayText)"
+                                ValueFieldName="@nameof(MachineSchedulePlannerLookupOption.Key)"
+                                @bind-Value="SelectedMachine" @bind-Value:after="ReloadAsync"
+                                NullText="All machines" SearchMode="ListSearchMode.AutoSearch"
+                                ListRenderMode="ListRenderMode.Virtual"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--process">
+                    <span>Process</span>
+                    <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"
+                                CustomData="@LoadProcessOptionsAsync"
+                                TextFieldName="@nameof(MachineSchedulePlannerLookupOption.DisplayText)"
+                                ValueFieldName="@nameof(MachineSchedulePlannerLookupOption.Key)"
+                                @bind-Value="SelectedProcess" @bind-Value:after="ReloadAsync"
+                                NullText="All processes" SearchMode="ListSearchMode.AutoSearch"
+                                ListRenderMode="ListRenderMode.Virtual"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--workorder">
+                    <span>Work Order</span>
+                    <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"
+                                CustomData="@LoadWorkOrderOptionsAsync"
+                                TextFieldName="@nameof(MachineSchedulePlannerLookupOption.DisplayText)"
+                                ValueFieldName="@nameof(MachineSchedulePlannerLookupOption.Key)"
+                                @bind-Value="SelectedWorkOrder" @bind-Value:after="ReloadAsync"
+                                NullText="Search Work Order" SearchMode="ListSearchMode.AutoSearch"
+                                ListRenderMode="ListRenderMode.Virtual"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--product">
+                    <span>Product</span>
+                    <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"
+                                CustomData="@LoadProductOptionsAsync"
+                                TextFieldName="@nameof(MachineSchedulePlannerLookupOption.DisplayText)"
+                                ValueFieldName="@nameof(MachineSchedulePlannerLookupOption.Key)"
+                                @bind-Value="SelectedProduct" @bind-Value:after="ReloadAsync"
+                                NullText="All products" SearchMode="ListSearchMode.AutoSearch"
+                                ListRenderMode="ListRenderMode.Virtual"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--status">
+                    <span>Status</span>
+                    <DxComboBox Data="@StatusOptions" TData="PlannerFilterOption" TValue="string"
+                                TextFieldName="@nameof(PlannerFilterOption.Name)"
+                                ValueFieldName="@nameof(PlannerFilterOption.Key)"
+                                @bind-Value="SelectedStatus" @bind-Value:after="ReloadAsync"
+                                NullText="All statuses" SearchMode="ListSearchMode.AutoSearch"
+                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--search">
+                    <span>Search</span>
+                    <DxTextBox Text="@SearchText" TextChanged="@OnSearchTextChangedAsync"
+                               NullText="WO, product or process" 
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </label>
+                <div class="pr-machine-schedule-filter-actions">
+                    <DxButton Text="Clear filters" RenderStyle="ButtonRenderStyle.Secondary" Click="ClearFiltersAsync" Enabled="@(!IsLoading)" />
+                    <DxButton Text="Refresh" RenderStyle="ButtonRenderStyle.Primary" Click="ReloadAsync" Enabled="@(!IsLoading)" />
+                </div>
             </div>
         </section>
 
@@ -115,7 +173,7 @@
                 }
                 @if (board.UnverifiedJobCount > 0)
                 {
-                    <span class="pr-machine-schedule-summary__warning"><strong>@board.UnverifiedJobCount</strong> calendar span(s) not verified</span>
+                    <span class="pr-machine-schedule-summary__warning"><strong>@board.UnverifiedJobCount</strong> calendar span(s) need attention</span>
                 }
             </div>
 
@@ -124,60 +182,141 @@
                 <section class="iv-card pr-machine-schedule-empty" role="status">
                     <i class="fa-regular fa-calendar-xmark" aria-hidden="true"></i>
                     <strong>No active scheduled operations in this window</strong>
-                    <span>Try another week or clear the current filters.</span>
+                    <span>Try another date range or clear the current filters.</span>
                 </section>
             }
             else
             {
-                <div class="pr-machine-schedule-workspace">
-                    <section class="iv-card pr-machine-schedule-board" aria-label="Machine timeline">
-                        <DxScheduler DataStorage="@DataStorage"
-                                     StartDate="@board.WindowStart"
-                                     ActiveViewType="SchedulerViewType.Timeline"
-                                     GroupType="SchedulerGroupType.Resource"
-                                     AllowCreateAppointment="false"
-                                     AllowDeleteAppointment="false"
-                                     AllowEditAppointment="false"
-                                     AllowDragAppointment="false"
-                                     AllowDragAppointmentBetweenResources="false"
-                                     AllowResizeAppointment="false"
-                                     AppointmentDragMode="SchedulerAppointmentDragMode.Server"
-                                     HtmlCellDecoration="DecorateCalendarCell"
-                                     @bind-SelectedAppointment="SelectedAppointment">
-                            <DxSchedulerTimelineView Duration="@ViewDuration" CellMinWidth="@TimelineCellWidth">
-                                <Scales>
+                <section class="iv-card pr-machine-schedule-board" aria-label="Machine timeline">
+                    <DxScheduler DataStorage="@DataStorage"
+                                 StartDate="@board.WindowStart"
+                                 ActiveViewType="SchedulerViewType.Timeline"
+                                 GroupType="SchedulerGroupType.Resource"
+                                 AllowCreateAppointment="false"
+                                 AllowDeleteAppointment="false"
+                                 AllowEditAppointment="@CanDragAppointments"
+                                 AllowDragAppointment="@CanDragAppointments"
+                                 AllowDragAppointmentBetweenResources="false"
+                                 AllowResizeAppointment="false"
+                                 AppointmentDragMode="SchedulerAppointmentDragMode.Server"
+                                 AppointmentStartDragging="OnAppointmentStartDragging"
+                                 AppointmentUpdating="OnAppointmentUpdating"
+                                 AppointmentFormShowing="OnAppointmentFormShowing"
+                                 HtmlCellDecoration="DecorateCalendarCell"
+                                 @bind-SelectedAppointment="SelectedAppointment"
+                                 @bind-SelectedAppointment:after="OnAppointmentSelectedAsync">
+                        <DxSchedulerTimelineView Duration="@ViewDuration" CellMinWidth="@TimelineCellWidth" VerticalResourceCellWidth="200">
+                            <Scales>
+                                @if (CurrentView == PlannerView.Month)
+                                {
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Week" UnitCount="1" />
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Day" UnitCount="1" />
+                                }
+                                else if (CurrentView == PlannerView.Day)
+                                {
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Day" UnitCount="1" />
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Hour" UnitCount="1" />
+                                }
+                                else
+                                {
                                     <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Day" UnitCount="1" />
                                     <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Hour" UnitCount="6" />
-                                </Scales>
-                            </DxSchedulerTimelineView>
-                        </DxScheduler>
-                    </section>
+                                }
+                            </Scales>
+                            <DateHeaderCellTemplate>
+                                <div class="pr-machine-schedule-date-header"
+                                     title="@($"{context.Interval.Start:dddd, dd MMMM yyyy HH:mm} – {context.Interval.End:dddd, dd MMMM yyyy HH:mm}")">
+                                    @if (context.Scale.Unit == SchedulerTimeScaleUnit.Hour)
+                                    {
+                                        <span>@context.Interval.Start.ToString("HH:mm")</span>
+                                    }
+                                    else if (context.Scale.Unit == SchedulerTimeScaleUnit.Week)
+                                    {
+                                        <span>Week of @context.Interval.Start.ToString("dd MMM")</span>
+                                    }
+                                    else if (context.Scale.Unit == SchedulerTimeScaleUnit.Month)
+                                    {
+                                        <span>@context.Interval.Start.ToString("MMMM yyyy")</span>
+                                    }
+                                    else if (CurrentView == PlannerView.Month)
+                                    {
+                                        <span>@context.Interval.Start.ToString("dd ddd")</span>
+                                    }
+                                    else
+                                    {
+                                        <span>@context.Interval.Start.ToString("ddd, dd MMM")</span>
+                                    }
+                                </div>
+                            </DateHeaderCellTemplate>
+                            <ResourceHeaderCellTemplate>
+                                @{
+                                    var machineCode = context.Resource.Id?.ToString();
+                                    var resourceMachine = board.Machines.FirstOrDefault(x =>
+                                        string.Equals(x.MachineCode, machineCode, StringComparison.OrdinalIgnoreCase));
+                                }
+                                @if (resourceMachine is null)
+                                {
+                                    <div class="pr-machine-schedule-resource" title="@context.Resource.Caption">
+                                        <strong>@context.Resource.Caption</strong>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="pr-machine-schedule-resource" title="@resourceMachine.DisplayName">
+                                        <strong>@resourceMachine.MachineCode</strong>
+                                        @if (!string.IsNullOrWhiteSpace(resourceMachine.MachineDescription))
+                                        {
+                                            <span>@resourceMachine.MachineDescription</span>
+                                        }
+                                    </div>
+                                }
+                            </ResourceHeaderCellTemplate>
+                        </DxSchedulerTimelineView>
+                    </DxScheduler>
+                </section>
 
-                    <aside class="iv-card pr-machine-schedule-details" aria-label="Selected schedule details">
+                <section class="iv-card pr-machine-schedule-details" aria-label="Selected schedule details">
+                    <button class="pr-machine-schedule-details__toggle" type="button"
+                            aria-expanded="@IsDetailsOpen" @onclick="ToggleDetails">
+                        <span>
+                            <strong>@(SelectedJob is { } selected ? $"{selected.WorkOrderNo} · {selected.OperationCode}" : "Selected operation details")</strong>
+                            <small>@(SelectedJob is { } current ? $"{current.MachineCode} · {current.PlannedStart:dd MMM yyyy HH:mm} → {current.PlannedCompletion:dd MMM yyyy HH:mm}" : "Select a schedule bar to inspect the Work Order and operation.")</small>
+                        </span>
+                        <i class="fa-solid @(IsDetailsOpen ? "fa-chevron-up" : "fa-chevron-down")" aria-hidden="true"></i>
+                    </button>
+                    @if (IsDetailsOpen)
+                    {
                         @if (SelectedJob is { } job)
                         {
-                            <div class="pr-machine-schedule-details__head">
-                                <span class="pr-machine-schedule-details__eyebrow">Selected operation</span>
-                                <h2>@job.WorkOrderNo</h2>
-                                <span class="pr-machine-schedule-status">@job.WorkOrderStatus · @job.ExecutionStatus</span>
-                            </div>
-                            <dl>
-                                <div><dt>Product</dt><dd>@job.ProductCode @DescriptionSuffix(job.ProductDescription)</dd></div>
-                                <div><dt>Work Centre</dt><dd>@job.WorkCentreCode @DescriptionSuffix(job.WorkCentreDescription)</dd></div>
-                                <div><dt>Operation</dt><dd>@job.OperationCode @DescriptionSuffix(job.OperationDescription)</dd></div>
-                                <div><dt>Machine</dt><dd>@job.MachineCode @DescriptionSuffix(job.MachineDescription)</dd></div>
-                                <div><dt>Planned quantity</dt><dd>@job.PlannedQuantity.ToString("n4") @job.OutputUom</dd></div>
-                                <div><dt>Productive duration</dt><dd>@job.ProductiveDurationMinutes.ToString("n1") min</dd></div>
-                                <div><dt>Planned start</dt><dd>@job.PlannedStart.ToString("dd MMM yyyy HH:mm")</dd></div>
-                                <div><dt>Planned completion</dt><dd>@job.PlannedCompletion.ToString("dd MMM yyyy HH:mm")</dd></div>
-                            </dl>
-                            @if (job.IsLocked && !string.IsNullOrWhiteSpace(job.LockReason))
-                            {
-                                <p class="pr-machine-schedule-lock-reason"><i class="fa-solid fa-lock" aria-hidden="true"></i> @job.LockReason</p>
-                            }
-                            <div class="pr-machine-schedule-details__actions">
-                                <DxButton Text="Open Work Order" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => OpenWorkOrder(job))" Enabled="@CanOpenWorkOrders" />
-                                <DxButton Text="Reschedule" RenderStyle="ButtonRenderStyle.Primary" Enabled="false" Title="Planner writes are not ready for this company." />
+                            <div class="pr-machine-schedule-details__body">
+                                <div class="pr-machine-schedule-details__head">
+                                    <span class="pr-machine-schedule-details__eyebrow">Selected operation · View only</span>
+                                    <h2>@job.WorkOrderNo</h2>
+                                    <span class="pr-machine-schedule-status">@job.WorkOrderStatus · @job.ExecutionStatus</span>
+                                </div>
+                                <dl>
+                                    <div><dt>Product</dt><dd>@job.ProductCode @DescriptionSuffix(job.ProductDescription)</dd></div>
+                                    <div><dt>Work Centre</dt><dd>@job.WorkCentreCode @DescriptionSuffix(job.WorkCentreDescription)</dd></div>
+                                    <div><dt>Operation</dt><dd>@job.OperationCode @DescriptionSuffix(job.OperationDescription)</dd></div>
+                                    <div><dt>Machine</dt><dd>@job.MachineCode @DescriptionSuffix(job.MachineDescription)</dd></div>
+                                    <div><dt>Planned quantity</dt><dd>@job.PlannedQuantity.ToString("n4") @job.OutputUom</dd></div>
+                                    <div><dt>Productive duration</dt><dd>@job.ProductiveDurationMinutes.ToString("n1") min</dd></div>
+                                    <div><dt>Planned start</dt><dd>@job.PlannedStart.ToString("dd MMM yyyy HH:mm")</dd></div>
+                                    <div><dt>Planned completion</dt><dd>@job.PlannedCompletion.ToString("dd MMM yyyy HH:mm")</dd></div>
+                                </dl>
+                                @if (job.IsLocked && !string.IsNullOrWhiteSpace(job.LockReason))
+                                {
+                                    <p class="pr-machine-schedule-lock-reason"><i class="fa-solid fa-lock" aria-hidden="true"></i> @job.LockReason</p>
+                                }
+                                <div class="pr-machine-schedule-details__actions">
+                                    <DxButton Text="Open Work Order" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => OpenWorkOrder(job))" Enabled="@CanOpenWorkOrders" />
+                                    <DxButton Text="Change Schedule" RenderStyle="ButtonRenderStyle.Primary"
+                                              Click="OpenRescheduleDialog" Enabled="@CanOpenReschedule" />
+                                    @if (!CanOpenReschedule)
+                                    {
+                                        <span>@RescheduleUnavailableReason</span>
+                                    }
+                                </div>
                             </div>
                         }
                         else
@@ -188,9 +327,164 @@
                                 <span>Work Order, operation, machine and execution details will appear here.</span>
                             </div>
                         }
-                    </aside>
+                    }
+                </section>
+            }
+
+            @if (IsRescheduleDialogOpen && SelectedJob is { } rescheduleJob)
+            {
+                <div class="pr-machine-schedule-dialog-backdrop">
+                    <section class="pr-machine-schedule-dialog iv-card" role="dialog" aria-modal="true"
+                             aria-labelledby="pr-machine-schedule-dialog-title">
+                        <header class="pr-machine-schedule-dialog__header">
+                            <div>
+                                <span class="iv-hero__eyebrow">Schedule preview</span>
+                                <h2 id="pr-machine-schedule-dialog-title">Change @rescheduleJob.WorkOrderNo · @rescheduleJob.OperationCode</h2>
+                                <p>@rescheduleJob.MachineCode · @rescheduleJob.PlannedStart.ToString("dd MMM yyyy HH:mm") to @rescheduleJob.PlannedCompletion.ToString("dd MMM yyyy HH:mm")</p>
+                            </div>
+                            <button type="button" class="pr-machine-schedule-dialog__close" aria-label="Close" @onclick="CloseRescheduleDialog" disabled="@IsRescheduleBusy">×</button>
+                        </header>
+
+                        <div class="pr-machine-schedule-dialog__inputs">
+                            <label>
+                                <span>Requested date</span>
+                                <input type="date" value="@RequestedDateText" @onchange="OnRequestedDateChanged" disabled="@IsRescheduleBusy" />
+                            </label>
+                            <label>
+                                <span>Requested time</span>
+                                <input type="time" step="60" value="@RequestedTimeText" @onchange="OnRequestedTimeChanged" disabled="@IsRescheduleBusy" />
+                            </label>
+                            <label class="pr-machine-schedule-dialog__reason">
+                                <span>Reason</span>
+                                <textarea maxlength="500" rows="3" @bind="RescheduleReason" @bind:after="InvalidateReschedulePreview"
+                                          placeholder="Why does this schedule need to change?" disabled="@IsRescheduleBusy"></textarea>
+                            </label>
+                        </div>
+
+                        @if (ReschedulePreview is { } preview)
+                        {
+                            <div class="pr-machine-schedule-preview" aria-live="polite">
+                                <div class="pr-machine-schedule-preview__summary">
+                                    <strong>Target operation</strong>
+                                    <span>@(preview.ProposedStart?.ToString("dd MMM yyyy HH:mm") ?? "—") → @(preview.ProposedCompletion?.ToString("dd MMM yyyy HH:mm") ?? "—")</span>
+                                </div>
+                                <div class="pr-machine-schedule-preview__summary">
+                                    <strong>Work Order window</strong>
+                                    <span>@preview.WorkOrderStartBefore.ToString("dd MMM HH:mm") – @preview.WorkOrderCompletionBefore.ToString("dd MMM HH:mm")
+                                        → @(preview.WorkOrderStartAfter?.ToString("dd MMM HH:mm") ?? "—") – @(preview.WorkOrderCompletionAfter?.ToString("dd MMM HH:mm") ?? "—")</span>
+                                </div>
+                                @if (preview.Changes.Count > 0)
+                                {
+                                    <div class="pr-machine-schedule-preview__changes">
+                                        <strong>Operations affected (@preview.Changes.Count)</strong>
+                                        <ul>
+                                            @foreach (var change in preview.Changes)
+                                            {
+                                                <li>
+                                                    <span>@change.OperationCode @DescriptionSuffix(change.OperationDescription) · @change.MachineCode</span>
+                                                    <small>@change.BeforeStart.ToString("dd MMM HH:mm") – @change.BeforeCompletion.ToString("dd MMM HH:mm") → @change.AfterStart.ToString("dd MMM HH:mm") – @change.AfterCompletion.ToString("dd MMM HH:mm")</small>
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                                @if (preview.Warnings.Count > 0)
+                                {
+                                    <div class="pr-machine-schedule-preview__messages">
+                                        <strong>Warnings</strong>
+                                        <ul>@foreach (var warning in preview.Warnings) { <li>@warning</li> }</ul>
+                                    </div>
+                                }
+                                @if (preview.Blockers.Count > 0)
+                                {
+                                    <div class="pr-machine-schedule-preview__messages pr-machine-schedule-preview__messages--blocked">
+                                        <strong>Cannot commit</strong>
+                                        <ul>@foreach (var blocker in preview.Blockers) { <li>@blocker</li> }</ul>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <footer class="pr-machine-schedule-dialog__actions">
+                            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseRescheduleDialog" Enabled="@(!IsRescheduleBusy)" />
+                            <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanOpenReschedule)" />
+                            <DxButton Text="Commit schedule" RenderStyle="ButtonRenderStyle.Primary" Click="CommitRescheduleAsync"
+                                      Enabled="@(!IsRescheduleBusy && CanOpenReschedule && ReschedulePreview?.CanCommit == true)" />
+                        </footer>
+                    </section>
                 </div>
             }
+
+            <section class="pr-machine-schedule-legend" aria-label="Timeline legend">
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--scheduled"></i>Scheduled</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--locked"></i>Started / locked</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--maintenance"></i>Maintenance</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--off"></i>Nonworking</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--attention"></i>Needs attention</span>
+            </section>
+        }
+
+        @if (IsBackfillDialogOpen && BackfillReport is { } backfill)
+        {
+            <div class="pr-machine-schedule-dialog-backdrop">
+                <section class="pr-machine-schedule-dialog iv-card" role="dialog" aria-modal="true"
+                         aria-labelledby="pr-machine-schedule-backfill-title">
+                    <header class="pr-machine-schedule-dialog__header">
+                        <div>
+                            <span class="iv-hero__eyebrow">Maintenance command · dry-run first</span>
+                            <h2 id="pr-machine-schedule-backfill-title">Allocation backfill</h2>
+                            <p>Verified fragments reserve existing schedules. This does not change Work Order dates.</p>
+                        </div>
+                        <button type="button" class="pr-machine-schedule-dialog__close" aria-label="Close"
+                                @onclick="CloseBackfillDialog" disabled="@IsBackfillBusy">×</button>
+                    </header>
+
+                    <div class="pr-machine-schedule-preview__summary">
+                        <strong>Active machine operations in this branch</strong>
+                        <span>@backfill.ActiveMachineOperationCount</span>
+                    </div>
+                    <div class="pr-machine-schedule-preview__summary">
+                        <strong>Already verified</strong>
+                        <span>@backfill.AlreadyVerifiedCount</span>
+                    </div>
+                    <div class="pr-machine-schedule-preview__summary">
+                        <strong>Missing allocations eligible for backfill</strong>
+                        <span>@backfill.MissingAllocationCount</span>
+                    </div>
+                    <div class="pr-machine-schedule-preview__summary">
+                        <strong>Unverified / overlapping</strong>
+                        <span>@backfill.UnverifiedCount / @backfill.OverlappingMachineCount machine(s)</span>
+                    </div>
+
+                    @if (backfill.Findings.Count > 0)
+                    {
+                        <div class="pr-machine-schedule-preview__changes">
+                            <strong>Dry-run findings</strong>
+                            <ul>
+                                @foreach (var finding in backfill.Findings)
+                                {
+                                    <li class="@(finding.IsBlocking ? "pr-machine-schedule-preview__finding--blocked" : string.Empty)">
+                                        <span><strong>@finding.Code</strong>@(finding.WorkOrderNo is null ? string.Empty : $" · {finding.WorkOrderNo}")@(finding.MachineCode is null ? string.Empty : $" · {finding.MachineCode}")</span>
+                                        <small>@finding.Message</small>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="pr-machine-schedule-backfill-clear">All active schedules in this company scope are reproducible and allocation fragments match.</p>
+                    }
+
+                    <footer class="pr-machine-schedule-dialog__actions">
+                        <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseBackfillDialog" Enabled="@(!IsBackfillBusy)" />
+                        <DxButton Text="Apply verified fragments" RenderStyle="ButtonRenderStyle.Primary"
+                                  Click="ApplyAllocationBackfillAsync"
+                                  Enabled="@(!IsBackfillBusy && backfill.CanApply && backfill.MissingAllocationCount > 0)" />
+                    </footer>
+                </section>
+            </div>
         }
     </div>
 </MenuAuthorize>
+

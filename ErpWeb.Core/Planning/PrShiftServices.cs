@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Production;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
@@ -134,6 +135,20 @@ public sealed class PrShiftService : IPrShiftService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            if (!vm.IsNew)
+            {
+                var machineCodes = await MachineScheduleCalendarImpactGuard.FindMachinesUsingShiftAsync(
+                    db, write.CompanyCode, code, DateTime.Today, ct);
+                var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                    db, write.CompanyCode, DateTime.Today, DateTime.MaxValue, machineCodes, ct);
+                if (impact is not null)
+                {
+                    await tx.RollbackAsync(ct);
+                    return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+                }
+            }
+
             PrShift entity;
             if (vm.IsNew)
             {
@@ -171,6 +186,11 @@ public sealed class PrShiftService : IPrShiftService
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Shift saved.");
         }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
         catch
         {
             await tx.RollbackAsync(ct);
@@ -185,19 +205,29 @@ public sealed class PrShiftService : IPrShiftService
         if (!await _access.CanDeleteAsync(MenuCodes.PlanningShift, ct)) return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningShift);
         var code = PlanningCodeNormalizer.NormalizeCode(shiftCd);
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        if (await db.PrShiftGroups.AnyAsync(x => x.ShiftCd == code && x.CompCode == write.CompanyCode, ct))
-            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, "Shift is used by a shift group.");
-        var e = await db.PrShifts.FirstOrDefaultAsync(x => x.ShiftCd == code && x.CompCode == write.CompanyCode, ct);
-        if (e is null) return PlanningServiceResult.Ok();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            if (await db.PrShiftGroups.AnyAsync(x => x.ShiftCd == code && x.CompCode == write.CompanyCode, ct))
+                return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, "Shift is used by a shift group.");
+            var e = await db.PrShifts.FirstOrDefaultAsync(x => x.ShiftCd == code && x.CompCode == write.CompanyCode, ct);
+            if (e is null)
+            {
+                await tx.CommitAsync(ct);
+                return PlanningServiceResult.Ok();
+            }
             var children = await db.PrShiftBreaks.Where(x => x.ShiftCd == code && x.CompCode == write.CompanyCode).ToListAsync(ct);
             db.PrShiftBreaks.RemoveRange(children);
             db.PrShifts.Remove(e);
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Shift deleted.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
         }
         catch
         {
@@ -267,6 +297,20 @@ public sealed class PrShiftGroupService : IPrShiftGroupService
         if (err is not null) return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err);
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+        await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+        var machineCodes = await MachineScheduleCalendarImpactGuard.FindMachinesUsingShiftGroupsAsync(
+            db, write.CompanyCode, [grp], DateTime.Today, ct);
+        var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+            db, write.CompanyCode, DateTime.Today, DateTime.MaxValue, machineCodes, ct);
+        if (impact is not null)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+        }
+
         var selected = vm.SelectedShiftCds.Select(PlanningCodeNormalizer.NormalizeCode).Distinct().ToList();
         var shifts = await db.PrShifts.AsNoTracking()
             .Where(x => selected.Contains(x.ShiftCd) && x.CompCode == write.CompanyCode)
@@ -299,9 +343,6 @@ public sealed class PrShiftGroupService : IPrShiftGroupService
         if (!validation.Succeeded) return validation;
 
         var intervalByShift = intervals.ToDictionary(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        try
-        {
             if (vm.DefaultGrp)
             {
                 // Tenant-scoped clear of other defaults
@@ -368,6 +409,11 @@ public sealed class PrShiftGroupService : IPrShiftGroupService
             _logger.LogInformation("ShiftGroup {Group} saved for {Company}", grp, write.CompanyCode);
             return PlanningServiceResult.Ok("Shift group saved.");
         }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
         catch
         {
             await tx.RollbackAsync(ct);
@@ -382,11 +428,27 @@ public sealed class PrShiftGroupService : IPrShiftGroupService
         if (!await _access.CanDeleteAsync(MenuCodes.PlanningShiftGroup, ct)) return PlanningServiceResult.PermissionDenied(MenuCodes.PlanningShiftGroup);
         var code = PlanningCodeNormalizer.NormalizeCode(shfGrpCd);
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        if (await db.PrShiftCalendars.AnyAsync(x => x.ShfGrpCd == code && x.CompCode == write.CompanyCode, ct))
-            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, "Shift group is used on machine calendars.");
-        var rows = await db.PrShiftGroups.Where(x => x.ShfGrpCd == code && x.CompCode == write.CompanyCode).ToListAsync(ct);
-        db.PrShiftGroups.RemoveRange(rows);
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Shift group deleted.");
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            if (await db.PrShiftCalendars.AnyAsync(x => x.ShfGrpCd == code && x.CompCode == write.CompanyCode, ct))
+                return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, "Shift group is used on machine calendars.");
+            var rows = await db.PrShiftGroups.Where(x => x.ShfGrpCd == code && x.CompCode == write.CompanyCode).ToListAsync(ct);
+            db.PrShiftGroups.RemoveRange(rows);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Shift group deleted.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 }

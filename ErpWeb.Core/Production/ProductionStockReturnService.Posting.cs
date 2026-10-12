@@ -45,7 +45,7 @@ public sealed partial class ProductionStockReturnService
                 if (replay.RequestFingerprint != fingerprint.RequestFingerprint) throw new ReturnException("The request ID was reused with different input.");
                 if (replay.SealedAtUtc is null) throw new ReturnException("The existing posting is not sealed; reconciliation is required.");
                 var recorded = await LoadAsync(db, scope, request.Id, false, ct);
-                var replayResult = await MapAsync(db, recorded, ct);
+                var replayResult = await MapAsync(db, recorded, scope, ct);
                 if (reversal) replayResult.ReversalPostingId = replay.Id; else replayResult.PostingId = replay.Id;
                 return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(replayResult);
             }
@@ -158,7 +158,7 @@ public sealed partial class ProductionStockReturnService
             await coordinator.CompleteInTransactionAsync(context, ct);
             if (context.Posting.SealedAtUtc is null) throw new ProductionPostingInvariantException("The PRTN posting was not sealed.");
             await tx.CommitAsync(ct);
-            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, ct));
+            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, scope, ct));
         }
         catch (ReturnException e) { return Fail<ProductionStockReturnDocument>(e.Message, e.Code); }
         catch (StockLedgerException e) { return Fail<ProductionStockReturnDocument>(e.Error.Message); }

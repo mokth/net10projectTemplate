@@ -2,58 +2,180 @@
 @page "/planning/stock-returns/{Id:int}/edit"
 @page "/planning/stock-returns/{Id:int}/view"
 @using Microsoft.AspNetCore.Components.Routing
+@using ErpWeb.Core.Production
+@using ErpWeb.UI.Planning.Lookups
 @inherits PageBase
 
 <PageTitle>@Heading</PageTitle>
 <NavigationLock ConfirmExternalNavigation="Dirty" OnBeforeInternalNavigation="BeforeNavigate" />
 <MenuAuthorize MenuCode="@MenuCodes.PlanningStockReturn">
-    <div class="iv-page pr-dp-page">
-        @if(!string.IsNullOrWhiteSpace(StatusMessage)){<div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div>}
-        @if(!string.IsNullOrWhiteSpace(ErrorMessage)){<div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div>}
-        <header class="iv-hero"><div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-arrow-rotate-left"></i></div><div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">@Heading</h1><div class="iv-chips"><span class="iv-chip">@Document.Status</span>@if(Document.Id>0){<span class="iv-chip code-style">PRTN @Document.BatchNo</span>}</div></div></header>
-        <section class="iv-card pr-stock-command"><DxButton Text="BACK" RenderStyle="ButtonRenderStyle.Secondary" Click="BackAsync" /><span class="pr-stock-command__spacer"></span>
-            @if(CanSave){<DxButton Text="SAVE DRAFT" IconCssClass="fa-solid fa-floppy-disk" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy)" />}
-            @if(CanPost){<DxButton Text="POST" IconCssClass="fa-solid fa-check" RenderStyle="ButtonRenderStyle.Success" Click="PostAsync" Enabled="@(!Busy && !Dirty)" />}
-            @if(CanRollback){<DxButton Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left" RenderStyle="ButtonRenderStyle.Warning" Click="BeginRollback" Enabled="@(!Busy)" />}
-            @if(CanDelete){<DxButton Text="DELETE" IconCssClass="fa-solid fa-trash" RenderStyle="ButtonRenderStyle.Danger" Click="DeleteAsync" Enabled="@(!Busy)" />}
-            @if(CanCorrection){<DxButton Text="CREATE CORRECTION" RenderStyle="ButtonRenderStyle.Secondary" Click="CreateCorrectionAsync" Enabled="@(!Busy)" />}
-            @if(CanEditDraft){<DxButton Text="EDIT DRAFT" RenderStyle="ButtonRenderStyle.Secondary" Click="EditDraft" />}
+    <div class="iv-page pr-stock-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div> }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-arrow-rotate-left"></i></div>
+            <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">@Heading</h1>
+                <div class="iv-chips"><span class="iv-chip">@Document.Status</span>@if (Document.Id > 0) { <span class="iv-chip code-style">PRTN @Document.BatchNo</span> }</div>
+            </div>
+        </header>
+
+        <section class="iv-card pr-stock-commandbar">
+            <div class="pr-stock-commandbar__left">
+                <DxButton Text="BACK" RenderStyle="ButtonRenderStyle.Secondary" Click="BackAsync" />
+                @if (CanChangeWorkOrder) { <DxButton Text="CHANGE WORK ORDER" RenderStyle="ButtonRenderStyle.Secondary" Click="RequestChangeWorkOrder" Enabled="@(!Busy)" /> }
+            </div>
+            <div class="pr-stock-commandbar__right">
+                @if (CanEditDraft) { <DxButton Text="EDIT DRAFT" RenderStyle="ButtonRenderStyle.Secondary" Click="EditDraft" /> }
+                @if (CanSave) { <DxButton Text="SAVE DRAFT" IconCssClass="fa-solid fa-floppy-disk" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy)" /> }
+                @if (CanPost) { <DxButton Text="POST" IconCssClass="fa-solid fa-check" RenderStyle="ButtonRenderStyle.Success" Click="BeginPost" Enabled="@(!Busy)" /> }
+                @if (CanRollback) { <DxButton Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left" RenderStyle="ButtonRenderStyle.Warning" Click="BeginRollback" Enabled="@(!Busy)" /> }
+                @if (CanDelete) { <DxButton Text="DELETE" IconCssClass="fa-solid fa-trash" RenderStyle="ButtonRenderStyle.Danger" Click="BeginDelete" Enabled="@(!Busy)" /> }
+                @if (CanCorrection) { <DxButton Text="CREATE CORRECTION" RenderStyle="ButtonRenderStyle.Secondary" Click="CreateCorrectionAsync" Enabled="@(!Busy)" /> }
+            </div>
         </section>
-        @if(BusyLoading){<section class="iv-card" aria-busy="true"><div class="iv-skeleton"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section>}
-        else if(!IsView && CanEditFields && WorkOrder is null)
+
+        @if (BusyLoading)
         {
-            <section class="iv-card"><div class="pr-dp-section-head"><div><p class="iv-eyebrow">Phase 1</p><strong>Select Work Order</strong><small>Choose a RELEASED or IN_PROGRESS Work Order before selecting a material pool.</small></div></div><div class="pr-stock-toolbar"><DxTextBox @bind-Text="WorkOrderInput" NullText="Work Order number" CssClass="w-100" /><DxButton Text="LOAD WORK ORDER" RenderStyle="ButtonRenderStyle.Primary" Click="LoadWorkOrderAsync" Enabled="@(!Busy)" /></div></section>
+            <section class="iv-card" aria-busy="true"><div class="iv-skeleton"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div></section>
         }
-        else if(!IsView && CanEditFields && WorkOrder is not null)
+        else if (CanEditFields && Document.WorkOrderId == 0)
         {
-            <section class="iv-card"><div class="pr-dp-section-head"><div><p class="iv-eyebrow">Locked Work Order context</p><strong class="code-style">@WorkOrder.WorkOrderNo · @WorkOrder.ProductCode</strong><small>@WorkOrder.Status · Snapshot @Document.SnapshotRevision</small></div><DxButton Text="CHANGE WORK ORDER" RenderStyle="ButtonRenderStyle.Secondary" Click="ChangeWorkOrder" Enabled="@(!Busy && Document.Id==0)" /></div>
-                <div class="pr-stock-toolbar"><DxTextBox @bind-Text="SourceSearch" NullText="Search item or lot" CssClass="w-100" /><DxButton Text="FIND POOLS" RenderStyle="ButtonRenderStyle.Secondary" Click="SearchPoolsAsync" Enabled="@(!Busy)" /></div>
-                @if(Sources.Count>0){<DxGrid Data="@Sources" PageSize="10" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-dp-grid"><Columns>
-                    <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.ItemCode)" Caption="Item" Width="170px" MinWidth="150" />
-                    <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.LotNo)" Caption="Lot" Width="140px" />
-                    <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.ReturnableQty)" Caption="Unused ISSUE available" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" Width="180px" />
-                    <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.Uom)" Caption="UOM" Width="90px" />
-                    <DxGridDataColumn Caption="Readiness" Width="280px"><CellDisplayTemplate>@(((ProductionStockReturnSource)context.DataItem).Readiness)</CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="Action" Width="100px"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;}<DxButton Text="ADD" RenderStyle="ButtonRenderStyle.Primary" Click="@(()=>AddSource(source))" Enabled="@(source.ReturnableQty>0 && Editors.All(x=>x.Source.ProductionBalLotId!=source.ProductionBalLotId))" /></CellDisplayTemplate></DxGridDataColumn>
-                </Columns></DxGrid>}
+            <section class="iv-card">
+                <div class="pr-stock-section-head"><div><p class="iv-eyebrow">Phase 1</p><strong>Select Work Order</strong><small>Choose a RELEASED or IN_PROGRESS Work Order. The lookup shows Work Orders with candidate Production stock.</small></div></div>
+                <div class="pr-stock-lookup"><label class="form-label">Work Order</label>
+                    <PrProductionStockWorkOrderPicker WorkOrderNo="@Document.WorkOrderNo" ResolveAsync="@ResolveWorkOrderAsync" SearchAsync="@SearchWorkOrdersAsync" Selected="@OnWorkOrderSelectedAsync" Cleared="@OnWorkOrderClearedAsync" Enabled="@(!Busy)" />
+                </div>
             </section>
         }
-        @if(IsView || CanEditFields && WorkOrder is not null)
+        else if (!CanEditFields && Document.Id == 0)
         {
-            <section class="iv-card"><div class="pr-dp-section-head"><div><p class="iv-eyebrow">Document</p><strong>@(IsView?"Saved return facts":"Return workspace")</strong><small>@(IsView?"Posted values below are historical facts.":"Current source availability is revalidated at Save and POST.")</small></div></div>
-                <DxFormLayout CssClass="pr-stock-form"><DxFormLayoutItem Caption="Work Order" ColSpanMd="4"><DxTextBox Text="@Document.WorkOrderNo" ReadOnly="true" /></DxFormLayoutItem><DxFormLayoutItem Caption="Effective date" ColSpanMd="4"><DxDateEdit @bind-Date="Document.EffectiveDate" Enabled="@CanEditFields" /></DxFormLayoutItem><DxFormLayoutItem Caption="Reference" ColSpanMd="4"><DxTextBox @bind-Text="Document.RefNo" Enabled="@CanEditFields" /></DxFormLayoutItem><DxFormLayoutItem Caption="Remarks" ColSpanMd="12"><DxMemo @bind-Text="Document.Remarks" Rows="2" Enabled="@CanEditFields" /></DxFormLayoutItem></DxFormLayout>
-                @if(IsView){<DxGrid Data="@Document.Lines" PageSize="20" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-dp-grid"><Columns><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.ItemCode)" Caption="Item" Width="170px" /><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.LotNo)" Caption="Lot" Width="130px" /><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.RequestedQty)" Caption="Returned Qty" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" Width="150px" /><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.BaseUom)" Caption="Base UOM" Width="100px" /><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.Reason)" Caption="Reason" Width="150px" /><DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.TotalValue)" Caption="Historical value" DisplayFormat="n6" TextAlignment="GridTextAlignment.Right" Width="160px" /></Columns></DxGrid>}
-                else {<DxGrid Data="@Editors" PageSize="20" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-dp-grid"><Columns>
-                    <DxGridDataColumn Caption="Item / Lot" Width="220px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<strong>@row.Source.ItemCode</strong><div class="text-muted">@row.Source.LotNo</div></CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="Current unused ISSUE" Width="170px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}@row.Source.ReturnableQty.ToString("n4") @row.Source.Uom</CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="Return qty" Width="170px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxSpinEdit @bind-Value="row.Quantity" MinValue="0.0001m" MaxValue="row.Source.ReturnableQty" Increment="0.0001m" DisplayFormat="n4" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="Reason" Width="190px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxComboBox Data="@ReasonOptions" @bind-Value="row.Reason" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="Remarks" Width="220px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxTextBox @bind-Text="row.Remarks" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
-                    <DxGridDataColumn Caption="" Width="80px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxButton Text="REMOVE" RenderStyle="ButtonRenderStyle.Danger" Click="@(()=>Editors.Remove(row))" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
-                </Columns></DxGrid>}
-                @if(Document.ReadinessErrors.Count>0){<ul class="pr-stock-readiness">@foreach(var error in Document.ReadinessErrors){<li>@error</li>}</ul>}
+            <section class="iv-card"><p class="mb-0" role="alert">You do not have permission to create a Production Stock Return.</p></section>
+        }
+
+        @if (Document.WorkOrderId > 0 && !BusyLoading)
+        {
+            @if (IsView)
+            {
+                <section class="iv-card">
+                    <div class="pr-stock-section-head"><div><p class="iv-eyebrow">Document facts</p><strong>Saved return</strong></div></div>
+                    <div class="pr-stock-meta">
+                        <div class="pr-stock-meta__item"><span>Work Order</span><strong>@Document.WorkOrderNo</strong></div>
+                        <div class="pr-stock-meta__item"><span>Product</span><strong>@Document.ProductCode — @Document.ProductDescription</strong></div>
+                        <div class="pr-stock-meta__item"><span>Current WO status</span><strong>@Document.WorkOrderStatus</strong></div>
+                        <div class="pr-stock-meta__item"><span>Snapshot</span><strong>@Document.SnapshotRevision</strong></div>
+                        <div class="pr-stock-meta__item"><span>Document Date</span><strong>@Document.EffectiveDate.ToString("dd MMM yyyy")</strong></div>
+                        <div class="pr-stock-meta__item"><span>Reference</span><strong>@(string.IsNullOrWhiteSpace(Document.RefNo) ? "—" : Document.RefNo)</strong></div>
+                        <div class="pr-stock-meta__item"><span>Status</span><strong>@Document.Status · Revision @Document.Revision</strong></div>
+                        <div class="pr-stock-meta__item"><span>Posting ID</span><strong>@(Document.PostingId?.ToString() ?? "—")</strong></div>
+                        <div class="pr-stock-meta__item"><span>Reversal ID</span><strong>@(Document.ReversalPostingId?.ToString() ?? "—")</strong></div>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(Document.Remarks)) { <p class="pr-stock-view-remarks"><strong>Remarks:</strong> @Document.Remarks</p> }
+                </section>
+            }
+            else
+            {
+                <section class="iv-card">
+                    <div class="pr-stock-section-head"><div><p class="iv-eyebrow">Locked Work Order context</p><strong>@Document.WorkOrderNo</strong></div></div>
+                    <div class="pr-stock-meta">
+                        <div class="pr-stock-meta__item"><span>Product</span><strong>@Document.ProductCode — @Document.ProductDescription</strong></div>
+                        <div class="pr-stock-meta__item"><span>Current WO status</span><strong>@Document.WorkOrderStatus</strong></div>
+                        <div class="pr-stock-meta__item"><span>Snapshot</span><strong>@Document.SnapshotRevision</strong></div>
+                    </div>
+                    <DxFormLayout CssClass="pr-stock-form" SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Effective Date" ColSpanMd="3"><Template><DxDateEdit @bind-Date="Document.EffectiveDate" Enabled="@CanEditFields" CssClass="pr-stock-date" /></Template></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Reference" ColSpanMd="4"><Template><DxTextBox @bind-Text="Document.RefNo" Enabled="@CanEditFields" maxlength="30" CssClass="pr-stock-reference" /></Template></DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Remarks" ColSpanMd="5"><Template><DxMemo @bind-Text="Document.Remarks" Rows="2" Enabled="@CanEditFields" maxlength="200" /></Template></DxFormLayoutItem>
+                    </DxFormLayout>
+                </section>
+            }
+
+            <section class="iv-card pr-stock-lines">
+                <div class="pr-stock-section-head"><div><p class="iv-eyebrow">Lines</p><strong>@(IsView ? "Historical material returns" : "Production return workspace")</strong>
+                    @if (!IsView) { <small>Selected @Editors.Count / 100 · Projected balances are based on current Production stock; Save and POST revalidate.</small> }
+                </div>
+                @if (CanEditFields) { <DxButton Text="ADD MATERIAL" IconCssClass="fa-solid fa-plus" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SourcePickerVisible = true)" Enabled="@(!Busy && CanAddMoreSources)" /> }
+                </div>
+
+                @if (IsView)
+                {
+                    <DxGrid Data="@Document.Lines" PageSize="20" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-stock-grid">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.ItemCode)" Caption="ITEM" Width="135px" MinWidth="120" />
+                            <DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.LotNo)" Caption="PRODUCTION LOT" Width="130px" />
+                            <DxGridDataColumn Caption="RETURNED QTY" Width="150px"><CellDisplayTemplate>@{var line=(ProductionStockReturnLineDto)context.DataItem;}@line.RequestedQty.ToString("n4") @line.SourceUom</CellDisplayTemplate></DxGridDataColumn>
+                            <DxGridDataColumn Caption="INVENTORY DESTINATION" Width="260px"><CellDisplayTemplate>@{var line=(ProductionStockReturnLineDto)context.DataItem;}<strong>@line.Warehouse / @line.Location</strong><div class="text-muted">Lot @line.InventoryLotNo · @line.ItemStatus</div></CellDisplayTemplate></DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.Reason)" Caption="REASON" Width="140px" />
+                            @if (Document.CanViewCost) { <DxGridDataColumn FieldName="@nameof(ProductionStockReturnLineDto.TotalValue)" Caption="HISTORICAL VALUE" DisplayFormat="n6" TextAlignment="GridTextAlignment.Right" Width="155px" /> }
+                        </Columns>
+                    </DxGrid>
+                }
+                else
+                {
+                    @if (Editors.Count == 0) { <div class="pr-stock-empty">No material lines selected. Choose <strong>ADD MATERIAL</strong> to find eligible sources.</div> }
+                    else
+                    {
+                        <DxGrid Data="@Editors" PageSize="20" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-stock-grid">
+                            <Columns>
+                                <DxGridDataColumn Caption="ITEM / LOT" Width="155px" MinWidth="135"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<strong>@row.Source.ItemCode</strong><div class="text-muted">@row.Source.Description · @row.Source.LotNo</div></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="CURRENT PRODUCTION" Width="150px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}@row.Source.ProductionQty.ToString("n4") @row.Source.Uom</CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="CURRENT RETURNABLE" Width="150px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}@row.Source.ReturnableQty.ToString("n4") @row.Source.Uom</CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="RETURN QTY" Width="142px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxSpinEdit @bind-Value="row.Quantity" MinValue="0m" MaxValue="row.Source.ReturnableQty" Increment="0.0001m" DisplayFormat="n4" Enabled="@CanEditFields" CssClass="pr-stock-qty" /></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="PROJECTED AFTER" Width="155px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}@ProjectedAfterReturn(row).ToString("n4") @row.Source.Uom <small class="d-block text-muted">Projected only</small></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="DESTINATION" Width="225px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<strong>@row.Source.Warehouse / @row.Source.Location</strong><div class="text-muted">Lot @row.Source.InventoryLotNo · @row.Source.ItemStatus</div></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="REASON" Width="155px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxComboBox Data="@ReasonOptions" TData="string" TValue="string" @bind-Value="row.Reason" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="REMARKS" Width="180px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxTextBox @bind-Text="row.Remarks" maxlength="250" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="" Width="90px"><CellDisplayTemplate>@{var row=(ReturnEditor)context.DataItem;}<DxButton Text="REMOVE" RenderStyle="ButtonRenderStyle.Danger" Click="@(() => RemoveEditor(row))" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
+                            </Columns>
+                        </DxGrid>
+                    }
+
+                    @if (Editors.Count >= 100) { <p class="pr-stock-limit" role="status">Maximum 100 lines reached.</p> }
+                    <div class="pr-stock-readiness" role="@(GetUiIssues().Count == 0 ? "status" : "alert")">
+                        @if (GetUiIssues().Count == 0) { <strong>Ready to save</strong><span>@Editors.Count line(s) selected.</span> }
+                        else { <strong>Action required</strong><ul>@foreach (var issue in GetUiIssues()) { <li>@issue</li> }</ul> }
+                    </div>
+                    @if (Document.ReadinessErrors.Count > 0) { <div class="pr-stock-domain-readiness" role="alert"><strong>Server readiness</strong><ul>@foreach (var error in Document.ReadinessErrors) { <li>@error</li> }</ul></div> }
+                }
             </section>
         }
-        @if(RollbackVisible){<DxPopup Visible="true" VisibleChanged="@(v=>RollbackVisible=v)" HeaderText="Rollback Production Stock Return" Width="min(520px,95vw)" CloseOnOutsideClick="false"><BodyContentTemplate><div class="common-popup__body"><p>This appends a reversal for the linked Inventory and Production movements.</p><DxMemo @bind-Text="RollbackReason" Rows="3" NullText="Rollback reason (required)" /></div></BodyContentTemplate><FooterContentTemplate><div class="common-popup__footer"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(()=>RollbackVisible=false)" /><DxButton Text="ROLLBACK" RenderStyle="ButtonRenderStyle.Warning" Click="RollbackAsync" Enabled="@(!Busy)" /></div></FooterContentTemplate></DxPopup>}
+
+        <DxPopup HeaderText="Add Production Stock Return Materials" CloseOnOutsideClick="false" Width="90vw" CssClass="common-popup pr-popup-grid-dialog" @bind-Visible="SourcePickerVisible">
+            <Content>
+                <div class="d-flex gap-2 mb-2 align-items-end"><div class="flex-grow-1"><label class="form-label mb-0">Search source pools</label>
+                    <DxTextBox Text="@SourceSearch" TextChanged="OnSourceSearchChanged" BindValueMode="BindValueMode.OnInput" NullText="Item / description / lot" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                </div></div>
+                <div class="pr-popup-grid-shell" aria-busy="@SourceLoading">
+                    @if (SourceLoading) { <div class="iv-skeleton p-3"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div> }
+                    else if (Sources.Count == 0) { <p class="text-muted p-3 mb-0">@(string.IsNullOrWhiteSpace(SourceSearch) ? "No candidate Production stock was found for this Work Order. Choose another Work Order." : "No Production stock matches the current search. Clear the search to show all source pools.")</p> }
+                    else
+                    {
+                        <DxGrid Data="@Sources" PageSize="20" TextWrapEnabled="false" ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" CssClass="pr-popup-grid">
+                            <Columns>
+                                <DxGridDataColumn Caption="ITEM / DESCRIPTION" Width="210px" MinWidth="180"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;}<strong>@source.ItemCode</strong><div class="text-muted">@source.Description</div></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.LotNo)" Caption="PRODUCTION LOT" Width="130px" />
+                                <DxGridDataColumn Caption="CURRENT PRODUCTION QTY" Width="170px"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;}@source.ProductionQty.ToString("n4") @source.Uom</CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="CURRENT RETURNABLE" Width="155px"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;}@source.ReturnableQty.ToString("n4") @source.Uom</CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.Uom)" Caption="UOM" Width="75px" />
+                                <DxGridDataColumn Caption="INVENTORY DESTINATION" Width="200px"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;}<strong>@source.Warehouse / @source.Location</strong><div class="text-muted">Lot @source.InventoryLotNo</div></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn FieldName="@nameof(ProductionStockReturnSource.Readiness)" Caption="READINESS" Width="260px" MinWidth="220" />
+                                <DxGridDataColumn Caption="ACTION" Width="110px"><CellDisplayTemplate>@{var source=(ProductionStockReturnSource)context.DataItem;var added=IsSourceAdded(source.ProductionBalLotId);}<DxButton Text="@(added ? "ADDED" : "ADD")" RenderStyle="@(added ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)" Click="@(() => AddSource(source))" Enabled="@(!added && SourceCanBeAdded(source) && CanAddMoreSources && !Busy)" /></CellDisplayTemplate></DxGridDataColumn>
+                            </Columns>
+                        </DxGrid>
+                    }
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-2"><span class="text-muted small">@SourcePageLabel</span><div class="d-flex gap-2">
+                    <DxButton Text="PREV" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourcePage > 0 && !SourceLoading)" Click="PreviousSourcePageAsync" />
+                    <DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourcePage + 1 < SourceTotalPages && !SourceLoading)" Click="NextSourcePageAsync" />
+                </div></div>
+                @if (Editors.Count >= 100) { <p class="pr-stock-limit mb-0 mt-2">Maximum 100 lines reached.</p> }
+                <div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton Text="DONE" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SourcePickerVisible = false)" /></div></div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Change Work Order?" CloseOnOutsideClick="false" Width="min(480px,95vw)" CssClass="common-popup" @bind-Visible="ChangeWorkOrderConfirmVisible"><Content><p class="iv-confirm__copy">Selected lines and unsaved entry details will be cleared.</p><div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => ChangeWorkOrderConfirmVisible = false)" /><DxButton Text="CHANGE WORK ORDER" RenderStyle="ButtonRenderStyle.Warning" Click="ConfirmChangeWorkOrder" /></div></div></Content></DxPopup>
+        <DxPopup HeaderText="Post Production Stock Return?" CloseOnOutsideClick="false" Width="min(520px,95vw)" CssClass="common-popup" @bind-Visible="PostConfirmVisible"><Content><p class="iv-confirm__copy">Post PRTN @Document.BatchNo?<br />@Document.Lines.Count material lines will move from Production back to their original Inventory balances. The destination cannot be changed after posting.</p><div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PostConfirmVisible = false)" /><DxButton Text="POST" RenderStyle="ButtonRenderStyle.Success" Click="ConfirmPostAsync" Enabled="@(!Busy)" /></div></div></Content></DxPopup>
+        <DxPopup HeaderText="Delete NEW Production Stock Return?" CloseOnOutsideClick="false" Width="min(480px,95vw)" CssClass="common-popup" @bind-Visible="DeleteConfirmVisible"><Content><p class="iv-confirm__copy">This permanently removes the saved NEW draft. No stock movement has been posted.</p><div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => DeleteConfirmVisible = false)" /><DxButton Text="DELETE" RenderStyle="ButtonRenderStyle.Danger" Click="ConfirmDeleteAsync" Enabled="@(!Busy)" /></div></div></Content></DxPopup>
+        <DxPopup HeaderText="Rollback Production Stock Return" CloseOnOutsideClick="false" Width="min(520px,95vw)" CssClass="common-popup" @bind-Visible="RollbackVisible"><Content><div class="common-popup__body"><p>This appends a reversal for the linked Inventory and Production movements.</p><DxMemo @bind-Text="RollbackReason" Rows="3" maxlength="250" NullText="Rollback reason (required)" /></div><div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackVisible = false)" /><DxButton Text="ROLLBACK" RenderStyle="ButtonRenderStyle.Warning" Click="RollbackAsync" Enabled="@(!Busy && !string.IsNullOrWhiteSpace(RollbackReason))" /></div></div></Content></DxPopup>
     </div>
 </MenuAuthorize>

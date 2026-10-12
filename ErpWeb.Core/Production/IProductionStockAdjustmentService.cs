@@ -1,10 +1,13 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Production;
 
 public interface IProductionStockAdjustmentService
 {
     Task<IvMasterOperationResult<ProductionStockAdjustmentPage>> SearchAsync(ProductionStockAdjustmentQuery query, CancellationToken ct = default);
+    Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchEligibleWorkOrdersAsync(LargeLookupSearchRequest request, CancellationToken ct = default);
+    Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveEligibleWorkOrderAsync(string workOrderNo, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockAdjustmentSourcePage>> SearchSourcesAsync(ProductionStockAdjustmentSourceQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> GetAsync(int id, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> SaveAsync(ProductionStockAdjustmentSaveRequest request, CancellationToken ct = default);
@@ -45,6 +48,9 @@ public sealed class ProductionStockAdjustmentDocument
     public int BatchNo { get; set; }
     public long WorkOrderId { get; set; }
     public string WorkOrderNo { get; set; } = "";
+    public string ProductCode { get; set; } = "";
+    public string? ProductDescription { get; set; }
+    public string WorkOrderStatus { get; set; } = "";
     public string Status { get; set; } = "NEW";
     public DateTime EffectiveDate { get; set; }
     public string? RefNo { get; set; }
@@ -73,6 +79,8 @@ public sealed class ProductionStockAdjustmentLineDto
     public string Uom { get; set; } = "";
     public decimal AdjustmentQty { get; set; }
     public decimal BaseQty { get; set; }
+    public decimal CurrentBaseQty { get; set; }
+    public string SourceUom { get; set; } = "";
     public string BaseUom { get; set; } = "";
     public string Reason { get; set; } = "";
     public string? Remarks { get; set; }

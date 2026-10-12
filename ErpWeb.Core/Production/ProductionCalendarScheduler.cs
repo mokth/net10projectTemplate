@@ -192,6 +192,36 @@ public static class ProductionCalendarScheduler
             : ScheduleBackward(data, anchor, requiredDuration);
     }
 
+    /// <summary>
+    /// Returns a scheduling view with already committed productive intervals removed from
+    /// capacity. Existing and new reservations use the same half-open interval rules.
+    /// </summary>
+    public static ScheduleMachineData ExcludeOccupiedIntervals(
+        ScheduleMachineData data,
+        IReadOnlyList<TimeInterval> occupiedIntervals)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(occupiedIntervals);
+
+        var occupied = UnionIntervals(occupiedIntervals);
+        var usable = SubtractIntervals(data.GlobalUsableIntervals, occupied);
+        var ownedUsable = data.OwnedWorkingByOperationalDate.ToDictionary(
+            x => x.Key,
+            x => (IReadOnlyList<TimeInterval>)IntersectIntervals(x.Value, usable));
+
+        return new ScheduleMachineData
+        {
+            MachineCode = data.MachineCode,
+            CalendarByDate = data.CalendarByDate,
+            ShiftGroups = data.ShiftGroups,
+            PreventiveWindows = data.PreventiveWindows,
+            OwnedWorkingByOperationalDate = data.OwnedWorkingByOperationalDate,
+            GlobalWorkingIntervals = data.GlobalWorkingIntervals,
+            GlobalUsableIntervals = usable,
+            OwnedUsableByOperationalDate = ownedUsable
+        };
+    }
+
     private static ScheduleMachineResult ScheduleForward(
         ScheduleMachineData data, DateTime anchor, TimeSpan required)
     {

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Production;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
@@ -105,6 +106,17 @@ public sealed class PrCalendarService : IPrCalendarService
         try
         {
             await PlanningCalendarYearLock.AcquireAsync(db, write.CompanyCode, year, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+
+            var yearStart = new DateTime(year, 1, 1);
+            var yearEnd = new DateTime(year + 1, 1, 1);
+            var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                db, write.CompanyCode, yearStart, yearEnd, cancellationToken: ct);
+            if (impact is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
 
             var persisted = await LoadCompanyDaysAsync(db, write.CompanyCode, year, ct);
             var currentFp = CalendarYearFingerprint.ComputeCompany(write.CompanyCode, year, persisted);
@@ -166,6 +178,11 @@ public sealed class PrCalendarService : IPrCalendarService
             }, "Company calendar saved.");
         }
         catch (PlanningCalendarLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
         {
             await tx.RollbackAsync(ct);
             return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
@@ -371,6 +388,15 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
         try
         {
             await PlanningCalendarYearLock.AcquireAsync(db, write.CompanyCode, year, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+
+            var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                db, write.CompanyCode, new DateTime(year, 1, 1), new DateTime(year + 1, 1, 1), [mac], ct);
+            if (impact is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
 
             var loaded = await LoadMachineDaysAsync(db, write.CompanyCode, mac, year, ct);
             var currentFp = CalendarYearFingerprint.Compute(loaded.Select(d => new CalendarYearFingerprint.CalendarDayRow(d.Date, d.DateCd, d.ShfGrpCd, null)));
@@ -401,6 +427,11 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
             }, "Machine calendar saved.");
         }
         catch (PlanningCalendarLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
         {
             await tx.RollbackAsync(ct);
             return PlanningServiceResult<CalendarSaveResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
@@ -479,6 +510,7 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
         try
         {
             await PlanningCalendarYearLock.AcquireAsync(db, write.CompanyCode, year, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
             var holidays = await PrCalendarService.LoadHolidaySetAsync(db, year, ct);
             var result = await CopyYearCoreAsync(db, write, src, tgt, year, overwrite, holidays, ct);
             if (!result.Succeeded)
@@ -490,6 +522,11 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
             return result;
         }
         catch (PlanningCalendarLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
         {
             await tx.RollbackAsync(ct);
             return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
@@ -518,6 +555,16 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
             .ToListAsync(ct);
         if (sourceRows.Count == 0)
             return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Source machine has no calendar rows for that year.");
+
+        var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+            db,
+            write.CompanyCode,
+            new DateTime(year, 1, 1),
+            new DateTime(year + 1, 1, 1),
+            [tgt],
+            ct);
+        if (impact is not null)
+            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
 
         var targetExisting = await db.PrShiftCalendars
             .Where(x => x.MachineCode == tgt && x.CompCode == write.CompanyCode && x.Dt >= start && x.Dt <= end)
@@ -567,6 +614,7 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
         try
         {
             await PlanningCalendarYearLock.AcquireAsync(db, write.CompanyCode, year, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
             var holidays = await PrCalendarService.LoadHolidaySetAsync(db, year, ct);
             var start = new DateTime(year, 1, 1);
             var end = new DateTime(year, 12, 31);
@@ -585,6 +633,22 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
                 .Select(x => x.MachineCd)
                 .Distinct()
                 .ToListAsync(ct);
+
+            var targetMachines = machines
+                .Where(machine => !string.Equals(machine, src, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                db,
+                write.CompanyCode,
+                new DateTime(year, 1, 1),
+                new DateTime(year + 1, 1, 1),
+                targetMachines,
+                ct);
+            if (impact is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult<CopyYearToAllResult>.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
 
             var results = new List<MachineCopyResult>();
             var skipped = 0;
@@ -651,6 +715,11 @@ public sealed class PrShiftCalendarService : IPrShiftCalendarService
             await tx.RollbackAsync(ct);
             return PlanningServiceResult<CopyYearToAllResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
         }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult<CopyYearToAllResult>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
         catch (Exception ex)
         {
             await tx.RollbackAsync(ct);
@@ -704,26 +773,59 @@ public sealed class PrHolidayService : IPrHolidayService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            DateTime? originalDate = null;
             var years = new List<int>();
             if (holiday.Uid != 0)
             {
                 var existing = await db.PrHolidays.AsNoTracking().FirstOrDefaultAsync(x => x.Uid == holiday.Uid, ct);
                 if (existing?.DateOff is DateTime oldDt)
+                {
+                    originalDate = oldDt.Date;
                     years.Add(oldDt.Year);
+                }
             }
             var newYear = holiday.DateOff?.Year ?? holiday.Year ?? DateTime.Today.Year;
             years.Add(newYear);
             await PlanningCalendarYearLock.AcquireYearsAsync(db, write.CompanyCode, years, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+
+            var current = holiday.Uid == 0
+                ? null
+                : await db.PrHolidays.FirstOrDefaultAsync(x => x.Uid == holiday.Uid, ct);
+            if (holiday.Uid != 0 && (current is null || current.DateOff?.Date != originalDate))
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, "Holiday changed since load.");
+            }
+
+            var affectedDates = originalDate == holiday.DateOff?.Date
+                ? Array.Empty<DateTime?>()
+                : new DateTime?[] { originalDate, holiday.DateOff?.Date };
+            var impact = await FindHolidayScheduleImpactAsync(db, write.CompanyCode, affectedDates, ct);
+            if (impact is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
 
             if (holiday.Uid == 0)
                 db.PrHolidays.Add(holiday);
             else
-                db.PrHolidays.Update(holiday);
+            {
+                current!.DateOff = holiday.DateOff?.Date;
+                current.Description = holiday.Description;
+                current.Year = holiday.Year;
+            }
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Holiday saved.");
         }
         catch (PlanningCalendarLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
         {
             await tx.RollbackAsync(ct);
             return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
@@ -747,21 +849,39 @@ public sealed class PrHolidayService : IPrHolidayService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var e = await db.PrHolidays.FirstOrDefaultAsync(x => x.Uid == uid, ct);
-            if (e is null)
+            var initial = await db.PrHolidays.AsNoTracking().FirstOrDefaultAsync(x => x.Uid == uid, ct);
+            if (initial is null)
             {
                 await tx.CommitAsync(ct);
                 return PlanningServiceResult.Ok("Holiday deleted.");
             }
 
-            var year = e.DateOff?.Year ?? e.Year ?? DateTime.Today.Year;
+            var year = initial.DateOff?.Year ?? initial.Year ?? DateTime.Today.Year;
             await PlanningCalendarYearLock.AcquireAsync(db, write.CompanyCode, year, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            var e = await db.PrHolidays.FirstOrDefaultAsync(x => x.Uid == uid, ct);
+            if (e is null || e.DateOff?.Date != initial.DateOff?.Date)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, "Holiday changed since load.");
+            }
+            var impact = await FindHolidayScheduleImpactAsync(db, write.CompanyCode, [e.DateOff?.Date], ct);
+            if (impact is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
             db.PrHolidays.Remove(e);
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Holiday deleted.");
         }
         catch (PlanningCalendarLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
         {
             await tx.RollbackAsync(ct);
             return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
@@ -798,11 +918,18 @@ public sealed class PrHolidayService : IPrHolidayService
         {
             var years = candidates.Select(c => c.Year).Distinct();
             await PlanningCalendarYearLock.AcquireYearsAsync(db, write.CompanyCode, years, ct);
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
 
             foreach (var c in candidates)
             {
                 var exists = await db.PrHolidays.AnyAsync(x => x.DateOff == c.DateOff.Date, ct);
                 if (exists) continue;
+                var impact = await FindHolidayScheduleImpactAsync(db, write.CompanyCode, [c.DateOff.Date], ct);
+                if (impact is not null)
+                {
+                    await tx.RollbackAsync(ct);
+                    return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+                }
                 db.PrHolidays.Add(new PrHoliday
                 {
                     DateOff = c.DateOff.Date,
@@ -819,10 +946,32 @@ public sealed class PrHolidayService : IPrHolidayService
             await tx.RollbackAsync(ct);
             return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
         }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
         catch
         {
             await tx.RollbackAsync(ct);
             throw;
         }
+    }
+
+    private static async Task<string?> FindHolidayScheduleImpactAsync(
+        AppDbContext db,
+        string companyCode,
+        IEnumerable<DateTime?> dates,
+        CancellationToken cancellationToken)
+    {
+        foreach (var date in dates.Where(x => x.HasValue).Select(x => x!.Value.Date).Distinct())
+        {
+            var end = date >= DateTime.MaxValue.Date ? DateTime.MaxValue : date.AddDays(1);
+            var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                db, companyCode, date, end, cancellationToken: cancellationToken);
+            if (impact is not null)
+                return impact;
+        }
+        return null;
     }
 }

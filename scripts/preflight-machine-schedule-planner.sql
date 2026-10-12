@@ -32,7 +32,6 @@ WHERE w.Status IN (N'RELEASED', N'IN_PROGRESS')
   (
       SELECT 1 FROM dbo.PrMachineScheduleAllocation a
       WHERE a.CompanyCode = w.CompanyCode
-        AND a.BranchCode = w.BranchCode
         AND a.WorkOrderID = w.UID
         AND a.WorkOrderOperationID = o.UID
         AND a.WorkOrderMachineID = m.UID
@@ -52,6 +51,7 @@ WHERE w.UID IS NULL
             OR m.ScheduleRevision <> a.ScheduleRevision
             OR m.IsSelected <> 1
             OR m.OperationID <> a.WorkOrderOperationID
+            OR a.BranchCode <> w.BranchCode
             OR m.MachineCode <> a.MachineCode
             OR o.WorkOrderID IS NULL
             OR o.WorkOrderID <> a.WorkOrderID

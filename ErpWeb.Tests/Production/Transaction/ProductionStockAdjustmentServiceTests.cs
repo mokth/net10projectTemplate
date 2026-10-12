@@ -113,6 +113,44 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Saved_adjustment_keeps_current_pool_base_separate_and_search_summary_uses_signed_source_uom()
+    {
+        var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync();
+        var service = CreateService();
+        var saved = await service.SaveAsync(new ProductionStockAdjustmentSaveRequest
+        {
+            WorkOrderId = workOrderId,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('A', 64),
+            EffectiveDate = EffectiveAt,
+            RefNo = "20461012",
+            Lines = [new ProductionStockAdjustmentLineInput
+            {
+                ProductionBalLotId = poolId,
+                AdjustmentQty = 3m,
+                Reason = ProductionStockAdjustmentReasons.Count,
+                Remarks = "Explicit opening balance",
+                CostEvidenceType = InventoryCostEvidenceTypes.ManualApproved,
+                ProposedUnitCost = 1m,
+                CostOverrideReason = "Approved opening valuation",
+            }],
+        });
+
+        Assert.True(saved.Succeeded, saved.Message);
+        var line = Assert.Single(saved.Data!.Lines);
+        Assert.Equal(3m, line.BaseQty);
+        Assert.Equal(0m, line.CurrentBaseQty);
+
+        var byNumericReference = await service.SearchAsync(new() { SearchText = "20461012" });
+        Assert.True(byNumericReference.Succeeded, byNumericReference.Message);
+        Assert.Equal("+3.0000 EA", Assert.Single(byNumericReference.Data!.Rows).QtySummary);
+
+        var byBatchNumber = await service.SearchAsync(new() { SearchText = saved.Data.BatchNo.ToString() });
+        Assert.True(byBatchNumber.Succeeded, byBatchNumber.Message);
+        Assert.Equal(saved.Data.Id, Assert.Single(byBatchNumber.Data!.Rows).Id);
+    }
+
+    [Fact]
     public async Task Failure_after_production_writer_rolls_back_the_complete_adjustment_transaction()
     {
         var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync();

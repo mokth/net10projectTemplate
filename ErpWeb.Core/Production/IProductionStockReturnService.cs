@@ -1,10 +1,13 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Production;
 
 public interface IProductionStockReturnService
 {
     Task<IvMasterOperationResult<ProductionStockReturnPage>> SearchAsync(ProductionStockReturnQuery query, CancellationToken ct = default);
+    Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchEligibleWorkOrdersAsync(LargeLookupSearchRequest request, CancellationToken ct = default);
+    Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveEligibleWorkOrderAsync(string workOrderNo, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockReturnSourcePage>> SearchSourcesAsync(ProductionStockReturnSourceQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockReturnDocument>> GetAsync(int id, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockReturnDocument>> SaveAsync(ProductionStockReturnSaveRequest request, CancellationToken ct = default);
@@ -46,6 +49,9 @@ public sealed class ProductionStockReturnDocument
     public int BatchNo { get; set; }
     public long WorkOrderId { get; set; }
     public string WorkOrderNo { get; set; } = "";
+    public string ProductCode { get; set; } = "";
+    public string? ProductDescription { get; set; }
+    public string WorkOrderStatus { get; set; } = "";
     public string Status { get; set; } = "NEW";
     public DateTime EffectiveDate { get; set; }
     public string? RefNo { get; set; }
@@ -72,6 +78,8 @@ public sealed class ProductionStockReturnLineDto
     public string LotNo { get; set; } = "";
     public decimal ProductionQty { get; set; }
     public decimal ReturnableQty { get; set; }
+    public decimal CurrentReturnableQty { get; set; }
+    public string CurrentReadiness { get; set; } = "";
     public decimal RequestedQty { get; set; }
     public string SourceUom { get; set; } = "";
     public decimal BaseQty { get; set; }

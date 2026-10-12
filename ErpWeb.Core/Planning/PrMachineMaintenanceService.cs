@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Production;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
@@ -281,6 +282,7 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
             var preventive = await db.PrPreventives.FirstOrDefaultAsync(
                 x => x.Uid == preventiveUid && x.CompCode == write.CompanyCode, ct);
             if (preventive is null)
@@ -298,6 +300,14 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
 
             if (!string.Equals(preventive.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
                 return PlanningServiceResult<int>.Fail(PlanningErrorCode.ValidationFailed, "Only PLANNED preventive rows can be completed.");
+
+            if (PreventiveWindowNormalizer.TryNormalize(preventive.DownDt, preventive.StartTm, preventive.EndTm, out var window, out _))
+            {
+                var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                    db, write.CompanyCode, window.WindowStart, window.WindowEnd, [preventive.MachineCd], ct);
+                if (impact is not null)
+                    return PlanningServiceResult<int>.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
 
             if (await db.PrMacMaintenances.AnyAsync(x => x.PreventiveUid == preventiveUid, ct))
                 return PlanningServiceResult<int>.Fail(PlanningErrorCode.DuplicateCode, "Maintenance history already linked to this preventive.");
@@ -337,6 +347,11 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
             _logger.LogInformation("Completed preventive {Uid} -> maintenance {Id} for company {Company}",
                 preventiveUid, history.Id, write.CompanyCode);
             return PlanningServiceResult<int>.Ok(history.Id, "Preventive completed.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult<int>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
         }
         catch (DbUpdateException ex) when (
             ex.InnerException?.Message.Contains("UX_PrMacMaintenance_PreventiveUid", StringComparison.OrdinalIgnoreCase) == true

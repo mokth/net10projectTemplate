@@ -261,6 +261,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProductionCalendarScheduleDataLoader, ProductionCalendarScheduleDataLoader>();
         services.AddScoped<IMachineSchedulePlannerService, MachineSchedulePlannerService>();
         services.AddScoped<IMachineSchedulePlannerReadinessService, MachineSchedulePlannerReadinessService>();
+        services.AddScoped<IMachineScheduleRescheduleService, MachineScheduleRescheduleService>();
+        services.AddScoped<IMachineScheduleAllocationBackfillService, MachineScheduleAllocationBackfillService>();
 
         services.AddScoped<IPlanningMasterAccess, PlanningMasterAccess>();
         services.AddScoped<IPlanningDependencyChecker, PlanningDependencyChecker>();

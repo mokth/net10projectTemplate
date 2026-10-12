@@ -1,5 +1,6 @@
 using System.Globalization;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -73,6 +74,97 @@ public sealed class ProductionStockAdjustmentService(
         return null;
     }
 
+    private IQueryable<ProductionWorkOrder> EligibleWorkOrders(AppDbContext db, InventoryTenantScope scope)
+    {
+        return db.ProductionWorkOrders.AsNoTracking().Where(order =>
+            order.CompanyCode == scope.CompanyCode && order.BranchCode == scope.BranchCode
+            && (order.Status == ProductionWorkOrderStatuses.Released || order.Status == ProductionWorkOrderStatuses.InProgress)
+            && order.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.FullHierarchyV2
+            && !order.IsLegacySnapshot && order.SnapshotRevision > 0 && order.SnapshotHash != null && order.SnapshotHash.Length == 64
+            && db.ProductionBalLots.Any(pool => pool.CompanyCode == scope.CompanyCode && pool.BranchCode == scope.BranchCode
+                && pool.WorkOrderId == order.Uid && (pool.Kind == ProductionBalLotKinds.MaterialIn || pool.Kind == ProductionBalLotKinds.Wip)));
+    }
+
+    private static ProductionStockWorkOrderLookupRow MapLookupRow(ProductionWorkOrder order, int candidateCount) => new()
+    {
+        WorkOrderId = order.Uid,
+        WorkOrderNo = order.WorkOrderNo,
+        ProductCode = order.ProductCode,
+        ProductDescription = order.ProductDescription,
+        Status = order.Status,
+        PlannedQty = order.PlannedQty,
+        RemainingQty = order.RemainingQty,
+        OutputUom = order.OutputUom,
+        SnapshotRevision = order.SnapshotRevision,
+        SnapshotHash = order.SnapshotHash,
+        CandidateSourceCount = candidateCount
+    };
+
+    public async Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchEligibleWorkOrdersAsync(
+        LargeLookupSearchRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            var scope = await ScopeAsync(PermissionCodes.Access, ct);
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var orders = EligibleWorkOrders(db, scope);
+            if (!string.IsNullOrWhiteSpace(request.SearchText))
+            {
+                var term = request.SearchText.Trim();
+                orders = orders.Where(order => order.WorkOrderNo.Contains(term) || order.ProductCode.Contains(term)
+                    || (order.ProductDescription != null && order.ProductDescription.Contains(term)));
+            }
+
+            var total = await orders.CountAsync(ct);
+            var rows = await orders.OrderByDescending(order => order.WorkOrderNo).ThenByDescending(order => order.Uid)
+                .Skip(request.NormalizedSkip).Take(request.NormalizedTake)
+                .Select(order => new
+                {
+                    Order = order,
+                    CandidateCount = db.ProductionBalLots.Count(pool => pool.CompanyCode == scope.CompanyCode
+                        && pool.BranchCode == scope.BranchCode && pool.WorkOrderId == order.Uid
+                        && (pool.Kind == ProductionBalLotKinds.MaterialIn || pool.Kind == ProductionBalLotKinds.Wip))
+                }).ToListAsync(ct);
+            return LargeLookupPage<ProductionStockWorkOrderLookupRow>.Ok(
+                rows.Select(x => MapLookupRow(x.Order, x.CandidateCount)).ToArray(), total);
+        }
+        catch (AdjustmentException ex)
+        {
+            return LargeLookupPage<ProductionStockWorkOrderLookupRow>.Fail(ex.Message);
+        }
+    }
+
+    public async Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveEligibleWorkOrderAsync(
+        string workOrderNo, CancellationToken ct = default)
+    {
+        var code = workOrderNo?.Trim() ?? "";
+        if (code.Length == 0)
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail("Work Order number is required.");
+        try
+        {
+            var scope = await ScopeAsync(PermissionCodes.Access, ct);
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var order = await EligibleWorkOrders(db, scope).SingleOrDefaultAsync(x => x.WorkOrderNo == code, ct);
+            if (order is null)
+            {
+                var exists = await db.ProductionWorkOrders.AsNoTracking().AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode && x.WorkOrderNo == code, ct);
+                return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail(exists
+                    ? $"Work Order '{code}' is not currently eligible for Production Stock Adjustment."
+                    : $"Work Order '{code}' was not found.");
+            }
+
+            var count = await db.ProductionBalLots.AsNoTracking().CountAsync(pool => pool.CompanyCode == scope.CompanyCode
+                && pool.BranchCode == scope.BranchCode && pool.WorkOrderId == order.Uid
+                && (pool.Kind == ProductionBalLotKinds.MaterialIn || pool.Kind == ProductionBalLotKinds.Wip), ct);
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Ok(MapLookupRow(order, count));
+        }
+        catch (AdjustmentException ex)
+        {
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail(ex.Message);
+        }
+    }
+
     private static async Task<ProductionBalLot> LockPoolAsync(AppDbContext db, InventoryTenantScope scope, long id, CancellationToken ct)
     {
         var pool = db.Database.IsSqlServer()
@@ -133,7 +225,8 @@ public sealed class ProductionStockAdjustmentService(
         var canViewCost = await access.CanAsync(Menu, PermissionCodes.ViewCost, ct);
         var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync(x => x.Uid == doc.WorkOrderId, ct);
         var result = new ProductionStockAdjustmentDocument { Id = doc.BatchId, BatchNo = doc.Batch.BatchNo,
-            WorkOrderId = doc.WorkOrderId, WorkOrderNo = order.WorkOrderNo, Status = doc.Batch.BatchStatus,
+            WorkOrderId = doc.WorkOrderId, WorkOrderNo = order.WorkOrderNo, ProductCode = order.ProductCode,
+            ProductDescription = order.ProductDescription, WorkOrderStatus = order.Status, Status = doc.Batch.BatchStatus,
             EffectiveDate = doc.Batch.TrxDtTime, RefNo = doc.Batch.RefNo, Remarks = doc.Batch.Remarks,
             Revision = doc.DocumentRevision, RowVersion = doc.RowVersion, PostingId = doc.PostingId,
             SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
@@ -152,7 +245,8 @@ public sealed class ProductionStockAdjustmentService(
                 value = StockLedgerPrecision.Money(pool.TotalCost * line.BaseQty / pool.BaseQty);
             result.Lines.Add(new() { ProductionBalLotId = pool.Uid, ItemCode = pool.ItemCode, Description = pool.Description ?? "",
                 PoolKind = pool.Kind, LotNo = pool.PhysicalLotNo ?? pool.LotNo, CurrentQty = pool.Qty, Uom = pool.Uom,
-                AdjustmentQty = line.AdjustmentQty, BaseQty = line.BaseQty, BaseUom = line.BaseUom,
+                AdjustmentQty = line.AdjustmentQty, BaseQty = line.BaseQty, CurrentBaseQty = pool.BaseQty,
+                SourceUom = line.SourceUom, BaseUom = line.BaseUom,
                 Reason = line.Detail.Reason ?? "", Remarks = line.Detail.Remarks, ProposedUnitCost = canViewCost ? line.ProposedUnitCost : null,
                 CostEvidenceType = line.CostEvidenceType, CostOverrideReason = canViewCost ? line.CostOverrideReason : null,
                 TotalValue = value, CostBasisCode = fact?.CostBasisCode });
@@ -179,17 +273,22 @@ public sealed class ProductionStockAdjustmentService(
             if (query.WorkOrderId is long workOrderId) rows = rows.Where(x => x.a.WorkOrderId == workOrderId);
             if (!string.IsNullOrWhiteSpace(query.Status)) rows = rows.Where(x => x.a.Batch.BatchStatus == query.Status);
             if (!string.IsNullOrWhiteSpace(query.SearchText))
-            { var term = query.SearchText.Trim(); rows = rows.Where(x => x.WorkOrderNo.Contains(term) || (x.a.Batch.RefNo != null && x.a.Batch.RefNo.Contains(term))); }
+            {
+                var term = query.SearchText.Trim();
+                var isBatchNo = int.TryParse(term, NumberStyles.Integer, CultureInfo.InvariantCulture, out var batchNo);
+                rows = rows.Where(x => (isBatchNo && x.a.Batch.BatchNo == batchNo)
+                    || x.WorkOrderNo.Contains(term) || (x.a.Batch.RefNo != null && x.a.Batch.RefNo.Contains(term)));
+            }
             var total = await rows.CountAsync(ct); var take = Math.Clamp(query.Take <= 0 ? 30 : query.Take, 1, 100);
             var page = await rows.OrderByDescending(x => x.a.BatchId).Skip(Math.Max(0, query.Skip)).Take(take)
                 .Select(x => new { x.a.BatchId, x.a.Batch.BatchNo, x.a.WorkOrderId, x.WorkOrderNo, x.a.Batch.BatchStatus, x.a.Batch.TrxDtTime, x.a.RowVersion }).ToListAsync(ct);
             var ids = page.Select(x => x.BatchId).ToArray();
             var details = await (from l in db.ProductionStockAdjustmentLines.AsNoTracking()
                 join d in db.IvTrxBatchDetails.AsNoTracking() on l.DetailId equals d.Id
-                where ids.Contains(l.BatchId) select new { l.BatchId, l.AdjustmentQty, d.ICode }).ToListAsync(ct);
+                where ids.Contains(l.BatchId) select new { l.BatchId, l.AdjustmentQty, l.SourceUom, d.ICode }).ToListAsync(ct);
             var summaries = page.Select(x => new ProductionStockAdjustmentSummary(x.BatchId, x.BatchNo, x.WorkOrderId, x.WorkOrderNo,
                 string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => d.ICode).Distinct()),
-                string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => $"{d.AdjustmentQty:+0.####;-0.####} {d.ICode}")),
+                string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => $"{d.AdjustmentQty.ToString("+0.0000;-0.0000;0.0000", CultureInfo.InvariantCulture)} {d.SourceUom}")),
                 x.BatchStatus, x.TrxDtTime, x.RowVersion)).ToArray();
             return IvMasterOperationResult<ProductionStockAdjustmentPage>.Ok(new(summaries, total, options.Value.AdjustmentPostingEnabled));
         }

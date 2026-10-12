@@ -3,14 +3,30 @@
     gap: 1rem;
 }
 
-.pr-machine-schedule-feedback,
+.pr-machine-schedule-mode,
 .pr-machine-schedule-readonly,
+.pr-machine-schedule-feedback,
 .pr-machine-schedule-loading,
 .pr-machine-schedule-empty {
     border: 1px solid var(--line);
     border-radius: .75rem;
     background: var(--surface);
     color: var(--text);
+}
+
+.pr-machine-schedule-mode {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: .5rem;
+    padding: .55rem .8rem;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-mode i,
+.pr-machine-schedule-readonly > i {
+    color: var(--accent);
 }
 
 .pr-machine-schedule-feedback {
@@ -26,50 +42,113 @@
     display: flex;
     align-items: flex-start;
     gap: .85rem;
-    padding: .9rem 1rem;
+    padding: .8rem 1rem;
     border-left: 4px solid var(--accent);
 }
 
-.pr-machine-schedule-readonly__icon {
-    color: var(--accent);
-    padding-top: .1rem;
+.pr-machine-schedule-readonly > i {
+    padding-top: .15rem;
 }
 
-.pr-machine-schedule-readonly p {
+.pr-machine-schedule-readonly div {
+    display: grid;
+    gap: .15rem;
+}
+
+.pr-machine-schedule-readonly span {
     color: var(--muted);
-    margin: .2rem 0 .45rem;
 }
 
-.pr-machine-schedule-readonly ul {
-    margin: .45rem 0 0;
+.pr-machine-schedule-readonly__details {
+    margin-top: .35rem;
+    color: var(--muted);
+}
+
+.pr-machine-schedule-readonly__details summary {
+    width: fit-content;
+    cursor: pointer;
+}
+
+.pr-machine-schedule-readonly__details ul {
+    margin: .4rem 0 0;
     padding-left: 1.2rem;
-    color: var(--muted);
 }
 
 .pr-machine-schedule-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: .75rem;
+    display: grid;
+    gap: .9rem;
     padding: .85rem;
 }
 
+.pr-machine-schedule-toolbar__top,
 .pr-machine-schedule-toolbar__nav,
 .pr-machine-schedule-toolbar__views,
-.pr-machine-schedule-toolbar__filters {
+.pr-machine-schedule-toolbar__zoom {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: .5rem;
 }
 
-.pr-machine-schedule-toolbar__filters {
-    flex: 1 1 100%;
+.pr-machine-schedule-toolbar__top {
+    justify-content: space-between;
+    row-gap: .65rem;
 }
 
-.pr-machine-schedule-toolbar__filters > * {
-    flex: 1 1 150px;
-    min-width: 135px;
+.pr-machine-schedule-toolbar__zoom > span {
+    margin-right: .15rem;
+    color: var(--muted);
+    font-size: .85rem;
+}
+
+.pr-machine-schedule-toolbar__filters {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: .65rem .75rem;
+}
+
+.pr-machine-schedule-filter {
+    display: grid;
+    flex: 0 1 175px;
+    min-width: 145px;
+    gap: .3rem;
+}
+
+.pr-machine-schedule-filter > span {
+    color: var(--muted);
+    font-size: .76rem;
+    font-weight: 650;
+}
+
+.pr-machine-schedule-filter--centre,
+.pr-machine-schedule-filter--process {
+    flex-basis: 175px;
+}
+
+.pr-machine-schedule-filter--machine {
+    flex-basis: 205px;
+}
+
+.pr-machine-schedule-filter--workorder,
+.pr-machine-schedule-filter--product {
+    flex-basis: 210px;
+}
+
+.pr-machine-schedule-filter--status {
+    flex-basis: 135px;
+}
+
+.pr-machine-schedule-filter--search {
+    flex-basis: 190px;
+}
+
+.pr-machine-schedule-filter-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: .45rem;
+    margin-left: auto;
 }
 
 .pr-machine-schedule-period {
@@ -101,35 +180,99 @@
     color: var(--danger) !important;
 }
 
-.pr-machine-schedule-workspace {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-    align-items: start;
-    gap: 1rem;
-}
-
 .pr-machine-schedule-board {
     min-width: 0;
-    overflow: hidden;
+    overflow-x: auto;
     padding: .5rem;
 }
 
+.pr-machine-schedule-date-header {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: .2rem .35rem;
+    color: var(--text);
+    font-size: .78rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-resource {
+    display: grid;
+    gap: .1rem;
+    min-width: 0;
+    padding: .2rem .35rem;
+    line-height: 1.2;
+}
+
+.pr-machine-schedule-resource strong,
+.pr-machine-schedule-resource span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-resource span {
+    color: var(--muted);
+    font-size: .75rem;
+}
+
 .pr-machine-schedule-details {
-    position: sticky;
-    top: 1rem;
-    padding: 1rem;
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.pr-machine-schedule-details__toggle {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .85rem 1rem;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.pr-machine-schedule-details__toggle > span {
+    display: grid;
+    min-width: 0;
+    gap: .15rem;
+}
+
+.pr-machine-schedule-details__toggle strong,
+.pr-machine-schedule-details__toggle small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-details__toggle small {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-details__toggle > i {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-details__body {
+    padding: 0 1rem 1rem;
+    border-top: 1px solid var(--line);
 }
 
 .pr-machine-schedule-details__head {
     display: grid;
     gap: .3rem;
-    padding-bottom: .8rem;
-    border-bottom: 1px solid var(--line);
+    padding: .8rem 0;
 }
 
 .pr-machine-schedule-details__head h2 {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: 1.15rem;
     color: var(--text);
 }
 
@@ -147,12 +290,14 @@
 
 .pr-machine-schedule-details dl {
     display: grid;
-    gap: .7rem;
-    margin: .9rem 0;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+    gap: .75rem 1rem;
+    margin: .2rem 0 .9rem;
 }
 
 .pr-machine-schedule-details dl > div {
     display: grid;
+    min-width: 0;
     gap: .1rem;
 }
 
@@ -177,10 +322,16 @@
 
 .pr-machine-schedule-details__actions {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: .5rem;
     padding-top: .65rem;
     border-top: 1px solid var(--line);
+}
+
+.pr-machine-schedule-details__actions > span {
+    color: var(--muted);
+    font-size: .84rem;
 }
 
 .pr-machine-schedule-details__empty,
@@ -203,6 +354,45 @@
 .pr-machine-schedule-details__empty > i {
     font-size: 1.4rem;
     color: var(--accent);
+}
+
+.pr-machine-schedule-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .55rem 1rem;
+    padding: .25rem .15rem;
+    color: var(--muted);
+    font-size: .82rem;
+}
+
+.pr-machine-schedule-legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+}
+
+.pr-machine-schedule-legend__swatch {
+    width: .8rem;
+    height: .8rem;
+    border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+    border-radius: .2rem;
+}
+
+.pr-machine-schedule-legend__swatch--scheduled {
+    background: var(--accent);
+}
+
+.pr-machine-schedule-legend__swatch--locked,
+.pr-machine-schedule-legend__swatch--attention {
+    background: var(--danger);
+}
+
+.pr-machine-schedule-legend__swatch--maintenance {
+    background: var(--muted);
+}
+
+.pr-machine-schedule-legend__swatch--off {
+    background: color-mix(in srgb, var(--muted) 18%, var(--surface));
 }
 
 .pr-machine-schedule-spinner {
@@ -238,23 +428,183 @@
     color: #fff !important;
 }
 
+.pr-machine-schedule-dialog-backdrop {
+    position: fixed;
+    z-index: 1100;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: auto;
+    padding: 1rem;
+    background: rgb(15 23 42 / 58%);
+}
+
+.pr-machine-schedule-dialog {
+    display: grid;
+    width: min(760px, 100%);
+    max-height: min(88vh, 900px);
+    gap: 1rem;
+    overflow: auto;
+    padding: 1rem;
+    box-shadow: 0 1.5rem 4rem rgb(15 23 42 / 28%);
+}
+
+.pr-machine-schedule-dialog__header,
+.pr-machine-schedule-dialog__actions {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: .75rem;
+}
+
+.pr-machine-schedule-dialog__header h2 {
+    margin: .15rem 0;
+    font-size: 1.15rem;
+}
+
+.pr-machine-schedule-dialog__header p {
+    margin: 0;
+    color: var(--muted);
+}
+
+.pr-machine-schedule-dialog__close {
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.pr-machine-schedule-dialog__inputs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .75rem;
+}
+
+.pr-machine-schedule-dialog__inputs label {
+    display: grid;
+    gap: .3rem;
+}
+
+.pr-machine-schedule-dialog__inputs label > span,
+.pr-machine-schedule-preview__summary strong,
+.pr-machine-schedule-preview__changes > strong,
+.pr-machine-schedule-preview__messages > strong {
+    color: var(--text);
+    font-size: .84rem;
+    font-weight: 650;
+}
+
+.pr-machine-schedule-dialog__inputs input,
+.pr-machine-schedule-dialog__inputs textarea {
+    width: 100%;
+    min-width: 0;
+    padding: .55rem .65rem;
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
+.pr-machine-schedule-dialog__reason {
+    grid-column: 1 / -1;
+}
+
+.pr-machine-schedule-dialog__actions {
+    justify-content: flex-end;
+    align-items: center;
+    padding-top: .75rem;
+    border-top: 1px solid var(--line);
+}
+
+.pr-machine-schedule-preview {
+    display: grid;
+    gap: .7rem;
+    padding: .85rem;
+    border: 1px solid var(--line);
+    border-radius: .65rem;
+    background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+
+.pr-machine-schedule-preview__summary {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: .35rem .8rem;
+}
+
+.pr-machine-schedule-preview__changes ul,
+.pr-machine-schedule-preview__messages ul {
+    margin: .35rem 0 0;
+    padding-left: 1.2rem;
+}
+
+.pr-machine-schedule-preview__changes li {
+    display: grid;
+    gap: .12rem;
+    margin: .35rem 0;
+}
+
+.pr-machine-schedule-preview__changes small {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-preview__finding--blocked > span,
+.pr-machine-schedule-preview__finding--blocked > small {
+    color: var(--danger);
+}
+
+.pr-machine-schedule-backfill-clear {
+    margin: 0;
+    padding: .75rem;
+    border-radius: .5rem;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.pr-machine-schedule-preview__messages {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-preview__messages--blocked {
+    color: var(--danger);
+}
+
 @keyframes pr-machine-schedule-spin {
     to { transform: rotate(360deg); }
 }
 
-@media (max-width: 1040px) {
-    .pr-machine-schedule-workspace {
-        grid-template-columns: 1fr;
+@media (max-width: 1120px) {
+    .pr-machine-schedule-toolbar__top {
+        justify-content: flex-start;
     }
 
-    .pr-machine-schedule-details {
-        position: static;
+    .pr-machine-schedule-toolbar__filters {
+        gap: .65rem;
+    }
+
+    .pr-machine-schedule-filter {
+        flex-basis: min(45%, 220px);
+        min-width: min(45%, 170px);
+    }
+
+    .pr-machine-schedule-filter-actions {
+        margin-left: 0;
     }
 }
 
 @media (max-width: 620px) {
+    .pr-machine-schedule-mode {
+        align-self: start;
+    }
+
     .pr-machine-schedule-toolbar__nav,
-    .pr-machine-schedule-toolbar__views {
+    .pr-machine-schedule-toolbar__views,
+    .pr-machine-schedule-toolbar__zoom {
         width: 100%;
     }
 
@@ -264,7 +614,25 @@
         order: -1;
     }
 
-    .pr-machine-schedule-toolbar__filters > * {
-        flex-basis: 100%;
+    .pr-machine-schedule-filter {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .pr-machine-schedule-filter-actions {
+        width: 100%;
+    }
+
+    .pr-machine-schedule-dialog__inputs {
+        grid-template-columns: 1fr;
+    }
+
+    .pr-machine-schedule-dialog__reason {
+        grid-column: auto;
+    }
+
+    .pr-machine-schedule-dialog__actions {
+        align-items: stretch;
+        flex-direction: column-reverse;
     }
 }

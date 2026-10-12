@@ -1,5 +1,6 @@
 using System.Globalization;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -72,6 +73,100 @@ public sealed partial class ProductionStockReturnService(
         if (revision != order.SnapshotRevision || !string.Equals(hash, order.SnapshotHash, StringComparison.Ordinal))
             return "The Work Order snapshot changed. Reload and save the return again.";
         return null;
+    }
+
+    private IQueryable<ProductionWorkOrder> EligibleWorkOrders(AppDbContext db, InventoryTenantScope scope)
+    {
+        return db.ProductionWorkOrders.AsNoTracking().Where(order =>
+            order.CompanyCode == scope.CompanyCode && order.BranchCode == scope.BranchCode
+            && (order.Status == ProductionWorkOrderStatuses.Released || order.Status == ProductionWorkOrderStatuses.InProgress)
+            && order.SnapshotFormatVersion >= ProductionSnapshotFormatVersions.FullHierarchyV2
+            && !order.IsLegacySnapshot && order.SnapshotRevision > 0 && order.SnapshotHash != null && order.SnapshotHash.Length == 64
+            && db.ProductionBalLots.Any(pool => pool.CompanyCode == scope.CompanyCode && pool.BranchCode == scope.BranchCode
+                && pool.WorkOrderId == order.Uid && pool.Kind == ProductionBalLotKinds.MaterialIn && pool.BaseQty > 0m
+                && pool.OriginalIssueMovementId != null && pool.WorkOrderMaterialId != null && pool.SourceIvBalLocId != null));
+    }
+
+    private static ProductionStockWorkOrderLookupRow MapLookupRow(ProductionWorkOrder order, int candidateCount) => new()
+    {
+        WorkOrderId = order.Uid,
+        WorkOrderNo = order.WorkOrderNo,
+        ProductCode = order.ProductCode,
+        ProductDescription = order.ProductDescription,
+        Status = order.Status,
+        PlannedQty = order.PlannedQty,
+        RemainingQty = order.RemainingQty,
+        OutputUom = order.OutputUom,
+        SnapshotRevision = order.SnapshotRevision,
+        SnapshotHash = order.SnapshotHash,
+        CandidateSourceCount = candidateCount
+    };
+
+    public async Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchEligibleWorkOrdersAsync(
+        LargeLookupSearchRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            var scope = await ScopeAsync(PermissionCodes.Access, ct);
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var orders = EligibleWorkOrders(db, scope);
+            if (!string.IsNullOrWhiteSpace(request.SearchText))
+            {
+                var term = request.SearchText.Trim();
+                orders = orders.Where(order => order.WorkOrderNo.Contains(term) || order.ProductCode.Contains(term)
+                    || (order.ProductDescription != null && order.ProductDescription.Contains(term)));
+            }
+
+            var total = await orders.CountAsync(ct);
+            var rows = await orders.OrderByDescending(order => order.WorkOrderNo).ThenByDescending(order => order.Uid)
+                .Skip(request.NormalizedSkip).Take(request.NormalizedTake)
+                .Select(order => new
+                {
+                    Order = order,
+                    CandidateCount = db.ProductionBalLots.Count(pool => pool.CompanyCode == scope.CompanyCode
+                        && pool.BranchCode == scope.BranchCode && pool.WorkOrderId == order.Uid
+                        && pool.Kind == ProductionBalLotKinds.MaterialIn && pool.BaseQty > 0m
+                        && pool.OriginalIssueMovementId != null && pool.WorkOrderMaterialId != null && pool.SourceIvBalLocId != null)
+                }).ToListAsync(ct);
+            return LargeLookupPage<ProductionStockWorkOrderLookupRow>.Ok(
+                rows.Select(x => MapLookupRow(x.Order, x.CandidateCount)).ToArray(), total);
+        }
+        catch (ReturnException ex)
+        {
+            return LargeLookupPage<ProductionStockWorkOrderLookupRow>.Fail(ex.Message);
+        }
+    }
+
+    public async Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveEligibleWorkOrderAsync(
+        string workOrderNo, CancellationToken ct = default)
+    {
+        var code = workOrderNo?.Trim() ?? "";
+        if (code.Length == 0)
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail("Work Order number is required.");
+        try
+        {
+            var scope = await ScopeAsync(PermissionCodes.Access, ct);
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var order = await EligibleWorkOrders(db, scope).SingleOrDefaultAsync(x => x.WorkOrderNo == code, ct);
+            if (order is null)
+            {
+                var exists = await db.ProductionWorkOrders.AsNoTracking().AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode && x.WorkOrderNo == code, ct);
+                return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail(exists
+                    ? $"Work Order '{code}' is not currently eligible for Production Stock Return."
+                    : $"Work Order '{code}' was not found.");
+            }
+
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Ok(
+                MapLookupRow(order, await db.ProductionBalLots.AsNoTracking().CountAsync(pool => pool.CompanyCode == scope.CompanyCode
+                    && pool.BranchCode == scope.BranchCode && pool.WorkOrderId == order.Uid
+                    && pool.Kind == ProductionBalLotKinds.MaterialIn && pool.BaseQty > 0m
+                    && pool.OriginalIssueMovementId != null && pool.WorkOrderMaterialId != null && pool.SourceIvBalLocId != null, ct)));
+        }
+        catch (ReturnException ex)
+        {
+            return LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>.Fail(ex.Message);
+        }
     }
 
     private sealed record SourceAuthority(ProductionBalLot Pool, ProductionWorkOrderMaterial Material,
@@ -232,8 +327,9 @@ public sealed partial class ProductionStockReturnService(
             if (!string.IsNullOrWhiteSpace(query.SearchText))
             {
                 var term = query.SearchText.Trim();
-                if (int.TryParse(term, out var batchNo)) rows = rows.Where(x => x.r.Batch.BatchNo == batchNo || x.WorkOrderNo.Contains(term));
-                else rows = rows.Where(x => x.WorkOrderNo.Contains(term) || (x.r.Batch.RefNo != null && x.r.Batch.RefNo.Contains(term)));
+                var isBatchNo = int.TryParse(term, NumberStyles.Integer, CultureInfo.InvariantCulture, out var batchNo);
+                rows = rows.Where(x => (isBatchNo && x.r.Batch.BatchNo == batchNo)
+                    || x.WorkOrderNo.Contains(term) || (x.r.Batch.RefNo != null && x.r.Batch.RefNo.Contains(term)));
             }
             var count = await rows.CountAsync(ct);
             var take = Math.Clamp(query.Take <= 0 ? 30 : query.Take, 1, 100);
@@ -244,11 +340,11 @@ public sealed partial class ProductionStockReturnService(
             var details = ids.Length == 0 ? [] : await (from l in db.ProductionStockReturnLines.AsNoTracking()
                 join d in db.IvTrxBatchDetails.AsNoTracking() on l.DetailId equals d.Id
                 where ids.Contains(l.BatchId)
-                select new { l.BatchId, d.ICode, d.ToLotNo, d.ToStdQty, d.ToStdUom }).ToListAsync(ct);
+                select new { l.BatchId, l.RequestedQty, l.SourceUom, d.ICode, d.ToLotNo }).ToListAsync(ct);
             var lookup = details.ToLookup(x => x.BatchId);
             var result = page.Select(x => new ProductionStockReturnSummary(x.BatchId, x.BatchNo, x.WorkOrderId, x.WorkOrderNo,
                 Summarize(lookup[x.BatchId].Select(y => y.ICode)), Summarize(lookup[x.BatchId].Select(y => y.ToLotNo)),
-                SummarizeQty(lookup[x.BatchId].Select(y => (Qty: y.ToStdQty, Uom: (string?)y.ToStdUom))), x.BatchStatus, x.TrxDtTime, x.RowVersion)).ToArray();
+                SummarizeQty(lookup[x.BatchId].Select(y => (Qty: (decimal?)y.RequestedQty, Uom: (string?)y.SourceUom))), x.BatchStatus, x.TrxDtTime, x.RowVersion)).ToArray();
             return IvMasterOperationResult<ProductionStockReturnPage>.Ok(new(result, count, options.Value.ReturnPostingEnabled));
         }
         catch (ReturnException e) { return Fail<ProductionStockReturnPage>(e.Message, e.Code); }
@@ -268,21 +364,51 @@ public sealed partial class ProductionStockReturnService(
         return uoms.Length switch { 0 => "—", > 1 => "Multiple UOM", _ => $"{IvQty.Round(rows.Sum(x => x.Qty ?? 0m)):n4} {uoms[0]}" };
     }
 
-    private async Task<ProductionStockReturnDocument> MapAsync(AppDbContext db, ProductionStockReturn r, CancellationToken ct)
+    private async Task<ProductionStockReturnDocument> MapAsync(AppDbContext db, ProductionStockReturn r, InventoryTenantScope scope, CancellationToken ct)
     {
         var costs = await access.CanAsync(Menu, PermissionCodes.ViewCost, ct);
         var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync(x => x.Uid == r.WorkOrderId, ct);
         var result = new ProductionStockReturnDocument { Id = r.BatchId, BatchNo = r.Batch.BatchNo, WorkOrderId = r.WorkOrderId,
-            WorkOrderNo = order.WorkOrderNo, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
+            WorkOrderNo = order.WorkOrderNo, ProductCode = order.ProductCode, ProductDescription = order.ProductDescription,
+            WorkOrderStatus = order.Status, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
             Remarks = r.Batch.Remarks, Revision = r.DocumentRevision, RowVersion = r.RowVersion, PostingId = r.PostingId,
             SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
             ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs,
             PostingEnabled = options.Value.ReturnPostingEnabled };
-        if (result.Status == IvBatchStatuses.New && !result.PostingEnabled)
-            result.ReadinessErrors.Add("Production Stock Return posting is disabled pending release acceptance.");
+        if (result.Status == IvBatchStatuses.New)
+        {
+            if (!result.PostingEnabled)
+                result.ReadinessErrors.Add("Production Stock Return posting is disabled pending release acceptance.");
+            if (WorkOrderError(order, r.SnapshotRevision, r.SnapshotHash) is { } orderError)
+                result.ReadinessErrors.Add(orderError);
+        }
         foreach (var line in r.Lines.OrderBy(x => x.Id))
         {
             var pool = await db.ProductionBalLots.AsNoTracking().SingleAsync(x => x.Uid == line.ProductionBalLotId, ct);
+            var currentReturnableQty = 0m;
+            var currentReadiness = "Current source state is unavailable.";
+            if (result.Status == IvBatchStatuses.New)
+            {
+                try
+                {
+                    var source = await RequireSourceAsync(db, scope, pool, ct, r.Batch.TrxDtTime);
+                    var available = source.Contribution.Contribution.AvailableBaseQty;
+                    currentReturnableQty = IvQty.Round(Math.Max(available, 0m) / pool.ConversionFactorToBase);
+                    currentReadiness = available > 0m ? "READY" : "No remaining original ISSUE contribution.";
+                    if (available <= 0m)
+                        result.ReadinessErrors.Add($"Line {pool.ItemCode}: {currentReadiness}");
+                }
+                catch (ReturnException ex)
+                {
+                    currentReadiness = ex.Message;
+                    result.ReadinessErrors.Add($"Line {pool.ItemCode}: {ex.Message}");
+                }
+                catch (InvalidOperationException ex)
+                {
+                    currentReadiness = ex.Message;
+                    result.ReadinessErrors.Add($"Line {pool.ItemCode}: {ex.Message}");
+                }
+            }
             decimal? value = null;
             if (costs && r.PostingId is long postingId)
                 value = await db.ProductionStockReturnFacts.AsNoTracking().Where(x => x.BatchId == r.BatchId
@@ -295,7 +421,8 @@ public sealed partial class ProductionStockReturnService(
                 ? await stock.LockBalLocByIdForTenantAsync(db, balanceId, r.CompanyCode, r.BranchCode, ct) : null;
             result.Lines.Add(new() { ProductionBalLotId = pool.Uid, SourceIssueMovementId = line.SourceIssueMovementId,
                 ItemCode = pool.ItemCode, ItemDescription = pool.Description ?? "", LotNo = pool.PhysicalLotNo ?? pool.LotNo,
-                ProductionQty = pool.Qty, ReturnableQty = line.BaseQty / line.SourceFactor, RequestedQty = line.RequestedQty,
+                ProductionQty = pool.Qty, ReturnableQty = line.BaseQty / line.SourceFactor,
+                CurrentReturnableQty = currentReturnableQty, CurrentReadiness = currentReadiness, RequestedQty = line.RequestedQty,
                 SourceUom = line.SourceUom, BaseQty = line.BaseQty, BaseUom = line.BaseUom,
                 Warehouse = r.Lines.Single(x => x.Id == line.Id).Detail.ToWarehouse ?? balance?.WhCode ?? "",
                 Location = line.Detail.ToLocation ?? balance?.LocCode ?? "", InventoryLotNo = line.Detail.ToLotNo ?? balance?.LotNo ?? "",
@@ -311,7 +438,7 @@ public sealed partial class ProductionStockReturnService(
         {
             var scope = await ScopeAsync(PermissionCodes.Access, ct);
             await using var db = await factory.CreateDbContextAsync(ct);
-            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, await LoadAsync(db, scope, id, false, ct), ct));
+            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, await LoadAsync(db, scope, id, false, ct), scope, ct));
         }
         catch (ReturnException e) { return Fail<ProductionStockReturnDocument>(e.Message, e.Code); }
     }
@@ -400,7 +527,7 @@ public sealed partial class ProductionStockReturnService(
                     SourceFactor = pool.ConversionFactorToBase, BaseQty = baseQty });
             }
             await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, ct));
+            return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, scope, ct));
         }
         catch (ReturnException e) { return Fail<ProductionStockReturnDocument>(e.Message, e.Code); }
         catch (DbUpdateConcurrencyException) { return Fail<ProductionStockReturnDocument>("The return or source stock changed. Reload before saving.", IvMasterErrorCode.Concurrency); }

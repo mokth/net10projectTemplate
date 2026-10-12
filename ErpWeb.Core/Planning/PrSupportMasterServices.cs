@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Production;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
@@ -301,6 +302,7 @@ public sealed class PrPreventiveService : IPrPreventiveService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
             foreach (var uid in deletedUids)
             {
                 var e = await db.PrPreventives.FirstOrDefaultAsync(
@@ -312,6 +314,13 @@ public sealed class PrPreventiveService : IPrPreventiveService
                 if (await db.PrMacMaintenances.AnyAsync(x => x.PreventiveUid == uid && x.CompCode == write.CompanyCode, ct))
                     return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists,
                         $"Cannot delete preventive {uid}: linked maintenance history exists.");
+                if (PreventiveWindowNormalizer.TryNormalize(e.DownDt, e.StartTm, e.EndTm, out var existingWindow, out _))
+                {
+                    var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                        db, write.CompanyCode, existingWindow.WindowStart, existingWindow.WindowEnd, [e.MachineCd], ct);
+                    if (impact is not null)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+                }
                 db.PrPreventives.Remove(e);
             }
 
@@ -340,6 +349,11 @@ public sealed class PrPreventiveService : IPrPreventiveService
                 {
                     if (!machine.Active)
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} is inactive.");
+
+                    var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                        db, write.CompanyCode, window.WindowStart, window.WindowEnd, [mac], ct);
+                    if (impact is not null)
+                        return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
 
                     var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, 0, window, ct);
                     if (overlapErr is not null)
@@ -370,6 +384,28 @@ public sealed class PrPreventiveService : IPrPreventiveService
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed,
                             $"Cannot edit preventive {row.Uid}: only PLANNED rows may be edited.");
 
+                    var existingWindow = (PreventiveWindowNormalizer.NormalizedWindow?)null;
+                    if (PreventiveWindowNormalizer.TryNormalize(e.DownDt, e.StartTm, e.EndTm, out var oldWindow, out _))
+                        existingWindow = oldWindow;
+                    var scheduleSourceChanged = existingWindow is null
+                        || !string.Equals(e.MachineCd, mac, StringComparison.OrdinalIgnoreCase)
+                        || existingWindow.Value.WindowStart != window.WindowStart
+                        || existingWindow.Value.WindowEnd != window.WindowEnd;
+                    if (scheduleSourceChanged && existingWindow is { } savedWindow)
+                    {
+                        var existingImpact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                            db, write.CompanyCode, savedWindow.WindowStart, savedWindow.WindowEnd, [e.MachineCd], ct);
+                        if (existingImpact is not null)
+                            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, existingImpact);
+                    }
+                    if (scheduleSourceChanged)
+                    {
+                        var proposedImpact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                            db, write.CompanyCode, window.WindowStart, window.WindowEnd, [mac], ct);
+                        if (proposedImpact is not null)
+                            return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, proposedImpact);
+                    }
+
                     var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, e.Uid, window, ct);
                     if (overlapErr is not null)
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, overlapErr);
@@ -388,6 +424,11 @@ public sealed class PrPreventiveService : IPrPreventiveService
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Preventive rows saved.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
         }
         catch
         {
@@ -435,12 +476,18 @@ public sealed class PrPreventiveService : IPrPreventiveService
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         try
         {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
             for (var d = from; d <= to; d = d.AddDays(1))
             {
                 var s = d.Add(start.ToTimeSpan());
                 var e = d.Add(end.ToTimeSpan());
                 if (!PreventiveWindowNormalizer.TryNormalize(d, s, e, out var window, out var err))
                     return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err ?? "Invalid window.");
+
+                var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                    db, write.CompanyCode, window.WindowStart, window.WindowEnd, [mac], ct);
+                if (impact is not null)
+                    return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
 
                 var overlapErr = await FindOverlapAsync(db, write.CompanyCode, mac, 0, window, ct);
                 if (overlapErr is not null)
@@ -467,6 +514,11 @@ public sealed class PrPreventiveService : IPrPreventiveService
             await tx.CommitAsync(ct);
             return PlanningServiceResult.Ok("Preventive range added.");
         }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
         catch
         {
             await tx.RollbackAsync(ct);
@@ -482,18 +534,42 @@ public sealed class PrPreventiveService : IPrPreventiveService
         if (write is null) return PlanningServiceResult.TenantRequired();
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var e = await db.PrPreventives.FirstOrDefaultAsync(
-            x => x.Uid == preventiveUid && x.CompCode == write.CompanyCode, ct);
-        if (e is null)
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Preventive not found.");
-        if (!string.Equals(e.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Only PLANNED preventive rows can be cancelled.");
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            var e = await db.PrPreventives.FirstOrDefaultAsync(
+                x => x.Uid == preventiveUid && x.CompCode == write.CompanyCode, ct);
+            if (e is null)
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Preventive not found.");
+            if (!string.Equals(e.Status, PreventiveStatuses.Planned, StringComparison.OrdinalIgnoreCase))
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Only PLANNED preventive rows can be cancelled.");
 
-        e.Status = PreventiveStatuses.Cancelled;
-        e.Updated = DateTime.Now;
-        e.UserId = write.UserId;
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Preventive cancelled.");
+            if (PreventiveWindowNormalizer.TryNormalize(e.DownDt, e.StartTm, e.EndTm, out var window, out _))
+            {
+                var impact = await MachineScheduleCalendarImpactGuard.FindBlockingImpactAsync(
+                    db, write.CompanyCode, window.WindowStart, window.WindowEnd, [e.MachineCd], ct);
+                if (impact is not null)
+                    return PlanningServiceResult.Fail(PlanningErrorCode.DependencyExists, impact);
+            }
+
+            e.Status = PreventiveStatuses.Cancelled;
+            e.Updated = DateTime.Now;
+            e.UserId = write.UserId;
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Preventive cancelled.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     private static async Task<string?> FindOverlapAsync(

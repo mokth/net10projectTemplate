@@ -105,6 +105,34 @@ public class ProductionCalendarSchedulerTests
     }
 
     [Fact]
+    public void Existing_occupied_fragments_are_removed_from_canonical_capacity()
+    {
+        var d = new DateOnly(2026, 6, 1);
+        var calendar = Build(d,
+            [Shift(new TimeOnly(8, 0), new TimeOnly(17, 0), (new TimeOnly(12, 0), new TimeOnly(13, 0)))]);
+        var withReservations = ProductionCalendarScheduler.ExcludeOccupiedIntervals(calendar,
+        [
+            new TimeInterval(new DateTime(2026, 6, 1, 9, 0, 0), new DateTime(2026, 6, 1, 10, 0, 0)),
+            new TimeInterval(new DateTime(2026, 6, 1, 14, 0, 0), new DateTime(2026, 6, 1, 15, 0, 0))
+        ]);
+
+        var result = ProductionCalendarScheduler.ScheduleMachine(
+            withReservations,
+            new DateTime(2026, 6, 1, 8, 0, 0),
+            TimeSpan.FromHours(6),
+            ScheduleDirection.Forward);
+
+        Assert.Equal(6, result.ConsumedIntervals.Sum(x => x.Duration.TotalHours));
+        Assert.Equal(new DateTime(2026, 6, 1, 8, 0, 0), result.ActualStart);
+        Assert.Equal(new DateTime(2026, 6, 1, 17, 0, 0), result.ActualCompletion);
+        Assert.Equal(4, result.ConsumedIntervals.Count);
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 10, 0, 0) && x.End > new DateTime(2026, 6, 1, 9, 0, 0));
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 15, 0, 0) && x.End > new DateTime(2026, 6, 1, 14, 0, 0));
+    }
+
+    [Fact]
     public void PA4_overnight_rule_a_backward_with_preventive()
     {
         var d = new DateOnly(2026, 6, 1);

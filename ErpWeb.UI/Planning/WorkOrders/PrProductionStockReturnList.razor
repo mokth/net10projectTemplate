@@ -9,14 +9,13 @@
         <header class="iv-hero">
             <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-arrow-rotate-left"></i></div>
             <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Production Stock Return</h1>
-                <div class="iv-chips"><span class="iv-chip">@TotalCount documents</span>@if (!string.IsNullOrWhiteSpace(StatusFilter)){<span class="iv-chip">@StatusFilter</span>}</div></div>
+                <div class="iv-chips"><span class="iv-chip">@TotalCount documents</span>@if (HasActiveFilters){<span class="iv-chip">Filtered</span>}</div></div>
             <div class="iv-hero__kpi"><span>Documents</span><strong>@TotalCount.ToString("N0")</strong></div>
         </header>
         <section class="iv-card">
             <div class="iv-toolbar-row">
-                <DxTextBox Text="@SearchText" TextChanged="OnSearchChanged" NullText="Search return, Work Order or reference…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
-                <DxComboBox Data="@Statuses" TData="StatusChoice" TValue="string" TextFieldName="Text" ValueFieldName="Value" Value="@StatusFilter" ValueChanged="@OnStatusChanged" ValueExpression="@(() => StatusFilter)" CssClass="erp-form-control--sm" />
-                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="NEW" IconCssClass="fa-solid fa-plus" Click="NewAsync" Enabled="@CanAdd" />
+                <div class="iv-toolbar-row__search"><DxTextBox Text="@SearchText" TextChanged="OnSearchChanged" NullText="Search return, Work Order or reference…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" /></div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" />
             </div>
             @if (Loading) { <div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div> }
             else
@@ -32,6 +31,14 @@
                 </div>
             }
         </section>
+        <DxPopup HeaderText="Filter Production Stock Returns" CloseOnOutsideClick="false" Width="540px" CssClass="common-popup" @bind-Visible="FilterPopupVisible">
+            <Content>
+                <div class="iv-popup-body"><DxFormLayout SizeMode="SizeMode.Small"><DxFormLayoutItem Caption="Status" ColSpanMd="12"><Template>
+                    <DxComboBox Data="@Statuses" TData="StatusChoice" TValue="string" TextFieldName="Text" ValueFieldName="Value" @bind-Value="DraftStatus" />
+                </Template></DxFormLayoutItem></DxFormLayout></div>
+                <div class="iv-popup-footer"><div class="iv-popup-footer__actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="ClearFiltersAsync" /><DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="ApplyFiltersAsync" /></div></div>
+            </Content>
+        </DxPopup>
         @if (ConfirmVisible)
         {
             <DxPopup Visible="true" VisibleChanged="@(v => ConfirmVisible = v)" HeaderText="@(ConfirmAction + " Production Stock Return")" Width="min(520px, 95vw)" CloseOnOutsideClick="false">

@@ -17,11 +17,12 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     private DxGrid? _grid; private Timer? _debounce; private int _version;
     private readonly List<ProductionStockReturnSummary> _selected = [];
     private readonly Dictionary<(int, string), ProductionStockReturnCommand> _requests = [];
-    protected bool Loading = true, Busy, CanAdd, CanPost, CanRollback, PostingEnabled, ConfirmVisible;
+    protected bool Loading = true, Busy, CanAdd, CanEdit, CanPost, CanRollback, PostingEnabled, ConfirmVisible, FilterPopupVisible;
     protected int TotalCount; protected string SearchText = "", StatusFilter = ""; protected string ConfirmAction = "";
-    protected string RollbackReason = ""; protected string? StatusMessage; protected List<ProductionStockReturnSummary> CompactRows = [];
+    protected string RollbackReason = "", DraftStatus = ""; protected string? StatusMessage; protected List<ProductionStockReturnSummary> CompactRows = [];
     protected ProductionStockReturnGridDataSource DataSource = default!;
     protected string ConfirmCopy => ConfirmAction == "ROLLBACK" ? $"Roll back {_selected.Count} return(s)? Inventory and Production effects will be reversed." : $"Post {_selected.Count} return(s)? Unused material will move back to its exact source Inventory balances.";
+    protected bool HasActiveFilters => !string.IsNullOrWhiteSpace(SearchText) || !string.IsNullOrWhiteSpace(StatusFilter);
     protected IReadOnlyList<StatusChoice> Statuses { get; } = [new("", "All statuses"), new("NEW", "New"), new("POSTED", "Posted"), new("REVERSED", "Reversed")];
     protected List<GridColumnData> Columns { get; } = [
         new() { Caption="Batch", FieldName=nameof(ProductionStockReturnSummary.BatchNo), VisibleIndex=1, Size=GridColumnSize.DocumentNo },
@@ -37,9 +38,10 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     {
         DataSource = new(LoadAsync);
         CanAdd = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Add);
+        CanEdit = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Edit);
         CanPost = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Post);
         CanRollback = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Rollback);
-        ActionButtons = [new() { Text="VIEW", IConClass="fa-regular fa-eye", Style="primary", ToolTip="View Production Stock Return" }, new() { Text="EDIT", IConClass="far fa-edit", Style="primary" }];
+        ActionButtons = [new() { Text="VIEW", IConClass="fa-regular fa-eye", Style="primary", ToolTip="View Production Stock Return" }, new() { Text="EDIT", IConClass="far fa-edit", Style="primary", Enabled=CanEdit, ToolTip="Edit draft" }];
         await ReloadAsync(); Loading = false;
     }
     protected void OnGridInstance(DxGrid grid) => _grid = grid;
@@ -51,7 +53,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     protected Task OnAction(SelectedButtonInfo<ProductionStockReturnSummary> info)
     {
         if (info.SelectedRow is null) return Task.CompletedTask;
-        if ((info.SelectedButton.Text ?? "").Equals("EDIT", StringComparison.OrdinalIgnoreCase) && info.SelectedRow.Status == "NEW")
+        if (CanEdit && (info.SelectedButton.Text ?? "").Equals("EDIT", StringComparison.OrdinalIgnoreCase) && info.SelectedRow.Status == "NEW")
             Navigation.NavigateTo($"/planning/stock-returns/{info.SelectedRow.Id}/edit");
         else OpenView(info.SelectedRow.Id);
         return Task.CompletedTask;
@@ -59,9 +61,26 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     protected Task OnButton(SelectedButtonInfo<ProductionStockReturnSummary> info)
     {
         var action=(info.SelectedButton.Text??"").ToUpperInvariant();
-        if (_selected.Count==0) { StatusMessage="Select at least one return."; return Task.CompletedTask; }
-        if (action=="POST" && (!PostingEnabled || !CanPost || _selected.Any(x=>x.Status!="NEW"))) { StatusMessage=PostingEnabled?"Select only NEW returns with POST permission.":"Return posting is disabled pending release acceptance."; return Task.CompletedTask; }
-        if (action=="ROLLBACK" && (!CanRollback || _selected.Any(x=>x.Status!="POSTED"))) { StatusMessage="Select only POSTED returns with ROLLBACK permission."; return Task.CompletedTask; }
+        switch (action)
+        {
+            case "NEW":
+                if (!CanAdd) { StatusMessage = "Access denied."; return Task.CompletedTask; }
+                Navigation.NavigateTo("/planning/stock-returns/new");
+                return Task.CompletedTask;
+            case "POST":
+                if (_selected.Count == 0) { StatusMessage = "Select at least one return."; return Task.CompletedTask; }
+                if (!PostingEnabled || !CanPost || _selected.Any(x => x.Status != "NEW"))
+                { StatusMessage = PostingEnabled ? "Select only NEW returns with POST permission." : "Return posting is disabled pending release acceptance."; return Task.CompletedTask; }
+                break;
+            case "ROLLBACK":
+                if (_selected.Count == 0) { StatusMessage = "Select at least one return."; return Task.CompletedTask; }
+                if (!CanRollback || _selected.Any(x => x.Status != "POSTED"))
+                { StatusMessage = "Select only POSTED returns with ROLLBACK permission."; return Task.CompletedTask; }
+                break;
+            default:
+                ErrorMessage = $"Unsupported action '{action}'.";
+                return Task.CompletedTask;
+        }
         ConfirmAction=action; RollbackReason=""; ConfirmVisible=true; return Task.CompletedTask;
     }
     protected async Task ConfirmAsync()
@@ -74,6 +93,9 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
         catch(Exception ex) { ErrorMessage=ex.Message; } finally { Busy=false; }
     }
     private void RebuildButtons() { Buttons=[new(){Text="NEW",IConClass="fas fa-plus",Style="primary",Enabled=CanAdd},new(){Text="POST",IConClass="fas fa-check",Style="success",Enabled=CanPost&&PostingEnabled&&_selected.Count>0&&_selected.All(x=>x.Status=="NEW")},new(){Text="ROLLBACK",IConClass="fa-solid fa-rotate-left",Style="warning",Enabled=CanRollback&&_selected.Count>0&&_selected.All(x=>x.Status=="POSTED")}]; }
+    protected void OpenFilterPopup() { DraftStatus = StatusFilter; FilterPopupVisible = true; }
+    protected async Task ApplyFiltersAsync() { StatusFilter = DraftStatus; FilterPopupVisible = false; await ReloadAsync(); }
+    protected async Task ClearFiltersAsync() { DraftStatus = ""; await ApplyFiltersAsync(); }
     private async Task ReloadAsync() { DataSource?.Update(SearchText,StatusFilter); await RefreshCompactAsync(); RebuildButtons(); _grid?.Reload(); await InvokeAsync(StateHasChanged); }
     private async Task<(IReadOnlyList<ProductionStockReturnSummary>,int)> LoadAsync(ProductionStockReturnQuery query,CancellationToken ct)
     { var r=await Returns.SearchAsync(query,ct); if(!r.Succeeded||r.Data is null) { await InvokeAsync(()=>ErrorMessage=r.Message); return([],0); } TotalCount=r.Data.TotalCount; PostingEnabled=r.Data.PostingEnabled; return(r.Data.Rows,r.Data.TotalCount); }

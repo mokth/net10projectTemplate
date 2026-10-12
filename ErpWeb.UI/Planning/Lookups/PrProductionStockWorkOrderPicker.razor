@@ -1,0 +1,26 @@
+@namespace ErpWeb.UI.Planning.Lookups
+@using ErpWeb.Core.Production
+@using ErpWeb.UI.Components.Common.Lookups
+
+<SmartLookupInput @ref="_smartLookup"
+                  TItem="ProductionStockWorkOrderLookupRow"
+                  Value="@WorkOrderNo"
+                  DisplayText="@WorkOrderNo"
+                  SecondaryText="@EffectiveSecondaryText"
+                  Enabled="@Enabled"
+                  InputCssClass="@InputCssClass"
+                  NullText="Select Work Order"
+                  SearchButtonAriaLabel="Search Work Orders"
+                  NotFoundMessage="Work Order not found or not eligible"
+                  ResolveAsync="@ResolveAsync"
+                  GetCode="@(static row => row.WorkOrderNo)"
+                  GetDisplayText="@(static row => row.WorkOrderNo)"
+                  GetSecondaryText="@FormatSecondaryText"
+                  ItemResolved="@CommitSelectionAsync"
+                  Cleared="@OnClearedAsync"
+                  OpenSearch="@OpenSearchAsync" />
+
+<PrProductionStockWorkOrderSearchPopup @bind-Visible="_popupVisible"
+                                       InitialSearchText="_popupSearchText"
+                                       SearchAsync="@SearchAsync"
+                                       Selected="@OnPopupSelectedAsync" />
