@@ -55,3 +55,17 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrMac
                AND name = N'IX_PrMachineScheduleAllocation_Order_Operation')
     CREATE INDEX IX_PrMachineScheduleAllocation_Order_Operation
         ON dbo.PrMachineScheduleAllocation(CompanyCode, BranchCode, WorkOrderID, WorkOrderOperationID);
+
+IF OBJECT_ID(N'dbo.PrMachineScheduleReadinessEvidence', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PrMachineScheduleReadinessEvidence
+    (
+        CompanyCode nvarchar(5) NOT NULL CONSTRAINT PK_PrMachineScheduleReadinessEvidence PRIMARY KEY,
+        CalendarSourceFingerprint char(64) NOT NULL,
+        SchemaContractVersion nvarchar(32) NOT NULL,
+        ReleaseContractVersion nvarchar(32) NOT NULL,
+        VerifiedAtUtc datetime2 NOT NULL,
+        VerifiedBy nvarchar(10) NOT NULL,
+        RowVersion rowversion NOT NULL
+    );
+END;
