@@ -54,3 +54,9 @@ ErpWeb/App_Data/
 
 # VS Code C# Dev Tools - Auto-generated runners
 .vscodecsdt/Runners/
+/.codex-remote-attachments/01a12ea4-8a3f-7423-8f45-3e12f1103d8b/deabb57f-b990-41a1-870e-185b9ce80591
+/DataProtection-Keys/key-9f4af8d2-e768-4271-9a2f-7fd990cff539.xml
+/.codex-work/transfer-tests
+/ErpWeb.Tests/TestResults
+/VSTestTransferDiag.host.26-10-12_14-40-10_72467_5.log
+/VSTestTransferDiag.log
