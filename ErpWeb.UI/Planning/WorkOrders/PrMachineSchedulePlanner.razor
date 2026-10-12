@@ -47,6 +47,23 @@
                         <DxButton Text="Dry-run allocations" RenderStyle="ButtonRenderStyle.Secondary"
                                   Click="PreviewAllocationBackfillAsync" Enabled="@(!IsBackfillBusy)" />
                     }
+                    @if (CanRefreshReadinessEvidence)
+                    {
+                        <DxButton Text="Refresh readiness evidence" RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="RefreshReadinessEvidenceAsync" Enabled="@(!IsBackfillBusy && !IsLoading)" />
+                        @if (Board is not null && Board.Readiness.BlockingReasons.Count > 0)
+                        {
+                            <details class="pr-machine-schedule-readonly__details">
+                                <summary>Why is rescheduling disabled?</summary>
+                                <ul>
+                                    @foreach (var reason in Board.Readiness.BlockingReasons)
+                                    {
+                                        <li>@reason</li>
+                                    }
+                                </ul>
+                            </details>
+                        }
+                    }
                 </div>
             </section>
         }

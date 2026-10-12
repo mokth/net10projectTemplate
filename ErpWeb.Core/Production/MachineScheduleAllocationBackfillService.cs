@@ -156,7 +156,13 @@ public sealed class MachineScheduleAllocationBackfillService : IMachineScheduleA
                         EndDateTime = interval.End,
                         ScheduleSourceHash = addition.Schedule.ScheduleSourceHash,
                         CreatedDate = DateTime.UtcNow,
-                        CreatedBy = createdBy
+                        CreatedBy = createdBy,
+                        RowVersion = string.Equals(
+                            db.Database.ProviderName,
+                            "Microsoft.EntityFrameworkCore.Sqlite",
+                            StringComparison.Ordinal)
+                            ? Guid.NewGuid().ToByteArray()
+                            : []
                     });
                 }
             }

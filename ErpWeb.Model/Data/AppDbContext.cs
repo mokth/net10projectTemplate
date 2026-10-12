@@ -88,6 +88,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionStockAdjustment> ProductionStockAdjustments => Set<ProductionStockAdjustment>();
     public DbSet<ProductionStockAdjustmentLine> ProductionStockAdjustmentLines => Set<ProductionStockAdjustmentLine>();
     public DbSet<ProductionStockAdjustmentFact> ProductionStockAdjustmentFacts => Set<ProductionStockAdjustmentFact>();
+    public DbSet<ProductionWorkOrderTransfer> ProductionWorkOrderTransfers => Set<ProductionWorkOrderTransfer>();
     public DbSet<ProductionFinishedGoodSource> ProductionFinishedGoodSourceRows => Set<ProductionFinishedGoodSource>();
     public DbSet<ProductionFinishedGoodFact> ProductionFinishedGoodFactRows => Set<ProductionFinishedGoodFact>();
     public DbSet<ProductionFinishedGoodPriceSnapshot> ProductionFinishedGoodPriceSnapshotRows => Set<ProductionFinishedGoodPriceSnapshot>();

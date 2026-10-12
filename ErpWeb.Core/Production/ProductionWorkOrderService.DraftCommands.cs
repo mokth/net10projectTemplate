@@ -16,6 +16,13 @@ public sealed partial class ProductionWorkOrderService
         CancellationToken cancellationToken = default)
     {
         request ??= new ProductionWorkOrderDraftRequest();
+        if (!string.IsNullOrWhiteSpace(request.SourceType)
+            && !string.Equals(Normalize(request.SourceType), ProductionSourceTypes.Manual, StringComparison.Ordinal))
+        {
+            return ValidationFailure<ProductionWorkOrderDetail>(
+                "Only Manual Work Order creation is available in Phase 1.", "SourceType");
+        }
+
         var auth = await AuthorizeAsync(PermissionCodes.Add, requireWriteScope: true, cancellationToken);
         if (auth.Error is not null)
         {
@@ -27,7 +34,10 @@ public sealed partial class ProductionWorkOrderService
             scope, request, snapshotRevision: 1, explicitScheduleAnchor: null, cancellationToken);
         if (built.WorkOrder is null)
         {
-            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+            return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                IvMasterErrorCode.Validation,
+                built.Error ?? "The snapshot could not be built.",
+                built.ValidationErrors);
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -70,6 +80,13 @@ public sealed partial class ProductionWorkOrderService
         CancellationToken cancellationToken = default)
     {
         request ??= new ProductionWorkOrderDraftRequest();
+        if (!string.IsNullOrWhiteSpace(request.SourceType)
+            && !string.Equals(Normalize(request.SourceType), ProductionSourceTypes.Manual, StringComparison.Ordinal))
+        {
+            return ValidationFailure<ProductionWorkOrderDetail>(
+                "Only Manual Work Order creation is available in Phase 1.", "SourceType");
+        }
+
         var add = await AuthorizeAsync(PermissionCodes.Add, requireWriteScope: true, cancellationToken);
         if (add.Error is not null)
         {
@@ -88,7 +105,9 @@ public sealed partial class ProductionWorkOrderService
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                IvMasterErrorCode.Validation, built.Error ?? "The snapshot could not be built.");
+                IvMasterErrorCode.Validation,
+                built.Error ?? "The snapshot could not be built.",
+                built.ValidationErrors);
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -1385,7 +1404,8 @@ public sealed partial class ProductionWorkOrderService
                     EndDateTime = interval.End,
                     ScheduleSourceHash = schedule.SourceHash,
                     CreatedDate = DateTime.UtcNow,
-                    CreatedBy = createdBy
+                    CreatedBy = createdBy,
+                    RowVersion = IsSqlite(db) ? Guid.NewGuid().ToByteArray() : []
                 });
                 fragmentCount++;
             }
@@ -1650,6 +1670,8 @@ public sealed partial class ProductionWorkOrderService
         public ProductionWorkOrder? WorkOrder { get; init; }
         public IReadOnlyList<string> Warnings { get; init; } = [];
         public string? Error { get; init; }
+        public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task<BuiltSnapshot> BuildCurrentSnapshotAsync(
@@ -1659,46 +1681,55 @@ public sealed partial class ProductionWorkOrderService
         DateTime? explicitScheduleAnchor,
         CancellationToken cancellationToken)
     {
-        if (request.PlannedQty <= 0m)
+        var normalizedRequest = new ProductionWorkOrderDraftRequest
         {
-            return new BuiltSnapshot { Error = "Planned quantity must be positive." };
+            ProductCode = request.ProductCode,
+            DefinitionCode = request.DefinitionCode,
+            PlannedQty = request.PlannedQty,
+            PlannedStartDate = request.PlannedStartDate,
+            PlannedCompletionDate = request.PlannedCompletionDate,
+            SchedulingDirection = request.SchedulingDirection,
+            SourceType = string.IsNullOrWhiteSpace(request.SourceType)
+                ? ProductionSourceTypes.Manual
+                : request.SourceType,
+            SourceReference = request.SourceReference,
+            Remark = request.Remark
+        };
+        var validationErrors = ValidateAndNormalize(
+            normalizedRequest, out var normalized, allowDeliveryRequest: true);
+        if (validationErrors.Count > 0)
+        {
+            return new BuiltSnapshot
+            {
+                Error = "Correct the highlighted fields.",
+                ValidationErrors = validationErrors
+            };
         }
 
-        var definitionCode = PrProductDefinitionCodes.Normalize(request.DefinitionCode);
-        if (definitionCode.Length == 0 || !PrProductDefinitionCodes.IsValidFormat(definitionCode))
-        {
-            return new BuiltSnapshot { Error = "A valid Product Definition code is required." };
-        }
-
-        var direction = string.IsNullOrWhiteSpace(request.SchedulingDirection)
-            ? ProductionSchedulingDirections.Forward
-            : Normalize(request.SchedulingDirection);
-        if (!ProductionSchedulingDirections.IsKnown(direction))
-        {
-            return new BuiltSnapshot { Error = "Schedule direction must be FORWARD or BACKWARD." };
-        }
-
-        var plannerDate = string.Equals(direction, ProductionSchedulingDirections.Backward, StringComparison.Ordinal)
-            ? request.PlannedCompletionDate
-            : request.PlannedStartDate;
+        var plannerDate = string.Equals(
+            normalized.SchedulingDirection,
+            ProductionSchedulingDirections.Backward,
+            StringComparison.Ordinal)
+            ? normalized.PlannedCompletionDate
+            : normalized.PlannedStartDate;
         var anchor = explicitScheduleAnchor
-            ?? ProductionSchedulingDirections.NormalizePlannerDateAnchor(plannerDate, direction);
+            ?? ProductionSchedulingDirections.NormalizePlannerDateAnchor(plannerDate, normalized.SchedulingDirection);
 
         var built = await _snapshotBuilder.BuildAsync(new WorkOrderSnapshotRequest
         {
             CompanyCode = scope.CompanyCode,
             BranchCode = scope.BranchCode ?? string.Empty,
             LocationCode = scope.LocationCode,
-            ProductCode = request.ProductCode,
-            PlannedQty = request.PlannedQty,
-            DefinitionCode = definitionCode,
-            PlannedStartDateTime = request.PlannedStartDate,
-            PlannedCompletionDateTime = request.PlannedCompletionDate,
+            ProductCode = normalized.ProductCode,
+            PlannedQty = normalized.PlannedQty,
+            DefinitionCode = normalized.DefinitionCode,
+            PlannedStartDateTime = normalized.PlannedStartDate,
+            PlannedCompletionDateTime = normalized.PlannedCompletionDate,
             ScheduleAnchorDateTime = anchor,
-            SchedulingDirection = direction,
-            SourceType = string.IsNullOrWhiteSpace(request.SourceType) ? ProductionSourceTypes.Manual : Normalize(request.SourceType),
-            SourceReference = TrimTo(request.SourceReference, SourceReferenceMax),
-            Remark = TrimTo(request.Remark, RemarkMax),
+            SchedulingDirection = normalized.SchedulingDirection,
+            SourceType = normalized.SourceType,
+            SourceReference = normalized.SourceReference,
+            Remark = normalized.Remark,
             SnapshotRevision = snapshotRevision
         }, cancellationToken);
 

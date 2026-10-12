@@ -300,7 +300,7 @@ public sealed partial class ProductionOutputService
         if (sealedEvidenceCount != evidence.Count)
             return false;
 
-        return await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m =>
+        var hasNaturalProduction = await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m =>
             evidenceIds.Contains(m.Uid)
             && m.ProductionBalLotId == lot.Uid
             && m.MovementType == ProductionBalLotMovementTypes.Produce
@@ -333,6 +333,72 @@ public sealed partial class ProductionOutputService
             && !db.ProductionBalLotMovements.Any(reversal =>
                 reversal.OriginalMovementId == m.Uid
                 && reversal.MovementType == ProductionBalLotMovementTypes.ProduceReversal),
+            cancellationToken);
+        if (hasNaturalProduction) return true;
+
+        // A verified sealed TransferIn is valid current-generation provenance when its transfer
+        // document, matching OUT movement and genealogy edge all agree with this natural producer pool.
+        // The caller's existing production-location checks remain unchanged.
+        return await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m =>
+            evidenceIds.Contains(m.Uid)
+            && m.ProductionBalLotId == lot.Uid
+            && m.MovementType == ProductionBalLotMovementTypes.TransferIn
+            && m.OriginalMovementId == null
+            && m.WorkOrderId == lot.WorkOrderId
+            && m.RouteStepId == lot.ProducingRouteStepId
+            && m.WorkOrderOperationId == lot.WorkOrderOperationId
+            && m.ItemCode == lot.ItemCode
+            && m.BaseUom == lot.BaseUom
+            && m.ConversionFactorToBase == lot.ConversionFactorToBase
+            && m.CompanyCode == companyCode
+            && m.BranchCode == branchCode
+            && m.StockPostingId.HasValue
+            && m.MovementGroupId.HasValue
+            && db.ProductionValuationEvidenceRows.Any(e => e.MovementId == m.Uid
+                && e.ProductionBalLotId == lot.Uid && e.Status == ProductionPoolValuationService.Verified)
+            && db.ProductionWorkOrderTransfers.Any(transfer =>
+                transfer.TransferInMovementId == m.Uid
+                && transfer.TransferOutMovementId != null
+                && transfer.Status == ProductionWorkOrderTransferStatuses.Posted
+                && transfer.DeletedAtUtc == null
+                && transfer.StockPostingId == m.StockPostingId
+                && transfer.MovementGroupId == m.MovementGroupId
+                && transfer.DestinationProductionBalLotId == lot.Uid
+                && transfer.TargetWorkOrderId == lot.WorkOrderId
+                && transfer.TargetProducingRouteStepId == lot.ProducingRouteStepId
+                && transfer.TargetProducerOperationId == lot.WorkOrderOperationId
+                && transfer.ItemCode == lot.ItemCode
+                && transfer.LotNo == lot.LotNo
+                && transfer.CompanyCode == companyCode && transfer.BranchCode == branchCode
+                && db.ProductionBalLotMovements.Any(outbound =>
+                    outbound.Uid == transfer.TransferOutMovementId
+                    && outbound.MovementType == ProductionBalLotMovementTypes.TransferOut
+                    && outbound.OriginalMovementId == null
+                    && outbound.StockPostingId == m.StockPostingId
+                    && outbound.MovementGroupId == m.MovementGroupId
+                    && outbound.ItemCode == m.ItemCode
+                    && outbound.BaseUom == m.BaseUom
+                    && outbound.BaseQty == m.BaseQty
+                    && outbound.TotalCost == m.TotalCost
+                    && db.ProductionValuationEvidenceRows.Any(outEvidence =>
+                        outEvidence.MovementId == outbound.Uid
+                        && outEvidence.Status == ProductionPoolValuationService.Verified)
+                    && db.ProductionPoolDependencyRows.Any(edge =>
+                        edge.ContributorMovementId == outbound.Uid
+                        && edge.ConsumerMovementId == m.Uid
+                        && edge.StockPostingId == m.StockPostingId))
+                && db.StockPostings.Any(posting =>
+                    posting.Id == m.StockPostingId
+                    && posting.CompanyCode == companyCode
+                    && posting.BranchCode == branchCode
+                    && posting.SourceDocumentType == ProductionDocumentTypes.WorkOrderTransfer
+                    && posting.SourceDocumentNo == transfer.TransferNo
+                    && posting.SealedAtUtc != null
+                    && !db.StockPostings.Any(reversal =>
+                        reversal.ReversesPostingId == posting.Id && reversal.SealedAtUtc != null))
+                && db.ProductionPostingLinks.Any(link =>
+                    link.Uid == transfer.ProductionPostingLinkId
+                    && link.Status == ProductionPostingLinkStatuses.Succeeded)),
             cancellationToken);
     }
 

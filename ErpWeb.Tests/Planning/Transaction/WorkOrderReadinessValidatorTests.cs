@@ -1,5 +1,6 @@
 using ErpWeb.Core.Production;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Planning;
 
 namespace ErpWeb.Tests.Planning.Transaction;
 /// <summary>
@@ -299,7 +300,7 @@ public sealed class WorkOrderReadinessValidatorTests
 
         var report = Sut().Validate(order, Ready());
 
-        Assert.Contains(report.Errors, e => e.Code == ProductionReadinessErrorCodes.FinalOutputMismatch);
+        Assert.Contains(report.Errors, e => e.Code == ProductionReadinessErrorCodes.TerminalFgRouteInvalid);
     }
 
     [Fact]
@@ -361,9 +362,13 @@ public sealed class WorkOrderReadinessValidatorTests
             Uid = 1,
             StageSequence = 10,
             WorkCentreCode = "WC01",
+            OutputType = PrRouteOutputTypes.FinishedGoods,
             OutputItemCode = "FG001",
             OutputBaseQty = 1m,
             OutputUom = "PCS",
+            YieldPercent = 100m,
+            OutputBaseUom = "PCS",
+            OutputConversionFactorToBase = 1m,
             PlannedQty = 10m
         };
 

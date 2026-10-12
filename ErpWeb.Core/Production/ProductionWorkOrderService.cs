@@ -741,7 +741,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
 
     private static Dictionary<string, string> ValidateAndNormalize(
         ProductionWorkOrderDraftRequest request,
-        out NormalizedDraft normalized)
+        out NormalizedDraft normalized,
+        bool allowDeliveryRequest = false)
     {
         var productCode = Normalize(request.ProductCode);
         var definitionCode = string.IsNullOrWhiteSpace(request.DefinitionCode)
@@ -774,7 +775,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             errors["SourceType"] = $"Source type must be {SourceTypeMax} characters or fewer.";
         else if (!ProductionSourceTypes.IsKnown(sourceType))
             errors["SourceType"] = "Source type is not recognized.";
-        else if (sourceType != ProductionSourceTypes.Manual)
+        else if (sourceType != ProductionSourceTypes.Manual
+            && !(allowDeliveryRequest && sourceType == ProductionSourceTypes.DeliveryRequest))
             errors["SourceType"] = "Only Manual Work Order creation is available in Phase 1.";
         if (sourceReference?.Length > SourceReferenceMax)
             errors["SourceReference"] = $"Source reference must be {SourceReferenceMax} characters or fewer.";

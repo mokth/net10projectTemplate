@@ -133,6 +133,104 @@ public class ProductionCalendarSchedulerTests
     }
 
     [Fact]
+    public void Capacity_splits_across_break_preventive_occupied_time_and_holiday()
+    {
+        var first = new DateOnly(2026, 6, 1);
+        var holiday = first.AddDays(1);
+        var last = first.AddDays(2);
+        var shift = Shift(new TimeOnly(8, 0), new TimeOnly(17, 0),
+            (new TimeOnly(12, 0), new TimeOnly(13, 0)));
+        var calendar = new Dictionary<DateOnly, CalendarDayRow>
+        {
+            [first] = new() { OperationalDate = first, DateCd = "W", ShfGrpCd = "G1" },
+            [holiday] = new() { OperationalDate = holiday, DateCd = "H", ShfGrpCd = null },
+            [last] = new() { OperationalDate = last, DateCd = "W", ShfGrpCd = "G1" }
+        };
+        var groups = new Dictionary<string, ShiftGroupSource>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["G1"] = new() { ShiftGroupCode = "G1", Shifts = [shift] }
+        };
+        var preventive = new[]
+        {
+            new PreventiveWindow
+            {
+                Start = new DateTime(2026, 6, 1, 9, 0, 0),
+                End = new DateTime(2026, 6, 1, 10, 0, 0)
+            }
+        };
+        var data = ProductionCalendarScheduler.BuildScheduleData("M1", calendar, groups, preventive);
+        var occupied = ProductionCalendarScheduler.ExcludeOccupiedIntervals(data,
+        [
+            new TimeInterval(new DateTime(2026, 6, 1, 14, 0, 0), new DateTime(2026, 6, 1, 15, 0, 0))
+        ]);
+
+        var result = ProductionCalendarScheduler.ScheduleMachine(
+            occupied,
+            new DateTime(2026, 6, 1, 8, 0, 0),
+            TimeSpan.FromHours(14),
+            ScheduleDirection.Forward);
+
+        Assert.Equal(new DateTime(2026, 6, 1, 8, 0, 0), result.ActualStart);
+        Assert.Equal(new DateTime(2026, 6, 3, 17, 0, 0), result.ActualCompletion);
+        Assert.Equal(TimeSpan.FromHours(14), result.ConsumedIntervals.Aggregate(
+            TimeSpan.Zero, (sum, interval) => sum + interval.Duration));
+        Assert.DoesNotContain(result.ConsumedIntervals, x => x.Start.Date == holiday.ToDateTime(TimeOnly.MinValue).Date);
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 10, 0, 0) && x.End > new DateTime(2026, 6, 1, 9, 0, 0));
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 15, 0, 0) && x.End > new DateTime(2026, 6, 1, 14, 0, 0));
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 13, 0, 0) && x.End > new DateTime(2026, 6, 1, 12, 0, 0));
+    }
+
+    [Fact]
+    public void Adjacent_reservation_is_available_at_its_half_open_end()
+    {
+        var d = new DateOnly(2026, 6, 1);
+        var data = Build(d, [Shift(new TimeOnly(8, 0), new TimeOnly(12, 0))]);
+        var occupied = ProductionCalendarScheduler.ExcludeOccupiedIntervals(data,
+        [
+            new TimeInterval(new DateTime(2026, 6, 1, 9, 0, 0), new DateTime(2026, 6, 1, 10, 0, 0))
+        ]);
+
+        var result = ProductionCalendarScheduler.ScheduleMachine(
+            occupied,
+            new DateTime(2026, 6, 1, 10, 0, 0),
+            TimeSpan.FromHours(2),
+            ScheduleDirection.Forward);
+
+        Assert.Equal(new DateTime(2026, 6, 1, 10, 0, 0), result.ActualStart);
+        Assert.Equal(new DateTime(2026, 6, 1, 12, 0, 0), result.ActualCompletion);
+        Assert.Single(result.ConsumedIntervals);
+    }
+
+    [Fact]
+    public void Backward_capacity_skips_break_and_existing_reservation()
+    {
+        var d = new DateOnly(2026, 6, 1);
+        var data = Build(d,
+            [Shift(new TimeOnly(8, 0), new TimeOnly(17, 0), (new TimeOnly(12, 0), new TimeOnly(13, 0)))]);
+        var occupied = ProductionCalendarScheduler.ExcludeOccupiedIntervals(data,
+        [
+            new TimeInterval(new DateTime(2026, 6, 1, 15, 0, 0), new DateTime(2026, 6, 1, 16, 0, 0))
+        ]);
+
+        var result = ProductionCalendarScheduler.ScheduleMachine(
+            occupied,
+            new DateTime(2026, 6, 1, 17, 0, 0),
+            TimeSpan.FromHours(3),
+            ScheduleDirection.Backward);
+
+        Assert.Equal(new DateTime(2026, 6, 1, 13, 0, 0), result.ActualStart);
+        Assert.Equal(new DateTime(2026, 6, 1, 17, 0, 0), result.ActualCompletion);
+        Assert.Equal(2, result.ConsumedIntervals.Count);
+        Assert.Equal(TimeSpan.FromHours(3), result.ConsumedIntervals.Aggregate(
+            TimeSpan.Zero, (sum, interval) => sum + interval.Duration));
+        Assert.DoesNotContain(result.ConsumedIntervals, x =>
+            x.Start < new DateTime(2026, 6, 1, 16, 0, 0) && x.End > new DateTime(2026, 6, 1, 15, 0, 0));
+    }
+
+    [Fact]
     public void PA4_overnight_rule_a_backward_with_preventive()
     {
         var d = new DateOnly(2026, 6, 1);

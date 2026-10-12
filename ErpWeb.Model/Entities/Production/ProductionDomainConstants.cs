@@ -80,6 +80,7 @@ public static class ProductionMaterialMovementTypes
 
 public static class ProductionPostingCommandTypes
 {
+    public const string WorkOrderTransferPost = "WO_TRANSFER_POST";
     public const string ProductionStockReturnPost = "PRODUCTION_STOCK_RETURN_POST";
     public const string ProductionStockReturnRollback = "PRODUCTION_STOCK_RETURN_ROLLBACK";
     public const string ProductionStockAdjustmentPost = "PRODUCTION_STOCK_ADJUSTMENT_POST";
@@ -94,11 +95,18 @@ public static class ProductionPostingCommandTypes
 
 public static class ProductionDocumentTypes
 {
+    public const string WorkOrderTransfer = "WORK_ORDER_TRANSFER";
     public const string ProductionStockReturn = "PRODUCTION_STOCK_RETURN";
     public const string ProductionStockAdjustment = "PRODUCTION_STOCK_ADJUSTMENT";
     public const string FinishedGoodReceipt = "FG_RECEIPT";
     public const string MaterialIssue = "MATERIAL_ISSUE";
     public const string ProductionOutput = "PRODUCTION_OUTPUT";
+}
+
+public static class ProductionWorkOrderTransferStatuses
+{
+    public const string New = "NEW";
+    public const string Posted = "POSTED";
 }
 
 public static class ProductionBalLotKinds

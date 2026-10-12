@@ -971,13 +971,14 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Save_reload_and_master_change_preserve_snapshot()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
 
         Assert.True(save.Succeeded, save.Message);
         Assert.Equal("WO00000001", save.Data!.WorkOrderNo);
         Assert.Equal(ProductionWorkOrderStatuses.Draft, save.Data.Status);
-        Assert.Equal(4.4m, Assert.Single(save.Data.Materials).RequiredQty);
+        Assert.Equal(0.88m, Assert.Single(save.Data.Materials).RequiredQty);
         Assert.Equal(ProductionAuditEventTypes.Created, Assert.Single(save.Data.AuditEvents).EventType);
 
         await using (var db = await _factory.CreateDbContextAsync())
@@ -990,7 +991,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 
         var reload = await sut.GetAsync(save.Data.WorkOrderNo);
         Assert.True(reload.Succeeded, reload.Message);
-        Assert.Equal(4.4m, Assert.Single(reload.Data!.Materials).RequiredQty);
+        Assert.Equal(0.88m, Assert.Single(reload.Data!.Materials).RequiredQty);
         Assert.Equal(save.Data.SnapshotHash, reload.Data.SnapshotHash);
     }
 
@@ -1014,6 +1015,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 StdQty = 1m,
                 StdUom = "BOX",
                 SeqNo = 2,
+                BomDefault = true,
                 Warehouse = "WH01",
                 BranchCode = "HQ",
                 LocationCode = "SITE",
@@ -1024,6 +1026,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             {
                 CompanyCode = "DEMO",
                 ProdCode = "PH001",
+                DefinitionCode = PrProductDefinitionCodes.Standard,
                 Version = 7,
                 Status = PrBomStatuses.Active,
                 EffectiveFrom = new DateTime(2026, 1, 1),
@@ -1042,6 +1045,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 StdQty = 3m,
                 StdUom = "L",
                 SeqNo = 1,
+                BomDefault = true,
                 ScrapPercent = 5m,
                 Tolerance = 0.1m,
                 Warehouse = "WH02",
@@ -1053,6 +1057,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
+        await SeedManualCurrentRouteAsync();
         var workOrders = CreateSut();
         var save = await workOrders.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1077,6 +1082,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Release_freezes_snapshot_and_has_no_inventory_side_effect()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1103,6 +1109,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Draft_cancel_requires_reason_and_blocks_release()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1726,21 +1733,30 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Stale_row_version_is_rejected()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
         var staleToken = save.Data!.RowVersion.ToArray();
 
-        var firstEdit = Request(12m);
-        firstEdit.WorkOrderNo = save.Data.WorkOrderNo;
-        firstEdit.RowVersion = staleToken;
-        var first = await sut.SaveDraftAsync(firstEdit);
+        var first = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = save.Data.WorkOrderNo,
+            PlannedQty = 12m,
+            SchedulingDirection = save.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = save.Data.ScheduleAnchorDateTime,
+            RowVersion = staleToken
+        });
         Assert.True(first.Succeeded, first.Message);
 
-        var staleEdit = Request(14m);
-        staleEdit.WorkOrderNo = save.Data.WorkOrderNo;
-        staleEdit.RowVersion = staleToken;
-        var second = await sut.SaveDraftAsync(staleEdit);
+        var second = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate
+        {
+            WorkOrderNo = save.Data.WorkOrderNo,
+            PlannedQty = 14m,
+            SchedulingDirection = save.Data.SchedulingDirection,
+            ScheduleAnchorDateTime = save.Data.ScheduleAnchorDateTime,
+            RowVersion = staleToken
+        });
 
         Assert.False(second.Succeeded);
         Assert.Equal(IvMasterErrorCode.Concurrency, second.ErrorCode);
@@ -1749,6 +1765,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Release_detects_snapshot_tampering_even_when_header_token_is_current()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1763,13 +1780,14 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 
         var release = await sut.ReleaseAsync(save.Data!.WorkOrderNo, save.Data.RowVersion);
         Assert.False(release.Succeeded);
-        Assert.Equal(IvMasterErrorCode.Concurrency, release.ErrorCode);
-        Assert.Contains("integrity hash", release.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(IvMasterErrorCode.Validation, release.ErrorCode);
+        Assert.Contains("recomputed snapshot hash", release.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task Release_detects_case_only_snapshot_text_tampering()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var save = await sut.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1777,19 +1795,20 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var order = await db.ProductionWorkOrders.SingleAsync();
-            order.ProductDescription = order.ProductDescription!.ToUpperInvariant();
+            order.Remark = order.Remark!.ToUpperInvariant();
             await db.SaveChangesAsync();
         }
 
         var release = await sut.ReleaseAsync(save.Data!.WorkOrderNo, save.Data.RowVersion);
         Assert.False(release.Succeeded);
-        Assert.Equal(IvMasterErrorCode.Concurrency, release.ErrorCode);
-        Assert.Contains("integrity hash", release.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(IvMasterErrorCode.Validation, release.ErrorCode);
+        Assert.Contains("recomputed snapshot hash", release.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task Branch_scope_cannot_read_another_branch_work_order()
     {
+        await SeedManualCurrentRouteAsync();
         var hq = CreateSut(branch: "HQ");
         var save = await hq.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -1814,6 +1833,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Save_normalizes_quantity_and_rejects_unimplemented_source_types()
     {
+        await SeedManualCurrentRouteAsync();
         var sut = CreateSut();
         var rounded = await sut.SaveDraftAsync(Request(1.23456m));
         Assert.True(rounded.Succeeded, rounded.Message);
@@ -1831,6 +1851,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Release_requires_approve_permission_server_side()
     {
+        await SeedManualCurrentRouteAsync();
         var creator = CreateSut();
         var save = await creator.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -2007,6 +2028,33 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(ProductionSnapshotHashVersions.Current, stored.SnapshotHashVersion);
         Assert.False(await db.IvTrxBatches.AnyAsync());
         Assert.False(await db.IvTrxHistories.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Release_reserves_machine_capacity_and_rejects_an_overlapping_work_order()
+    {
+        await SeedMachineCurrentRouteAsync();
+        var sut = CreateSut();
+
+        var first = await sut.CreateAndReleaseAsync(Request(10m));
+        Assert.True(first.Succeeded, first.Message);
+
+        var secondDraft = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(secondDraft.Succeeded, secondDraft.Message);
+        var secondRelease = await ReleaseCurrentAsync(sut, secondDraft.Data!);
+
+        Assert.False(secondRelease.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, secondRelease.ErrorCode);
+        Assert.Contains("overlaps an existing reservation", secondRelease.Message, StringComparison.Ordinal);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var firstStored = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == first.Data!.WorkOrderNo);
+        var secondStored = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == secondDraft.Data!.WorkOrderNo);
+        var allocations = await verify.ProductionMachineScheduleAllocations.ToListAsync();
+        Assert.Equal(ProductionWorkOrderStatuses.Released, firstStored.Status);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, secondStored.Status);
+        Assert.Single(allocations.Where(x => x.WorkOrderId == firstStored.Uid));
+        Assert.Empty(allocations.Where(x => x.WorkOrderId == secondStored.Uid));
     }
 
     [Fact]
@@ -2255,6 +2303,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
     [Fact]
     public async Task Work_order_snapshot_blocks_product_definition_delete()
     {
+        await SeedManualCurrentRouteAsync();
         var workOrders = CreateSut();
         var save = await workOrders.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
@@ -3094,6 +3143,61 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 await db.DisposeAsync();
             }
         }
+    }
+
+    private async Task SeedMachineCurrentRouteAsync()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var header = await db.PrBomHdrs
+            .Include(x => x.Lines)
+            .Include(x => x.RouteSteps)
+            .Include(x => x.Operations)
+            .SingleAsync(x => x.ProdCode == "FG001");
+
+        var operation = new PrBomOperation
+        {
+            CompanyCode = "DEMO",
+            WorkCentreCode = "WC01",
+            OutputItemCode = "FG001",
+            CentralSequence = 10,
+            OutputBaseQty = 1m,
+            OutputUom = "PCS",
+            OperationCode = "MACHINE-OP",
+            ProcessSequence = 10,
+            ProcessType = PrProcessTypes.Machine,
+            IsFinalOperation = true,
+            RowVersion = [1],
+            Machines =
+            [
+                new PrBomMachineOption
+                {
+                    MachineCode = "MC-CAPACITY",
+                    MachineDescription = "Capacity test machine",
+                    IsPrimary = true,
+                    Priority = 1,
+                    CycleSeconds = 30m,
+                    OutputPerCycle = 1m,
+                    ParallelMachineCount = 1,
+                    RowVersion = [1]
+                }
+            ]
+        };
+        var step = new PrBomRouteStep
+        {
+            CompanyCode = "DEMO",
+            WorkCentreCode = "WC01",
+            StageSequence = 10,
+            OutputItemCode = "FG001",
+            OutputType = PrRouteOutputTypes.FinishedGoods,
+            StandardOutputQty = 1m,
+            OutputUom = "PCS",
+            RowVersion = [1],
+            Operations = { operation }
+        };
+        header.RouteSteps.Add(step);
+        header.Operations.Add(operation);
+        header.Lines.Single().Operation = operation;
+        await db.SaveChangesAsync();
     }
 
     private static ProductionWorkOrderDraftRequest Request(decimal quantity) => new()

@@ -974,7 +974,13 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                     EndDateTime = interval.End,
                     ScheduleSourceHash = placement.Placement.SourceHash,
                     CreatedDate = DateTime.UtcNow,
-                    CreatedBy = createdBy
+                    CreatedBy = createdBy,
+                    RowVersion = string.Equals(
+                        db.Database.ProviderName,
+                        "Microsoft.EntityFrameworkCore.Sqlite",
+                        StringComparison.Ordinal)
+                        ? Guid.NewGuid().ToByteArray()
+                        : []
                 });
             }
         }

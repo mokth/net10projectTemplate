@@ -16,6 +16,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     [Inject] private IMachineSchedulePlannerService Planner { get; set; } = default!;
     [Inject] private IMachineScheduleRescheduleService Rescheduler { get; set; } = default!;
     [Inject] private IMachineScheduleAllocationBackfillService AllocationBackfill { get; set; } = default!;
+    [Inject] private IMachineSchedulePlannerReadinessService Readiness { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     private MachineSchedulePlannerBoard? Board;
@@ -24,6 +25,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool IsLoading;
     private bool CanOpenWorkOrders;
     private bool CanEditSchedule;
+    private bool CanRefreshReadinessEvidence;
     private bool IsDetailsOpen;
     private bool IsRescheduleDialogOpen;
     private bool IsRescheduleBusy;
@@ -82,11 +84,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private bool CanOpenReschedule => IsReschedulingEnabled && CanEditSchedule && IsSelectedJobEligible;
 
-    // Keep drag disabled until the installed DevExpress 26.1.4 flow passes the planner browser UAT.
-    private const bool SchedulerDragBrowserAcceptancePassed = false;
-    private bool CanDragAppointments => SchedulerDragBrowserAcceptancePassed
-        && IsReschedulingEnabled
-        && CanEditSchedule;
+    private bool CanDragAppointments => IsReschedulingEnabled && CanEditSchedule;
 
     private string HeaderInstructions => CanDragAppointments
         ? "Find a Work Order or machine, then select a job. Drag it to move, or use Change Schedule."
@@ -132,7 +130,27 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     {
         CanOpenWorkOrders = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Access);
         CanEditSchedule = await AccessRights.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Edit);
+        CanRefreshReadinessEvidence = await AccessRights.CanAsync(MenuCodes.AdminSettings, PermissionCodes.Edit);
         await ReloadAsync();
+    }
+
+    private async Task RefreshReadinessEvidenceAsync()
+    {
+        if (!CanRefreshReadinessEvidence || IsLoading)
+            return;
+
+        ErrorMessage = null;
+        var result = await Readiness.RefreshEvidenceAsync();
+        if (!result.Succeeded || result.Data is null)
+        {
+            ErrorMessage = result.Message ?? "Readiness evidence could not be refreshed.";
+            return;
+        }
+
+        await ReloadAsync();
+        StatusMessage = result.Data.Message;
+        if (!result.Data.EvidenceRecorded && result.Data.BlockingReasons.Count > 0)
+            StatusMessage += " " + string.Join(" ", result.Data.BlockingReasons);
     }
 
     private async Task ReloadAsync()
@@ -360,7 +378,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         args.Cancel = true;
         if (!CanDragAppointments)
         {
-            StatusMessage = "Drag rescheduling remains disabled until browser acceptance passes.";
+            StatusMessage = "Drag rescheduling is unavailable because planner readiness or edit permission is missing.";
             return Task.CompletedTask;
         }
 

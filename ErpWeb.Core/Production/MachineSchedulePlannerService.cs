@@ -145,7 +145,17 @@ public sealed class MachineSchedulePlannerReadiness
     public int UnexplainedActiveMachineOverlaps { get; init; }
     public int StaleAllocations { get; init; }
     public bool CalendarAndReleaseEvidenceVerified { get; init; }
+    public DateTime? EvidenceVerifiedAtUtc { get; init; }
     public bool BackwardSchedulingWriteSupported { get; init; }
+    public IReadOnlyList<string> BlockingReasons { get; init; } = [];
+}
+
+public sealed class MachineSchedulePlannerEvidenceRefreshResult
+{
+    public bool EvidenceRecorded { get; init; }
+    public bool WriteSettingEnabled { get; init; }
+    public DateTime? VerifiedAtUtc { get; init; }
+    public string Message { get; init; } = string.Empty;
     public IReadOnlyList<string> BlockingReasons { get; init; } = [];
 }
 
@@ -163,6 +173,9 @@ public interface IMachineSchedulePlannerService
 public interface IMachineSchedulePlannerReadinessService
 {
     Task<MachineSchedulePlannerReadiness> GetReadinessAsync(CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>> RefreshEvidenceAsync(
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class MachineSchedulePlannerReadinessService : IMachineSchedulePlannerReadinessService
@@ -284,23 +297,163 @@ public sealed class MachineSchedulePlannerReadinessService : IMachineSchedulePla
         if (overlaps > 0)
             reasons.Add($"ACTIVE_MACHINE_OVERLAP: {overlaps} unexplained active machine allocation overlap(s) require review.");
 
-        // Calendar masters and the mandatory release evidence are checked by the deployment
-        // preflight/UAT gate. Until that evidence is connected to runtime readiness, fail closed.
-        reasons.Add("CALENDAR_RELEASE_EVIDENCE_MISSING: Current calendar impact and release-gate evidence are not verified for this scope.");
+        var evidence = await db.ProductionMachineScheduleReadinessEvidence.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode, cancellationToken);
+        var evidenceCurrent = false;
+        if (missing == 0 && stale == 0 && overlaps == 0)
+        {
+            var currentCalendarFingerprint = await MachineScheduleReadinessEvidenceFingerprint
+                .ComputeCalendarSourceAsync(db, scope.CompanyCode, cancellationToken);
+            evidenceCurrent = evidence is not null
+                && evidence.SchemaContractVersion == MachineScheduleReadinessEvidenceFingerprint.SchemaContractVersion
+                && evidence.ReleaseContractVersion == MachineScheduleReadinessEvidenceFingerprint.ReleaseContractVersion
+                && string.Equals(evidence.CalendarSourceFingerprint, currentCalendarFingerprint, StringComparison.Ordinal);
+        }
+        if (!evidenceCurrent)
+            reasons.Add("CALENDAR_RELEASE_EVIDENCE_MISSING: Run the authorized readiness preflight after calendar and release checks pass.");
 
         return new MachineSchedulePlannerReadiness
         {
-            IsWriteReady = false,
+            IsWriteReady = enabled && schemaReady && missing == 0 && stale == 0 && overlaps == 0 && evidenceCurrent,
             WriteSettingEnabled = enabled,
             AllocationSchemaReady = true,
             ActiveAllocationBackfillComplete = missing == 0,
             UnverifiedActiveAllocations = missing,
             UnexplainedActiveMachineOverlaps = overlaps,
             StaleAllocations = stale,
-            CalendarAndReleaseEvidenceVerified = false,
+            CalendarAndReleaseEvidenceVerified = evidenceCurrent,
+            EvidenceVerifiedAtUtc = evidenceCurrent ? evidence!.VerifiedAtUtc : null,
             BackwardSchedulingWriteSupported = false,
             BlockingReasons = reasons
         };
+    }
+
+    public async Task<IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>> RefreshEvidenceAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryBranchScope();
+        if (scope is null)
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Fail(
+                IvMasterErrorCode.InvalidScope, "A company and branch scope is required.");
+        if (!await _access.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Access, cancellationToken)
+            || !await _access.CanAsync(MenuCodes.AdminSettings, PermissionCodes.Edit, cancellationToken))
+        {
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Fail(
+                IvMasterErrorCode.AccessDenied, "Planner access and Admin Settings edit access are required to certify readiness.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await IsAllocationSchemaReadyAsync(db, cancellationToken))
+        {
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Ok(new()
+            {
+                Message = "Readiness evidence was not recorded because the planner schema is not installed.",
+                BlockingReasons = ["ALLOCATION_SCHEMA_NOT_READY: Apply scripts/create-machine-schedule-planner.sql first."]
+            });
+        }
+
+        var machineCodes = await db.ProductionWorkOrderMachines.AsNoTracking()
+            .Where(m => m.IsSelected
+                && m.Operation != null
+                && m.Operation.WorkOrder != null
+                && m.Operation.WorkOrder.CompanyCode == scope.CompanyCode
+                && (m.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.Released
+                    || m.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress))
+            .Select(m => m.MachineCode)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // This matches the writer lock order. The exclusive scheduling-source lock freezes
+            // calendar changes, Release, reschedule, and backfill while the evidence is refreshed.
+            await ProductionMachineScheduleLock.AcquireManyAsync(
+                db, scope.CompanyCode, machineCodes, cancellationToken);
+            await WorkOrderSchedulingLock.AcquireAsync(
+                db, scope.CompanyCode, exclusive: true, cancellationToken);
+
+            // Recheck all allocation and overlap invariants after acquiring the lock. The only
+            // ignored blockers are the disabled feature flag and this certificate being absent or
+            // stale; neither is allowed to hide a data-integrity finding.
+            var current = await GetReadinessAsync(cancellationToken);
+            var blockers = current.BlockingReasons
+                .Where(x => !x.StartsWith("WRITE_SETTING_DISABLED:", StringComparison.Ordinal)
+                    && !x.StartsWith("CALENDAR_RELEASE_EVIDENCE_MISSING:", StringComparison.Ordinal))
+                .ToList();
+            if (!current.AllocationSchemaReady
+                || !current.ActiveAllocationBackfillComplete
+                || current.UnverifiedActiveAllocations != 0
+                || current.StaleAllocations != 0
+                || current.UnexplainedActiveMachineOverlaps != 0
+                || blockers.Count > 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Ok(new()
+                {
+                    Message = "Readiness evidence was not recorded. Resolve the listed allocation, provenance, and overlap findings, then run the preflight again.",
+                    BlockingReasons = blockers
+                });
+            }
+
+            var fingerprint = await MachineScheduleReadinessEvidenceFingerprint
+                .ComputeCalendarSourceAsync(db, scope.CompanyCode, cancellationToken);
+            var evidence = await db.ProductionMachineScheduleReadinessEvidence
+                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode, cancellationToken);
+            var verifiedAt = DateTime.UtcNow;
+            var actor = string.IsNullOrWhiteSpace(scope.UserId) ? "SYSTEM" : scope.UserId.Trim();
+            if (actor.Length > 10)
+                actor = actor[..10];
+
+            if (evidence is null)
+            {
+                db.ProductionMachineScheduleReadinessEvidence.Add(new ProductionMachineScheduleReadinessEvidence
+                {
+                    CompanyCode = scope.CompanyCode,
+                    CalendarSourceFingerprint = fingerprint,
+                    SchemaContractVersion = MachineScheduleReadinessEvidenceFingerprint.SchemaContractVersion,
+                    ReleaseContractVersion = MachineScheduleReadinessEvidenceFingerprint.ReleaseContractVersion,
+                    VerifiedAtUtc = verifiedAt,
+                    VerifiedBy = actor
+                });
+            }
+            else
+            {
+                evidence.CalendarSourceFingerprint = fingerprint;
+                evidence.SchemaContractVersion = MachineScheduleReadinessEvidenceFingerprint.SchemaContractVersion;
+                evidence.ReleaseContractVersion = MachineScheduleReadinessEvidenceFingerprint.ReleaseContractVersion;
+                evidence.VerifiedAtUtc = verifiedAt;
+                evidence.VerifiedBy = actor;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            var settingEnabled = await _settings.GetFlagAsync(
+                AppSettingModules.Planning,
+                AppSettingCatalogue.PlanningKeys.MachineSchedulePlannerWriteEnabled,
+                cancellationToken);
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Ok(new()
+            {
+                EvidenceRecorded = true,
+                WriteSettingEnabled = settingEnabled,
+                VerifiedAtUtc = verifiedAt,
+                Message = settingEnabled
+                    ? "Readiness evidence is recorded. Reload the planner to confirm the runtime checks."
+                    : "Readiness evidence is recorded. The planner remains View Only until an Admin Settings editor enables the company write setting."
+            });
+        }
+        catch (ProductionMachineScheduleLockException ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Fail(
+                IvMasterErrorCode.Concurrency, ex.Message);
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return IvMasterOperationResult<MachineSchedulePlannerEvidenceRefreshResult>.Fail(
+                IvMasterErrorCode.Concurrency, ex.Message);
+        }
     }
 
     internal static async Task<bool> IsAllocationSchemaReadyAsync(AppDbContext db, CancellationToken ct)
@@ -334,6 +487,11 @@ SELECT CASE WHEN OBJECT_ID(N'dbo.PrMachineScheduleAllocation', N'U') IS NOT NULL
     AND COL_LENGTH(N'dbo.PrMachineScheduleAllocation', N'CreatedDate') IS NOT NULL
     AND COL_LENGTH(N'dbo.PrMachineScheduleAllocation', N'CreatedBy') IS NOT NULL
     AND COL_LENGTH(N'dbo.PrMachineScheduleAllocation', N'RowVersion') IS NOT NULL
+    AND OBJECT_ID(N'dbo.PrMachineScheduleReadinessEvidence', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleReadinessEvidence', N'CalendarSourceFingerprint') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleReadinessEvidence', N'SchemaContractVersion') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleReadinessEvidence', N'ReleaseContractVersion') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleReadinessEvidence', N'VerifiedAtUtc') IS NOT NULL
     AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrMachineScheduleAllocation')
                 AND name = N'IX_PrMachineScheduleAllocation_Machine_Start_End')
     AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrMachineScheduleAllocation')

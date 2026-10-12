@@ -206,7 +206,9 @@ public sealed class WorkOrderQuantityCalculatorTests
             WorkCentreCode = "WC01",
             OutputItemCode = "FG001",
             OutputBaseQty = 1m,
-            OutputUom = "PCS"
+            OutputUom = "PCS",
+            OutputBaseUom = "PCS",
+            OutputConversionFactorToBase = 1m
         };
 
         var operation = new ProductionWorkOrderOperation

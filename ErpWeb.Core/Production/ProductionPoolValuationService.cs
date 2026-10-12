@@ -38,9 +38,21 @@ public static class ProductionPoolValuationService
         context.EnsureUnsealed();
         var db = context.Db;
         var registry = new StockMovementRegistry();
+        var transferPairs = ValidateWorkOrderTransferPairs(movements, context.Posting.Id);
+        var transferInPairByMovement = transferPairs.ToDictionary(x => x.Inbound.Uid, x => x);
         var inputIds = movements.Where(x => x.MovementType == ProductionBalLotMovementTypes.Consume).Select(x => x.Uid).ToArray();
         var inputStatuses = new List<string>();
-        foreach (var movement in movements.OrderBy(x => x.MovementType == ProductionBalLotMovementTypes.Produce ? 1 : 0).ThenBy(x => x.Uid))
+        var orderedMovements = movements.OrderBy(x => x.MovementType == ProductionBalLotMovementTypes.Produce ? 1 : 0)
+            .ThenBy(x => x.Uid).ToList();
+        foreach (var pair in transferPairs)
+        {
+            orderedMovements.Remove(pair.Inbound);
+            var outboundIndex = orderedMovements.IndexOf(pair.Outbound);
+            if (outboundIndex < 0)
+                throw new InvalidOperationException("Work Order Transfer OUT movement is missing from its posting set.");
+            orderedMovements.Insert(outboundIndex + 1, pair.Inbound);
+        }
+        foreach (var movement in orderedMovements)
         {
             if (await db.ProductionValuationEvidenceRows.AnyAsync(x => x.MovementId == movement.Uid, ct))
                 throw new InvalidOperationException("Valuation evidence is immutable and has already been recorded.");
@@ -73,6 +85,23 @@ public static class ProductionPoolValuationService
             var status = direction < 0 ? pool.Status : Unvalued;
             var basis = direction < 0 ? "POOLED_AVERAGE" : "MISSING_EVIDENCE";
             if (original is not null) { status = original.Status; basis = "REVERSAL"; }
+            if (transferInPairByMovement.TryGetValue(movement.Uid, out var transferPair))
+            {
+                var outboundEvidence = await db.ProductionValuationEvidenceRows
+                    .SingleOrDefaultAsync(x => x.MovementId == transferPair.Outbound.Uid, ct);
+                if (outboundEvidence?.Status != Verified)
+                    throw new InvalidOperationException("Work Order Transfer IN requires its paired OUT to be VERIFIED first.");
+                if (pool.TrackedBaseQty == 0m && pool.TrackedValue == 0m)
+                {
+                    // An empty reusable destination identity may start a new verified generation.
+                }
+                else if (pool.TrackedBaseQty <= 0m || pool.Status != Verified)
+                {
+                    throw new InvalidOperationException("A nonempty Work Order Transfer destination pool must already be VERIFIED.");
+                }
+                status = Verified;
+                basis = $"WORK_ORDER_TRANSFER:{transferPair.Outbound.Uid}";
+            }
             if (hasInboundAuthority)
             {
                 status = Verified;
@@ -224,6 +253,15 @@ public static class ProductionPoolValuationService
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = sourceId,
                         ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
             }
+            if (transferInPairByMovement.TryGetValue(movement.Uid, out var completedTransferPair))
+            {
+                db.ProductionPoolDependencyRows.Add(new()
+                {
+                    ContributorMovementId = completedTransferPair.Outbound.Uid,
+                    ConsumerMovementId = movement.Uid,
+                    StockPostingId = context.Posting.Id
+                });
+            }
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
                 foreach (var inputId in inputIds)
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = inputId, ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
@@ -233,6 +271,41 @@ public static class ProductionPoolValuationService
                 throw new InvalidOperationException("Production quantity/value reconciliation failed.");
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    private sealed record WorkOrderTransferPair(ProductionBalLotMovement Outbound, ProductionBalLotMovement Inbound);
+
+    private static IReadOnlyList<WorkOrderTransferPair> ValidateWorkOrderTransferPairs(
+        IReadOnlyList<ProductionBalLotMovement> movements, long stockPostingId)
+    {
+        var transferDocuments = movements.Where(x =>
+            string.Equals(x.DocumentType, ProductionDocumentTypes.WorkOrderTransfer, StringComparison.Ordinal)).ToArray();
+        if (transferDocuments.Length == 0) return [];
+        if (transferDocuments.Any(x => x.MovementType is not (ProductionBalLotMovementTypes.TransferOut or ProductionBalLotMovementTypes.TransferIn)))
+            throw new InvalidOperationException("Work Order Transfer posting contains a non-transfer movement.");
+        if (transferDocuments.Length != 2 || transferDocuments.Any(x => x.MovementGroupId is null))
+            throw new InvalidOperationException("A Work Order Transfer posting must contain one grouped OUT/IN movement pair.");
+        var groups = transferDocuments.GroupBy(x => x.MovementGroupId).ToArray();
+        if (groups.Length != 1) throw new InvalidOperationException("A Work Order Transfer posting must contain exactly one movement group.");
+        var group = groups[0].ToArray();
+        var outboundRows = group.Where(x => x.MovementType == ProductionBalLotMovementTypes.TransferOut).ToArray();
+        var inboundRows = group.Where(x => x.MovementType == ProductionBalLotMovementTypes.TransferIn).ToArray();
+        if (group.Length != 2 || outboundRows.Length != 1 || inboundRows.Length != 1)
+            throw new InvalidOperationException("A Work Order Transfer movement group must contain exactly one OUT and one IN.");
+        var outbound = outboundRows[0];
+        var inbound = inboundRows[0];
+        if (outbound.StockPostingId != stockPostingId || inbound.StockPostingId != stockPostingId
+            || outbound.OriginalMovementId is not null || inbound.OriginalMovementId is not null
+            || outbound.ProductionBalLotId == inbound.ProductionBalLotId || outbound.WorkOrderId == inbound.WorkOrderId
+            || outbound.ItemCode != inbound.ItemCode || outbound.Qty != inbound.Qty
+            || outbound.Uom != inbound.Uom || outbound.BaseQty != inbound.BaseQty
+            || outbound.BaseUom != inbound.BaseUom || outbound.ConversionFactorToBase != inbound.ConversionFactorToBase
+            || outbound.TotalCost != inbound.TotalCost || outbound.UnitCost != inbound.UnitCost
+            || outbound.DocumentNo != inbound.DocumentNo || outbound.CompanyCode != inbound.CompanyCode
+            || outbound.BranchCode != inbound.BranchCode
+            || outbound.ValuationStatus != Verified || inbound.ValuationStatus != Verified)
+            throw new InvalidOperationException("Work Order Transfer OUT and IN movement evidence does not match.");
+        return [new(outbound, inbound)];
     }
 
     private static async Task ValidateInboundAuthorityAsync(StockPostingContext context, ProductionBalLot lot,

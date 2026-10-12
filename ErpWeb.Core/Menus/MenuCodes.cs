@@ -271,6 +271,7 @@ public static class MenuCodes
     public const string PlanningFinishedGoodReceipt = "PLN_FINISHED_GOOD_RECEIPT";
     public const string PlanningStockReturn = "PLN_STOCK_RETURN";
     public const string PlanningStockAdjustment = "PLN_STOCK_ADJUSTMENT";
+    public const string PlanningWorkOrderTransfer = "PLN_WO_TRANSFER";
     public const string PlanningStockCard = "PLN_STOCK_CARD";
     public const string PlanningStockMovement = "PLN_STOCK_MOVEMENT";
     public const string PlanningStockAsOf = "PLN_STOCK_ASOF";

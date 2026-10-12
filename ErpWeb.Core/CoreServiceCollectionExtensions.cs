@@ -243,6 +243,7 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProductionFinishedGoodReceiptService, ProductionFinishedGoodReceiptService>();
         services.AddScoped<IProductionStockReturnService, ProductionStockReturnService>();
         services.AddScoped<IProductionStockAdjustmentService, ProductionStockAdjustmentService>();
+        services.AddScoped<IProductionWorkOrderTransferService, ProductionWorkOrderTransferService>();
         services.AddScoped<IProductionOutputService, ProductionOutputService>();
         services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
         services.AddScoped<IProductionMaterialConsumeVarianceInquiryService, ProductionMaterialConsumeVarianceInquiryService>();

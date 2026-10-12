@@ -116,13 +116,14 @@ internal static class ProductionLedgerTestFixture
         string company = "DEMO",
         string branch = "HQ",
         IAccessRightService? access = null,
-        IInventoryValuationService? valuation = null) =>
+        IInventoryValuationService? valuation = null,
+        int startingSequence = 2) =>
         new(
             factory,
             InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch),
             access ?? Allow(MenuCodes.PlanningDailyProduction),
             new FixedCurrentDateService(new DateTime(2026, 10, 1)),
-            new TestRunningNumberService(),
+            new TestRunningNumberService(startingSequence - 1),
             CreateCoordinator(factory, company, branch, valuation));
 
     public static async Task SeedVerifiedPoolAsync(AppDbContext db, ProductionBalLot lot)
@@ -159,7 +160,9 @@ internal static class ProductionLedgerTestFixture
 
     private sealed class TestRunningNumberService : IRunningNumberService
     {
-        private int _next = 1;
+        private int _next;
+
+        public TestRunningNumberService(int initialSequence = 1) => _next = initialSequence;
 
         public Task<int> PeekNextAsync(
             AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) =>
