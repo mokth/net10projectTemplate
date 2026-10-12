@@ -51,17 +51,18 @@
             </header>
 
             <section class="mr-card">
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form erp-form-scope">
                     <DxFormLayoutItem Caption="Transaction date" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="3">
                         <Template>
-<DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" />
+<DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Receipt type" ColSpanMd="3">
@@ -75,7 +76,7 @@
                                         ValueChanged="@OnTrxTypeChangedAsync"
                                         Enabled="@CanEditDocument"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
-                                        NullText="Select type" ValueExpression="@(() => TrxTypeDisplay)" />
+                                        NullText="Select type" CssClass="erp-form-control--md" ValueExpression="@(() => TrxTypeDisplay)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="3">
@@ -83,7 +84,8 @@
                             <DxTextBox @bind-Text="@Header.RefNo"
                                        NullText="Auto-generated if blank"
                                        maxlength="50"
-                                       ReadOnly="@(!CanEditDocument)" />
+                                       ReadOnly="@(!CanEditDocument)"
+                                       CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
@@ -92,7 +94,8 @@
                                     Rows="2"
                                     maxlength="250"
                                     ReadOnly="@(!CanEditDocument)"
-                                    NullText="Optional notes for this goods receipt" />
+                                    NullText="Optional notes for this goods receipt"
+                                    CssClass="erp-form-control--full" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>
@@ -269,14 +272,14 @@
                 {
                     <p class="mr-popup-error">@PoPickerError</p>
                 }
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form erp-form-scope">
                     <DxFormLayoutItem Caption="Search PO lines" ColSpanMd="12">
                         <Template>
 <DxTextBox Text="@PoPickerSearchText"
                                        TextChanged="@OnPoPickerSearchChangedAsync"
                                        NullText="PO no, vendor, item code or description…"
                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                       Enabled="@(!PoPickerLoading)" TextExpression="@(() => PoPickerSearchText)" />
+                                       Enabled="@(!PoPickerLoading)" CssClass="erp-form-control--full" TextExpression="@(() => PoPickerSearchText)" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>
@@ -348,35 +351,36 @@
              @bind-Visible="@LinePopupVisible">
         <Content>
             <div class="mr-popup-body">
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form erp-form-scope">
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>PO line</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="PO" ColSpanMd="4">
                                 <Template>
-<DxTextBox Text="@($"{LinePopup.PoNo}/{LinePopup.PoRelNo}")" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@($"{LinePopup.PoNo}/{LinePopup.PoRelNo}")" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="PO line" ColSpanMd="4">
                                 <Template>
-<DxTextBox Text="@LinePopup.PoLineNo.ToString()" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@LinePopup.PoLineNo.ToString()" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--xs" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Balance qty" ColSpanMd="4">
                                 <Template>
 <DxSpinEdit Value="@LinePopup.FrPurQty"
                                                 DisplayFormat="n4"
-                                                ReadOnly="true" ValidationEnabled="false" />
+                                                ReadOnly="true" ValidationEnabled="false"
+                                                CssClass="erp-form-control--sm" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Item" ColSpanMd="6">
                                 <Template>
-<DxTextBox Text="@LinePopup.ICode" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@LinePopup.ICode" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--lg" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Description" ColSpanMd="6">
                                 <Template>
-<DxTextBox Text="@LinePopup.IDesc" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@LinePopup.IDesc" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--xl" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -393,12 +397,13 @@
                                                 MaxValue="@LinePopup.FrPurQty"
                                                 DisplayFormat="n4"
                                                 BindValueMode="BindValueMode.OnInput"
+                                                CssClass="erp-form-control--sm"
                                                 InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="UOM" ColSpanMd="6">
                                 <Template>
-<DxTextBox Text="@LinePopup.Uom" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@LinePopup.Uom" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--xs" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -411,26 +416,30 @@
                             <Items>
                                 <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
                                     <Template>
-                                        <IvCodeComboBox Data="@Warehouses"
+                                        <div class="erp-form-control--md">
+                                            <IvCodeComboBox Data="@Warehouses"
                                                         Value="@LinePopup.ToWarehouse"
                                                         ValueChanged="OnLineWarehouseChangedAsync"
                                                         InputCssClass="required-field"
                                                         NullText="Select warehouse" />
+                                        </div>
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Location" ColSpanMd="6">
                                     <Template>
-                                        <IvCodeComboBox Data="@Locations"
+                                        <div class="erp-form-control--md">
+                                            <IvCodeComboBox Data="@Locations"
                                                         @bind-Value="@LinePopup.ToLocation"
                                                         IsLoading="@LocationsLoading"
                                                         Enabled="@(!string.IsNullOrWhiteSpace(LinePopup.ToWarehouse))"
                                                         InputCssClass="@(Locations.Count > 0 ? "required-field" : null)"
                                                         NullText="Select location" />
+                                        </div>
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Lot number" ColSpanMd="6">
                                     <Template>
-                                        <div class="d-flex gap-1">
+                                        <div class="d-flex gap-1 erp-form-control--lg">
                                             <DxTextBox @bind-Text="@LinePopup.ToLotNo"
                                                        maxlength="50"
                                                        Enabled="@LinePopup.LotControl"
@@ -452,16 +461,18 @@
                                                     DisplayFormat="dd/MM/yyyy"
                                                     MinDate="@ExpiryMinimumDate"
                                                     Enabled="@LineExpiryEnabled"
-                                                    CssClass="@(LineExpiryRequired ? "w-100 required-field" : "w-100")"
+                                                    CssClass="@(LineExpiryRequired ? "w-100 required-field erp-form-control--md" : "w-100 erp-form-control--md")"
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
                                     <Template>
-                                        <IvCodeComboBox Data="@Statuses"
+                                        <div class="erp-form-control--md">
+                                            <IvCodeComboBox Data="@Statuses"
                                                         @bind-Value="@LinePopup.IStatus"
                                                         InputCssClass="required-field"
                                                         NullText="Select status" />
+                                        </div>
                                     </Template>
                                 </DxFormLayoutItem>
                             </Items>
@@ -473,7 +484,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
                                 <Template>
-                                    <DxMemo @bind-Text="@LinePopup.Remarks" Rows="3" NullText="Optional notes for this line" />
+                                    <DxMemo @bind-Text="@LinePopup.Remarks" Rows="3" NullText="Optional notes for this line" CssClass="erp-form-control--full" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>

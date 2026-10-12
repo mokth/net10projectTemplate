@@ -8,6 +8,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
 
+public sealed record ProductionInboundValuationAuthority(
+    string CostBasisCode, decimal UnitCost, decimal TotalValue,
+    long? OriginalIssueMovementId = null, long? StandardCostRevisionId = null,
+    long? ApprovedAdjustmentLineId = null);
+
+/// <summary>Optional strict lineage and inbound value evidence. Null preserves legacy callers.</summary>
+public sealed class ProductionPoolValuationDirectives
+{
+    public IReadOnlyDictionary<long, long> RequiredReceiptMovementByOutboundMovementId { get; init; }
+        = new Dictionary<long, long>();
+    public IReadOnlyDictionary<long, ProductionInboundValuationAuthority> InboundValuationAuthorityByMovementId { get; init; }
+        = new Dictionary<long, ProductionInboundValuationAuthority>();
+}
+
 /// <summary>Records provenance, FIFO genealogy and pooled dependencies in the caller's transaction.</summary>
 public static class ProductionPoolValuationService
 {
@@ -16,6 +30,10 @@ public static class ProductionPoolValuationService
 
     public static async Task RecordAsync(StockPostingContext context, IReadOnlyList<ProductionBalLotMovement> movements,
         CancellationToken ct)
+        => await RecordAsync(context, movements, null, ct);
+
+    public static async Task RecordAsync(StockPostingContext context, IReadOnlyList<ProductionBalLotMovement> movements,
+        ProductionPoolValuationDirectives? directives, CancellationToken ct)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -43,11 +61,23 @@ public static class ProductionPoolValuationService
             if (pool.TrackedBaseQty == 0 && pool.TrackedValue != 0)
                 throw new InvalidOperationException($"Production pool {lot.Uid} has stranded value.");
             var direction = registry.GetRequired(movement.MovementType).Direction;
+            var hasInboundAuthority = directives is not null
+                && directives.InboundValuationAuthorityByMovementId.TryGetValue(movement.Uid, out _);
+            var inboundAuthority = hasInboundAuthority
+                ? directives!.InboundValuationAuthorityByMovementId[movement.Uid]
+                : null;
+            if (hasInboundAuthority)
+                await ValidateInboundAuthorityAsync(context, lot, pool, movement, inboundAuthority!, ct);
             var original = movement.OriginalMovementId is long originalId
                 ? await db.ProductionValuationEvidenceRows.SingleOrDefaultAsync(x => x.MovementId == originalId, ct) : null;
             var status = direction < 0 ? pool.Status : Unvalued;
             var basis = direction < 0 ? "POOLED_AVERAGE" : "MISSING_EVIDENCE";
             if (original is not null) { status = original.Status; basis = "REVERSAL"; }
+            if (hasInboundAuthority)
+            {
+                status = Verified;
+                basis = inboundAuthority!.CostBasisCode;
+            }
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
             {
                 var conversionFacts = movement.OriginalMovementId is null
@@ -107,6 +137,7 @@ public static class ProductionPoolValuationService
                     pool.Status = status;
                 }
                 else if (status != Verified) pool.Status = Unvalued;
+                else if (hasInboundAuthority) pool.Status = Verified;
                 // Verified receipts cannot cleanse a contaminated nonempty pool.
             }
             var evidence = new ProductionValuationEvidence
@@ -151,13 +182,21 @@ public static class ProductionPoolValuationService
                 var currentIds = await db.ProductionValuationEvidenceRows.Where(x => x.ProductionBalLotId == lot.Uid && x.Generation == pool.Generation).Select(x => x.MovementId).ToListAsync(ct);
                 foreach (var contributor in inbound.Where(x => currentIds.Contains(x.Uid)))
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = contributor.Uid, ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
-                var receiptIds = inbound.Where(x => x.OriginalMovementId == null).Select(x => x.Uid).ToArray();
-                var used = await db.ProductionMovementAllocations.Where(x => receiptIds.Contains(x.ReceiptMovementId)).ToListAsync(ct);
-                var sequenceIds = inbound.Where(x => x.StockPostingId.HasValue).Select(x => x.StockPostingId!.Value).ToArray();
-                var sequences = await db.StockPostings.Where(x => sequenceIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.PostingSequence, ct);
-                var candidates = inbound.Where(x => x.OriginalMovementId == null).Select(x => new ProductionContribution(lot.Uid, x.Uid,
-                    x.MovementDate, sequences.GetValueOrDefault(x.StockPostingId ?? 0), x.PostingLineNo ?? 0,
-                    x.BaseQty - contributors.Where(r => r.OriginalMovementId == x.Uid && registry.GetRequired(r.MovementType).Direction < 0).Sum(r => r.BaseQty) - used.Where(a => a.ReceiptMovementId == x.Uid).Sum(a => a.ReversesAllocationId == null ? a.BaseQty : -a.BaseQty))).ToArray();
+                var availability = await ProductionContributionAvailabilityService.ReadAsync(db, lot.Uid, pool.Generation, ct);
+                var candidates = availability.Select(x => x.Contribution).ToArray();
+                var requiredReceipt = directives?.RequiredReceiptMovementByOutboundMovementId.GetValueOrDefault(movement.Uid);
+                if (requiredReceipt is long receiptId)
+                {
+                    var receipt = availability.SingleOrDefault(x => x.Movement.Uid == receiptId);
+                    var validPair = movement.MovementType == ProductionBalLotMovementTypes.Return
+                        && receipt?.Movement.MovementType == ProductionBalLotMovementTypes.Issue
+                        || movement.MovementType == ProductionBalLotMovementTypes.AdjustOut
+                        && receipt?.Movement.MovementType == ProductionBalLotMovementTypes.AdjustIn;
+                    if (!validPair || receipt is null || receipt.Evidence.Status != Verified
+                        || receipt.Contribution.AvailableBaseQty < movement.BaseQty)
+                        throw new InvalidOperationException("Production outbound quantity is not available from its exact current-generation VERIFIED receipt contribution.");
+                    candidates = [receipt.Contribution];
+                }
                 // Unvalued legacy consumption may lack a complete contribution ledger. FG never permits that state.
                 if (candidates.Sum(x => x.AvailableBaseQty) >= movement.BaseQty)
                     foreach (var a in new ProductionContributionAllocator().BuildPlan(candidates, [new(movement.Uid.ToString(), movement.BaseQty)]))
@@ -166,6 +205,24 @@ public static class ProductionPoolValuationService
                             BaseQty = a.BaseQty, CreatedAtUtc = context.Posting.PostedAtUtc });
                 else if (movement.MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
                     throw new InvalidOperationException("The source pool has incomplete quantity contribution evidence.");
+            }
+            if (movement.MovementType == ProductionBalLotMovementTypes.AdjustIn && hasInboundAuthority)
+            {
+                var sourceIds = inboundAuthority!.CostBasisCode switch
+                {
+                    ProductionStockAdjustmentCostBasisCodes.CurrentProductionPoolCost =>
+                        await db.ProductionValuationEvidenceRows.Where(x => x.ProductionBalLotId == lot.Uid
+                                && x.Generation == pool.Generation && x.MovementId != movement.Uid)
+                            .Select(x => x.MovementId).ToListAsync(ct),
+                    ProductionStockAdjustmentCostBasisCodes.OriginalIssueCost => inboundAuthority.OriginalIssueMovementId is long sourceId
+                        ? await db.ProductionMaterialMovements.Where(x => x.Uid == sourceId && x.ProductionBalLotMovementId != null)
+                            .Select(x => x.ProductionBalLotMovementId!.Value).ToListAsync(ct)
+                        : [],
+                    _ => []
+                };
+                foreach (var sourceId in sourceIds.Distinct().Where(x => x != movement.Uid))
+                    db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = sourceId,
+                        ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
             }
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
                 foreach (var inputId in inputIds)
@@ -176,6 +233,78 @@ public static class ProductionPoolValuationService
                 throw new InvalidOperationException("Production quantity/value reconciliation failed.");
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    private static async Task ValidateInboundAuthorityAsync(StockPostingContext context, ProductionBalLot lot,
+        ProductionPoolValuation pool, ProductionBalLotMovement movement,
+        ProductionInboundValuationAuthority authority, CancellationToken ct)
+    {
+        if (movement.MovementType != ProductionBalLotMovementTypes.AdjustIn || movement.OriginalMovementId is not null
+            || authority.TotalValue < 0m || authority.UnitCost < 0m
+            || StockLedgerPrecision.Money(authority.TotalValue) != movement.TotalCost
+            || StockLedgerPrecision.Money(authority.UnitCost) != movement.UnitCost
+            || StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty) != movement.UnitCost)
+            throw new InvalidOperationException("ADJUST_IN does not match its six-decimal Production cost authority.");
+        switch (authority.CostBasisCode)
+        {
+            case ProductionStockAdjustmentCostBasisCodes.CurrentProductionPoolCost:
+                if (pool.Status != Verified || pool.TrackedBaseQty <= 0m || pool.TrackedValue < 0m
+                    || authority.OriginalIssueMovementId is not null || authority.StandardCostRevisionId is not null
+                    || StockLedgerPrecision.Money(pool.TrackedValue * movement.BaseQty / pool.TrackedBaseQty) != movement.TotalCost
+                    || StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty) != movement.UnitCost)
+                    throw new InvalidOperationException("A nonempty pool ADJUST_IN must use its exact current verified Production pool value.");
+                break;
+            case ProductionStockAdjustmentCostBasisCodes.OriginalIssueCost:
+                if (pool.TrackedBaseQty != 0m || pool.TrackedValue != 0m || authority.OriginalIssueMovementId is not long issueId
+                    || authority.StandardCostRevisionId is not null)
+                    throw new InvalidOperationException("ORIGINAL_ISSUE_COST applies only to an empty MATERIAL_IN Production generation.");
+                var materialIssue = await context.Db.ProductionMaterialMovements.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Uid == issueId && x.MovementType == ProductionMaterialMovementTypes.Issue
+                        && x.ProductionBalLotId == lot.Uid && x.WorkOrderId == lot.WorkOrderId
+                        && x.WorkOrderMaterialId == lot.WorkOrderMaterialId, ct)
+                    ?? throw new InvalidOperationException("The exact original MATERIAL_IN ISSUE cost source is unavailable.");
+                var issueMovement = materialIssue.ProductionBalLotMovementId is long issueBalanceMovementId
+                    ? await context.Db.ProductionBalLotMovements.SingleAsync(x => x.Uid == issueBalanceMovementId, ct) : null;
+                var issueEvidence = issueMovement is null ? null : await context.Db.ProductionValuationEvidenceRows
+                    .SingleOrDefaultAsync(x => x.MovementId == issueMovement.Uid, ct);
+                if (issueMovement is null || issueEvidence?.Status != Verified
+                    || materialIssue.BaseQty <= 0m
+                    || StockLedgerPrecision.Money(issueMovement.TotalCost * movement.BaseQty / materialIssue.BaseQty) != movement.TotalCost)
+                    throw new InvalidOperationException("ORIGINAL_ISSUE_COST does not match the exact VERIFIED source ISSUE cost.");
+                break;
+            case ProductionStockAdjustmentCostBasisCodes.StandardCost:
+                if (authority.OriginalIssueMovementId is not null || authority.StandardCostRevisionId is not long standardId)
+                    throw new InvalidOperationException("STANDARD_COST requires its approved effective revision ID.");
+                var standard = await context.Db.ItemStandardCostRevisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == standardId && x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode && x.ItemCode == lot.ItemCode
+                        && x.Status == ItemStandardCostRevisionStatuses.Approved && x.EffectiveFrom <= context.Posting.EffectiveAt.Date
+                        && (x.EffectiveTo == null || x.EffectiveTo > context.Posting.EffectiveAt.Date), ct)
+                    ?? throw new InvalidOperationException("STANDARD_COST does not identify one approved revision effective on the adjustment date.");
+                if (StockLedgerPrecision.Money(standard.TotalStandardCost * movement.BaseQty) != movement.TotalCost)
+                    throw new InvalidOperationException("STANDARD_COST total value does not match its approved revision.");
+                break;
+            case ProductionStockAdjustmentCostBasisCodes.ManualApproved:
+            case ProductionStockAdjustmentCostBasisCodes.ZeroCostApproved:
+                var line = authority.ApprovedAdjustmentLineId is long lineId
+                    ? await context.Db.ProductionStockAdjustmentLines.AsNoTracking().SingleOrDefaultAsync(x => x.Id == lineId
+                        && x.BatchId == int.Parse(context.Posting.SourceDocumentId), ct) : null;
+                if (line is null || line.CostEvidenceType != authority.CostBasisCode
+                    || StockLedgerPrecision.Money(line.ProposedUnitCost.GetValueOrDefault() * movement.BaseQty) != movement.TotalCost
+                    || string.IsNullOrWhiteSpace(line.CostOverrideReason)
+                    || string.IsNullOrWhiteSpace(line.CostApprovedBy) || line.CostApprovedAtUtc is null
+                    || StockLedgerPrecision.Money(authority.UnitCost * movement.BaseQty) != movement.TotalCost
+                    || authority.CostBasisCode == ProductionStockAdjustmentCostBasisCodes.ManualApproved && movement.UnitCost <= 0m
+                    || authority.CostBasisCode == ProductionStockAdjustmentCostBasisCodes.ZeroCostApproved && movement.UnitCost != 0m)
+                    throw new InvalidOperationException("PADJ override has no complete server-approved six-decimal sidecar evidence.");
+                break;
+            default:
+                throw new InvalidOperationException("Unknown Production Stock Adjustment valuation authority.");
+        }
+        if (authority.CostBasisCode != ProductionStockAdjustmentCostBasisCodes.CurrentProductionPoolCost
+            && authority.CostBasisCode != ProductionStockAdjustmentCostBasisCodes.OriginalIssueCost
+            && pool.TrackedBaseQty != 0m && pool.Status != Verified)
+            throw new InvalidOperationException("A nonempty UNVALUED Production pool cannot accept ADJUST_IN.");
     }
 
     public static async Task<bool> HasActiveDependentsAsync(AppDbContext db, IReadOnlyCollection<long> movementIds, CancellationToken ct)

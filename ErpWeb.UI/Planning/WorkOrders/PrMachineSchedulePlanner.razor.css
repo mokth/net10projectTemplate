@@ -1,0 +1,270 @@
+.pr-machine-schedule-page {
+    display: grid;
+    gap: 1rem;
+}
+
+.pr-machine-schedule-feedback,
+.pr-machine-schedule-readonly,
+.pr-machine-schedule-loading,
+.pr-machine-schedule-empty {
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.pr-machine-schedule-feedback {
+    padding: .75rem 1rem;
+    border-color: var(--danger);
+}
+
+.pr-machine-schedule-feedback--info {
+    border-color: var(--line);
+}
+
+.pr-machine-schedule-readonly {
+    display: flex;
+    align-items: flex-start;
+    gap: .85rem;
+    padding: .9rem 1rem;
+    border-left: 4px solid var(--accent);
+}
+
+.pr-machine-schedule-readonly__icon {
+    color: var(--accent);
+    padding-top: .1rem;
+}
+
+.pr-machine-schedule-readonly p {
+    color: var(--muted);
+    margin: .2rem 0 .45rem;
+}
+
+.pr-machine-schedule-readonly ul {
+    margin: .45rem 0 0;
+    padding-left: 1.2rem;
+    color: var(--muted);
+}
+
+.pr-machine-schedule-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .75rem;
+    padding: .85rem;
+}
+
+.pr-machine-schedule-toolbar__nav,
+.pr-machine-schedule-toolbar__views,
+.pr-machine-schedule-toolbar__filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.pr-machine-schedule-toolbar__filters {
+    flex: 1 1 100%;
+}
+
+.pr-machine-schedule-toolbar__filters > * {
+    flex: 1 1 150px;
+    min-width: 135px;
+}
+
+.pr-machine-schedule-period {
+    min-width: 190px;
+    font-weight: 650;
+    text-align: center;
+}
+
+.pr-machine-schedule-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem;
+    color: var(--muted);
+}
+
+.pr-machine-schedule-summary span {
+    padding: .35rem .7rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+}
+
+.pr-machine-schedule-summary strong {
+    color: var(--text);
+}
+
+.pr-machine-schedule-summary__warning,
+.pr-machine-schedule-summary__warning strong {
+    color: var(--danger) !important;
+}
+
+.pr-machine-schedule-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+    align-items: start;
+    gap: 1rem;
+}
+
+.pr-machine-schedule-board {
+    min-width: 0;
+    overflow: hidden;
+    padding: .5rem;
+}
+
+.pr-machine-schedule-details {
+    position: sticky;
+    top: 1rem;
+    padding: 1rem;
+}
+
+.pr-machine-schedule-details__head {
+    display: grid;
+    gap: .3rem;
+    padding-bottom: .8rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.pr-machine-schedule-details__head h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--text);
+}
+
+.pr-machine-schedule-details__eyebrow {
+    color: var(--muted);
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
+.pr-machine-schedule-status {
+    color: var(--muted);
+    font-size: .82rem;
+}
+
+.pr-machine-schedule-details dl {
+    display: grid;
+    gap: .7rem;
+    margin: .9rem 0;
+}
+
+.pr-machine-schedule-details dl > div {
+    display: grid;
+    gap: .1rem;
+}
+
+.pr-machine-schedule-details dt {
+    color: var(--muted);
+    font-size: .76rem;
+}
+
+.pr-machine-schedule-details dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.pr-machine-schedule-lock-reason {
+    padding: .65rem;
+    border-radius: .55rem;
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+    color: var(--danger);
+    font-size: .85rem;
+}
+
+.pr-machine-schedule-details__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    padding-top: .65rem;
+    border-top: 1px solid var(--line);
+}
+
+.pr-machine-schedule-details__empty,
+.pr-machine-schedule-loading,
+.pr-machine-schedule-empty {
+    display: grid;
+    justify-items: center;
+    gap: .5rem;
+    padding: 2rem 1rem;
+    color: var(--muted);
+    text-align: center;
+}
+
+.pr-machine-schedule-empty strong,
+.pr-machine-schedule-details__empty strong {
+    color: var(--text);
+}
+
+.pr-machine-schedule-empty > i,
+.pr-machine-schedule-details__empty > i {
+    font-size: 1.4rem;
+    color: var(--accent);
+}
+
+.pr-machine-schedule-spinner {
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: pr-machine-schedule-spin .8s linear infinite;
+}
+
+.pr-machine-schedule-cell--off {
+    background: color-mix(in srgb, var(--muted) 9%, var(--surface));
+}
+
+.pr-machine-schedule-cell--maintenance {
+    background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+
+.pr-machine-schedule-label--scheduled {
+    background: var(--accent) !important;
+}
+
+.pr-machine-schedule-label--locked {
+    background: var(--danger) !important;
+}
+
+.pr-machine-schedule-label--maintenance {
+    background: var(--muted) !important;
+}
+
+.pr-machine-schedule-label__text {
+    color: #fff !important;
+}
+
+@keyframes pr-machine-schedule-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1040px) {
+    .pr-machine-schedule-workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .pr-machine-schedule-details {
+        position: static;
+    }
+}
+
+@media (max-width: 620px) {
+    .pr-machine-schedule-toolbar__nav,
+    .pr-machine-schedule-toolbar__views {
+        width: 100%;
+    }
+
+    .pr-machine-schedule-period {
+        flex: 1;
+        min-width: 0;
+        order: -1;
+    }
+
+    .pr-machine-schedule-toolbar__filters > * {
+        flex-basis: 100%;
+    }
+}

@@ -37,6 +37,21 @@ public sealed class ProductionMaterialReconciliationService : IProductionMateria
                 Message = $"Issue-to-Production batch {batchNo} is still a NEW draft."
             });
 
+        var returnDrafts = await db.ProductionStockReturns.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.WorkOrderId == workOrderId
+                && x.DeletedAtUtc == null && x.Batch.DeletedAtUtc == null && x.Batch.BatchStatus == IvBatchStatuses.New)
+            .Select(x => x.Batch.BatchNo).ToListAsync(cancellationToken);
+        var adjustmentDrafts = await db.ProductionStockAdjustments.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.WorkOrderId == workOrderId
+                && x.DeletedAtUtc == null && x.Batch.DeletedAtUtc == null && x.Batch.BatchStatus == IvBatchStatuses.New)
+            .Select(x => x.Batch.BatchNo).ToListAsync(cancellationToken);
+        foreach (var batchNo in returnDrafts)
+            findings.Add(new() { Code = "OPEN_PRTN_DRAFT", InventoryBatchNo = batchNo,
+                Message = $"Production Stock Return batch {batchNo} is still a NEW draft." });
+        foreach (var batchNo in adjustmentDrafts)
+            findings.Add(new() { Code = "OPEN_PADJ_DRAFT", InventoryBatchNo = batchNo,
+                Message = $"Production Stock Adjustment batch {batchNo} is still a NEW draft." });
+
         var pending = await db.ProductionPostingLinks.AsNoTracking()
             .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.WorkOrderId == workOrderId
                 && x.Status == ProductionPostingLinkStatuses.Pending)
@@ -55,6 +70,8 @@ public sealed class ProductionMaterialReconciliationService : IProductionMateria
             .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.WorkOrderId == workOrderId)
             .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.BaseQty, x.InventoryBatchNo })
             .ToListAsync(cancellationToken);
+        var execution = await ProductionMaterialExecutionFacts.ReadAsync(db, companyCode, branchCode,
+            materials.Select(x => x.Uid).ToArray(), cancellationToken);
         var materialLots = await db.ProductionBalLots.AsNoTracking()
             .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode
                 && x.WorkOrderId == workOrderId && x.Kind == ProductionBalLotKinds.MaterialIn)
@@ -64,8 +81,7 @@ public sealed class ProductionMaterialReconciliationService : IProductionMateria
         foreach (var material in materials)
         {
             var rows = movements.Where(x => x.WorkOrderMaterialId == material.Uid).ToList();
-            var totals = ProductionMaterialMovementTotals.FromRows(rows.Select(x => (x.MovementType, x.BaseQty)));
-            var remaining = IvQty.Round(totals.Issued - totals.Returned - totals.Consumed);
+            var remaining = execution.GetValueOrDefault(material.Uid, ProductionMaterialExecutionTotals.Empty).RemainingProductionMaterialBaseQty;
             var lotRemaining = IvQty.Round(materialLots.Where(x => x.WorkOrderMaterialId == material.Uid).Sum(x => x.BaseQty));
             var latestBatch = rows.Where(x => x.InventoryBatchNo.HasValue).Select(x => x.InventoryBatchNo).LastOrDefault();
 

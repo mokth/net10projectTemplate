@@ -17,6 +17,9 @@ public class ProductionWorkOrder
     public int SnapshotRevision { get; set; } = 1;
     public string SnapshotHash { get; set; } = string.Empty;
 
+    /// <summary>Placement-only version; schedule moves must not change the frozen production snapshot.</summary>
+    public int ScheduleRevision { get; set; }
+
     /// <summary>
     /// Deprecated: legacy as-of date used by format-1/2 snapshots. Physically the
     /// <c>SnapshotAsOfDate</c> column. Retained for hash-version-1 compatibility; new selection

@@ -2,7 +2,7 @@ namespace ErpWeb.Model.Entities.Inventory;
 
 public class IvTrxHistory
 {
-    // Exact FG value is independent of rounded unit prices. Null preserves legacy semantics.
+    // Exact Production-to-Inventory value is independent of rounded unit prices. Null preserves legacy semantics.
     public decimal? ExactTransferredValue { get; set; }
     public string? ValuationStatus { get; set; }
     public decimal? EvidenceBaseQty { get; set; }

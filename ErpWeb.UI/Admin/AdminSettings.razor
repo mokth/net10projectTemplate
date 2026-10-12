@@ -199,7 +199,7 @@
                     </div>
                 </div>
 
-                <div class="as-editor__grid">
+                <div class="as-editor__grid erp-form-scope erp-form-row">
                     <div class="iv-field">
                         <label class="iv-field__label">Stored at</label>
 <DxComboBox Data="@EditScopeOptions"
@@ -208,7 +208,7 @@
                                     Value="@EditScope"
                                     ValueChanged="@((AppSettingScope scope) => OnScopeChanged(scope))"
                                     ReadOnly="@(!CanEdit)"
-                                    CssClass="w-100" ValueExpression="@(() => EditScope)"/>
+                                    CssClass="w-100 erp-form-control--md" ValueExpression="@(() => EditScope)"/>
                         <small class="as-editor__hint">
                             Leave a scope empty to inherit from a broader level (or the code default).
                         </small>
@@ -228,14 +228,14 @@
                                         @bind-Value="@EditText"
                                         NullText="Not set — uses the default"
                                         ReadOnly="@(!CanEdit)"
-                                        CssClass="w-100" />
+                                        CssClass="w-100 erp-form-control--lg" />
                         }
                         else if (EditRow.Type == AppSettingType.Number)
                         {
                             <DxSpinEdit @bind-Value="@EditNumber"
                                         ShowSpinButtons="false"
                                         ReadOnly="@(!CanEdit)"
-                                        CssClass="w-100" />
+                                        CssClass="w-100 erp-form-control--sm" />
                         }
                         else
                         {
@@ -243,13 +243,13 @@
                                        maxlength="400"
                                        NullText="Not set — uses the default"
                                        ReadOnly="@(!CanEdit)"
-                                       CssClass="w-100" />
+                                       CssClass="w-100 erp-form-control--lg" />
                         }
                     </div>
 
                     <div class="iv-field as-editor__remark">
                         <label class="iv-field__label">Remark</label>
-                        <DxTextBox @bind-Text="@EditRemark" maxlength="400" ReadOnly="@(!CanEdit)" CssClass="w-100" />
+                        <DxTextBox @bind-Text="@EditRemark" maxlength="400" ReadOnly="@(!CanEdit)" CssClass="w-100 erp-form-control--full" />
                     </div>
                 </div>
 

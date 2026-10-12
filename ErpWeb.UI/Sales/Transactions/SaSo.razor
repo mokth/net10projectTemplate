@@ -88,13 +88,13 @@
             }
 
             <section class="sdoc-master">
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form erp-form-scope">
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Document</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="SO no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@SoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@SoNoDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -104,17 +104,18 @@
                                                 DateExpression="@(() => SoDate)"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
+                                                CssClass="erp-form-control--md"
                                                 InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -125,19 +126,21 @@
                         <Items>
                             <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
                                 <Template>
-                                    <SaCustomerPicker CustCode="@CustCode"
+                                    <div class="erp-form-control--xl">
+                                        <SaCustomerPicker CustCode="@CustCode"
                                                       SecondaryName="@CustName"
                                                       Selected="@OnCustomerSelectedAsync"
                                                       Cleared="@OnCustomerClearedAsync"
                                                       Enabled="@CanEditCustomer"
                                                       NullText="Customer code"
                                                       InputCssClass="required-field" />
+                                    </div>
                                     @FieldError("CustCode")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Currency / rate" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@($"{Currency} @ {CurrRate:n6}")" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                     @if (HasCustomer && !CurrRateValid)
                                     {
                                         <p class="sdoc-field-error">Valid FX rate is required.</p>
@@ -152,33 +155,44 @@
                         <Items>
                             <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
                                 <Template>
-                                    <IvCodeComboBox Data="@PayCodes" Value="@PayCode" ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))" Enabled="@CanEditDocument" NullText="Select payment term" InputCssClass="required-field" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@PayCodes"
+                                                        Value="@PayCode"
+                                                        ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))"
+                                                        Enabled="@CanEditDocument"
+                                                        NullText="Select payment term"
+                                                        InputCssClass="required-field" />
+                                    </div>
                                     @FieldError("PayCode")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
                                 <Template>
-                                    <DxComboBox Data="@TaxGroups"
-                                                TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
-                                                ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
-                                                Value="@TaxGrCode"
-                                                ValueChanged="@(async (string? v) => await OnTaxGrCodeChanged(v))"
-                                                ValueExpression="@(() => TaxGrCode)"
-                                                SearchMode="ListSearchMode.AutoSearch"
-                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                Enabled="@CanEditDocument"
-                                                NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                    <div class="erp-form-control--md">
+                                        <DxComboBox Data="@TaxGroups"
+                                                    TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
+                                                    Value="@TaxGrCode"
+                                                    ValueChanged="@(async (string? v) => await OnTaxGrCodeChanged(v))"
+                                                    ValueExpression="@(() => TaxGrCode)"
+                                                    SearchMode="ListSearchMode.AutoSearch"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    NullText="Select tax group"
+                                                    CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                    </div>
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Salesman" ColSpanMd="12">
                                 <Template>
-                                    <IvCodeComboBox Data="@SalesReps"
-                                                    Value="@SalesRep"
-                                                    ValueChanged="@(v => { SalesRep = v; MarkDirtyOnly(); })"
-                                                    Enabled="@CanEditDocument"
-                                                    NullText="Select salesman" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@SalesReps"
+                                                        Value="@SalesRep"
+                                                        ValueChanged="@(v => { SalesRep = v; MarkDirtyOnly(); })"
+                                                        Enabled="@CanEditDocument"
+                                                        NullText="Select salesman" />
+                                    </div>
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -189,22 +203,24 @@
                         <Items>
                             <DxFormLayoutItem Caption="Ref no." ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Cust PO" ColSpanMd="4">
                                 <Template>
-                                    <DxTextBox @bind-Text="@CustPo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" InputCssClass="required-field" />
+                                    <DxTextBox @bind-Text="@CustPo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--lg" InputCssClass="required-field" />
                                     @FieldError("CustPo")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="4">
                                 <Template>
-                                    <IvCodeComboBox Data="@Projects"
-                                                    Value="@ProjId"
-                                                    ValueChanged="@(v => { ProjId = v; MarkDirtyOnly(); })"
-                                                    Enabled="@CanEditProject"
-                                                    NullText="Select project" />
+                                    <div class="erp-form-control--lg">
+                                        <IvCodeComboBox Data="@Projects"
+                                                        Value="@ProjId"
+                                                        ValueChanged="@(v => { ProjId = v; MarkDirtyOnly(); })"
+                                                        Enabled="@CanEditProject"
+                                                        NullText="Select project" />
+                                    </div>
                                     @FieldError("ProjId")
                                     @if (HasActiveDeliveryRequest)
                                     {
@@ -214,12 +230,13 @@
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Revision reason" ColSpanMd="12">
                                 <Template>
-                                    <DxMemo @bind-Text="@RevisionReason"
-                                            @bind-Text:after="MarkDirtyOnly"
-                                            Rows="2"
-                                            Enabled="@IsReviseMode"
-                                            MaxLength="200"
-                                            NullText="Reason for this revision" />
+                                        <DxMemo @bind-Text="@RevisionReason"
+                                                @bind-Text:after="MarkDirtyOnly"
+                                                Rows="2"
+                                                Enabled="@IsReviseMode"
+                                                MaxLength="200"
+                                                NullText="Reason for this revision"
+                                                CssClass="erp-form-control--full" />
                                     @FieldError("RevisionReason")
                                 </Template>
                             </DxFormLayoutItem>

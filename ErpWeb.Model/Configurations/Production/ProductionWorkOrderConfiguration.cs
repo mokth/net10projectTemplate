@@ -61,6 +61,7 @@ public sealed class ProductionWorkOrderConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.LegacySnapshotReason).HasMaxLength(500);
         builder.Property(x => x.ScheduleAnchorDateTime).HasColumnType("datetime2");
         builder.Property(x => x.ScheduleCalculationTrace);
+        builder.Property(x => x.ScheduleRevision).HasDefaultValue(0).ValueGeneratedNever();
 
         builder.Property(x => x.ReleasedBy).HasMaxLength(10);
         builder.Property(x => x.CancelledBy).HasMaxLength(10);

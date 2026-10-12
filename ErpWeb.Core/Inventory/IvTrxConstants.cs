@@ -7,6 +7,8 @@ public static class IvTrxTypes
     public const string GoodsReceive = "GR";
     public const string NonStockGoodsReceive = "NG";
     public const string FinishedGoods = "FG";
+    public const string ProductionStockReturn = "PRTN";
+    public const string ProductionStockAdjustment = "PADJ";
     public const string VendorReturn = "VR";
     public const string StockTransfer = "TR";
     public const string IssueToProduction = "IP";

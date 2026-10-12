@@ -138,15 +138,18 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             ? []
             : await db.ProductionWorkOrderMaterials.AsNoTracking()
                 .Where(x => ids.Contains(x.WorkOrderId))
-                .Select(x => new { x.WorkOrderId, x.RequiredQty, x.IssuedQty, x.ReturnedQty })
+                .Select(x => new { x.Uid, x.WorkOrderId, x.RequiredQty, x.IssuedQty, x.ReturnedQty })
                 .ToListAsync(cancellationToken);
+
+        var materialExecution = await ProductionMaterialExecutionFacts.ReadAsync(db, scope.CompanyCode, scope.BranchCode!,
+            materialRows.Select(x => x.Uid).ToArray(), cancellationToken);
 
         var materialProgress = materialRows
             .GroupBy(x => x.WorkOrderId)
             .ToDictionary(
                 g => g.Key,
                 g => ProductionWorkOrderCalc.ProgressPercent(
-                    g.Sum(x => Math.Min(Math.Max(x.IssuedQty - x.ReturnedQty, 0m), x.RequiredQty)),
+                    g.Sum(x => Math.Min(Math.Max(materialExecution.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).EffectiveSupplyQty, 0m), x.RequiredQty)),
                     g.Sum(x => x.RequiredQty)));
 
         var rows = page.Select(x => new ProductionWorkOrderListRow
@@ -207,7 +210,9 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
                 IvMasterErrorCode.NotFound, "Work Order not found.");
         }
 
-        return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity));
+        var execution = await ProductionMaterialExecutionFacts.ReadAsync(db, scope.CompanyCode, scope.BranchCode!,
+            entity.Materials.Select(x => x.Uid).ToArray(), cancellationToken);
+        return IvMasterOperationResult<ProductionWorkOrderDetail>.Ok(MapDetail(entity, execution));
     }
 
     public async Task<IvMasterOperationResult<ProductionWorkOrderPreview>> ProcessPreviewAsync(
@@ -922,7 +927,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
     }
 
-    private static ProductionWorkOrderDetail MapDetail(ProductionWorkOrder entity)
+    private static ProductionWorkOrderDetail MapDetail(ProductionWorkOrder entity,
+        IReadOnlyDictionary<long, ProductionMaterialExecutionTotals>? execution = null)
     {
         var demandAllocation = entity.DemandAllocations
             .OrderByDescending(x => x.IsActive)
@@ -1008,7 +1014,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
             .ToList(),
         Materials = entity.Materials
             .OrderBy(x => x.LineNo)
-            .Select(MapMaterial)
+            .Select(row => MapMaterial(row, execution?.GetValueOrDefault(row.Uid, ProductionMaterialExecutionTotals.Empty)))
             .ToList(),
         Operations = entity.Operations
             .OrderBy(x => x.SequenceNo == 0 ? int.MaxValue : x.SequenceNo)
@@ -1033,7 +1039,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         };
     }
 
-    private static ProductionWorkOrderMaterialVm MapMaterial(ProductionWorkOrderMaterial row) => new()
+    private static ProductionWorkOrderMaterialVm MapMaterial(ProductionWorkOrderMaterial row, ProductionMaterialExecutionTotals? execution = null) => new()
     {
         Uid = row.Uid,
         LineNo = row.LineNo,
@@ -1066,11 +1072,13 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         LocationCode = row.LocationCode,
         ReservedQty = row.ReservedQty,
         PickedQty = row.PickedQty,
-        IssuedQty = row.IssuedQty,
-        ReturnedQty = row.ReturnedQty,
-        ConsumedQty = row.ConsumedQty,
+        IssuedQty = execution?.EffectiveIssuedQty ?? row.IssuedQty,
+        ReturnedQty = execution?.EffectiveReturnedQty ?? row.ReturnedQty,
+        ConsumedQty = execution?.EffectiveConsumedQty ?? row.ConsumedQty,
+        NetActiveAdjustmentQty = execution?.NetActiveAdjustmentQty ?? 0m,
+        EffectiveSupplyQty = execution?.EffectiveSupplyQty ?? ProductionWorkOrderCalc.NetIssuedQty(row.IssuedQty, row.ReturnedQty),
         VarianceQty = row.VarianceQty,
-        OpenRequirementQty = ProductionWorkOrderCalc.OpenRequirementQty(
+        OpenRequirementQty = execution?.OutstandingQty(row.RequiredQty) ?? ProductionWorkOrderCalc.OpenRequirementQty(
             row.RequiredQty, row.IssuedQty, row.ReturnedQty)
     };
 

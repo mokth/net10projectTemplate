@@ -236,6 +236,8 @@ public sealed class ProductionMaterialIssueMaterial
     public decimal IssuedQty { get; init; }
     public decimal ReturnedQty { get; init; }
     public decimal NetIssuedQty { get; init; }
+    public decimal NetActiveAdjustmentQty { get; init; }
+    public decimal EffectiveSupplyQty { get; init; }
     public decimal ConsumedQty { get; init; }
     public decimal OutstandingQty { get; init; }
     public decimal TolerancePercent { get; init; }
@@ -403,6 +405,8 @@ public sealed class ProductionMaterialIssuePostedMaterial
     public decimal IssuedQty { get; init; }
     public decimal ReturnedQty { get; init; }
     public decimal NetIssuedQty { get; init; }
+    public decimal NetActiveAdjustmentQty { get; init; }
+    public decimal EffectiveSupplyQty { get; init; }
     public decimal OutstandingQty { get; init; }
 }
 

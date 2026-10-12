@@ -129,7 +129,7 @@ public sealed partial class ProductionMaterialIssueService
                 var basis = basisByOperation.GetValueOrDefault(row.WorkOrderOperationId, OperationBasisTotals.Empty);
                 row.PostedBasisQty = basis.Posted;
                 row.OpenDraftBasisQty = basis.OpenDraft;
-                row.RemainingBasisQty = IvQty.Round(Math.Max(row.PlannedOutputQty - basis.Posted - basis.OpenDraft, 0m));
+                row.RemainingBasisQty = IvQty.Round(Math.Max(row.PlannedOutputQty - basis.SupplyAdjustedPosted - basis.OpenDraft, 0m));
             }
             var operationIds = page.Select(x => x.WorkOrderOperationId).ToArray();
             var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()

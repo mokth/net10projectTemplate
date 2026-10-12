@@ -56,6 +56,7 @@ public sealed class ProductionWorkOrderMachineConfiguration : IEntityTypeConfigu
         builder.Property(x => x.CalendarHorizonEnd).HasColumnType("datetime2");
         builder.Property(x => x.PlannedStartDateTime).HasColumnType("datetime2");
         builder.Property(x => x.PlannedCompletionDateTime).HasColumnType("datetime2");
+        builder.Property(x => x.ScheduleRevision).HasDefaultValue(0).ValueGeneratedNever();
 
         builder.Property(x => x.CreatedBy).HasMaxLength(10);
         builder.Property(x => x.ModifiedBy).HasMaxLength(10);

@@ -1,0 +1,196 @@
+@page "/planning/work-orders/machine-schedule"
+@using DevExpress.Blazor
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Production
+@using ErpWeb.Model.Entities.Production
+@using ErpWeb.UI.Components.Pages
+@inherits PageBase
+<PageTitle>Machine Schedule Planner</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMachineSchedulePlanner">
+    <div class="iv-page pr-machine-schedule-page" aria-busy="@IsLoading">
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-calendar-week"></i></div>
+            <div class="iv-hero__copy">
+                <span class="iv-hero__eyebrow">Planning · Production</span>
+                <h1>Machine Schedule Planner</h1>
+                <p>Review Work Order loading, machine availability, and planned maintenance.</p>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Scheduled operations</span>
+                <strong>@(Board?.Jobs.Count.ToString("N0") ?? "—")</strong>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="pr-machine-schedule-feedback" role="alert">@ErrorMessage</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="pr-machine-schedule-feedback pr-machine-schedule-feedback--info" role="status">@StatusMessage</div>
+        }
+
+        @if (Board?.Readiness is { IsWriteReady: false } readiness)
+        {
+            <section class="pr-machine-schedule-readonly" role="status">
+                <div class="pr-machine-schedule-readonly__icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></div>
+                <div>
+                    <strong>Scheduling changes are temporarily read-only</strong>
+                    <p>Planner writes remain disabled until active allocations, calendar freshness, and release readiness are verified.</p>
+                    @if (readiness.BlockingReasons.Count > 0)
+                    {
+                        <details>
+                            <summary>Readiness details</summary>
+                            <ul>
+                                @foreach (var reason in readiness.BlockingReasons)
+                                {
+                                    <li>@reason</li>
+                                }
+                            </ul>
+                        </details>
+                    }
+                </div>
+            </section>
+        }
+
+        <section class="iv-card pr-machine-schedule-toolbar" aria-label="Schedule planner controls">
+            <div class="pr-machine-schedule-toolbar__nav">
+                <DxButton Text="Previous" RenderStyle="ButtonRenderStyle.Secondary" Click="PreviousPeriodAsync" />
+                <DxButton Text="Today" RenderStyle="ButtonRenderStyle.Secondary" Click="TodayAsync" />
+                <DxButton Text="Next" RenderStyle="ButtonRenderStyle.Secondary" Click="NextPeriodAsync" />
+                <span class="pr-machine-schedule-period">@PeriodLabel</span>
+            </div>
+            <div class="pr-machine-schedule-toolbar__views" role="group" aria-label="Timeline range">
+                <DxButton Text="Day" RenderStyle="@ViewButtonStyle(PlannerView.Day)" Click="@(() => ChangeViewAsync(PlannerView.Day))" />
+                <DxButton Text="Week" RenderStyle="@ViewButtonStyle(PlannerView.Week)" Click="@(() => ChangeViewAsync(PlannerView.Week))" />
+                <DxButton Text="Month" RenderStyle="@ViewButtonStyle(PlannerView.Month)" Click="@(() => ChangeViewAsync(PlannerView.Month))" />
+            </div>
+            <div class="pr-machine-schedule-toolbar__filters">
+                <DxComboBox Data="@WorkCentreOptions"
+                            TextFieldName="@nameof(PlannerFilterOption.Name)"
+                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
+                            @bind-Value="SelectedWorkCentre"
+                            NullText="All work centres"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                <DxComboBox Data="@MachineOptions"
+                            TextFieldName="@nameof(PlannerFilterOption.Name)"
+                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
+                            @bind-Value="SelectedMachine"
+                            NullText="All machines"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                <DxComboBox Data="@StatusOptions"
+                            TextFieldName="@nameof(PlannerFilterOption.Name)"
+                            ValueFieldName="@nameof(PlannerFilterOption.Key)"
+                            @bind-Value="SelectedStatus"
+                            NullText="All statuses"
+                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                <DxTextBox @bind-Text="SearchText"
+                           NullText="Search Work Order or product"
+                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                <DxButton Text="Refresh" RenderStyle="ButtonRenderStyle.Primary" Click="ReloadAsync" Enabled="@(!IsLoading)" />
+            </div>
+        </section>
+
+        @if (IsLoading && Board is null)
+        {
+            <section class="iv-card pr-machine-schedule-loading" role="status">
+                <span class="pr-machine-schedule-spinner" aria-hidden="true"></span>
+                <span>Loading the visible machine schedule…</span>
+            </section>
+        }
+        else if (Board is { } board)
+        {
+            <div class="pr-machine-schedule-summary" aria-label="Schedule summary">
+                <span><strong>@board.Machines.Count</strong> machines</span>
+                <span><strong>@board.Jobs.Count</strong> scheduled operations</span>
+                <span><strong>@board.LockedJobCount</strong> locked by execution state</span>
+                @if (board.HasMoreJobsThanLimit)
+                {
+                    <span class="pr-machine-schedule-summary__warning">Showing the first 3,000 operations; narrow the date range or filters.</span>
+                }
+                @if (board.HasMoreIdleMachinesThanLimit)
+                {
+                    <span class="pr-machine-schedule-summary__warning">More than 500 idle machines exist; scheduled machines in this window remain included.</span>
+                }
+                @if (board.UnverifiedJobCount > 0)
+                {
+                    <span class="pr-machine-schedule-summary__warning"><strong>@board.UnverifiedJobCount</strong> calendar span(s) not verified</span>
+                }
+            </div>
+
+            @if (board.Jobs.Count == 0)
+            {
+                <section class="iv-card pr-machine-schedule-empty" role="status">
+                    <i class="fa-regular fa-calendar-xmark" aria-hidden="true"></i>
+                    <strong>No active scheduled operations in this window</strong>
+                    <span>Try another week or clear the current filters.</span>
+                </section>
+            }
+            else
+            {
+                <div class="pr-machine-schedule-workspace">
+                    <section class="iv-card pr-machine-schedule-board" aria-label="Machine timeline">
+                        <DxScheduler DataStorage="@DataStorage"
+                                     StartDate="@board.WindowStart"
+                                     ActiveViewType="SchedulerViewType.Timeline"
+                                     GroupType="SchedulerGroupType.Resource"
+                                     AllowCreateAppointment="false"
+                                     AllowDeleteAppointment="false"
+                                     AllowEditAppointment="false"
+                                     AllowDragAppointment="false"
+                                     AllowDragAppointmentBetweenResources="false"
+                                     AllowResizeAppointment="false"
+                                     AppointmentDragMode="SchedulerAppointmentDragMode.Server"
+                                     HtmlCellDecoration="DecorateCalendarCell"
+                                     @bind-SelectedAppointment="SelectedAppointment">
+                            <DxSchedulerTimelineView Duration="@ViewDuration" CellMinWidth="@TimelineCellWidth">
+                                <Scales>
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Day" UnitCount="1" />
+                                    <DxSchedulerTimeScale Unit="SchedulerTimeScaleUnit.Hour" UnitCount="6" />
+                                </Scales>
+                            </DxSchedulerTimelineView>
+                        </DxScheduler>
+                    </section>
+
+                    <aside class="iv-card pr-machine-schedule-details" aria-label="Selected schedule details">
+                        @if (SelectedJob is { } job)
+                        {
+                            <div class="pr-machine-schedule-details__head">
+                                <span class="pr-machine-schedule-details__eyebrow">Selected operation</span>
+                                <h2>@job.WorkOrderNo</h2>
+                                <span class="pr-machine-schedule-status">@job.WorkOrderStatus · @job.ExecutionStatus</span>
+                            </div>
+                            <dl>
+                                <div><dt>Product</dt><dd>@job.ProductCode @DescriptionSuffix(job.ProductDescription)</dd></div>
+                                <div><dt>Work Centre</dt><dd>@job.WorkCentreCode @DescriptionSuffix(job.WorkCentreDescription)</dd></div>
+                                <div><dt>Operation</dt><dd>@job.OperationCode @DescriptionSuffix(job.OperationDescription)</dd></div>
+                                <div><dt>Machine</dt><dd>@job.MachineCode @DescriptionSuffix(job.MachineDescription)</dd></div>
+                                <div><dt>Planned quantity</dt><dd>@job.PlannedQuantity.ToString("n4") @job.OutputUom</dd></div>
+                                <div><dt>Productive duration</dt><dd>@job.ProductiveDurationMinutes.ToString("n1") min</dd></div>
+                                <div><dt>Planned start</dt><dd>@job.PlannedStart.ToString("dd MMM yyyy HH:mm")</dd></div>
+                                <div><dt>Planned completion</dt><dd>@job.PlannedCompletion.ToString("dd MMM yyyy HH:mm")</dd></div>
+                            </dl>
+                            @if (job.IsLocked && !string.IsNullOrWhiteSpace(job.LockReason))
+                            {
+                                <p class="pr-machine-schedule-lock-reason"><i class="fa-solid fa-lock" aria-hidden="true"></i> @job.LockReason</p>
+                            }
+                            <div class="pr-machine-schedule-details__actions">
+                                <DxButton Text="Open Work Order" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => OpenWorkOrder(job))" Enabled="@CanOpenWorkOrders" />
+                                <DxButton Text="Reschedule" RenderStyle="ButtonRenderStyle.Primary" Enabled="false" Title="Planner writes are not ready for this company." />
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="pr-machine-schedule-details__empty">
+                                <i class="fa-regular fa-hand-pointer" aria-hidden="true"></i>
+                                <strong>Select a schedule bar</strong>
+                                <span>Work Order, operation, machine and execution details will appear here.</span>
+                            </div>
+                        }
+                    </aside>
+                </div>
+            }
+        }
+    </div>
+</MenuAuthorize>

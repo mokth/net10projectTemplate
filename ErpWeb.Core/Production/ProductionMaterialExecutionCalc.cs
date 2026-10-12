@@ -58,6 +58,19 @@ public static class ProductionMaterialExecutionCalc
     public static decimal Outstanding(decimal requiredQty, decimal effectiveIssueQty, decimal returnedQty) =>
         IvQty.Round(Math.Max(requiredQty - effectiveIssueQty + returnedQty, 0m));
 
+    /// <summary>
+    /// Material corrections change the remaining issue basis without changing the historical
+    /// posted basis. The least supplied component determines replacement eligibility; each
+    /// selected component still passes its independent effective-supply quantity cap.
+    /// </summary>
+    public static decimal SupplyAdjustedBasisQty(decimal postedBasisQty, decimal plannedOutputQty,
+        IEnumerable<(decimal RequiredQty, decimal ReturnedQty, decimal AdjustmentQty)> materials)
+    {
+        var offsets = materials.Where(x => x.RequiredQty > 0m)
+            .Select(x => (x.AdjustmentQty - x.ReturnedQty) * plannedOutputQty / x.RequiredQty).ToArray();
+        return IvQty.Round(Math.Max(postedBasisQty + (offsets.Length == 0 ? 0m : offsets.Min()), 0m));
+    }
+
     public static decimal BaseQtyForIssueQty(decimal issueQty, decimal conversionFactorToBase)
     {
         EnsureConversion(conversionFactorToBase);

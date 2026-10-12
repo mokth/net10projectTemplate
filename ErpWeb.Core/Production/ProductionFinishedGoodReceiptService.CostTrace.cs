@@ -625,6 +625,39 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 return await BuildIssueAtomsAsync(movement, evidence, ct);
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
                 return await BuildProduceAtomsAsync(movement, evidence, ct);
+            if (movement.MovementType == ProductionBalLotMovementTypes.AdjustIn)
+            {
+                var adjustment = await _db.ProductionStockAdjustmentFacts.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ProductionMovementId == movement.Uid && x.ReversesFactId == null, ct);
+                if (adjustment is null || adjustment.StockPostingId != movement.StockPostingId
+                    || adjustment.TotalValue != movement.TotalCost || evidence.Status != ProductionPoolValuationService.Verified
+                    || evidence.Basis != adjustment.CostBasisCode)
+                    throw new TraceFailure($"Production ADJUST_IN movement {movement.Uid} has no exact verified adjustment fact.");
+                return
+                [
+                    new TraceAtom(
+                        $"adjustment:{adjustment.Id}",
+                        CostTraceComponentTypes.ProductionStockAdjustment,
+                        adjustment.TotalValue,
+                        new FinishedGoodCostTraceDetail
+                        {
+                            ComponentType = CostTraceComponentTypes.ProductionStockAdjustment,
+                            SourceKind = "PRODUCTION_STOCK_ADJUSTMENT",
+                            SourceFactId = adjustment.Id,
+                            SourceMovementId = movement.Uid,
+                            SourceDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+                            SourceDocumentNo = movement.DocumentNo,
+                            ItemCode = movement.ItemCode ?? "",
+                            Lot = movement.PhysicalLotNo ?? movement.LotIdentity,
+                            Quantity = movement.BaseQty,
+                            Uom = movement.BaseUom,
+                            Rate = movement.UnitCost,
+                            CostMethod = "PRODUCTION_ACTUAL",
+                            ValuationSource = adjustment.CostBasisCode,
+                            Amount = adjustment.TotalValue
+                        })
+                ];
+            }
 
             return
             [
@@ -994,6 +1027,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         public const string UtilitiesOverhead = "UTILITIES_OVERHEAD";
         public const string Other = "OTHER";
         public const string UnclassifiedVerified = "UNCLASSIFIED_VERIFIED";
+        public const string ProductionStockAdjustment = "PRODUCTION_STOCK_ADJUSTMENT";
 
         public static string Label(string componentType) => componentType switch
         {
@@ -1003,6 +1037,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             UtilitiesOverhead => "Utilities / Overhead",
             Other => "Other",
             UnclassifiedVerified => "Verified Unclassified",
+            ProductionStockAdjustment => "Production Stock Adjustment",
             _ => componentType
         };
 
@@ -1014,6 +1049,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             UtilitiesOverhead => 4,
             Other => 5,
             UnclassifiedVerified => 6,
+            ProductionStockAdjustment => 7,
             _ => 99
         };
     }

@@ -20,12 +20,23 @@ public sealed partial class ProductionOutputService
         if (scope is null) return Fail("A company, branch and user scope is required.", IvMasterErrorCode.InvalidScope);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var executionWorkOrderId = await db.ProductionOutputs.AsNoTracking()
+            .Where(x => x.Uid == outputId && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode)
+            .Select(x => (long?)x.WorkOrderId)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (executionWorkOrderId is null)
+            return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
+            await ProductionWorkOrderExecutionLock.AcquireAsync(
+                db, scope.CompanyCode, scope.BranchCode!, executionWorkOrderId.Value, cancellationToken);
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, outputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+            if (output.WorkOrderId != executionWorkOrderId.Value)
+                return Fail("The Daily Production Work Order changed while posting; reload and retry.", IvMasterErrorCode.Concurrency);
             if (output.DeletedAtUtc is not null)
                 return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
             if (output.Status == ProductionOutputStatuses.Posted)
@@ -617,6 +628,11 @@ public sealed partial class ProductionOutputService
         {
             await tx.RollbackAsync(CancellationToken.None);
             return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency);
+        }
+        catch (ProductionWorkOrderExecutionLockException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Message, IvMasterErrorCode.Concurrency);
         }
     }
 

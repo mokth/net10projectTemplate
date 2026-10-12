@@ -60,13 +60,13 @@
             }
 
             <section class="sdoc-master">
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form erp-form-scope">
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Document</HeaderContentTemplate>
                         <Items>
                             <DxFormLayoutItem Caption="PO no." ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@PoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@PoNoDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Date" ColSpanMd="12">
@@ -76,18 +76,19 @@
                                                 DateChanged="@((DateTime? d) => { PoDate = d?.Date; MarkDirtyOnly(); })"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
+                                                CssClass="erp-form-control--md"
                                                 InputCssClass="required-field" DateExpression="@(() => PoDate)" />
                                     @FieldError("PoDate")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Prefix" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From supplier/numbering" ValidationEnabled="false" />
+                                    <DxTextBox Text="@(Prefix ?? string.Empty)" ReadOnly="true" NullText="From supplier/numbering" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -98,18 +99,20 @@
                         <Items>
                             <DxFormLayoutItem Caption="Supplier" ColSpanMd="12">
                                 <Template>
+                                    <div class="erp-form-control--xl">
                                     <PoSupplierPicker SuppCode="@VendCode"
                                                       Selected="@OnSupplierSelectedAsync"
                                                       Cleared="@OnSupplierClearedAsync"
                                                       Enabled="@CanEditSupplier"
                                                       NullText="Select supplier"
                                                       InputCssClass="w-100 required-field" />
+                                    </div>
                                     @FieldError("VendCode")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Name" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="@VendName" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" />
+                                    <DxTextBox @bind-Text="@VendName" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" CssClass="erp-form-control--xl" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="One-time" ColSpanMd="12">
@@ -134,7 +137,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field" ValueExpression="@(() => CurCode)" />
+                                                CssClass="w-100 required-field erp-form-control--sm" ValueExpression="@(() => CurCode)" />
                                     @FieldError("CurCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -147,7 +150,8 @@
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
-                                                NullText="Select" />
+                                                NullText="Select"
+                                                CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
@@ -159,7 +163,8 @@
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
-                                                NullText="Select" />
+                                                NullText="Select"
+                                                CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -170,7 +175,7 @@
                         <Items>
                             <DxFormLayoutItem Caption="Quotation" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@QuatationNo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@QuatationNo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Project" ColSpanMd="3">
@@ -184,28 +189,28 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select project"
-                                                CssClass="w-100" ValueExpression="@(() => ProjId)" />
+                                                CssClass="w-100 erp-form-control--lg" ValueExpression="@(() => ProjId)" />
                                     @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref 1" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref 2" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Ref2" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@Ref2" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref 3" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Ref3" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@Ref3" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Ref 4" ColSpanMd="3">
                                 <Template>
-                                    <DxTextBox @bind-Text="@Ref4" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" />
+                                    <DxTextBox @bind-Text="@Ref4" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Buyer" ColSpanMd="3">
@@ -217,7 +222,8 @@
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
-                                                NullText="Select buyer" />
+                                                NullText="Select buyer"
+                                                CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Department" ColSpanMd="3">
@@ -231,7 +237,7 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select department"
-                                                CssClass="w-100" ValueExpression="@(() => DeptCode)" />
+                                                CssClass="w-100 erp-form-control--md" ValueExpression="@(() => DeptCode)" />
                                     @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -242,7 +248,8 @@
                                             Rows="2"
                                             Enabled="@IsReviseMode"
                                             MaxLength="200"
-                                            NullText="Reason for this revision" />
+                                            NullText="Reason for this revision"
+                                            CssClass="erp-form-control--full" />
                                     @FieldError("RevisionReason")
                                 </Template>
                             </DxFormLayoutItem>

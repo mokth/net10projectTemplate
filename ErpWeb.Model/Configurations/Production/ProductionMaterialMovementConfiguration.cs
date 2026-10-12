@@ -16,7 +16,7 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
             table.HasCheckConstraint("CK_PrMaterialMovement_Cost", "[UnitCost] >= 0 AND [TotalCost] >= 0");
             table.HasCheckConstraint(
                 "CK_PrMaterialMovement_Type",
-                "[MovementType] IN ('ISSUE', 'ISSUE_REVERSAL', 'RETURN', 'CONSUME', 'CONSUME_REVERSAL', 'ADJUST')");
+                "[MovementType] IN ('ISSUE', 'ISSUE_REVERSAL', 'RETURN', 'RETURN_REVERSAL', 'CONSUME', 'CONSUME_REVERSAL', 'ADJUST')");
         });
 
         builder.HasKey(x => x.Uid);

@@ -62,9 +62,21 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             return Fail("Output lot number is limited to 50 characters.");
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var executionWorkOrderId = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .Where(x => x.Uid == request.WorkOrderOperationId
+                && x.WorkOrder != null
+                && x.WorkOrder.CompanyCode == scope.CompanyCode
+                && x.WorkOrder.BranchCode == scope.BranchCode)
+            .Select(x => (long?)x.WorkOrder!.Uid)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (executionWorkOrderId is null)
+            return Fail("Work Order operation was not found.", IvMasterErrorCode.NotFound);
+
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await ProductionWorkOrderExecutionLock.AcquireAsync(
+                db, scope.CompanyCode, scope.BranchCode!, executionWorkOrderId.Value, cancellationToken);
             var replay = await db.ProductionOutputs
                 .Include(x => x.Materials)
                 .SingleOrDefaultAsync(x =>
@@ -197,6 +209,11 @@ public sealed partial class ProductionOutputService : IProductionOutputService
 
             return Fail("Daily Production creation conflicted with another request; retry with the same PostingRequestId.",
                 IvMasterErrorCode.Concurrency);
+        }
+        catch (ProductionWorkOrderExecutionLockException ex)
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            return Fail(ex.Message, IvMasterErrorCode.Concurrency);
         }
     }
 

@@ -259,32 +259,35 @@
                     <h2 class="iv-card__title">Identity</h2>
                     <div class="sa-cust-identity">
                         <div class="sa-cust-identity__col">
-                            <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-form-grid iv-form-grid--single erp-form-scope">
                                 <div class="iv-field">
                                     <label class="iv-field__label">Customer code</label>
                                     <DxTextBox @bind-Text="@Model.CustCode"
                                                maxlength="30"
                                                ReadOnly="@(!IsNewMode)"
+                                               CssClass="erp-form-control--md"
                                                InputCssClass="required-field"
                                                NullText="Required" />
                                     @FieldError(nameof(SaCustEditVm.CustCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Customer name</label>
-                                    <DxTextBox @bind-Text="@Model.CustName" maxlength="200" InputCssClass="required-field" NullText="Required" />
+                                    <DxTextBox @bind-Text="@Model.CustName" maxlength="200" CssClass="erp-form-control--xl" InputCssClass="required-field" NullText="Required" />
                                     @FieldError(nameof(SaCustEditVm.CustName))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Short name</label>
-                                    <DxTextBox @bind-Text="@Model.CustShortName" maxlength="100" />
+                                    <DxTextBox @bind-Text="@Model.CustShortName" maxlength="100" CssClass="erp-form-control--lg" />
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Invoice prefix</label>
-                                    <DxTextBox @bind-Text="@Model.InvoicePrefix" maxlength="20" />
+                                    <DxTextBox @bind-Text="@Model.InvoicePrefix" maxlength="20" CssClass="erp-form-control--sm" />
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Group</label>
-                                    <IvCodeComboBox Data="@Groups" @bind-Value="@Model.CustGroupCode" NullText="Select group" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Groups" @bind-Value="@Model.CustGroupCode" NullText="Select group" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.CustGroupCode))
                                 </div>
                                 <div class="iv-field">
@@ -295,10 +298,12 @@
                         </div>
                         <div class="sa-cust-identity__divider" aria-hidden="true"></div>
                         <div class="sa-cust-identity__col">
-                            <div class="iv-form-grid iv-form-grid--single">
+                            <div class="iv-form-grid iv-form-grid--single erp-form-scope">
                                 <div class="iv-field">
                                     <label class="iv-field__label">Type</label>
-                                    <IvCodeComboBox Data="@Types" @bind-Value="@Model.CustType" NullText="Select type" InputCssClass="required-field" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Types" @bind-Value="@Model.CustType" NullText="Select type" InputCssClass="required-field" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.CustType))
                                 </div>
                                 <div class="iv-field">
@@ -307,31 +312,43 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Salesman</label>
-                                    <IvCodeComboBox Data="@SalesReps" @bind-Value="@Model.SalesmanCode" NullText="Select salesman" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@SalesReps" @bind-Value="@Model.SalesmanCode" NullText="Select salesman" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.SalesmanCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Area</label>
-                                    <IvCodeComboBox Data="@Areas" @bind-Value="@Model.AreaCode" NullText="Select area" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Areas" @bind-Value="@Model.AreaCode" NullText="Select area" />
+                                    </div>
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Sub group</label>
-                                    <IvCodeComboBox Data="@SubGroups" @bind-Value="@Model.SubGroupCode" NullText="Select sub group" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@SubGroups" @bind-Value="@Model.SubGroupCode" NullText="Select sub group" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.SubGroupCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Industry</label>
-                                    <IvCodeComboBox Data="@Industries" @bind-Value="@Model.IndustryCode" NullText="Select industry" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Industries" @bind-Value="@Model.IndustryCode" NullText="Select industry" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.IndustryCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Channel</label>
-                                    <IvCodeComboBox Data="@Channels" @bind-Value="@Model.ChannelCode" NullText="Select channel" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Channels" @bind-Value="@Model.ChannelCode" NullText="Select channel" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.ChannelCode))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Source (current)</label>
-                                    <IvCodeComboBox Data="@Sources" @bind-Value="@Model.CustSource" NullText="Select source" />
+                                    <div class="erp-form-control--md">
+                                        <IvCodeComboBox Data="@Sources" @bind-Value="@Model.CustSource" NullText="Select source" />
+                                    </div>
                                     @FieldError(nameof(SaCustEditVm.CustSource))
                                 </div>
                             </div>

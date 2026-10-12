@@ -52,6 +52,7 @@ public static class ProductionBalLotOpening
                     consumeReversal += row.BaseQty;
                     break;
                 case ProductionMaterialMovementTypes.Return:
+                case ProductionMaterialMovementTypes.ReturnReversal:
                     return Fail("Opening stopped: RETURN is present and cannot be attributed safely yet.");
                 case ProductionMaterialMovementTypes.Adjustment:
                     return Fail("Opening stopped: ADJUST is present and ProductionBalLot ADJUST is not supported.");

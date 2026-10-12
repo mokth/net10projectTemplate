@@ -475,7 +475,7 @@
                         <small>Choose existing master values, then enter the production quantities.</small>
                     </div>
                 </div>
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form">
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="pr-dp-form erp-form-scope">
                     <DxFormLayoutItem Caption="Production date &amp; time" ColSpanMd="3">
                         <Template>
                             <DxDateEdit Date="@ProductionDate"
@@ -483,7 +483,7 @@
                                         DisplayFormat="dd/MM/yyyy HH:mm"
                                         TimeSectionVisible="true"
                                         Enabled="@CanEditFields"
-                                        CssClass="w-100" DateExpression="@(() => ProductionDate)" />
+                                        CssClass="w-100 erp-form-control--md" DateExpression="@(() => ProductionDate)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Shift" ColSpanMd="3">
@@ -496,7 +496,8 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         SearchMode="ListSearchMode.AutoSearch"
                                         SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                        Enabled="@CanEditFields" />
+                                        Enabled="@CanEditFields"
+                                        CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Actual machine" ColSpanMd="3">
@@ -509,7 +510,8 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         SearchMode="ListSearchMode.AutoSearch"
                                         SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                        Enabled="@CanEditFields" />
+                                        Enabled="@CanEditFields"
+                                        CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Operator" ColSpanMd="3">
@@ -522,7 +524,8 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                         SearchMode="ListSearchMode.AutoSearch"
                                         SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                        Enabled="@CanEditFields" />
+                                        Enabled="@CanEditFields"
+                                        CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Output lot" ColSpanMd="4">
@@ -530,17 +533,18 @@
                             <DxTextBox @bind-Text="@OutputLotNo"
                                        NullText="Auto-generated if blank"
                                        maxlength="50"
-                                       Enabled="@CanEditFields" />
+                                       Enabled="@CanEditFields"
+                                       CssClass="erp-form-control--md" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Output item / UOM" ColSpanMd="4">
                         <Template>
-                            <div class="pr-dp-readonly code-style">@OutputItemCode · @OutputUom</div>
+                            <div class="pr-dp-readonly code-style erp-form-control--lg">@OutputItemCode · @OutputUom</div>
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Planned machine" ColSpanMd="4">
                         <Template>
-                            <div class="pr-dp-readonly">@PlannedMachineCode @(string.IsNullOrWhiteSpace(PlannedMachineDescription) ? "" : $"· {PlannedMachineDescription}")</div>
+                            <div class="pr-dp-readonly erp-form-control--xl">@PlannedMachineCode @(string.IsNullOrWhiteSpace(PlannedMachineDescription) ? "" : $"· {PlannedMachineDescription}")</div>
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>
@@ -554,33 +558,33 @@
                         <small>Good Completed drives the remaining quantity; Scrap, Reject, and Hold are tracked separately.</small>
                     </div>
                 </div>
-                <div class="pr-dp-qty-grid">
+                <div class="pr-dp-qty-grid erp-form-scope">
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Good</span>
                         <DxSpinEdit Value="@GoodQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(v, ScrapQty, RejectQty, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => GoodQty)" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" CssClass="erp-form-control--sm" ValueExpression="@(() => GoodQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Scrap</span>
                         <DxSpinEdit Value="@ScrapQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, v, RejectQty, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => ScrapQty)" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" CssClass="erp-form-control--sm" ValueExpression="@(() => ScrapQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Reject</span>
                         <DxSpinEdit Value="@RejectQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, v, HoldQty))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => RejectQty)" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" CssClass="erp-form-control--sm" ValueExpression="@(() => RejectQty)" />
                         <small>@OutputUom</small>
                     </div>
                     <div class="pr-dp-qty-field">
                         <span class="iv-field__label">Hold</span>
                         <DxSpinEdit Value="@HoldQty"
                                     ValueChanged="@((decimal v) => OnOutputQtyChanged(GoodQty, ScrapQty, RejectQty, v))"
-                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ValueExpression="@(() => HoldQty)" />
+                                    Enabled="@CanEditFields" MinValue="0m" Increment="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" CssClass="erp-form-control--sm" ValueExpression="@(() => HoldQty)" />
                         <small>@OutputUom</small>
                     </div>
                 </div>

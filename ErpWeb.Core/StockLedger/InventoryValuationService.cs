@@ -373,7 +373,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
         IvTrxHistory history,
         StockValuationFact inventoryFact)
     {
-        if (!string.Equals(history.TrxType, IvTrxTypes.FinishedGoods, StringComparison.OrdinalIgnoreCase)
+        if (!(string.Equals(history.TrxType, IvTrxTypes.FinishedGoods, StringComparison.OrdinalIgnoreCase)
+              || string.Equals(history.TrxType, IvTrxTypes.ProductionStockReturn, StringComparison.OrdinalIgnoreCase))
             || history.ExactTransferredValue is not decimal actual)
             return;
         if (actual < 0m)
@@ -1926,6 +1927,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
     {
         IvTrxTypes.GoodsReceive => StockValuationSources.ReceiptActual,
         IvTrxTypes.FinishedGoods => StockValuationSources.ProductionActual,
+        IvTrxTypes.ProductionStockReturn => StockValuationSources.ProductionActual,
         _ => StockValuationSources.ManualApproved
     };
 
@@ -1961,6 +1963,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
         IvTrxTypes.SalesOut => "SALE_OUT",
         IvTrxTypes.IssueToProduction => "PRODUCTION_MATERIAL_OUT",
         IvTrxTypes.FinishedGoods => "FINISHED_GOOD_IN",
+        IvTrxTypes.ProductionStockReturn => "PRODUCTION_STOCK_RETURN_IN",
         IvTrxTypes.CustomerReturn => "SALE_RETURN_IN",
         IvTrxTypes.VendorReturn => "VENDOR_RETURN_OUT",
         IvTrxTypes.Scrap => "SCRAP_OUT",

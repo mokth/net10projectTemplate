@@ -181,9 +181,9 @@ public sealed partial class ProductionMaterialIssueService
                 return "Persisted Desired Output is invalid for the selected operation planned output.";
             var activeBasis = await LoadActiveBasisByOperationAsync(db, company, branch, order.Uid, batchNo, ct);
             var basis = activeBasis.GetValueOrDefault(workOrderOperationId, OperationBasisTotals.Empty);
-            if (IvQty.Round(basis.Posted + basis.OpenDraft + storedDesired) > IvQty.Round(operation.PlannedOutputQty))
+            if (IvQty.Round(basis.SupplyAdjustedPosted + basis.OpenDraft + storedDesired) > IvQty.Round(operation.PlannedOutputQty))
                 return $"Material Requirement Basis Qty exceeds the remaining operation planning basis of "
-                    + $"{Math.Max(operation.PlannedOutputQty - basis.Posted - basis.OpenDraft, 0m):n4}.";
+                    + $"{Math.Max(operation.PlannedOutputQty - basis.SupplyAdjustedPosted - basis.OpenDraft, 0m):n4}.";
             var materialIds = maps.Select(x => x.WorkOrderMaterialId).Distinct().OrderBy(x => x).ToArray();
             var materials = new Dictionary<long, ProductionWorkOrderMaterial>();
             foreach (var id in materialIds)
@@ -193,8 +193,7 @@ public sealed partial class ProductionMaterialIssueService
                     return "A frozen Process BOM material is no longer eligible.";
                 materials[id] = material;
             }
-            var facts = await db.ProductionMaterialMovements.AsNoTracking().Where(x => materialIds.Contains(x.WorkOrderMaterialId))
-                .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.Qty }).ToListAsync(ct);
+            var facts = await ProductionMaterialExecutionFacts.ReadAsync(db, company, branch, materialIds, ct);
             var otherDrafts = await (from map in db.ProductionMaterialIssueLines.AsNoTracking()
                 join otherLink in db.ProductionPostingLinks.AsNoTracking() on map.PostingLinkId equals otherLink.Uid
                 join otherBatch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals otherBatch.Id
@@ -205,12 +204,10 @@ public sealed partial class ProductionMaterialIssueService
             foreach (var group in maps.GroupBy(x => x.WorkOrderMaterialId))
             {
                 var material = materials[group.Key];
-                var issued = facts.Where(x => x.WorkOrderMaterialId == group.Key && x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty)
-                    - facts.Where(x => x.WorkOrderMaterialId == group.Key && x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty);
-                var returned = facts.Where(x => x.WorkOrderMaterialId == group.Key && x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty);
+                var execution = facts.GetValueOrDefault(group.Key, ProductionMaterialExecutionTotals.Empty);
                 var other = otherDrafts.Where(x => x.WorkOrderMaterialId == group.Key).Sum(x => x.IssueQty);
                 var issueQty = IvQty.Round(group.Sum(x => x.IssueQty));
-                var remainingWo = IvQty.Round(Math.Max(ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance) - (issued - returned) - other, 0m));
+                var remainingWo = IvQty.Round(Math.Max(ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance) - execution.EffectiveSupplyQty - other, 0m));
                 var standardForDesired = ProductionMaterialExecutionCalc.RequestedForProductionQty(
                     material.RequiredQty, operation.PlannedOutputQty, storedDesired);
                 var desiredMax = ProductionMaterialExecutionCalc.MaxForProductionQty(standardForDesired, material.Tolerance);
@@ -315,17 +312,13 @@ public sealed partial class ProductionMaterialIssueService
             await db.SaveChangesAsync(ct);
             await StampProductionMaterialIdentityAsync(ledgerContext, link.Uid, ct);
             await _inventoryPosting.ValuePostingInTransactionAsync(ledgerContext, ct);
-            var allFacts = await db.ProductionMaterialMovements.AsNoTracking().Where(x => materialIds.Contains(x.WorkOrderMaterialId))
-                .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.Qty }).ToListAsync(ct);
+            var allFacts = await ProductionMaterialExecutionFacts.ReadAsync(db, company, branch, materialIds, ct);
             foreach (var material in materials.Values)
             {
-                var rows = allFacts.Where(x => x.WorkOrderMaterialId == material.Uid);
-                material.IssuedQty = IvQty.Round(rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty)
-                    - rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty));
-                material.ReturnedQty = IvQty.Round(rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty));
-                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
-                    rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                    rows.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
+                var execution = allFacts.GetValueOrDefault(material.Uid, ProductionMaterialExecutionTotals.Empty);
+                material.IssuedQty = execution.EffectiveIssuedQty;
+                material.ReturnedQty = execution.EffectiveReturnedQty;
+                material.ConsumedQty = execution.EffectiveConsumedQty;
                 material.ModifiedDate = now; material.ModifiedBy = user;
             }
             await CreateMaterialInLotsAsync(ledgerContext, order, link, now, user, ct);

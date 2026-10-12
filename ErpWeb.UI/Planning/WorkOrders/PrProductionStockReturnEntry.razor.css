@@ -1,0 +1,2 @@
+.pr-stock-command{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.pr-stock-command__spacer{flex:1}.pr-stock-toolbar{display:flex;align-items:center;gap:.6rem;margin:.7rem 0 1rem}.pr-stock-form{margin:.5rem 0 1rem}.pr-stock-readiness{margin:.8rem 0 0;color:var(--danger)}
+@media(max-width:700px){.pr-stock-toolbar{align-items:stretch;flex-direction:column}.pr-stock-command{position:sticky;bottom:.25rem;z-index:3;background:var(--surface);box-shadow:0 2px 12px #0002}.pr-stock-command__spacer{display:none}}

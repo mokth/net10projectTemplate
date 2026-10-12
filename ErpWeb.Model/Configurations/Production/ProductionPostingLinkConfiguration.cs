@@ -40,6 +40,10 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
             .WithMany()
             .HasForeignKey(x => x.OriginalPostingLinkId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo }, "UQ_PrProductionPostingLink_StockTransactionBatch")
+            .IsUnique()
+            .HasFilter("[InventoryBatchNo] IS NOT NULL AND [CommandType] IN ('PRODUCTION_STOCK_RETURN_POST','PRODUCTION_STOCK_ADJUSTMENT_POST')")
+            .HasDatabaseName("UQ_PrProductionPostingLink_StockTransactionBatch");
     }
 }
 

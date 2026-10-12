@@ -12,12 +12,16 @@ public static class ProductionMaterialMovementTotals
     public static decimal EffectiveConsumed(decimal consumeQty, decimal consumeReversalQty) =>
         IvQty.Round(consumeQty - consumeReversalQty);
 
+    public static decimal EffectiveReturned(decimal returnQty, decimal returnReversalQty) =>
+        IvQty.Round(returnQty - returnReversalQty);
+
     public static (decimal Issued, decimal Returned, decimal Consumed) FromRows(
         IEnumerable<(string MovementType, decimal Qty)> rows)
     {
         var issue = 0m;
         var issueReversal = 0m;
         var returned = 0m;
+        var returnReversal = 0m;
         var consume = 0m;
         var consumeReversal = 0m;
         foreach (var row in rows)
@@ -33,6 +37,9 @@ public static class ProductionMaterialMovementTotals
                 case ProductionMaterialMovementTypes.Return:
                     returned += row.Qty;
                     break;
+                case ProductionMaterialMovementTypes.ReturnReversal:
+                    returnReversal += row.Qty;
+                    break;
                 case ProductionMaterialMovementTypes.Consume:
                     consume += row.Qty;
                     break;
@@ -44,12 +51,12 @@ public static class ProductionMaterialMovementTotals
 
         return (
             EffectiveIssue(issue, issueReversal),
-            IvQty.Round(returned),
+            EffectiveReturned(returned, returnReversal),
             EffectiveConsumed(consume, consumeReversal));
     }
 
     /// <summary>
-    /// True when an ISSUE still has an unreversed CONSUME, or any RETURN/ADJUST dependency.
+    /// True when an ISSUE still has an active CONSUME, RETURN or material ADJUST dependency.
     /// </summary>
     public static bool HasBlockingDownstreamDependency(
         IReadOnlyList<ProductionMaterialMovement> movementsPointingAtIssue)
@@ -67,9 +74,15 @@ public static class ProductionMaterialMovementTotals
         if (consumeIds.Any(id => !reversedConsumeIds.Contains(id)))
             return true;
 
+        var reversedReturnIds = movementsPointingAtIssue
+            .Where(x => x.MovementType == ProductionMaterialMovementTypes.ReturnReversal && x.ReversesMaterialMovementId.HasValue)
+            .Select(x => x.ReversesMaterialMovementId!.Value).ToHashSet();
+        var reversedAdjustmentIds = movementsPointingAtIssue
+            .Where(x => x.MovementType == ProductionMaterialMovementTypes.Adjustment && x.ReversesMaterialMovementId.HasValue)
+            .Select(x => x.ReversesMaterialMovementId!.Value).ToHashSet();
         return movementsPointingAtIssue.Any(x =>
-            x.MovementType is ProductionMaterialMovementTypes.Return
-                or ProductionMaterialMovementTypes.Adjustment);
+            x.MovementType == ProductionMaterialMovementTypes.Return && !reversedReturnIds.Contains(x.Uid)
+            || x.MovementType == ProductionMaterialMovementTypes.Adjustment && x.ReversesMaterialMovementId is null && !reversedAdjustmentIds.Contains(x.Uid));
     }
 }
 
@@ -158,5 +171,6 @@ public static class ProductionBalLotSignedQty
         movementType is ProductionBalLotMovementTypes.IssueReversal
             or ProductionBalLotMovementTypes.ProduceReversal
             or ProductionBalLotMovementTypes.FgReceiptReversal or ProductionBalLotMovementTypes.ConsumeReversal
-            or ProductionBalLotMovementTypes.ReturnReversal;
+            or ProductionBalLotMovementTypes.ReturnReversal
+            or ProductionBalLotMovementTypes.AdjustIn or ProductionBalLotMovementTypes.AdjustOut;
 }

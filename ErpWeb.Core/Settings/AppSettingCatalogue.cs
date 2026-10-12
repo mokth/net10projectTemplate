@@ -49,6 +49,7 @@ public static class AppSettingCatalogue
     public static class PlanningKeys
     {
         public const string AllowCapacityOverride = "ALLOW_CAPACITY_OVERRIDE";
+        public const string MachineSchedulePlannerWriteEnabled = "MACHINE_SCHEDULE_PLANNER_WRITE_ENABLED";
     }
 
     public static class ProductionKeys
@@ -160,6 +161,14 @@ public static class AppSettingCatalogue
         "false",
         Description: "Reserved for the planning module.");
 
+    public static readonly AppSettingDefinition PlanningMachineSchedulePlannerWriteEnabled = new(
+        AppSettingModules.Planning,
+        PlanningKeys.MachineSchedulePlannerWriteEnabled,
+        AppSettingType.Flag,
+        AppSettingScope.Company,
+        "false",
+        Description: "Allow machine schedule planner commits only after allocation backfill, overlap, calendar, execution and release readiness checks pass.");
+
     public static readonly AppSettingDefinition ProductionAllowPartialCompletion = new(
         AppSettingModules.Production,
         ProductionKeys.AllowPartialCompletion,
@@ -204,6 +213,7 @@ public static class AppSettingCatalogue
         InventoryRequireLotOnReceipt,
 
         PlanningAllowCapacityOverride,
+        PlanningMachineSchedulePlannerWriteEnabled,
         ProductionAllowPartialCompletion,
         ProductionWipConsumptionPolicy,
         QaRequireInspectionOnReceipt

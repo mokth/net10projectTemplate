@@ -239,7 +239,10 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProductionStockWriter, ProductionStockWriter>();
         services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
         services.AddOptions<FinishedGoodReceiptOptions>().BindConfiguration("Production:FinishedGoodReceipt");
+        services.AddOptions<ProductionStockTransactionOptions>().BindConfiguration(ProductionStockTransactionOptions.SectionName);
         services.AddScoped<IProductionFinishedGoodReceiptService, ProductionFinishedGoodReceiptService>();
+        services.AddScoped<IProductionStockReturnService, ProductionStockReturnService>();
+        services.AddScoped<IProductionStockAdjustmentService, ProductionStockAdjustmentService>();
         services.AddScoped<IProductionOutputService, ProductionOutputService>();
         services.AddScoped<IProductionBalanceInquiryService, ProductionBalanceInquiryService>();
         services.AddScoped<IProductionMaterialConsumeVarianceInquiryService, ProductionMaterialConsumeVarianceInquiryService>();
@@ -256,6 +259,8 @@ public static class CoreServiceCollectionExtensions
         services.Configure<ProductionWorkOrderOptions>(
             configuration.GetSection(ProductionWorkOrderOptions.SectionName));
         services.AddScoped<IProductionCalendarScheduleDataLoader, ProductionCalendarScheduleDataLoader>();
+        services.AddScoped<IMachineSchedulePlannerService, MachineSchedulePlannerService>();
+        services.AddScoped<IMachineSchedulePlannerReadinessService, MachineSchedulePlannerReadinessService>();
 
         services.AddScoped<IPlanningMasterAccess, PlanningMasterAccess>();
         services.AddScoped<IPlanningDependencyChecker, PlanningDependencyChecker>();

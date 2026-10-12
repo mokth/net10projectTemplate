@@ -109,7 +109,7 @@ public interface IIvInventoryPostingService
         RollBackStockOutInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
 
     /// <summary>
-    /// Stock-in (MR or CR) post on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Stock-in on the caller's context and transaction (MR, CR, or Production-owned PRTN). Does not SaveChanges or Commit.
     /// Caller must already have begun a transaction on <paramref name="db"/>.
     /// </summary>
     Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
@@ -118,7 +118,7 @@ public interface IIvInventoryPostingService
         string branchCode,
         string userId,
         int batchNo,
-        string expectedTrxType, // MR or CR
+        string expectedTrxType,
         CancellationToken cancellationToken = default);
 
     Task<IvInventoryPostingBatchResult> PostStockInInTransactionAsync(
@@ -128,7 +128,7 @@ public interface IIvInventoryPostingService
         PostStockInInTransactionAsync(db, companyCode, branchCode, userId, batchNo, expectedTrxType, cancellationToken);
 
     /// <summary>
-    /// Stock-in (MR or CR) rollback on the caller's context and transaction. Does not SaveChanges or Commit.
+    /// Stock-in rollback on the caller's context and transaction. Does not SaveChanges or Commit.
     /// Caller must already have begun a transaction on <paramref name="db"/>.
     /// </summary>
     Task<IvInventoryPostingBatchResult> RollBackStockInInTransactionAsync(

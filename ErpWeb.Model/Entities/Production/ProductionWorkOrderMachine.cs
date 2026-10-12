@@ -89,6 +89,9 @@ public class ProductionWorkOrderMachine
     /// <summary>Plant-local planned completion (plan §6.5).</summary>
     public DateTime? PlannedCompletionDateTime { get; set; }
 
+    /// <summary>Per-machine placement version used to identify current productive allocation fragments.</summary>
+    public int ScheduleRevision { get; set; }
+
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

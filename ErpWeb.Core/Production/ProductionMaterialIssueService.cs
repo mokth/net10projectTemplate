@@ -109,24 +109,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
             .ToList();
         var materialIds = materialEntities.Select(x => x.Uid).ToList();
 
-        // Fetch facts and aggregate in memory so the read contract is provider-independent; SQLite
-        // does not support decimal SUM, while SQL Server does.
-        var movements = await db.ProductionMaterialMovements
-            .AsNoTracking()
-            .Where(x => materialIds.Contains(x.WorkOrderMaterialId))
-            .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.Qty })
-            .ToListAsync(cancellationToken);
-        var totals = movements
-            .GroupBy(x => x.WorkOrderMaterialId)
-            .ToDictionary(
-                g => g.Key,
-                g => new MovementTotals(
-                    g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty),
-                    g.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty),
-                    g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty),
-                    ProductionMaterialMovementTotals.EffectiveConsumed(
-                        g.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                        g.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty))));
+        var totals = await ProductionMaterialExecutionFacts.ReadAsync(
+            db, scope.CompanyCode, scope.BranchCode!, materialIds, cancellationToken);
         var draftRows = await (from map in db.ProductionMaterialIssueLines.AsNoTracking()
             join link in db.ProductionPostingLinks.AsNoTracking() on map.PostingLinkId equals link.Uid
             join batch in db.IvTrxBatches.AsNoTracking() on map.InventoryBatchId equals batch.Id
@@ -147,7 +131,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         foreach (var material in materialEntities)
         {
             totals.TryGetValue(material.Uid, out var movement);
-            movement ??= new MovementTotals(0m, 0m, 0m, 0m);
+            movement ??= ProductionMaterialExecutionTotals.Empty;
             stockMasters.TryGetValue(material.ComponentCode, out var stock);
             var blockingReason = BlockingReason(material, stock?.IsActive == true, stock?.StockControl == true);
             var canManualIssue = blockingReason is null;
@@ -166,13 +150,13 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 }
             }
 
-            var issued = ProductionMaterialExecutionCalc.MovementEffectiveIssue(movement.Issue, movement.IssueReversal);
-            var returned = IvQty.Round(movement.Returned);
+            var issued = movement.EffectiveIssuedQty;
+            var returned = movement.EffectiveReturnedQty;
             var netIssued = ProductionWorkOrderCalc.NetIssuedQty(issued, returned);
             var otherOpenDraft = IvQty.Round(draftRows.Where(x => x.WorkOrderMaterialId == material.Uid).Sum(x => x.IssueQty));
             var maxAllowed = ProductionMaterialExecutionCalc.MaxAllowedNetIssue(material.RequiredQty, material.Tolerance);
-            var availableToDraft = IvQty.Round(Math.Max(maxAllowed - netIssued - otherOpenDraft, 0m));
-            var outstanding = ProductionMaterialExecutionCalc.Outstanding(material.RequiredQty, issued, returned);
+            var availableToDraft = IvQty.Round(Math.Max(maxAllowed - movement.EffectiveSupplyQty - otherOpenDraft, 0m));
+            var outstanding = movement.OutstandingQty(material.RequiredQty);
             var availableQty = material.ConversionFactorToBase > 0m
                 ? ProductionMaterialExecutionCalc.IssueQtyForBaseQty(availableBaseQty, material.ConversionFactorToBase)
                 : 0m;
@@ -200,12 +184,14 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 IssuedQty = issued,
                 ReturnedQty = returned,
                 NetIssuedQty = netIssued,
-                ConsumedQty = IvQty.Round(movement.Consumed),
+                NetActiveAdjustmentQty = movement.NetActiveAdjustmentQty,
+                EffectiveSupplyQty = movement.EffectiveSupplyQty,
+                ConsumedQty = movement.EffectiveConsumedQty,
                 OutstandingQty = outstanding,
                 TolerancePercent = material.Tolerance,
                 MaxAllowedNetIssue = maxAllowed,
                 OtherOpenDraftQty = otherOpenDraft,
-                StandardRemaining = IvQty.Round(Math.Max(material.RequiredQty - netIssued, 0m)),
+                StandardRemaining = outstanding,
                 AvailableToDraft = availableToDraft,
                 AvailableBaseQty = availableBaseQty,
                 AvailableQty = availableQty,
@@ -244,7 +230,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                 PostedBasisQty = basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).Posted,
                 OpenDraftBasisQty = basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).OpenDraft,
                 RemainingBasisQty = IvQty.Round(Math.Max(x.PlannedOutputQty
-                    - basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).Posted
+                    - basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).SupplyAdjustedPosted
                     - basisByOperation.GetValueOrDefault(x.Uid, OperationBasisTotals.Empty).OpenDraft, 0m))
             }).ToList();
         var routeIds = operations.Where(x => x.RouteStepId.HasValue).Select(x => x.RouteStepId!.Value).ToHashSet();
@@ -342,13 +328,34 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
                           })
             .ToListAsync(cancellationToken);
 
-        return rows.GroupBy(x => new { x.WorkOrderOperationId, x.Uid, x.IsDraft, x.ProductionQtyThisIssue })
+        var result = rows.GroupBy(x => new { x.WorkOrderOperationId, x.Uid, x.IsDraft, x.ProductionQtyThisIssue })
             .GroupBy(x => x.Key.WorkOrderOperationId)
             .ToDictionary(
                 x => x.Key,
                 x => new OperationBasisTotals(
                     IvQty.Round(x.Where(y => !y.Key.IsDraft).Sum(y => y.Key.ProductionQtyThisIssue ?? 0m)),
                     IvQty.Round(x.Where(y => y.Key.IsDraft).Sum(y => y.Key.ProductionQtyThisIssue ?? 0m))));
+
+        var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()
+            .Where(x => x.WorkOrderId == workOrderId && x.WorkOrderOperationId != null && x.RequiredQty > 0m
+                && x.IssueMethod == PrMaterialIssueMethods.Manual
+                && (x.SupplySource == PrMaterialSupplySources.Purchased || x.SupplySource == PrMaterialSupplySources.ExternalSupply))
+            .Select(x => new { x.Uid, x.WorkOrderOperationId, x.RequiredQty }).ToListAsync(cancellationToken);
+        var execution = await ProductionMaterialExecutionFacts.ReadAsync(db, companyCode, branchCode,
+            materials.Select(x => x.Uid).ToArray(), cancellationToken);
+        var output = await db.ProductionWorkOrderOperations.AsNoTracking().Where(x => x.WorkOrderId == workOrderId)
+            .ToDictionaryAsync(x => x.Uid, x => x.PlannedOutputQty, cancellationToken);
+        foreach (var group in materials.GroupBy(x => x.WorkOrderOperationId!.Value))
+        {
+            var basis = result.GetValueOrDefault(group.Key, OperationBasisTotals.Empty);
+            result[group.Key] = basis with
+            {
+                SupplyAdjustedPosted = ProductionMaterialExecutionCalc.SupplyAdjustedBasisQty(basis.Posted, output.GetValueOrDefault(group.Key),
+                    group.Select(x => { var facts = execution.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty);
+                        return (x.RequiredQty, facts.EffectiveReturnedQty, facts.NetActiveAdjustmentQty); }))
+            };
+        }
+        return result;
     }
 
     private static string? BlockingReason(
@@ -383,9 +390,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         IvMasterErrorCode code, string message) =>
         IvMasterOperationResult<ProductionMaterialIssueWorkspace>.Fail(code, message);
 
-    private sealed record MovementTotals(decimal Issue, decimal IssueReversal, decimal Returned, decimal Consumed);
     private sealed record OperationBasisTotals(decimal Posted, decimal OpenDraft)
     {
         public static readonly OperationBasisTotals Empty = new(0m, 0m);
+        public decimal SupplyAdjustedPosted { get; init; } = Posted;
     }
 }

@@ -85,12 +85,15 @@ public sealed partial class ProductionMaterialIssueService
         var materialIds = await db.ProductionMaterialMovements.AsNoTracking().Where(x => x.PostingLinkId == link.Uid)
             .Select(x => x.WorkOrderMaterialId).Distinct().ToListAsync(ct);
         var mats = await db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => materialIds.Contains(x.Uid)).OrderBy(x => x.Uid).ToListAsync(ct);
+        var totals = await ProductionMaterialExecutionFacts.ReadAsync(db, link.CompanyCode, link.BranchCode, materialIds, ct);
         return new ProductionMaterialIssuePostResult { PostingRequestId = link.PostingRequestId, BatchNo = link.InventoryBatchNo ?? 0,
             PostingOperationId = link.PostingOperationId, WorkOrderNo = woNo, WorkOrderStatus = order.Status,
             PostedDate = link.CompletedDate ?? link.CreatedDate, Materials = mats.Select(x => new ProductionMaterialIssuePostedMaterial
             { WorkOrderMaterialId = x.Uid, IssuedQty = x.IssuedQty, ReturnedQty = x.ReturnedQty,
                 NetIssuedQty = ProductionWorkOrderCalc.NetIssuedQty(x.IssuedQty, x.ReturnedQty),
-                OutstandingQty = ProductionMaterialExecutionCalc.Outstanding(x.RequiredQty, x.IssuedQty, x.ReturnedQty) }).ToList() };
+                NetActiveAdjustmentQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).NetActiveAdjustmentQty,
+                EffectiveSupplyQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).EffectiveSupplyQty,
+                OutstandingQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).OutstandingQty(x.RequiredQty) }).ToList() };
     }
 
     private static IvMasterOperationResult<ProductionMaterialIssuePostResult> PostFail(IvMasterErrorCode code, string message) =>

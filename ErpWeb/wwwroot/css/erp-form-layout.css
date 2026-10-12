@@ -1,0 +1,65 @@
+/* Opt in at the smallest form boundary. Keep page layout and editor internals local. */
+.erp-form-scope {
+    --erp-form-xs: 7.5rem;
+    --erp-form-sm: 10rem;
+    --erp-form-md: 13rem;
+    --erp-form-lg: 18rem;
+    --erp-form-xl: 26rem;
+}
+
+.erp-form-scope .erp-form-control--xs,
+.erp-form-scope .erp-form-control--sm,
+.erp-form-scope .erp-form-control--md,
+.erp-form-scope .erp-form-control--lg,
+.erp-form-scope .erp-form-control--xl,
+.erp-form-scope .erp-form-control--full {
+    inline-size: 100%;
+    min-inline-size: 0;
+    justify-self: start;
+}
+
+.erp-form-scope .erp-form-control--xs {
+    max-inline-size: var(--erp-form-xs);
+}
+
+.erp-form-scope .erp-form-control--sm {
+    max-inline-size: var(--erp-form-sm);
+}
+
+.erp-form-scope .erp-form-control--md {
+    max-inline-size: var(--erp-form-md);
+}
+
+.erp-form-scope .erp-form-control--lg {
+    max-inline-size: var(--erp-form-lg);
+}
+
+.erp-form-scope .erp-form-control--xl {
+    max-inline-size: var(--erp-form-xl);
+}
+
+.erp-form-scope .erp-form-control--full {
+    max-inline-size: none;
+}
+
+/* A hint or validation message must not stretch the neighboring field stack. */
+.erp-form-scope .iv-field {
+    align-content: start;
+    grid-auto-rows: max-content;
+    min-width: 0;
+}
+
+.erp-form-scope.erp-form-row,
+.erp-form-scope .erp-form-row {
+    align-items: start;
+}
+
+@media (max-width: 767px) {
+    .erp-form-scope .erp-form-control--xs,
+    .erp-form-scope .erp-form-control--sm,
+    .erp-form-scope .erp-form-control--md,
+    .erp-form-scope .erp-form-control--lg,
+    .erp-form-scope .erp-form-control--xl {
+        max-inline-size: none;
+    }
+}

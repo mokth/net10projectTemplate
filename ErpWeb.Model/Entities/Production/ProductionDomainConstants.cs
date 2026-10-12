@@ -56,6 +56,10 @@ public static class ProductionAuditEventTypes
     public const string MaterialSubstituted = "MATERIAL_SUBSTITUTED";
     public const string MaterialIssued = "MATERIAL_ISSUED";
     public const string MaterialIssueRolledBack = "MATERIAL_ISSUE_ROLLED_BACK";
+    public const string MaterialReturned = "MATERIAL_RETURNED";
+    public const string MaterialReturnRolledBack = "MATERIAL_RETURN_ROLLED_BACK";
+    public const string ProductionStockAdjusted = "PRODUCTION_STOCK_ADJUSTED";
+    public const string ProductionStockAdjustmentRolledBack = "PRODUCTION_STOCK_ADJUSTMENT_ROLLED_BACK";
     public const string OutputPosted = "OUTPUT_POSTED";
     public const string OutputRolledBack = "OUTPUT_ROLLED_BACK";
     public const string Completed = "COMPLETED";
@@ -66,6 +70,7 @@ public static class ProductionMaterialMovementTypes
     public const string Issue = "ISSUE";
     public const string IssueReversal = "ISSUE_REVERSAL";
     public const string Return = "RETURN";
+    public const string ReturnReversal = "RETURN_REVERSAL";
     public const string Consume = "CONSUME";
     public const string ConsumeReversal = "CONSUME_REVERSAL";
     public const string Adjustment = "ADJUST";
@@ -73,6 +78,10 @@ public static class ProductionMaterialMovementTypes
 
 public static class ProductionPostingCommandTypes
 {
+    public const string ProductionStockReturnPost = "PRODUCTION_STOCK_RETURN_POST";
+    public const string ProductionStockReturnRollback = "PRODUCTION_STOCK_RETURN_ROLLBACK";
+    public const string ProductionStockAdjustmentPost = "PRODUCTION_STOCK_ADJUSTMENT_POST";
+    public const string ProductionStockAdjustmentRollback = "PRODUCTION_STOCK_ADJUSTMENT_ROLLBACK";
     public const string FinishedGoodReceiptPost = "FG_RECEIPT_POST";
     public const string FinishedGoodReceiptRollback = "FG_RECEIPT_ROLLBACK";
     public const string MaterialIssuePost = "MATERIAL_ISSUE_POST";
@@ -83,6 +92,8 @@ public static class ProductionPostingCommandTypes
 
 public static class ProductionDocumentTypes
 {
+    public const string ProductionStockReturn = "PRODUCTION_STOCK_RETURN";
+    public const string ProductionStockAdjustment = "PRODUCTION_STOCK_ADJUSTMENT";
     public const string FinishedGoodReceipt = "FG_RECEIPT";
     public const string MaterialIssue = "MATERIAL_ISSUE";
     public const string ProductionOutput = "PRODUCTION_OUTPUT";
@@ -170,6 +181,38 @@ public static class ProductionMaterialVarianceReasonCodes
             && (UserSelectable.Contains(normalized, StringComparer.Ordinal)
                 || string.Equals(normalized, LegacyUnclassified, StringComparison.Ordinal));
     }
+}
+
+public static class ProductionStockReturnReasons
+{
+    public const string Excess = "EXCESS";
+    public const string WorkOrderCancelled = "WO_CANCELLED";
+    public const string WrongIssue = "WRONG_ISSUE";
+    public const string NotRequired = "NOT_REQUIRED";
+    public const string QualityReturn = "QC_RETURN";
+    public const string Other = "OTHER";
+    public static IReadOnlyList<string> All { get; } = [Excess, WorkOrderCancelled, WrongIssue, NotRequired, QualityReturn, Other];
+}
+
+public static class ProductionStockAdjustmentReasons
+{
+    public const string Count = "COUNT";
+    public const string Found = "FOUND";
+    public const string Shortage = "SHORTAGE";
+    public const string Damage = "DAMAGE";
+    public const string DataCorrection = "DATA_CORRECTION";
+    public const string Other = "OTHER";
+    public static IReadOnlyList<string> All { get; } = [Count, Found, Shortage, Damage, DataCorrection, Other];
+}
+
+public static class ProductionStockAdjustmentCostBasisCodes
+{
+    public const string CurrentProductionPoolCost = "CURRENT_PRODUCTION_POOL_COST";
+    public const string OriginalIssueCost = "ORIGINAL_ISSUE_COST";
+    public const string StandardCost = "STANDARD_COST";
+    public const string ManualApproved = "MANUAL_APPROVED";
+    public const string ZeroCostApproved = "ZERO_COST_APPROVED";
+    public const string Reversal = "REVERSAL";
 }
 
 public static class ProductionChangeOrderStatuses

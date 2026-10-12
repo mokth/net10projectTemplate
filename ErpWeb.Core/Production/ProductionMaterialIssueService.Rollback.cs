@@ -224,23 +224,15 @@ public sealed partial class ProductionMaterialIssueService
                 }
             }
 
-            var facts = await db.ProductionMaterialMovements.AsNoTracking()
-                .Where(x => materialIds.Contains(x.WorkOrderMaterialId))
-                .Select(x => new { x.WorkOrderMaterialId, x.MovementType, x.Qty })
-                .ToListAsync(cancellationToken);
+            var facts = await ProductionMaterialExecutionFacts.ReadAsync(db, scope.CompanyCode, scope.BranchCode!, materialIds, cancellationToken);
             var reversedByMaterial = originalMovements.GroupBy(x => x.WorkOrderMaterialId)
                 .ToDictionary(x => x.Key, x => IvQty.Round(x.Sum(y => y.Qty)));
             foreach (var material in materials.Values)
             {
-                var materialFacts = facts.Where(x => x.WorkOrderMaterialId == material.Uid);
-                material.IssuedQty = IvQty.Round(
-                    materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).Sum(x => x.Qty)
-                    - materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.IssueReversal).Sum(x => x.Qty)
-                    - reversedByMaterial.GetValueOrDefault(material.Uid));
-                material.ReturnedQty = IvQty.Round(materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Return).Sum(x => x.Qty));
-                material.ConsumedQty = ProductionMaterialMovementTotals.EffectiveConsumed(
-                    materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.Consume).Sum(x => x.Qty),
-                    materialFacts.Where(x => x.MovementType == ProductionMaterialMovementTypes.ConsumeReversal).Sum(x => x.Qty));
+                var execution = facts.GetValueOrDefault(material.Uid, ProductionMaterialExecutionTotals.Empty);
+                material.IssuedQty = IvQty.Round(execution.EffectiveIssuedQty - reversedByMaterial.GetValueOrDefault(material.Uid));
+                material.ReturnedQty = execution.EffectiveReturnedQty;
+                material.ConsumedQty = execution.EffectiveConsumedQty;
                 material.ModifiedDate = now;
                 material.ModifiedBy = user;
             }
@@ -408,6 +400,7 @@ public sealed partial class ProductionMaterialIssueService
             .Select(x => x.WorkOrderMaterialId).Distinct().ToListAsync(ct);
         var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()
             .Where(x => materialIds.Contains(x.Uid)).OrderBy(x => x.Uid).ToListAsync(ct);
+        var totals = await ProductionMaterialExecutionFacts.ReadAsync(db, link.CompanyCode, link.BranchCode, materialIds, ct);
         return new ProductionMaterialIssueRollbackResult
         {
             PostingRequestId = link.PostingRequestId,
@@ -422,7 +415,9 @@ public sealed partial class ProductionMaterialIssueService
                 IssuedQty = x.IssuedQty,
                 ReturnedQty = x.ReturnedQty,
                 NetIssuedQty = ProductionWorkOrderCalc.NetIssuedQty(x.IssuedQty, x.ReturnedQty),
-                OutstandingQty = ProductionWorkOrderCalc.OpenRequirementQty(x.RequiredQty, x.IssuedQty, x.ReturnedQty)
+                NetActiveAdjustmentQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).NetActiveAdjustmentQty,
+                EffectiveSupplyQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).EffectiveSupplyQty,
+                OutstandingQty = totals.GetValueOrDefault(x.Uid, ProductionMaterialExecutionTotals.Empty).OutstandingQty(x.RequiredQty)
             }).ToList()
         };
     }

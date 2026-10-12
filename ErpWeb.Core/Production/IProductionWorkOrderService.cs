@@ -101,6 +101,8 @@ public sealed class ProductionWorkOrderMaterialVm
     public decimal PickedQty { get; init; }
     public decimal IssuedQty { get; init; }
     public decimal ReturnedQty { get; init; }
+    public decimal NetActiveAdjustmentQty { get; init; }
+    public decimal EffectiveSupplyQty { get; init; }
     public decimal ConsumedQty { get; init; }
     public decimal VarianceQty { get; init; }
     public decimal OpenRequirementQty { get; init; }

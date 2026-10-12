@@ -14,15 +14,19 @@ public class AppDbContext : DbContext
 {
     // The FG service owns this lifecycle; generic inventory services never set this capability.
     public bool FinishedGoodReceiptWrite { get; set; }
+    public bool ProductionStockReturnWrite { get; set; }
+    public bool ProductionStockAdjustmentWrite { get; set; }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateFinishedGoodWrites();
+        ValidateProductionStockTransactionWrites();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         ValidateFinishedGoodWrites();
+        ValidateProductionStockTransactionWrites();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
     private void ValidateFinishedGoodWrites()
@@ -48,12 +52,42 @@ public class AppDbContext : DbContext
         }
     }
 
+    private void ValidateProductionStockTransactionWrites()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            if (entry.State != EntityState.Added && entry.Entity is ProductionStockReturnFact
+                or ProductionStockReturnPriceSnapshot or ProductionStockAdjustmentFact)
+                throw new InvalidOperationException("Production stock transaction evidence is immutable; append a linked reversal.");
+
+            // Test original as well as current type so a generic writer cannot escape ownership
+            // by relabelling an existing PRTN/PADJ batch or detail before saving.
+            var type = entry.Entity switch { IvTrxBatch b => b.TrxType, IvTrxBatchDetail d => d.TrxType, _ => null };
+            var originalType = entry.Entity is IvTrxBatch or IvTrxBatchDetail
+                ? entry.OriginalValues.GetValue<string>(nameof(IvTrxBatch.TrxType)) : null;
+            if (!ProductionStockReturnWrite && (type == "PRTN" || originalType == "PRTN"
+                || entry.Entity is ProductionStockReturn or ProductionStockReturnLine or ProductionStockReturnFact or ProductionStockReturnPriceSnapshot))
+                throw new InvalidOperationException("Production Stock Return documents must be changed through their owning service.");
+            if (!ProductionStockAdjustmentWrite && (type == "PADJ" || originalType == "PADJ"
+                || entry.Entity is ProductionStockAdjustment or ProductionStockAdjustmentLine or ProductionStockAdjustmentFact))
+                throw new InvalidOperationException("Production Stock Adjustment documents must be changed through their owning service.");
+        }
+    }
+
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
     }
 
     public DbSet<ProductionFinishedGoodReceipt> ProductionFinishedGoodReceiptRows => Set<ProductionFinishedGoodReceipt>();
+    public DbSet<ProductionStockReturn> ProductionStockReturns => Set<ProductionStockReturn>();
+    public DbSet<ProductionStockReturnLine> ProductionStockReturnLines => Set<ProductionStockReturnLine>();
+    public DbSet<ProductionStockReturnFact> ProductionStockReturnFacts => Set<ProductionStockReturnFact>();
+    public DbSet<ProductionStockReturnPriceSnapshot> ProductionStockReturnPriceSnapshots => Set<ProductionStockReturnPriceSnapshot>();
+    public DbSet<ProductionStockAdjustment> ProductionStockAdjustments => Set<ProductionStockAdjustment>();
+    public DbSet<ProductionStockAdjustmentLine> ProductionStockAdjustmentLines => Set<ProductionStockAdjustmentLine>();
+    public DbSet<ProductionStockAdjustmentFact> ProductionStockAdjustmentFacts => Set<ProductionStockAdjustmentFact>();
     public DbSet<ProductionFinishedGoodSource> ProductionFinishedGoodSourceRows => Set<ProductionFinishedGoodSource>();
     public DbSet<ProductionFinishedGoodFact> ProductionFinishedGoodFactRows => Set<ProductionFinishedGoodFact>();
     public DbSet<ProductionFinishedGoodPriceSnapshot> ProductionFinishedGoodPriceSnapshotRows => Set<ProductionFinishedGoodPriceSnapshot>();
@@ -249,6 +283,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionWorkOrderMaterial> ProductionWorkOrderMaterials => Set<ProductionWorkOrderMaterial>();
     public DbSet<ProductionWorkOrderOperation> ProductionWorkOrderOperations => Set<ProductionWorkOrderOperation>();
     public DbSet<ProductionWorkOrderMachine> ProductionWorkOrderMachines => Set<ProductionWorkOrderMachine>();
+    public DbSet<ProductionMachineScheduleAllocation> ProductionMachineScheduleAllocations => Set<ProductionMachineScheduleAllocation>();
     public DbSet<ProductionWorkOrderLabour> ProductionWorkOrderLabours => Set<ProductionWorkOrderLabour>();
     public DbSet<ProductionWorkOrderResource> ProductionWorkOrderResources => Set<ProductionWorkOrderResource>();
     public DbSet<ProductionAuditEvent> ProductionAuditEvents => Set<ProductionAuditEvent>();
