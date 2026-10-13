@@ -38,20 +38,44 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 if (replay.SealedAtUtc is null) throw new FgException("The existing posting is not sealed; reconciliation is required.");
                 var recorded = await LoadAsync(db, scope, request.Id, false, ct);
                 var replayResult = await MapAsync(db, recorded, ct);
-                // Preserve the original operation identity even if the receipt was subsequently reversed.
-                if (reversal) replayResult.ReversalPostingId = replay.Id; else replayResult.PostingId = replay.Id;
                 return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(replayResult);
             }
             var r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
                 throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
-            if (r.Batch.TrxType != "FG" || r.Batch.BatchStatus != (reversal ? "POSTED" : "NEW"))
+            if (r.Batch.TrxType != IvTrxTypes.FinishedGoods || r.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
                 throw new FgException(reversal ? "Only POSTED FG receipts can be reversed." : "Only NEW FG receipts can be posted.");
             if (reversal && (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)) throw new FgException("Enter a rollback reason of at most 500 characters.");
+            if (reversal && r.PostingId is not long) throw new FgException("The original FG posting is missing.");
+            var originalPostingId = r.PostingId;
+            if (reversal && await ProductionPostingGenerationGuard.ValidateRollbackTargetAsync(
+                    db, originalPostingId!.Value, scope.CompanyCode, scope.BranchCode!, "PRODUCTION",
+                    ProductionDocumentTypes.FinishedGoodReceipt,
+                    r.BatchId.ToString(System.Globalization.CultureInfo.InvariantCulture), r.DocumentRevision, ct)
+                is string generationError)
+                throw new FgException(generationError);
+            var postLink = await db.ProductionPostingLinks.SingleOrDefaultAsync(x =>
+                x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                && x.CommandType == ProductionPostingCommandTypes.FinishedGoodReceiptPost
+                && x.InventoryBatchNo == r.Batch.BatchNo && x.DocumentRevision == r.DocumentRevision
+                && x.Status == (reversal ? ProductionPostingLinkStatuses.Succeeded : ProductionPostingLinkStatuses.Draft), ct);
+            if (postLink is null && !reversal)
+            {
+                postLink = new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.FinishedGoodReceiptPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.FinishedGoodReceipt,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = clock.Now, CreatedBy = User(scope)
+                };
+                db.ProductionPostingLinks.Add(postLink);
+                await db.SaveChangesAsync(ct);
+            }
+            if (postLink is null) throw new FgException("The current FG posting generation link is missing.");
             var date = reversal ? clock.Now : r.Batch.TrxDtTime;
             if (date > clock.Now) throw new FgException("Future receipt dates are not allowed.");
-            if (reversal && (r.PostingId is null || !await db.StockPostings.AnyAsync(x => x.Id == r.PostingId && x.SealedAtUtc != null, ct)))
-                throw new FgException("The original sealed posting is missing.");
             if (db.Database.IsSqlServer())
                 await db.ProductionWorkOrders.FromSqlInterpolated($"SELECT * FROM dbo.PrWorkOrder WITH (UPDLOCK,HOLDLOCK) WHERE UID={r.WorkOrderId}").SingleAsync(ct);
             var pools = new Dictionary<long, ProductionBalLot>();
@@ -79,30 +103,71 @@ public sealed partial class ProductionFinishedGoodReceiptService
             var command = new StockPostingCommand { RequestId = request.RequestId, CommandType = commandType, SourceModule = "PRODUCTION",
                 SourceDocumentType = ProductionDocumentTypes.FinishedGoodReceipt, SourceDocumentId = r.BatchId.ToString(), SourceDocumentNo = r.Batch.BatchNo.ToString(),
                 DocumentRevision = r.DocumentRevision, PostingRole = reversal ? "REVERSAL" : "PRIMARY", EffectiveAt = date, Evidence = snapshot,
-                ReversesPostingId = reversal ? r.PostingId : null, ReasonText = reversal ? request.Reason : null };
+                ReversesPostingId = reversal ? originalPostingId : null, ReasonText = reversal ? request.Reason : null };
             var begin = await coordinator.BeginInTransactionAsync(db, command, ct);
             if (begin.Error is not null) throw new FgException(begin.Error.Message);
             if (!begin.LedgerEnabled || begin.Context is null) throw new FgException("A compatible active V2 stock ledger is required. No legacy FG posting is permitted.");
             var context = begin.Context;
-            var link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
-                CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"), ProductionDocumentType = "FG_RECEIPT",
-                ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo, CreatedDate = date, CreatedBy = User(scope),
-                Status = ProductionPostingLinkStatuses.Pending };
-            db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct);
+            ProductionPostingLink link;
+            if (reversal)
+            {
+                link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.FinishedGoodReceipt,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    OriginalPostingLinkId = postLink.Uid, CreatedDate = date, CreatedBy = User(scope), Status = ProductionPostingLinkStatuses.Pending };
+                db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct);
+            }
+            else
+            {
+                link = postLink;
+                link.Status = ProductionPostingLinkStatuses.Pending;
+            }
             context.Posting.ProductionPostingLinkId = link.Uid;
             await stock.LockStockMastersAsync(db, scope.CompanyCode, pools.Values.Select(x => x.ItemCode).Distinct().Order(StringComparer.Ordinal), ct);
             if (reversal) await ReverseLegsAsync(context, r, pools, link, scope, ct);
             else await PostLegsAsync(context, r, pools, link, scope, ct);
             link.Status = ProductionPostingLinkStatuses.Succeeded; link.CompletedDate = date;
-            r.DocumentRevision++;
             if (reversal)
             {
-                r.ReversalPostingId = context.Posting.Id; r.ReversalReason = request.Reason!.Trim(); r.Batch.BatchStatus = "REVERSED";
+                r.ReversalPostingId = context.Posting.Id; r.ReversalReason = request.Reason!.Trim();
+                r.DocumentRevision = checked(r.DocumentRevision + 1); r.Batch.BatchStatus = IvBatchStatuses.New;
                 r.Batch.RollbackDate = date; r.Batch.RollbackBy = User(scope); r.Batch.RollbackCount++; r.Batch.RollbackOperationId = request.RequestId;
+                short lineNo = 0;
+                foreach (var source in r.Sources.OrderBy(x => x.Id).ToArray())
+                {
+                    var oldDetail = source.Detail;
+                    var detail = new IvTrxBatchDetail
+                    {
+                        Batch = r.Batch, BatchId = r.BatchId, CompanyCode = r.CompanyCode, BranchCode = r.BranchCode,
+                        BatchNo = r.Batch.BatchNo, DocumentRevision = r.DocumentRevision, TrxLineNo = ++lineNo,
+                        TrxType = IvTrxTypes.FinishedGoods, ProdCode = oldDetail.ProdCode, ProdDesc = oldDetail.ProdDesc,
+                        ICode = oldDetail.ICode, IDesc = oldDetail.IDesc, ToWarehouse = oldDetail.ToWarehouse,
+                        ToLocation = oldDetail.ToLocation, ToLotNo = oldDetail.ToLotNo, ToStdQty = oldDetail.ToStdQty,
+                        ToStdUom = oldDetail.ToStdUom, IStatus = oldDetail.IStatus, ExpiryDate = oldDetail.ExpiryDate
+                    };
+                    r.Sources.Add(new ProductionFinishedGoodSource
+                    {
+                        Receipt = r, BatchId = r.BatchId, Detail = detail, DocumentRevision = r.DocumentRevision,
+                        ProductionBalLotId = source.ProductionBalLotId, RequestedQty = source.RequestedQty,
+                        SourceUom = source.SourceUom, DestinationUom = source.DestinationUom, BaseUom = source.BaseUom,
+                        SourceFactor = source.SourceFactor, DestinationFactor = source.DestinationFactor, BaseQty = source.BaseQty
+                    });
+                }
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.FinishedGoodReceiptPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.FinishedGoodReceipt,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = date, CreatedBy = User(scope)
+                });
             }
             else
             {
-                r.PostingId = context.Posting.Id; r.Batch.BatchStatus = "POSTED"; r.Batch.PostedDate = date;
+                r.PostingId = context.Posting.Id; r.ReversalPostingId = null; r.ReversalReason = null;
+                r.Batch.BatchStatus = IvBatchStatuses.Posted; r.Batch.PostedDate = date;
                 r.Batch.PostedBy = User(scope); r.Batch.PostedCount++; r.Batch.PostingOperationId = request.RequestId;
             }
             await db.SaveChangesAsync(ct);

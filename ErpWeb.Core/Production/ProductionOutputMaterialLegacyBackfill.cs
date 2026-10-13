@@ -17,7 +17,7 @@ public static class ProductionOutputMaterialLegacyBackfill
     {
         var outputs = await db.ProductionOutputs
             .Include(x => x.Materials)
-            .Where(x => !x.Materials.Any())
+            .Where(x => !x.Materials.Any(m => m.DocumentRevision == x.DocumentRevision))
             .ToListAsync(cancellationToken);
         var count = 0;
         foreach (var output in outputs)
@@ -38,6 +38,7 @@ public static class ProductionOutputMaterialLegacyBackfill
                     material.RequiredQty, operation.PlannedOutputQty, processed);
                 var consume = await db.ProductionMaterialMovements.AsNoTracking()
                     .Where(x => x.ProductionOutputId == output.Uid
+                        && x.StockPostingId == output.PostingId
                         && x.WorkOrderMaterialId == material.Uid
                         && x.MovementType == ProductionMaterialMovementTypes.Consume)
                     .SumAsync(x => (decimal?)x.Qty, cancellationToken) ?? 0m;
@@ -50,6 +51,7 @@ public static class ProductionOutputMaterialLegacyBackfill
                     CompanyCode = output.CompanyCode,
                     BranchCode = output.BranchCode,
                     ProductionOutputId = output.Uid,
+                    DocumentRevision = output.DocumentRevision,
                     WorkOrderMaterialId = material.Uid,
                     IsHandoff = false,
                     ComponentCode = material.ComponentCode,
@@ -74,6 +76,7 @@ public static class ProductionOutputMaterialLegacyBackfill
 
             var handoffConsume = await db.ProductionBalLotMovements.AsNoTracking()
                 .Where(x => x.ProductionOutputId == output.Uid
+                    && x.StockPostingId == output.PostingId
                     && x.MovementType == ProductionBalLotMovementTypes.Consume
                     && x.WorkOrderMaterialId == null)
                 .SumAsync(x => (decimal?)x.Qty, cancellationToken) ?? 0m;
@@ -98,6 +101,7 @@ public static class ProductionOutputMaterialLegacyBackfill
                         CompanyCode = output.CompanyCode,
                         BranchCode = output.BranchCode,
                         ProductionOutputId = output.Uid,
+                        DocumentRevision = output.DocumentRevision,
                         IsHandoff = true,
                         HandoffFromOperationId = priorId,
                         ComponentCode = operation.RouteStep!.OutputItemCode,

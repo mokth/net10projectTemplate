@@ -449,7 +449,7 @@ public sealed partial class ProductionOutputService
         if (output is not null
             && (output.WorkOrderId != material.WorkOrderId
                 || output.WorkOrderOperationId != material.WorkOrderOperationId
-                || output.Status is not (ProductionOutputStatuses.New or ProductionOutputStatuses.Posted or ProductionOutputStatuses.Reversed)))
+                || output.Status is not (ProductionOutputStatuses.New or ProductionOutputStatuses.Posted)))
         {
             return IvMasterOperationResult<ProductionSharedWipSourceInquiry>.Fail(
                 IvMasterErrorCode.Validation, "The BOM line does not belong to this Daily Production document.");
@@ -489,11 +489,12 @@ public sealed partial class ProductionOutputService
                 .Where(x => x.ProductionOutputId == output.Uid
                     && x.WorkOrderMaterialId == material.Uid
                     && x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode)
+                    && x.BranchCode == scope.BranchCode
+                    && x.DocumentRevision == output.DocumentRevision)
                 .Select(x => (decimal?)x.ConsumeQty)
                 .SingleOrDefaultAsync(cancellationToken) ?? 0m;
         }
-        var historical = output?.Status is ProductionOutputStatuses.Posted or ProductionOutputStatuses.Reversed;
+        var historical = output?.Status == ProductionOutputStatuses.Posted;
         if (historical && output is not null)
         {
             var historic = await BuildHistoricalSharedWipSourceInquiryAsync(
@@ -578,6 +579,7 @@ public sealed partial class ProductionOutputService
         var consumes = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(x => x.ProductionOutputId == output.Uid
                 && x.WorkOrderMaterialId == material.Uid
+                && x.StockPostingId == output.PostingId
                 && x.MovementType == ProductionBalLotMovementTypes.Consume
                 && x.OriginalMovementId == null
                 && x.CompanyCode == scope.CompanyCode
@@ -703,7 +705,8 @@ public sealed partial class ProductionOutputService
                 .Where(x => x.ProductionOutputId == output.Uid
                     && x.WorkOrderMaterialId == material.Uid
                     && x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode)
+                    && x.BranchCode == scope.BranchCode
+                    && x.DocumentRevision == output.DocumentRevision)
                 .Select(x => (decimal?)x.ConsumeQty)
                 .SingleOrDefaultAsync(cancellationToken) ?? 0m,
             ConsumingUom = material.RequiredUom ?? string.Empty,
@@ -711,7 +714,7 @@ public sealed partial class ProductionOutputService
             BaseUom = material.BaseUom ?? string.Empty,
             WipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy),
             IsHistorical = true,
-            IsReversed = output.Status == ProductionOutputStatuses.Reversed,
+            IsReversed = false,
             CanViewCost = canViewCost,
             Message = sourceRows.Count == 0
                 ? "No shared WIP consume movement was recorded for this BOM line."

@@ -131,10 +131,6 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         Id > 0
         && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
         && CanDeleteAccess;
-    protected bool CanCreateCorrection =>
-        Id > 0
-        && string.Equals(Document.Status, "REVERSED", StringComparison.OrdinalIgnoreCase)
-        && CanAdd;
     protected bool CanOpenEditFromView =>
         IsViewMode
         && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
@@ -163,7 +159,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         IsViewMode
         && Document.CanViewCost
         && (string.Equals(Document.Status, "POSTED", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Document.Status, "REVERSED", StringComparison.OrdinalIgnoreCase));
+            || Document.PostingId is not null);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -465,31 +461,6 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         }
     }
 
-    protected async Task CreateCorrectionAsync()
-    {
-        if (IsSubmitting || Id <= 0)
-            return;
-
-        IsSubmitting = true;
-        ErrorMessage = null;
-        try
-        {
-            var result = await Receipts.CreateCorrectionAsync(Id);
-            if (!result.Succeeded || result.Data is null)
-            {
-                ErrorMessage = result.Message ?? "Unable to create a correction.";
-                return;
-            }
-
-            _navigating = true;
-            Navigation.NavigateTo($"/planning/finished-good-receipts/{result.Data.Id}/edit");
-        }
-        finally
-        {
-            IsSubmitting = false;
-        }
-    }
-
     protected async Task ChangeWorkOrderAsync()
     {
         Editors.Clear();
@@ -608,7 +579,9 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
             Editors = [];
             _saved = JsonSerializer.Serialize(ToRequest());
             _pending = null;
-            StatusMessage = action == "POST" ? "Posted the finished good receipt." : "Rolled back the finished good receipt.";
+            StatusMessage = action == "POST"
+                ? "Posted the finished good receipt."
+                : "The finished good receipt was reopened as NEW after rollback.";
         }
         catch (Exception)
         {

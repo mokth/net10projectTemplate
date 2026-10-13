@@ -318,7 +318,7 @@ public class SaCdnSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         return new SaCdnService(
             factory,
             tenant,
@@ -349,7 +349,7 @@ public class SaCdnSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         return new SaInvoiceService(
             factory,
             tenant,
@@ -657,7 +657,7 @@ public class SaCdnSqlServerConcurrencyTests
                 new IvStockPostingRepository(),
                 new IvStockCommonRepository(factory),
                 new PoOrderRepository(),
-                NullLogger<IvInventoryPostingService>.Instance));
+                NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)));
 
         var failSut = CreateCdnSut(factory, failPosting);
         var curr = await failSut.GetAsync(save.DocNo!);

@@ -28,8 +28,6 @@ public partial class IvStockReturn : PageBase
     protected string BatchStatusDisplay = IvBatchStatuses.New;
     protected bool LocationsLoading;
     protected bool CanEditPermission;
-    protected DateTime AppToday => Dates.Today;
-
     private int _locationLoadVersion;
     private string? _pendingDefLocation;
     private IvStockReturnLineVm? _editingLine;
@@ -625,9 +623,9 @@ public partial class IvStockReturn : PageBase
                 return "Expiry date is required for this item.";
             }
 
-            if (Popup.ExpiryDate.Value.Date < AppToday.Date)
+            if (Popup.ExpiryDate.Value.Date < Header.TrxDate.Date)
             {
-                return "Expiry date cannot be earlier than today.";
+                return "Expiry date cannot be earlier than the transaction date.";
             }
         }
 

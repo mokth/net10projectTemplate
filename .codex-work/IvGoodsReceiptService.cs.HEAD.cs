@@ -1,0 +1,1382 @@
+using ErpWeb.Core.Menus;
+using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Transactions;
+using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Repositories.Inventory;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+
+namespace ErpWeb.Core.Inventory;
+
+public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
+{
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
+    private readonly IInventoryTenantContext _tenant;
+    private readonly IAccessRightService _accessRights;
+    private readonly IRunningNumberService _runningNumbers;
+    private readonly ICurrentDateService _dates;
+    private readonly IIvStockMasterRepository _stockMasters;
+    private readonly IIvStockCommonRepository _common;
+    private readonly IIvStockTransactionRepository _transactions;
+    private readonly IIvStockPostingRepository _postingRepo;
+    private readonly IIvInventoryPostingService _posting;
+    private readonly ILogger<IvGoodsReceiptService> _logger;
+    private readonly ICompanyCurrencyRateResolver _currencyRates;
+
+    public IvGoodsReceiptService(
+        IDbContextFactory<AppDbContext> dbFactory,
+        IInventoryTenantContext tenant,
+        IAccessRightService accessRights,
+        IRunningNumberService runningNumbers,
+        ICurrentDateService dates,
+        IIvStockMasterRepository stockMasters,
+        IIvStockCommonRepository common,
+        IIvStockTransactionRepository transactions,
+        IIvStockPostingRepository postingRepo,
+        IIvInventoryPostingService posting,
+        ILogger<IvGoodsReceiptService> logger,
+        ICompanyCurrencyRateResolver? currencyRates = null)
+    {
+        _dbFactory = dbFactory;
+        _tenant = tenant;
+        _accessRights = accessRights;
+        _runningNumbers = runningNumbers;
+        _dates = dates;
+        _stockMasters = stockMasters;
+        _common = common;
+        _transactions = transactions;
+        _postingRepo = postingRepo;
+        _posting = posting;
+        _logger = logger;
+        _currencyRates = currencyRates ?? new CompanyCurrencyRateResolver();
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> PeekNextBatchNoAsync(CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var peek = await _runningNumbers.PeekNextAsync(db, context.CompanyCode!, RunningNumberKeys.IvBatch, cancellationToken);
+        return IvGoodsReceiptOperationResult.OkPeek(peek);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> SearchAsync(IvGoodsReceiptListQuery? query, CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        query ??= new IvGoodsReceiptListQuery();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = context.CompanyCode!;
+        var branch = context.BranchCode!;
+        var skip = Math.Max(0, query.Skip);
+        var take = Math.Clamp(query.Take <= 0 ? 20 : query.Take, 1, 100);
+
+        var trxTypes = new[] { IvTrxTypes.GoodsReceive, IvTrxTypes.NonStockGoodsReceive };
+        var q = db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && trxTypes.Contains(x.TrxType));
+
+        if (!string.IsNullOrWhiteSpace(query.BatchStatus))
+        {
+            var status = query.BatchStatus.Trim();
+            q = q.Where(x => x.BatchStatus == status);
+        }
+
+        if (query.DateFrom is DateTime from)
+        {
+            q = q.Where(x => x.TrxDtTime >= from.Date);
+        }
+
+        if (query.DateTo is DateTime to)
+        {
+            var toExclusive = to.Date.AddDays(1);
+            q = q.Where(x => x.TrxDtTime < toExclusive);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            var term = query.SearchText.Trim();
+            if (int.TryParse(term, out var batchNo))
+            {
+                q = q.Where(x => x.BatchNo == batchNo
+                    || (x.RefNo != null && x.RefNo.Contains(term))
+                    || (x.Remarks != null && x.Remarks.Contains(term))
+                    || x.Details.Any(d => d.PoNo != null && d.PoNo.Contains(term)));
+            }
+            else
+            {
+                q = q.Where(x => (x.RefNo != null && x.RefNo.Contains(term))
+                    || (x.Remarks != null && x.Remarks.Contains(term))
+                    || x.Details.Any(d => (d.PoNo != null && d.PoNo.Contains(term))
+                        || (d.ICode != null && d.ICode.Contains(term))
+                        || (d.IDesc != null && d.IDesc.Contains(term))));
+            }
+        }
+
+        var total = await q.CountAsync(cancellationToken);
+        var page = await ApplySort(q, query.SortField, query.SortDescending)
+            .Skip(skip)
+            .Take(take)
+            .Select(x => new
+            {
+                x.Id,
+                x.BatchNo,
+                x.TrxType,
+                x.TrxDtTime,
+                x.BatchStatus,
+                x.RefNo,
+                x.Remarks,
+                LineCount = x.Details.Count,
+                x.CreatedDate,
+                x.CreatedBy,
+                x.ModifiedDate,
+                x.ModifiedBy
+            })
+            .ToListAsync(cancellationToken);
+
+        var ids = page.Select(x => x.Id).ToList();
+        var totals = ids.Count == 0
+            ? new Dictionary<int, decimal>()
+            : (await db.IvTrxBatchDetails.AsNoTracking()
+                .Where(d => ids.Contains(d.BatchId))
+                .Select(d => new { d.BatchId, d.ToPurQty, d.UnitPrice })
+                .ToListAsync(cancellationToken))
+                .GroupBy(d => d.BatchId)
+                .ToDictionary(g => g.Key, g => g.Sum(d => (d.ToPurQty ?? 0m) * (d.UnitPrice ?? 0m)));
+
+        return IvGoodsReceiptOperationResult.OkList(new IvGoodsReceiptListPage
+        {
+            Rows = page.Select(x => new IvGoodsReceiptListRow
+            {
+                Id = x.Id,
+                BatchNo = x.BatchNo,
+                TrxType = x.TrxType,
+                TrxDate = x.TrxDtTime,
+                BatchStatus = x.BatchStatus,
+                RefNo = x.RefNo,
+                Remarks = x.Remarks,
+                LineCount = x.LineCount,
+                TotalAmount = decimal.Round(totals.GetValueOrDefault(x.Id), 2),
+                CreatedDate = x.CreatedDate,
+                CreatedBy = x.CreatedBy,
+                ModifiedDate = x.ModifiedDate,
+                ModifiedBy = x.ModifiedBy
+            }).ToList(),
+            TotalCount = total
+        });
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> SearchPoLinesAsync(
+        string trxType,
+        string? searchText,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        var type = NormalizeTrxType(trxType);
+        var indirect = string.Equals(type, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var company = context.CompanyCode!;
+        var branch = context.BranchCode!;
+
+        var latest =
+            from h in db.PoOrders.AsNoTracking()
+            where h.CompanyCode == company && h.BranchCode == branch
+            group h by h.PoNo into g
+            select new { PoNo = g.Key, PoRelNo = g.Max(x => x.PoRelNo) };
+
+        var q =
+            from h in db.PoOrders.AsNoTracking()
+            join m in latest on new { h.PoNo, h.PoRelNo } equals new { m.PoNo, m.PoRelNo }
+            from d in h.Details
+            where h.CompanyCode == company
+                && h.BranchCode == branch
+                && d.BalanceQty > 0m
+                && (h.Status == PoOrderStatuses.New || h.Status == PoOrderStatuses.Received)
+                && ((d.OneTime ?? h.OneTime ?? false) == indirect)
+            select new { h, d };
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var term = searchText.Trim();
+            q = q.Where(x => x.h.PoNo.Contains(term)
+                || (x.h.VendCode != null && x.h.VendCode.Contains(term))
+                || (x.h.VendName != null && x.h.VendName.Contains(term))
+                || (x.d.ICode != null && x.d.ICode.Contains(term))
+                || (x.d.IDesc != null && x.d.IDesc.Contains(term)));
+        }
+
+        var rows = await q
+            .OrderByDescending(x => x.h.PoDate)
+            .ThenByDescending(x => x.h.PoNo)
+            .ThenBy(x => x.d.Line)
+            .Take(50)
+            .Select(x => new IvGoodsReceiptPoLineLookupRow
+            {
+                PoNo = x.h.PoNo,
+                PoRelNo = x.h.PoRelNo,
+                PoLineNo = x.d.Line,
+                VendCode = x.h.VendCode,
+                VendName = x.h.VendName,
+                ICode = x.d.ICode ?? string.Empty,
+                IDesc = x.d.IDesc,
+                OrderedQty = x.d.PoPurQty,
+                ReceivedQty = x.d.RecvQty,
+                BalanceQty = x.d.BalanceQty,
+                DraftQty = 0m,
+                AvailableQty = x.d.BalanceQty,
+                PurchaseUom = x.d.PurchaseUom,
+                StdUom = x.d.StdUom,
+                PackSz = x.d.PackSz,
+                UnitPrice = x.d.PoUnitPrice,
+                ToWarehouse = x.d.ToWarehouse,
+                IsIndirect = indirect
+            })
+            .ToListAsync(cancellationToken);
+
+        if (rows.Count > 0)
+        {
+            var poNos = rows.Select(x => x.PoNo).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var draftGroups = await (
+                from b in db.IvTrxBatches.AsNoTracking()
+                from d in b.Details
+                where b.CompanyCode == company
+                    && b.BranchCode == branch
+                    && b.BatchStatus == IvBatchStatuses.New
+                    && b.DeletedAtUtc == null
+                    && b.TrxType == type
+                    && d.PoNo != null
+                    && poNos.Contains(d.PoNo)
+                group d by new { d.PoNo, d.PoRelNo, d.PoLineNo } into g
+                select new
+                {
+                    PoNo = g.Key.PoNo!,
+                    PoRelNo = g.Key.PoRelNo ?? (short)0,
+                    PoLineNo = g.Key.PoLineNo ?? (short)0,
+                    DraftQty = g.Sum(x => x.ToPurQty ?? 0m)
+                }).ToListAsync(cancellationToken);
+
+            var draftByKey = draftGroups.ToDictionary(
+                x => $"{x.PoNo}|{x.PoRelNo}|{x.PoLineNo}",
+                x => IvQty.Round(x.DraftQty),
+                StringComparer.OrdinalIgnoreCase);
+
+            rows = rows.Select(x =>
+            {
+                var draft = draftByKey.GetValueOrDefault($"{x.PoNo}|{x.PoRelNo}|{x.PoLineNo}");
+                var available = IvQty.Round(Math.Max(0m, x.BalanceQty - draft));
+                return new IvGoodsReceiptPoLineLookupRow
+                {
+                    PoNo = x.PoNo,
+                    PoRelNo = x.PoRelNo,
+                    PoLineNo = x.PoLineNo,
+                    VendCode = x.VendCode,
+                    VendName = x.VendName,
+                    ICode = x.ICode,
+                    IDesc = x.IDesc,
+                    OrderedQty = x.OrderedQty,
+                    ReceivedQty = x.ReceivedQty,
+                    BalanceQty = x.BalanceQty,
+                    DraftQty = draft,
+                    AvailableQty = available,
+                    PurchaseUom = x.PurchaseUom,
+                    StdUom = x.StdUom,
+                    PackSz = x.PackSz,
+                    UnitPrice = x.UnitPrice,
+                    ToWarehouse = x.ToWarehouse,
+                    DefWarehouse = x.DefWarehouse,
+                    DefLocation = x.DefLocation,
+                    LotControl = x.LotControl,
+                    ExpiryControl = x.ExpiryControl,
+                    IsIndirect = x.IsIndirect
+                };
+            }).ToList();
+        }
+
+        if (!indirect && rows.Count > 0)
+        {
+            var codes = rows.Select(x => x.ICode).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var masterRows = await db.IvStockMasters.AsNoTracking()
+                .Where(x => x.CompanyCode == company && codes.Contains(x.ICode))
+                .Select(x => new { x.ICode, x.LotControl, x.ExpiryControl, x.DefWarehouse, x.DefLocation })
+                .ToListAsync(cancellationToken);
+            var masterByCode = masterRows.ToDictionary(x => x.ICode, StringComparer.OrdinalIgnoreCase);
+            rows = rows.Select(x =>
+            {
+                masterByCode.TryGetValue(x.ICode, out var master);
+                return new IvGoodsReceiptPoLineLookupRow
+                {
+                    PoNo = x.PoNo,
+                    PoRelNo = x.PoRelNo,
+                    PoLineNo = x.PoLineNo,
+                    VendCode = x.VendCode,
+                    VendName = x.VendName,
+                    ICode = x.ICode,
+                    IDesc = x.IDesc,
+                    OrderedQty = x.OrderedQty,
+                    ReceivedQty = x.ReceivedQty,
+                    BalanceQty = x.BalanceQty,
+                    DraftQty = x.DraftQty,
+                    AvailableQty = x.AvailableQty,
+                    PurchaseUom = x.PurchaseUom,
+                    StdUom = x.StdUom,
+                    PackSz = x.PackSz,
+                    UnitPrice = x.UnitPrice,
+                    ToWarehouse = x.ToWarehouse,
+                    DefWarehouse = master?.DefWarehouse,
+                    DefLocation = master?.DefLocation,
+                    LotControl = master?.LotControl ?? false,
+                    ExpiryControl = CanonicalExpiryControl(master?.ExpiryControl),
+                    IsIndirect = false
+                };
+            }).ToList();
+        }
+
+        return IvGoodsReceiptOperationResult.OkPoLines(rows);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> AllocateLotAsync(
+        string iCode,
+        IReadOnlyCollection<string>? reservedInSave = null,
+        int? excludeBatchNo = null,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        var code = (iCode ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Item code is required to allocate a lot.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        try
+        {
+            var lotNo = await AllocateLotCoreAsync(
+                db,
+                context.CompanyCode!,
+                code,
+                reservedInSave,
+                excludeBatchNo,
+                cancellationToken);
+            return IvGoodsReceiptOperationResult.OkLot(lotNo);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return IvGoodsReceiptOperationResult.Fail(ex.Message);
+        }
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> GetAsync(int batchNo, CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        if (batchNo <= 0)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Batch number is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var batch = await _transactions.GetByBatchNoAsync(db, context.CompanyCode!, context.BranchCode!, batchNo, cancellationToken);
+        if (batch is null || !IsGoodsReceiptType(batch.TrxType))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Goods receipt was not found.");
+        }
+
+        var stockCodes = batch.Details.Select(x => (x.ICode ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var policyByCode = new Dictionary<string, (bool LotControl, string ExpiryControl)>(StringComparer.OrdinalIgnoreCase);
+        if (stockCodes.Count > 0)
+        {
+            var masterRows = await db.IvStockMasters.AsNoTracking()
+                .Where(x => x.CompanyCode == context.CompanyCode && stockCodes.Contains(x.ICode))
+                .Select(x => new { x.ICode, x.LotControl, x.ExpiryControl })
+                .ToListAsync(cancellationToken);
+            foreach (var master in masterRows)
+            {
+                policyByCode[master.ICode] = (master.LotControl, CanonicalExpiryControl(master.ExpiryControl));
+            }
+        }
+
+        return IvGoodsReceiptOperationResult.OkDocument(new IvGoodsReceiptDocument
+        {
+            Id = batch.Id,
+            BatchNo = batch.BatchNo,
+            TrxType = batch.TrxType,
+            TrxDate = batch.TrxDtTime,
+            BatchStatus = batch.BatchStatus,
+            RefNo = batch.RefNo,
+            Remark = batch.Remarks,
+            Lines = batch.Details.OrderBy(x => x.TrxLineNo).Select(d =>
+            {
+                var code = (d.ICode ?? string.Empty).Trim();
+                return new IvGoodsReceiptLineDto
+                {
+                    LineNo = d.TrxLineNo,
+                    PoNo = d.PoNo ?? string.Empty,
+                    PoRelNo = d.PoRelNo ?? 0,
+                    PoLineNo = d.PoLineNo ?? 0,
+                    ICode = code,
+                    IDesc = d.IDesc,
+                    ToWarehouse = d.ToWarehouse ?? string.Empty,
+                    ToLocation = d.ToLocation,
+                    ToLotNo = d.ToLotNo,
+                    FrPurQty = d.FrPurQty ?? 0m,
+                    ToRecvQty = d.ToPurQty ?? 0m,
+                    ToStdQty = d.ToStdQty ?? 0m,
+                    PurchaseUom = d.ToPurUom,
+                    StdUom = d.ToStdUom,
+                    PackSz = d.ToPurQty is > 0m ? PoOrderCalc.RoundQty((d.ToStdQty ?? 0m) / d.ToPurQty.Value) : 1m,
+                    IClassCode = d.IClassCode,
+                    IStatus = string.IsNullOrWhiteSpace(d.IStatus) ? IvItemStatuses.Active : d.IStatus,
+                    UnitPrice = d.UnitPrice ?? 0m,
+                    ExpiryDate = d.ExpiryDate,
+                    Remarks = d.Remarks,
+                    LotControl = policyByCode.GetValueOrDefault(code).LotControl,
+                    ExpiryControl = policyByCode.GetValueOrDefault(code).ExpiryControl ?? IvExpiryControlModes.None
+                };
+            }).ToList()
+        });
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> SaveNewAsync(IvGoodsReceiptSaveRequest? request, CancellationToken cancellationToken = default)
+    {
+        if (request is null)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Save request is required.");
+        }
+
+        var context = ValidateWriteContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Add, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var trxType = NormalizeTrxType(request.TrxType);
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(movementDateError);
+        }
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvGoodsReceiptOperationResult.Fail(periodGuard);
+        }
+
+        var validated = await ValidateLinesAsync(
+            db,
+            request.Lines,
+            trxType,
+            context.CompanyCode!,
+            context.BranchCode!,
+            trxDate,
+            excludeBatchNo: null,
+            cancellationToken);
+        if (validated.ErrorMessage is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
+        }
+
+        var batchNo = await _runningNumbers.GetNextAsync(db, context.CompanyCode!, RunningNumberKeys.IvBatch, cancellationToken);
+        var now = DateTime.UtcNow;
+        var userId = Truncate(context.UserId!, 10);
+
+        var batch = new IvTrxBatch
+        {
+            CompanyCode = context.CompanyCode!,
+            BranchCode = context.BranchCode!,
+            BatchNo = batchNo,
+            TrxDtTime = trxDate,
+            TrxType = trxType,
+            BatchStatus = IvBatchStatuses.New,
+            RefNo = NormalizeRefNo(request.RefNo, batchNo),
+            Remarks = TruncateOptional(request.Remark, 250),
+            LocationCode = context.LocationCode,
+            CreatedDate = now,
+            CreatedBy = userId
+        };
+
+        var (costEvidence, costError) = await ResolveReceiptCostEvidenceAsync(
+            db, context.CompanyCode!, trxDate, validated.Lines!, cancellationToken);
+        if (costError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(costError);
+        }
+
+        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batchNo, trxType);
+        await _transactions.InsertAsync(db, batch, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation("Goods receipt saved. Company={Company} Branch={Branch} BatchNo={BatchNo}", context.CompanyCode, context.BranchCode, batchNo);
+        return IvGoodsReceiptOperationResult.OkSaved(batch.Id, batchNo);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> UpdateAsync(int batchNo, IvGoodsReceiptSaveRequest? request, CancellationToken cancellationToken = default)
+    {
+        if (request is null)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Save request is required.");
+        }
+
+        if (batchNo <= 0)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Batch number is required.");
+        }
+
+        var context = ValidateWriteContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Edit, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var batch = await _postingRepo.LockBatchForUpdateAsync(db, context.CompanyCode!, context.BranchCode!, batchNo, cancellationToken);
+        if (batch is null || !IsGoodsReceiptType(batch.TrxType))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Goods receipt was not found.");
+        }
+
+        if (batch.DeletedAtUtc is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(
+                TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, "This goods receipt")!);
+        }
+
+        if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Only NEW goods receipts can be edited.");
+        }
+
+        var trxType = NormalizeTrxType(request.TrxType);
+        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
+        if (movementDateError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(movementDateError);
+        }
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
+        {
+            return IvGoodsReceiptOperationResult.Fail(periodGuard);
+        }
+
+        var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        var validated = await ValidateLinesAsync(
+            db,
+            request.Lines,
+            trxType,
+            context.CompanyCode!,
+            context.BranchCode!,
+            trxDate,
+            excludeBatchNo: batch.BatchNo,
+            cancellationToken);
+        if (validated.ErrorMessage is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(validated.ErrorMessage);
+        }
+
+        var now = DateTime.UtcNow;
+        var userId = Truncate(context.UserId!, 10);
+        batch.TrxType = trxType;
+        batch.TrxDtTime = trxDate;
+        batch.RefNo = NormalizeRefNo(request.RefNo, batch.BatchNo);
+        batch.Remarks = TruncateOptional(request.Remark, 250);
+        batch.ModifiedDate = now;
+        batch.ModifiedBy = userId;
+
+        db.IvTrxBatchDetails.RemoveRange(existingDetails);
+        batch.Details.Clear();
+        var (costEvidence, costError) = await ResolveReceiptCostEvidenceAsync(
+            db, context.CompanyCode!, trxDate, validated.Lines!, cancellationToken);
+        if (costError is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(costError);
+        }
+
+        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, trxType);
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        return IvGoodsReceiptOperationResult.OkSaved(batch.Id, batch.BatchNo);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> DeleteAsync(IReadOnlyList<int>? batchNos, CancellationToken cancellationToken = default)
+    {
+        var context = ValidateWriteContext();
+        if (context.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(context.Error);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Delete, cancellationToken))
+        {
+            return IvGoodsReceiptOperationResult.Fail("Not authorized.");
+        }
+
+        var nos = (batchNos ?? Array.Empty<int>()).Where(n => n > 0).Distinct().ToList();
+        if (nos.Count == 0)
+        {
+            return IvGoodsReceiptOperationResult.Fail("Select at least one goods receipt.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await new BranchStockTransactionLock().AcquireAsync(
+            db, context.CompanyCode!, context.BranchCode!, cancellationToken);
+        foreach (var batchNo in nos)
+        {
+            var batch = await _postingRepo.LockBatchForUpdateAsync(db, context.CompanyCode!, context.BranchCode!, batchNo, cancellationToken);
+            if (batch is null || !IsGoodsReceiptType(batch.TrxType))
+            {
+                return IvGoodsReceiptOperationResult.Fail($"Goods receipt {batchNo} was not found.");
+            }
+
+            if (batch.DeletedAtUtc is not null)
+                continue;
+
+            var deleteError = await TransactionDeleteApplicator.ApplyInventoryBatchAsync(
+                db, batch, TransactionDeleteOwnerTypes.InventoryBatch, context.UserId, null, cancellationToken);
+            if (deleteError is not null)
+                return IvGoodsReceiptOperationResult.Fail($"Goods receipt {batchNo}: {deleteError}");
+
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
+        return IvGoodsReceiptOperationResult.Ok();
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> PostAsync(IReadOnlyList<int> batchNos, CancellationToken cancellationToken = default)
+    {
+        var firstType = await ResolvePostingTrxTypeAsync(batchNos, cancellationToken);
+        if (firstType.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(firstType.Error);
+        }
+
+        var posting = await _posting.PostAsync(firstType.TrxType!, batchNos, cancellationToken);
+        return IvGoodsReceiptOperationResult.OkPosting(posting);
+    }
+
+    public async Task<IvGoodsReceiptOperationResult> RollbackAsync(IReadOnlyList<int> batchNos, CancellationToken cancellationToken = default)
+    {
+        var firstType = await ResolvePostingTrxTypeAsync(batchNos, cancellationToken);
+        if (firstType.Error is not null)
+        {
+            return IvGoodsReceiptOperationResult.Fail(firstType.Error);
+        }
+
+        var posting = await _posting.RollbackAsync(firstType.TrxType!, batchNos, cancellationToken);
+        return IvGoodsReceiptOperationResult.OkPosting(posting);
+    }
+
+    private async Task<(string? ErrorMessage, List<ValidatedLine>? Lines)> ValidateLinesAsync(
+        AppDbContext db,
+        IReadOnlyList<IvGoodsReceiptLineRequest>? lines,
+        string trxType,
+        string companyCode,
+        string branchCode,
+        DateTime trxDate,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        if (lines is null || lines.Count == 0)
+        {
+            return ("Add at least one goods receipt line.", null);
+        }
+
+        var indirect = string.Equals(trxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
+        var result = new List<ValidatedLine>();
+        var reservedLotsByItem = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        short lineNo = 1;
+        foreach (var line in lines)
+        {
+            var validated = await ValidateLineAsync(
+                db,
+                line,
+                trxType,
+                indirect,
+                companyCode,
+                branchCode,
+                trxDate,
+                lineNo,
+                reservedLotsByItem,
+                excludeBatchNo,
+                cancellationToken);
+            if (validated.ErrorMessage is not null)
+            {
+                return (validated.ErrorMessage, null);
+            }
+
+            result.Add(validated.Line!);
+            if (!indirect
+                && validated.Line!.LotControl
+                && !string.IsNullOrWhiteSpace(validated.Line.ToLotNo)
+                && !string.IsNullOrWhiteSpace(validated.Line.PoLine.ICode))
+            {
+                var itemCode = validated.Line.PoLine.ICode!;
+                if (!reservedLotsByItem.TryGetValue(itemCode, out var reserved))
+                {
+                    reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    reservedLotsByItem[itemCode] = reserved;
+                }
+
+                reserved.Add(validated.Line.ToLotNo!);
+            }
+
+            lineNo++;
+        }
+
+        return (null, result);
+    }
+
+    private async Task<(string? ErrorMessage, ValidatedLine? Line)> ValidateLineAsync(
+        AppDbContext db,
+        IvGoodsReceiptLineRequest line,
+        string trxType,
+        bool indirect,
+        string companyCode,
+        string branchCode,
+        DateTime trxDate,
+        short lineNo,
+        IReadOnlyDictionary<string, HashSet<string>> reservedLotsByItem,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var poNo = (line.PoNo ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(poNo) || line.PoRelNo <= 0 || line.PoLineNo <= 0)
+        {
+            return ($"Line {lineNo}: PO line is required.", null);
+        }
+
+        if (line.ToRecvQty <= 0m)
+        {
+            return ($"Line {lineNo}: receive quantity must be greater than zero.", null);
+        }
+
+        var po = await db.PoOrders.AsNoTracking()
+            .Include(x => x.Details)
+            .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.PoNo == poNo)
+            .OrderByDescending(x => x.PoRelNo)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (po is null || po.PoRelNo != line.PoRelNo)
+        {
+            return ($"Line {lineNo}: PO {poNo}/{line.PoRelNo} is not the latest revision.", null);
+        }
+
+        if (!PoStatusPolicy.IsGrPickable(po.Status))
+        {
+            return ($"Line {lineNo}: PO {poNo} is not available for goods receipt.", null);
+        }
+
+        var poLine = po.Details.FirstOrDefault(x => x.Line == line.PoLineNo);
+        if (poLine is null)
+        {
+            return ($"Line {lineNo}: PO line {poNo}/{line.PoLineNo} was not found.", null);
+        }
+
+        if ((poLine.OneTime ?? po.OneTime ?? false) != indirect)
+        {
+            return ($"Line {lineNo}: PO line type does not match this receipt type.", null);
+        }
+
+        var stdQty = PoOrderCalc.ComputeStdQty(line.ToRecvQty, poLine.PackSz);
+        var itemStatus = string.IsNullOrWhiteSpace(line.IStatus) ? IvItemStatuses.Active : line.IStatus.Trim().ToUpperInvariant();
+        var lotControl = false;
+        string? toWarehouse = null;
+        string? toLocation = null;
+        string? toLotNo = null;
+        DateTime? expiry = null;
+        if (!indirect)
+        {
+            var item = await _stockMasters.GetByCodeAsync(db, companyCode, poLine.ICode ?? string.Empty, cancellationToken);
+            if (item is null || !item.IsActive)
+            {
+                return ($"Line {lineNo}: stock item '{poLine.ICode}' was not found.", null);
+            }
+
+            lotControl = item.LotControl;
+            if (!IvExpiryControlModes.TryNormalize(item.ExpiryControl, out var expiryControl))
+            {
+                return ($"Line {lineNo}: item '{item.ICode}' has an invalid expiry control policy.", null);
+            }
+
+            if (!item.LotControl && !string.Equals(expiryControl, IvExpiryControlModes.None, StringComparison.Ordinal))
+            {
+                return ($"Line {lineNo}: non-lot item '{item.ICode}' cannot have an active expiry control policy.", null);
+            }
+
+            var explicitWarehouse = (line.ToWarehouse ?? string.Empty).Trim();
+            if (explicitWarehouse.Length > 0)
+            {
+                toWarehouse = explicitWarehouse;
+            }
+            else
+            {
+                toWarehouse = await ResolveCompatibleWarehouseAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    poLine.ToWarehouse,
+                    item.DefWarehouse,
+                    cancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(toWarehouse))
+            {
+                return ($"Line {lineNo}: warehouse is required.", null);
+            }
+
+            var warehouse = await _common.GetActiveWarehouseAsync(db, companyCode, branchCode, toWarehouse, cancellationToken);
+            if (warehouse is null)
+            {
+                return ($"Line {lineNo}: warehouse '{toWarehouse}' was not found for this branch.", null);
+            }
+
+            var explicitLocation = (line.ToLocation ?? string.Empty).Trim();
+            if (explicitLocation.Length > 0)
+            {
+                toLocation = explicitLocation;
+            }
+            else
+            {
+                var hasLocations = await _common.HasActiveLocationsAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    toWarehouse,
+                    cancellationToken);
+                toLocation = await ResolveCompatibleLocationAsync(
+                    db,
+                    companyCode,
+                    branchCode,
+                    toWarehouse,
+                    item.DefLocation,
+                    hasLocations,
+                    cancellationToken);
+            }
+
+            var locationValidation = await IvInventoryLocationValidation.ValidateDestinationAsync(
+                db,
+                _common,
+                companyCode,
+                branchCode,
+                toWarehouse,
+                toLocation,
+                $"Line {lineNo}",
+                "location",
+                cancellationToken);
+            if (locationValidation.Error is not null)
+            {
+                return (locationValidation.Error, null);
+            }
+
+            toLocation = locationValidation.Location;
+
+            var status = await _common.GetActiveStatusAsync(db, companyCode, itemStatus, cancellationToken);
+            if (status is null)
+            {
+                return ($"Line {lineNo}: item status '{itemStatus}' was not found.", null);
+            }
+
+            if (item.LotControl)
+            {
+                toLotNo = (line.ToLotNo ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(toLotNo))
+                {
+                    reservedLotsByItem.TryGetValue(item.ICode, out var reservedForItem);
+                    try
+                    {
+                        toLotNo = await AllocateLotCoreAsync(
+                            db,
+                            companyCode,
+                            item.ICode,
+                            reservedForItem,
+                            excludeBatchNo,
+                            cancellationToken);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ($"Line {lineNo}: {ex.Message}", null);
+                    }
+                }
+
+                expiry = line.ExpiryDate?.Date;
+                switch (expiryControl)
+                {
+                    case IvExpiryControlModes.None:
+                        expiry = null;
+                        break;
+                    case IvExpiryControlModes.Optional:
+                        if (expiry is not null && expiry.Value < trxDate.Date)
+                        {
+                            return ($"Line {lineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                        }
+                        break;
+                    case IvExpiryControlModes.Required:
+                        if (expiry is null)
+                        {
+                            return ($"Line {lineNo}: expiry date is required for lot-controlled item '{item.ICode}'.", null);
+                        }
+
+                        if (expiry.Value < trxDate.Date)
+                        {
+                            return ($"Line {lineNo}: expiry date cannot be earlier than the receipt transaction date.", null);
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                toLotNo = string.Empty;
+            }
+        }
+
+        return (null, new ValidatedLine(
+            po,
+            poLine,
+            line.ToRecvQty,
+            stdQty,
+            toWarehouse,
+            toLocation,
+            toLotNo,
+            itemStatus,
+            expiry,
+            lotControl,
+            TruncateOptional(line.Remarks, 250),
+            trxType));
+    }
+
+    private async Task<string> AllocateLotCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        IReadOnlyCollection<string>? reservedInSave,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var reserved = await LoadReservedLotNosAsync(db, companyCode, iCode, excludeBatchNo, cancellationToken);
+        var prefix = _dates.Today.ToString("yyMMdd");
+        var lots = await IvLotNumberGenerator.AllocateAsync(
+            count: 1,
+            prefixOrFirstLot: prefix,
+            startSeq: 1,
+            autoGenerate: true,
+            usedInDocument: reservedInSave ?? Array.Empty<string>(),
+            existsInDatabaseAsync: lot => Task.FromResult(reserved.Contains(lot)));
+        return lots[0];
+    }
+
+    private static async Task<HashSet<string>> LoadReservedLotNosAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        int? excludeBatchNo,
+        CancellationToken cancellationToken)
+    {
+        var code = iCode.Trim();
+        var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var existingLots = await db.IvLots.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode && x.ICode == code)
+            .Select(x => x.LotNo)
+            .ToListAsync(cancellationToken);
+        foreach (var lot in existingLots)
+        {
+            if (!string.IsNullOrWhiteSpace(lot))
+            {
+                reserved.Add(lot.Trim());
+            }
+        }
+
+        var draftTypes = new[]
+        {
+            IvTrxTypes.GoodsReceive,
+            IvTrxTypes.NonStockGoodsReceive,
+            IvTrxTypes.MiscellaneousReceipt
+        };
+
+        var draftQuery =
+            from b in db.IvTrxBatches.AsNoTracking()
+            from d in b.Details
+            where b.CompanyCode == companyCode
+                && b.BatchStatus == IvBatchStatuses.New
+                && b.DeletedAtUtc == null
+                && draftTypes.Contains(b.TrxType)
+                && d.ICode == code
+                && d.ToLotNo != null
+                && d.ToLotNo != ""
+            select new { b.BatchNo, d.ToLotNo };
+
+        if (excludeBatchNo is > 0)
+        {
+            var exclude = excludeBatchNo.Value;
+            draftQuery = draftQuery.Where(x => x.BatchNo != exclude);
+        }
+
+        var draftLots = await draftQuery.Select(x => x.ToLotNo!).ToListAsync(cancellationToken);
+        foreach (var lot in draftLots)
+        {
+            if (!string.IsNullOrWhiteSpace(lot))
+            {
+                reserved.Add(lot.Trim());
+            }
+        }
+
+        return reserved;
+    }
+
+    private async Task<string> ResolveCompatibleWarehouseAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string? poWarehouse,
+        string? defWarehouse,
+        CancellationToken cancellationToken)
+    {
+        foreach (var candidate in new[] { poWarehouse, defWarehouse })
+        {
+            var code = (candidate ?? string.Empty).Trim();
+            if (code.Length == 0)
+            {
+                continue;
+            }
+
+            var warehouse = await _common.GetActiveWarehouseAsync(db, companyCode, branchCode, code, cancellationToken);
+            if (warehouse is not null)
+            {
+                return code;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<string> ResolveCompatibleLocationAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string warehouse,
+        string? defLocation,
+        bool hasLocations,
+        CancellationToken cancellationToken)
+    {
+        if (!hasLocations)
+        {
+            return string.Empty;
+        }
+
+        var code = (defLocation ?? string.Empty).Trim();
+        if (code.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var location = await _common.GetActiveLocationAsync(db, companyCode, branchCode, warehouse, code, cancellationToken);
+        return location is null ? string.Empty : code;
+    }
+
+    private static void AddDetails(
+        IvTrxBatch batch,
+        IReadOnlyList<ValidatedLine> validated,
+        IReadOnlyDictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence> costEvidence,
+        string companyCode,
+        string branchCode,
+        string? locationCode,
+        int batchNo,
+        string trxType)
+    {
+        short trxLineNo = 1;
+        foreach (var row in validated)
+        {
+            var poLine = row.PoLine;
+            var evidence = costEvidence[(row.Po.PoNo, row.Po.PoRelNo, row.PoLine.Line)];
+            batch.Details.Add(new IvTrxBatchDetail
+            {
+                CompanyCode = companyCode,
+                BranchCode = branchCode,
+                BatchNo = batchNo,
+                TrxLineNo = trxLineNo,
+                TrxType = trxType,
+                ICode = poLine.ICode,
+                IDesc = TruncateOptional(poLine.IDesc, 200),
+                ProdCode = poLine.ICode,
+                ProdDesc = TruncateOptional(poLine.IDesc, 200),
+                ToWarehouse = row.ToWarehouse,
+                ToLocation = row.ToLocation,
+                ToLotNo = row.ToLotNo,
+                FrPurQty = PoOrderCalc.RoundQty(poLine.BalanceQty),
+                FrPurUom = poLine.PurchaseUom,
+                ToPurQty = PoOrderCalc.RoundQty(row.ToRecvQty),
+                ToPurUom = poLine.PurchaseUom,
+                ToStdQty = row.ToStdQty,
+                ToStdUom = poLine.StdUom,
+                IStatus = row.IStatus,
+                IClassCode = poLine.ICode,
+                ExpiryDate = row.ExpiryDate,
+                UnitPrice = row.PoLine.PoUnitPrice,
+                CostPrice = evidence.NetPurchaseUnitCost,
+                BaseUnitPrices = evidence.BaseStockUnitCost,
+                Currency = evidence.Currency,
+                PriceEvidence = evidence.Description,
+                Remarks = row.Remarks,
+                PoNo = row.Po.PoNo,
+                PoRelNo = row.Po.PoRelNo,
+                PoLineNo = row.PoLine.Line,
+                LocationCode = NullIfWhiteSpace(locationCode)
+            });
+            trxLineNo++;
+        }
+    }
+
+    private async Task<(
+        Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>? Evidence,
+        string? Error)> ResolveReceiptCostEvidenceAsync(
+        AppDbContext db,
+        string companyCode,
+        DateTime transactionDate,
+        IReadOnlyCollection<ValidatedLine> lines,
+        CancellationToken cancellationToken)
+    {
+        var configuredHomeCurrency = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode)
+            .Select(x => x.CurrencyCode)
+            .FirstOrDefaultAsync(cancellationToken);
+        var homeCurrency = (configuredHomeCurrency ?? string.Empty).Trim();
+        if (homeCurrency.Length == 0)
+            return (null, $"Company {companyCode} has no configured base currency; receipt cost cannot be frozen.");
+
+        var currencies = lines
+            .Select(x => string.IsNullOrWhiteSpace(x.PoLine.CurCode) ? x.Po.CurCode : x.PoLine.CurCode)
+            .Select(x => string.IsNullOrWhiteSpace(x) ? homeCurrency : x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var rates = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var currency in currencies)
+        {
+            var resolved = await _currencyRates.ResolveAsync(
+                db, companyCode, currency, transactionDate, cancellationToken);
+            if (!resolved.Succeeded)
+                return (null, $"{resolved.Error} Receipt cost cannot be frozen.");
+            rates[currency] = resolved.Rate;
+        }
+
+        var result = new Dictionary<(string PoNo, short PoRelNo, short PoLineNo), ReceiptCostEvidence>();
+        foreach (var row in lines)
+        {
+            if (row.ToRecvQty <= 0m || row.ToStdQty <= 0m || row.PoLine.PoPurQty <= 0m)
+                return (null, $"PO {row.Po.PoNo}/{row.Po.PoRelNo} line {row.PoLine.Line} has invalid purchase/base quantity for receipt costing.");
+
+            var currency = string.IsNullOrWhiteSpace(row.PoLine.CurCode)
+                ? row.Po.CurCode
+                : row.PoLine.CurCode;
+            currency = string.IsNullOrWhiteSpace(currency) ? homeCurrency : currency.Trim();
+            var rate = rates[currency];
+            var netPurchaseUnitCost = decimal.Round(
+                row.PoLine.NetAmount / row.PoLine.PoPurQty, 6, MidpointRounding.AwayFromZero);
+            var baseStockUnitCost = decimal.Round(
+                netPurchaseUnitCost * row.ToRecvQty * rate / row.ToStdQty,
+                6,
+                MidpointRounding.AwayFromZero);
+            result[(row.Po.PoNo, row.Po.PoRelNo, row.PoLine.Line)] = new ReceiptCostEvidence(
+                currency,
+                netPurchaseUnitCost,
+                baseStockUnitCost,
+                $"PO_PROVISIONAL|PO={row.Po.PoNo}/{row.Po.PoRelNo}/{row.PoLine.Line}|CUR={currency}|RATE={rate:0.########}");
+        }
+
+        return (result, null);
+    }
+
+    private async Task<(string? Error, string? TrxType)> ResolvePostingTrxTypeAsync(
+        IReadOnlyList<int>? batchNos,
+        CancellationToken cancellationToken)
+    {
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return (context.Error, null);
+        }
+
+        var nos = (batchNos ?? Array.Empty<int>()).Where(x => x > 0).Distinct().ToList();
+        if (nos.Count == 0)
+        {
+            return ("No record selected.", null);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var types = await db.IvTrxBatches.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode && x.BranchCode == context.BranchCode && nos.Contains(x.BatchNo))
+            .Select(x => x.TrxType)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        if (types.Count != 1 || !IsGoodsReceiptType(types[0]))
+        {
+            return ("Select goods receipts of the same type.", null);
+        }
+
+        return (null, types[0]);
+    }
+
+    private static IQueryable<IvTrxBatch> ApplySort(IQueryable<IvTrxBatch> query, string? sortField, bool desc) =>
+        (sortField, desc) switch
+        {
+            (nameof(IvGoodsReceiptListRow.TrxDate), false) => query.OrderBy(x => x.TrxDtTime).ThenBy(x => x.BatchNo),
+            (nameof(IvGoodsReceiptListRow.BatchStatus), true) => query.OrderByDescending(x => x.BatchStatus).ThenByDescending(x => x.BatchNo),
+            (nameof(IvGoodsReceiptListRow.BatchStatus), false) => query.OrderBy(x => x.BatchStatus).ThenBy(x => x.BatchNo),
+            (_, false) => query.OrderBy(x => x.BatchNo),
+            _ => query.OrderByDescending(x => x.BatchNo)
+        };
+
+    private static string NormalizeTrxType(string? trxType) =>
+        string.Equals((trxType ?? string.Empty).Trim(), IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase)
+            ? IvTrxTypes.NonStockGoodsReceive
+            : IvTrxTypes.GoodsReceive;
+
+    private static bool IsGoodsReceiptType(string? trxType) =>
+        string.Equals(trxType, IvTrxTypes.GoodsReceive, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(trxType, IvTrxTypes.NonStockGoodsReceive, StringComparison.OrdinalIgnoreCase);
+
+    private static string? NormalizeRefNo(string? refNo, int batchNo)
+    {
+        var value = (refNo ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "AUTO", StringComparison.OrdinalIgnoreCase))
+        {
+            value = batchNo.ToString();
+        }
+
+        return TruncateOptional(value, 50);
+    }
+
+    private UserContext ValidateUserContext()
+    {
+        var scope = _tenant.TryBranchScope();
+        return scope is null
+            ? UserContext.Fail("Invalid company or branch context.")
+            : UserContext.Ok(scope.CompanyCode, scope.BranchCode, scope.LocationCode, scope.UserId);
+    }
+
+    private UserContext ValidateWriteContext()
+    {
+        var scope = _tenant.TryWriteScope();
+        return scope is null
+            ? UserContext.Fail("Invalid company, branch, or location context.")
+            : UserContext.Ok(scope.CompanyCode, scope.BranchCode!, scope.LocationCode!, scope.UserId);
+    }
+
+    private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
+    private static string? TruncateOptional(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
+    private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string CanonicalExpiryControl(string? value) =>
+        IvExpiryControlModes.TryNormalize(value, out var normalized)
+            ? normalized
+            : IvExpiryControlModes.None;
+
+    private sealed record ValidatedLine(
+        PoOrder Po,
+        PoOrderDetail PoLine,
+        decimal ToRecvQty,
+        decimal ToStdQty,
+        string? ToWarehouse,
+        string? ToLocation,
+        string? ToLotNo,
+        string IStatus,
+        DateTime? ExpiryDate,
+        bool LotControl,
+        string? Remarks,
+        string TrxType);
+
+    private sealed record ReceiptCostEvidence(
+        string Currency,
+        decimal NetPurchaseUnitCost,
+        decimal BaseStockUnitCost,
+        string Description);
+
+    private readonly record struct UserContext(
+        string? CompanyCode,
+        string? BranchCode,
+        string? LocationCode,
+        string? UserId,
+        string? Error)
+    {
+        public static UserContext Ok(string companyCode, string branchCode, string? locationCode, string userId) =>
+            new(companyCode, branchCode, locationCode, userId, null);
+
+        public static UserContext Fail(string error) => new(null, null, null, null, error);
+    }
+}

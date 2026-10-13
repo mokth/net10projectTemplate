@@ -35,6 +35,10 @@ public sealed partial class ProductionMaterialIssueService
                 && link.BranchCode == scope.BranchCode
                 && link.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
                 && link.InventoryBatchNo != null
+                && link.DocumentRevision == db.IvTrxBatchDetails
+                    .Where(d => d.CompanyCode == link.CompanyCode && d.BranchCode == link.BranchCode
+                        && d.BatchNo == link.InventoryBatchNo)
+                    .Select(d => (int?)d.DocumentRevision).Max()
             select new ProductionMaterialIssueListRow
             {
                 BatchNo = link.InventoryBatchNo!.Value,
@@ -88,7 +92,11 @@ public sealed partial class ProductionMaterialIssueService
         {
             var mapRows = await db.ProductionMaterialIssueLines.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
-                    && batchNos.Contains(x.InventoryBatchNo))
+                    && batchNos.Contains(x.InventoryBatchNo)
+                    && x.DocumentRevision == db.IvTrxBatchDetails
+                        .Where(d => d.CompanyCode == x.CompanyCode && d.BranchCode == x.BranchCode
+                            && d.BatchNo == x.InventoryBatchNo)
+                        .Select(d => (int?)d.DocumentRevision).Max())
                 .Select(x => new { x.InventoryBatchNo, x.WorkOrderMaterialId })
                 .ToListAsync(cancellationToken);
             var movements = await db.ProductionMaterialMovements.AsNoTracking()
@@ -126,10 +134,17 @@ public sealed partial class ProductionMaterialIssueService
             return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(IvMasterErrorCode.Validation, "Batch number is required.");
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var currentRevision = await db.IvTrxBatchDetails.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                && x.BatchNo == batchNo && x.TrxType == IvTrxTypes.IssueToProduction)
+            .Select(x => (int?)x.DocumentRevision).MaxAsync(cancellationToken);
+        if (currentRevision is null)
+            return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(IvMasterErrorCode.NotFound, "Inventory issue details were not found.");
+
         var link = await db.ProductionPostingLinks.AsNoTracking()
             .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
                 && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
-                && x.InventoryBatchNo == batchNo, cancellationToken);
+                && x.InventoryBatchNo == batchNo && x.DocumentRevision == currentRevision, cancellationToken);
         if (link is null)
             return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(IvMasterErrorCode.NotFound, "Material issue was not found.");
         var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync(x => x.Uid == link.WorkOrderId, cancellationToken);

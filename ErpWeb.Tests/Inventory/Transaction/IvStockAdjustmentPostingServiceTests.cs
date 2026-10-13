@@ -85,6 +85,32 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Save_future_dated_new_adjustment_keeps_balance_and_ledger_unchanged()
+    {
+        var balId = await SeedBalLocAsync(100m);
+        var adj = CreateAdjustment();
+        var request = AdjRequest(balId, -10m);
+        request.TrxDate = FixedToday.AddDays(1);
+
+        var saved = await adj.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await adj.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
     public async Task Save_missing_reason_fails()
     {
         var balId = await SeedBalLocAsync(100m);
@@ -431,7 +457,7 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
         return new IvStockAdjustmentService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -458,7 +484,7 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
     }
 
     private static Mock<IAccessRightService> Access()

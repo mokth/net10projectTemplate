@@ -138,17 +138,12 @@ public sealed class CostingRepairOwnershipResolver : ICostingRepairOwnershipReso
         {
             if (!long.TryParse(posting.SourceDocumentId, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var outputId))
                 return null;
-            var requestId = await db.ProductionOutputs.AsNoTracking()
-                .Where(x => x.Uid == outputId && x.CompanyCode == company && x.BranchCode == branch)
-                .Select(x => x.PostingRequestId)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(requestId))
-                return null;
             return await db.ProductionPostingLinks.AsNoTracking()
                 .Where(x => x.CompanyCode == company
                     && x.BranchCode == branch
-                    && x.PostingRequestId == requestId)
-                .OrderByDescending(x => x.Uid)
+                    && x.CommandType == ProductionPostingCommandTypes.OutputPost
+                    && x.ProductionDocumentLineId == outputId
+                    && x.DocumentRevision == posting.DocumentRevision)
                 .FirstOrDefaultAsync(cancellationToken);
         }
 

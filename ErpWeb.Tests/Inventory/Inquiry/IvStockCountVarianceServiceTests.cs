@@ -434,7 +434,8 @@ public class IvStockCountVarianceServiceTests : IAsyncLifetime
                 postingRepo,
                 new IvStockCommonRepository(_factory),
                 new PoOrderRepository(),
-                NullLogger<IvInventoryPostingService>.Instance),
+                NullLogger<IvInventoryPostingService>.Instance,
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
             NullLogger<IvStockCountService>.Instance);
     }
 

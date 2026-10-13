@@ -1,0 +1,38 @@
+TpTrace Verbose: 0 : 52616, 2, 2026/10/13, 12:51:21.093, 159211213747, testhost.dll, Version: 17.14.1 Current process architecture: X64
+TpTrace Verbose: 0 : 52616, 2, 2026/10/13, 12:51:21.097, 159211247910, testhost.dll, Runtime location: C:\Program Files\dotnet\shared\Microsoft.NETCore.App\10.0.12
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.100, 159211276892, testhost.dll, DefaultEngineInvoker.Invoke: Testhost process started with args :[--port, 59051],[--endpoint, 127.0.0.1:059051],[--role, client],[--parentprocessid, 52496],[--diag, C:\wincom\net10projects\.codex-work\vstest-chronology.host.26-10-13_12-51-20_90008_5.log],[--tracelevel, 4],[--telemetryoptedin, false]
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.101, 159211287489, testhost.dll, Setting up debug trace listener.
+TpTrace Verbose: 0 : 52616, 2, 2026/10/13, 12:51:21.101, 159211289547, testhost.dll, TestPlatformTraceListener.Setup: Replacing listener System.Diagnostics.DefaultTraceListener with TestHostTraceListener.
+TpTrace Verbose: 0 : 52616, 2, 2026/10/13, 12:51:21.101, 159211290851, testhost.dll, TestPlatformTraceListener.Setup: Added test platform trace listener.
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.101, 159211294770, testhost.dll, DefaultEngineInvoker.SetParentProcessExitCallback: Monitoring parent process with id: '52496'
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.111, 159211390042, testhost.dll, DefaultEngineInvoker.GetConnectionInfo: Initialize communication on endpoint address: '127.0.0.1:059051'
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.133, 159211609552, testhost.dll, SocketClient.Start: connecting to server endpoint: 127.0.0.1:059051
+TpTrace Information: 0 : 52616, 2, 2026/10/13, 12:51:21.148, 159211761502, testhost.dll, DefaultEngineInvoker.Invoke: Start Request Processing.
+TpTrace Information: 0 : 52616, 11, 2026/10/13, 12:51:21.148, 159211764199, testhost.dll, SocketClient.OnServerConnected: connected to server endpoint: 127.0.0.1:059051
+TpTrace Information: 0 : 52616, 12, 2026/10/13, 12:51:21.151, 159211791387, testhost.dll, DefaultEngineInvoker.StartProcessingAsync: Connected to vstest.console, Starting process requests.
+TpTrace Error: 0 : 52616, 11, 2026/10/13, 12:51:21.177, 159212053284, testhost.dll, MulticastDelegateUtilities.SafeInvoke: 1: Invoking callback 1/Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.TestRequestHandler for .SocketClient: Server Failed to Connect, failed after 0 ms with: System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.AggregateException: One or more errors occurred. (An attempt was made to access a socket in a way forbidden by its access permissions.)
+ ---> System.Net.Sockets.SocketException (10013): An attempt was made to access a socket in a way forbidden by its access permissions.
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at System.Net.Sockets.TcpClient.CompleteConnectAsync(Task task)
+   --- End of inner exception stack trace ---
+   at Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.TestRequestHandler.<InitializeCommunication>b__32_0(Object sender, ConnectedEventArgs connectedArgs) in /_/src/Microsoft.TestPlatform.CrossPlatEngine/EventHandlers/TestRequestHandler.cs:line 132
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Delegate.DynamicInvokeImpl(Object[] args)
+   at Microsoft.VisualStudio.TestPlatform.Utilities.MulticastDelegateUtilities.SafeInvoke(Delegate delegates, Object sender, Object args, String traceDisplayName) in /_/src/Microsoft.TestPlatform.CoreUtilities/Utilities/MulticastDelegateUtilities.cs:line 59.
+TpTrace Verbose: 0 : 52616, 11, 2026/10/13, 12:51:21.178, 159212058968, testhost.dll, Unable to connect to server, Exception occurred: System.AggregateException: One or more errors occurred. (An attempt was made to access a socket in a way forbidden by its access permissions.)
+ ---> System.Net.Sockets.SocketException (10013): An attempt was made to access a socket in a way forbidden by its access permissions.
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Threading.Tasks.ValueTask.ValueTaskSourceAsTask.<>c.<.cctor>b__4_0(Object state)
+--- End of stack trace from previous location ---
+   at System.Net.Sockets.TcpClient.CompleteConnectAsync(Task task)
+   --- End of inner exception stack trace ---

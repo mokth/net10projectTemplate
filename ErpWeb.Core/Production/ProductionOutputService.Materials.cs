@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -46,7 +47,7 @@ public sealed partial class ProductionOutputService
         var user = TruncateUser(scope.UserId);
 
         var existing = await db.ProductionOutputMaterials
-            .Where(x => x.ProductionOutputId == output.Uid)
+            .Where(x => x.ProductionOutputId == output.Uid && x.DocumentRevision == output.DocumentRevision)
             .ToListAsync(cancellationToken);
         var existingByMaterial = existing
             .Where(x => x.WorkOrderMaterialId is not null)
@@ -79,6 +80,7 @@ public sealed partial class ProductionOutputService
                     CompanyCode = output.CompanyCode,
                     BranchCode = output.BranchCode,
                     ProductionOutputId = output.Uid,
+                    DocumentRevision = output.DocumentRevision,
                     CreatedDate = now,
                     CreatedBy = user,
                 };
@@ -153,6 +155,7 @@ public sealed partial class ProductionOutputService
                 CompanyCode = output.CompanyCode,
                 BranchCode = output.BranchCode,
                 ProductionOutputId = output.Uid,
+                DocumentRevision = output.DocumentRevision,
                 CreatedDate = now,
                 CreatedBy = user,
             };
@@ -183,29 +186,9 @@ public sealed partial class ProductionOutputService
         return null;
     }
 
-    private static bool ReplayPayloadMatches(ProductionOutput existing, ProductionOutputCreateRequest request)
+    private static string CreateRequestFingerprint(ProductionOutputCreateRequest request)
     {
-        if (existing.WorkOrderOperationId != request.WorkOrderOperationId)
-            return false;
-        if (existing.ProductionDate != request.ProductionDate)
-            return false;
-        if (!string.Equals(Normalize(existing.ShiftCode), Normalize(request.ShiftCode), StringComparison.Ordinal))
-            return false;
-        if (!string.Equals(Normalize(existing.ActualMachineCode), Normalize(request.ActualMachineCode), StringComparison.Ordinal))
-            return false;
-        if (!string.Equals(Normalize(existing.OperatorCode), Normalize(request.OperatorCode), StringComparison.Ordinal))
-            return false;
-        if (IvQty.Round(existing.GoodQty) != IvQty.Round(request.GoodQty)
-            || IvQty.Round(existing.ScrapQty) != IvQty.Round(request.ScrapQty)
-            || IvQty.Round(existing.RejectQty) != IvQty.Round(request.RejectQty)
-            || IvQty.Round(existing.HoldQty) != IvQty.Round(request.HoldQty))
-            return false;
-        var incomingOutputLotNo = ResolveOutputLotNo(request.OutputLotNo, existing.DocumentNo);
-        if (!string.Equals((existing.OutputLotNo ?? string.Empty).Trim(), incomingOutputLotNo, StringComparison.Ordinal))
-            return false;
-
-        var incoming = (request.Materials ?? [])
-            .Where(x => x.WorkOrderMaterialId > 0)
+        var materials = (request.Materials ?? [])
             .OrderBy(x => x.WorkOrderMaterialId)
             .Select(x => (
                 x.WorkOrderMaterialId,
@@ -213,19 +196,20 @@ public sealed partial class ProductionOutputService
                 ProductionMaterialVarianceReasonCodes.Normalize(x.VarianceReasonCode) ?? "",
                 (x.VarianceReasonText ?? string.Empty).Trim()))
             .ToList();
-        if (incoming.Count == 0)
-            return true;
-
-        var saved = existing.Materials
-            .Where(x => !x.IsHandoff && x.WorkOrderMaterialId is not null)
-            .OrderBy(x => x.WorkOrderMaterialId)
-            .Select(x => (
-                x.WorkOrderMaterialId!.Value,
-                IvQty.Round(x.ConsumeQty),
-                ProductionMaterialVarianceReasonCodes.Normalize(x.VarianceReasonCode) ?? "",
-                (x.VarianceReasonText ?? string.Empty).Trim()))
-            .ToList();
-        return saved.SequenceEqual(incoming);
+        return StockPostingFingerprint.Create(new
+        {
+            request.WorkOrderOperationId,
+            request.ProductionDate,
+            ShiftCode = Normalize(request.ShiftCode),
+            MachineCode = Normalize(request.ActualMachineCode),
+            OperatorCode = Normalize(request.OperatorCode),
+            GoodQty = IvQty.Round(request.GoodQty),
+            ScrapQty = IvQty.Round(request.ScrapQty),
+            RejectQty = IvQty.Round(request.RejectQty),
+            HoldQty = IvQty.Round(request.HoldQty),
+            OutputLotNo = (request.OutputLotNo ?? string.Empty).Trim(),
+            Materials = materials
+        }, new { }).RequestFingerprint;
     }
 
     private async Task RebuildWorkOrderMaterialExecutionProjectionAsync(
@@ -250,11 +234,13 @@ public sealed partial class ProductionOutputService
                 .Where(x => x.WorkOrderMaterialId == materialId
                     && x.ProductionOutputId != currentOutputId
                     && x.ProductionOutput != null
-                    && x.ProductionOutput.Status == ProductionOutputStatuses.Posted)
+                    && x.ProductionOutput.Status == ProductionOutputStatuses.Posted
+                    && x.DocumentRevision == x.ProductionOutput.DocumentRevision)
                 .SumAsync(x => (decimal?)x.StandardQty, cancellationToken) ?? 0m;
 
             var currentStandard = await db.ProductionOutputMaterials.AsNoTracking()
-                .Where(x => x.WorkOrderMaterialId == materialId && x.ProductionOutputId == currentOutputId)
+                .Where(x => x.WorkOrderMaterialId == materialId && x.ProductionOutputId == currentOutputId
+                    && x.DocumentRevision == x.ProductionOutput!.DocumentRevision)
                 .Select(x => (decimal?)x.StandardQty)
                 .SingleOrDefaultAsync(cancellationToken) ?? 0m;
 

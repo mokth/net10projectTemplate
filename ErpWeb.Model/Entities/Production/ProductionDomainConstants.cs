@@ -141,7 +141,6 @@ public static class ProductionOutputStatuses
 {
     public const string New = "NEW";
     public const string Posted = "POSTED";
-    public const string Reversed = "REVERSED";
 }
 
 /// <summary>Company policy captured on each Daily Production draft.</summary>

@@ -15,6 +15,7 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.CommandType).HasMaxLength(40).IsRequired();
         builder.Property(x => x.PostingRequestId).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.DocumentRevision).HasDefaultValue(1);
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.ProductionDocumentType).HasMaxLength(30);
         builder.Property(x => x.ProductionDocumentNo).HasMaxLength(40);
@@ -32,18 +33,22 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
             .HasDatabaseName("UQ_PrProductionPostingLink_Idempotency");
         builder.HasIndex(x => new { x.WorkOrderId, x.CommandType, x.Status })
             .HasDatabaseName("IX_PrProductionPostingLink_Order_Command_Status");
-        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo })
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo, x.DocumentRevision })
             .IsUnique()
             .HasFilter("[InventoryBatchNo] IS NOT NULL AND [CommandType] = 'MATERIAL_ISSUE_POST'")
-            .HasDatabaseName("UQ_PrProductionPostingLink_MaterialIssueBatch");
+            .HasDatabaseName("UQ_PrProductionPostingLink_MaterialIssueBatchRevision");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.ProductionDocumentLineId, x.DocumentRevision })
+            .IsUnique()
+            .HasFilter("[ProductionDocumentLineID] IS NOT NULL AND [CommandType] = 'OUTPUT_POST'")
+            .HasDatabaseName("UQ_PrProductionPostingLink_OutputGeneration");
         builder.HasOne(x => x.OriginalPostingLink)
             .WithMany()
             .HasForeignKey(x => x.OriginalPostingLinkId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo }, "UQ_PrProductionPostingLink_StockTransactionBatch")
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.InventoryBatchNo, x.DocumentRevision }, "UQ_PrProductionPostingLink_StockTransactionBatchRevision")
             .IsUnique()
-            .HasFilter("[InventoryBatchNo] IS NOT NULL AND [CommandType] IN ('PRODUCTION_STOCK_RETURN_POST','PRODUCTION_STOCK_ADJUSTMENT_POST')")
-            .HasDatabaseName("UQ_PrProductionPostingLink_StockTransactionBatch");
+            .HasFilter("[InventoryBatchNo] IS NOT NULL AND [CommandType] IN ('PRODUCTION_STOCK_RETURN_POST','PRODUCTION_STOCK_ADJUSTMENT_POST','FG_RECEIPT_POST')")
+            .HasDatabaseName("UQ_PrProductionPostingLink_StockTransactionBatchRevision");
     }
 }
 

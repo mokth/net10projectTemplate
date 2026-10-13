@@ -164,6 +164,9 @@ public sealed partial class ProductionMaterialIssueService
                 .OrderBy(x => x.TrxLineNo).ToListAsync(ct);
             if (maps.Count == 0 || maps.Count != details.Count || maps.Select(x => x.WorkOrderOperationId).Distinct().Count() != 1)
                 return "The draft allocation map is incomplete or mixes operations.";
+            if (maps.Any(x => x.DocumentRevision != link.DocumentRevision)
+                || details.Any(x => x.DocumentRevision != link.DocumentRevision))
+                return "The draft allocation map does not match the current inventory issue generation.";
             var workOrderOperationId = maps[0].WorkOrderOperationId;
             var operation = await db.ProductionWorkOrderOperations.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.Uid == workOrderOperationId && x.WorkOrderId == link.WorkOrderId, ct);

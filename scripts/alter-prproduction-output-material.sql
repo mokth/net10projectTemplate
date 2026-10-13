@@ -39,6 +39,7 @@ BEGIN
         CompanyCode nvarchar(5) NOT NULL,
         BranchCode nvarchar(5) NOT NULL,
         ProductionOutputID bigint NOT NULL,
+        DocumentRevision int NOT NULL CONSTRAINT DF_PrPOM_DocumentRevision DEFAULT (1),
         WorkOrderMaterialID bigint NULL,
         IsHandoff bit NOT NULL CONSTRAINT DF_PrPOM_IsHandoff DEFAULT (0),
         HandoffFromOperationID bigint NULL,
@@ -72,12 +73,6 @@ BEGIN
             OR ([IsHandoff] = 1 AND [WorkOrderMaterialID] IS NULL AND [HandoffFromOperationID] IS NOT NULL))
     );
 
-    CREATE UNIQUE INDEX UQ_PrProductionOutputMaterial_Output_Material
-        ON dbo.PrProductionOutputMaterial (ProductionOutputID, WorkOrderMaterialID)
-        WHERE WorkOrderMaterialID IS NOT NULL;
-    CREATE UNIQUE INDEX UQ_PrProductionOutputMaterial_Output_Handoff
-        ON dbo.PrProductionOutputMaterial (ProductionOutputID)
-        WHERE IsHandoff = 1;
     CREATE INDEX IX_PrProductionOutputMaterial_Output
         ON dbo.PrProductionOutputMaterial (ProductionOutputID);
     CREATE INDEX IX_PrProductionOutputMaterial_WorkOrderMaterial
@@ -87,6 +82,36 @@ BEGIN
     CREATE INDEX IX_PrProductionOutputMaterial_Reason
         ON dbo.PrProductionOutputMaterial (CompanyCode, BranchCode, VarianceReasonCode);
 END;
+GO
+
+/* Remove the pre-generation uniqueness rules so a later document revision can retain its own snapshot. */
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutputMaterial') AND name = N'UQ_PrProductionOutputMaterial_Output_Material')
+    DROP INDEX UQ_PrProductionOutputMaterial_Output_Material ON dbo.PrProductionOutputMaterial;
+GO
+
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutputMaterial') AND name = N'UQ_PrProductionOutputMaterial_Output_Handoff')
+    DROP INDEX UQ_PrProductionOutputMaterial_Output_Handoff ON dbo.PrProductionOutputMaterial;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutputMaterial', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutputMaterial', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrProductionOutputMaterial
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrPOM_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutputMaterial') AND name = N'UQ_PrProductionOutputMaterial_Output_Revision_Material')
+    CREATE UNIQUE INDEX UQ_PrProductionOutputMaterial_Output_Revision_Material
+        ON dbo.PrProductionOutputMaterial (ProductionOutputID, DocumentRevision, WorkOrderMaterialID)
+        WHERE WorkOrderMaterialID IS NOT NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutputMaterial') AND name = N'UQ_PrProductionOutputMaterial_Output_Revision_Handoff')
+    CREATE UNIQUE INDEX UQ_PrProductionOutputMaterial_Output_Revision_Handoff
+        ON dbo.PrProductionOutputMaterial (ProductionOutputID, DocumentRevision)
+        WHERE IsHandoff = 1;
 GO
 
 PRINT N'PrProductionOutputMaterial ready.';

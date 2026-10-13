@@ -95,8 +95,12 @@ public sealed partial class ProductionFinishedGoodReceiptService(
         var query = locked && db.Database.IsSqlServer()
             ? db.ProductionFinishedGoodReceiptRows.FromSqlInterpolated($"SELECT * FROM dbo.PrFinishedGoodReceipt WITH (UPDLOCK,HOLDLOCK) WHERE BatchId={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}")
             : db.ProductionFinishedGoodReceiptRows.Where(x => x.BatchId == id && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
-        return await query.Include(x => x.Batch).Include(x => x.Sources).ThenInclude(x => x.Detail).SingleOrDefaultAsync(ct)
+        var result = await query.Include(x => x.Batch).SingleOrDefaultAsync(ct)
             ?? throw new FgException("Finished Good Receipt was not found.", IvMasterErrorCode.NotFound);
+        result.Sources = await db.ProductionFinishedGoodSourceRows
+            .Where(x => x.BatchId == result.BatchId && x.DocumentRevision == result.DocumentRevision)
+            .Include(x => x.Detail).OrderBy(x => x.Id).ToListAsync(ct);
+        return result;
     }
 
     public async Task<IvMasterOperationResult<FinishedGoodReceiptPage>> SearchAsync(FinishedGoodReceiptQuery query, CancellationToken ct = default)
@@ -136,7 +140,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 ? []
                 : await (from s in db.ProductionFinishedGoodSourceRows.AsNoTracking()
                     join d in db.IvTrxBatchDetails.AsNoTracking() on s.DetailId equals d.Id
-                    where ids.Contains(s.BatchId)
+                    join current in db.ProductionFinishedGoodReceiptRows.AsNoTracking() on s.BatchId equals current.BatchId
+                    where ids.Contains(s.BatchId) && s.DocumentRevision == current.DocumentRevision
                     select new { s.BatchId, d.ICode, d.ToLotNo, d.ToStdQty, d.ToStdUom, d.ToWarehouse }).ToListAsync(ct);
             var byBatch = details.ToLookup(x => x.BatchId);
             var result = page.Select(x =>
@@ -316,7 +321,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             WorkOrderNo = order.WorkOrderNo, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
             Remarks = r.Batch.Remarks, Revision = r.DocumentRevision, RowVersion = r.RowVersion, PostingId = r.PostingId,
             ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs };
-        foreach (var s in r.Sources.OrderBy(x => x.Id))
+        foreach (var s in r.Sources.Where(x => x.DocumentRevision == r.DocumentRevision).OrderBy(x => x.Id))
         {
             var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == s.ProductionBalLotId, ct);
             var error = await SourceReadinessAsync(db, lot, ct);
@@ -336,9 +341,9 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     }
 
     public Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveAsync(FinishedGoodReceiptSaveRequest request, CancellationToken ct = default)
-        => SaveCoreAsync(request, null, ct);
+        => SaveCoreAsync(request, ct);
 
-    private async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveCoreAsync(FinishedGoodReceiptSaveRequest request, int? correctedId, CancellationToken ct)
+    private async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> SaveCoreAsync(FinishedGoodReceiptSaveRequest request, CancellationToken ct)
     {
         try
         {
@@ -358,10 +363,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             ProductionFinishedGoodReceipt r;
             if (request.Id == 0)
             {
-                if (correctedId.HasValue && (await LoadAsync(db, scope, correctedId.Value, true, ct)).Batch.BatchStatus != "REVERSED")
-                    throw new FgException("Complete rollback before creating a correction.");
                 r = new() { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = order.Uid,
-                    CorrectedBatchId = correctedId, Batch = new() { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
+                    Batch = new() { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
                         BatchNo = await numbers.GetNextAsync(db, scope.CompanyCode, RunningNumberKeys.IvBatch, ct), TrxType = IvTrxTypes.FinishedGoods,
                         BatchStatus = "NEW", CreatedDate = clock.Now, CreatedBy = User(scope) } };
                 db.ProductionFinishedGoodReceiptRows.Add(r);
@@ -374,7 +377,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 if (r.Batch.BatchStatus != "NEW") throw new FgException("Only NEW receipts can be edited.");
                 db.ProductionFinishedGoodSourceRows.RemoveRange(r.Sources);
                 db.IvTrxBatchDetails.RemoveRange(r.Sources.Select(x => x.Detail));
-                r.Sources.Clear(); r.DocumentRevision++;
+                r.Sources.Clear();
             }
             var resolvedRefNo = string.IsNullOrWhiteSpace(requestedRefNo)
                 ? r.Batch.BatchNo.ToString(CultureInfo.InvariantCulture)
@@ -404,11 +407,29 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                     ProdCode = order.ProductCode, ProdDesc = order.ProductDescription, ICode = item.ICode, IDesc = item.IDesc,
                     ToWarehouse = input.Warehouse.Trim(), ToLocation = input.Location.Trim(), ToLotNo = lotNo, ToStdQty = quantity.DestinationQty,
                     ToStdUom = item.StdUom, IStatus = "ACTIVE", ExpiryDate = expiryDate };
-                r.Sources.Add(new() { Detail = detail, ProductionBalLotId = source.Uid, RequestedQty = input.Quantity,
+                r.Sources.Add(new() { Detail = detail, DocumentRevision = r.DocumentRevision, ProductionBalLotId = source.Uid, RequestedQty = input.Quantity,
                     SourceUom = source.Uom, DestinationUom = item.StdUom!, BaseUom = source.BaseUom, SourceFactor = source.ConversionFactorToBase,
                     DestinationFactor = factor, BaseQty = quantity.BaseQty });
             }
-            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            await db.SaveChangesAsync(ct);
+            if (!await db.ProductionPostingLinks.AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.CommandType == ProductionPostingCommandTypes.FinishedGoodReceiptPost
+                    && x.InventoryBatchNo == r.Batch.BatchNo && x.DocumentRevision == r.DocumentRevision
+                    && x.Status == ProductionPostingLinkStatuses.Draft, ct))
+            {
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.FinishedGoodReceiptPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.FinishedGoodReceipt,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = r.Batch.BatchNo,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = clock.Now, CreatedBy = User(scope)
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
             return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(await MapAsync(db, r, ct));
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptDocument>(e.Message, e.Code); }
@@ -478,18 +499,4 @@ public sealed partial class ProductionFinishedGoodReceiptService(
         catch (DbUpdateConcurrencyException) { return Fail<bool>("The receipt changed. Reload before deleting.", IvMasterErrorCode.Concurrency); }
     }
 
-    public async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> CreateCorrectionAsync(int id, CancellationToken ct = default)
-    {
-        try
-        {
-            var scope = await ScopeAsync(PermissionCodes.Add, ct);
-            await using var db = await factory.CreateDbContextAsync(ct);
-            var r = await LoadAsync(db, scope, id, false, ct);
-            if (r.Batch.BatchStatus != "REVERSED") throw new FgException("Complete rollback before creating a correction.");
-            return await SaveCoreAsync(new() { WorkOrderId = r.WorkOrderId, EffectiveDate = clock.Now, RefNo = r.Batch.RefNo, Remarks = r.Batch.Remarks,
-                Lines = r.Sources.Select(s => new FinishedGoodReceiptLineInput { ProductionBalLotId = s.ProductionBalLotId, Quantity = s.RequestedQty,
-                    Warehouse = s.Detail.ToWarehouse!, Location = s.Detail.ToLocation ?? "", LotNo = s.Detail.ToLotNo, ExpiryDate = s.Detail.ExpiryDate }).ToList() }, id, ct);
-        }
-        catch (FgException e) { return Fail<FinishedGoodReceiptDocument>(e.Message, e.Code); }
-    }
 }

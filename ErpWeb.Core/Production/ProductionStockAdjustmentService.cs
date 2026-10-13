@@ -49,8 +49,12 @@ public sealed class ProductionStockAdjustmentService(
         var query = locked && db.Database.IsSqlServer()
             ? db.ProductionStockAdjustments.FromSqlInterpolated($"SELECT * FROM dbo.PrProductionStockAdjustment WITH (UPDLOCK,HOLDLOCK) WHERE BatchId={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}")
             : db.ProductionStockAdjustments.Where(x => x.BatchId == id && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
-        return await query.Include(x => x.Batch).Include(x => x.Lines).ThenInclude(x => x.Detail).SingleOrDefaultAsync(ct)
+        var result = await query.Include(x => x.Batch).SingleOrDefaultAsync(ct)
             ?? throw new AdjustmentException("Production Stock Adjustment was not found.", IvMasterErrorCode.NotFound);
+        result.Lines = await db.ProductionStockAdjustmentLines
+            .Where(x => x.BatchId == result.BatchId && x.DocumentRevision == result.DocumentRevision)
+            .Include(x => x.Detail).OrderBy(x => x.Id).ToListAsync(ct);
+        return result;
     }
 
     private static async Task<ProductionWorkOrder> LockWorkOrderAsync(AppDbContext db, string company, string branch, long id, CancellationToken ct)
@@ -231,7 +235,7 @@ public sealed class ProductionStockAdjustmentService(
             SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
             ReversalPostingId = doc.ReversalPostingId, CorrectedBatchId = doc.CorrectedBatchId,
             CanViewCost = canViewCost };
-        foreach (var line in doc.Lines.OrderBy(x => x.Id))
+        foreach (var line in doc.Lines.Where(x => x.DocumentRevision == doc.DocumentRevision).OrderBy(x => x.Id))
         {
             var pool = await db.ProductionBalLots.AsNoTracking().SingleAsync(x => x.Uid == line.ProductionBalLotId, ct);
             var fact = canViewCost && doc.PostingId is long postingId
@@ -282,7 +286,9 @@ public sealed class ProductionStockAdjustmentService(
             var ids = page.Select(x => x.BatchId).ToArray();
             var details = await (from l in db.ProductionStockAdjustmentLines.AsNoTracking()
                 join d in db.IvTrxBatchDetails.AsNoTracking() on l.DetailId equals d.Id
-                where ids.Contains(l.BatchId) select new { l.BatchId, l.AdjustmentQty, l.SourceUom, d.ICode }).ToListAsync(ct);
+                join current in db.ProductionStockAdjustments.AsNoTracking() on l.BatchId equals current.BatchId
+                where ids.Contains(l.BatchId) && l.DocumentRevision == current.DocumentRevision
+                select new { l.BatchId, l.AdjustmentQty, l.SourceUom, d.ICode }).ToListAsync(ct);
             var summaries = page.Select(x => new ProductionStockAdjustmentSummary(x.BatchId, x.BatchNo, x.WorkOrderId, x.WorkOrderNo,
                 string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => d.ICode).Distinct()),
                 string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => $"{d.AdjustmentQty.ToString("+0.0000;-0.0000;0.0000", CultureInfo.InvariantCulture)} {d.SourceUom}")),
@@ -327,9 +333,9 @@ public sealed class ProductionStockAdjustmentService(
     }
 
     public Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> SaveAsync(ProductionStockAdjustmentSaveRequest request, CancellationToken ct = default)
-        => SaveCoreAsync(request, null, ct);
+        => SaveCoreAsync(request, ct);
 
-    private async Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> SaveCoreAsync(ProductionStockAdjustmentSaveRequest request, int? correctionId, CancellationToken ct)
+    private async Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> SaveCoreAsync(ProductionStockAdjustmentSaveRequest request, CancellationToken ct)
     {
         try
         {
@@ -348,9 +354,8 @@ public sealed class ProductionStockAdjustmentService(
             ProductionStockAdjustment doc;
             if (request.Id == 0)
             {
-                if (correctionId is int corrected && (await LoadAsync(db, scope, corrected, true, ct)).Batch.BatchStatus != "REVERSED") throw new AdjustmentException("Rollback the original adjustment before creating a correction.");
                 doc = new() { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = order.Uid,
-                    SnapshotRevision = order.SnapshotRevision, SnapshotHash = order.SnapshotHash, CorrectedBatchId = correctionId,
+                    SnapshotRevision = order.SnapshotRevision, SnapshotHash = order.SnapshotHash,
                     Batch = new() { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, BatchNo = await numbers.GetNextAsync(db, scope.CompanyCode, RunningNumberKeys.IvBatch, ct),
                         TrxType = IvTrxTypes.ProductionStockAdjustment, BatchStatus = IvBatchStatuses.New, CreatedDate = clock.Now, CreatedBy = User(scope) } };
                 db.ProductionStockAdjustments.Add(doc);
@@ -358,9 +363,9 @@ public sealed class ProductionStockAdjustmentService(
             else
             {
                 doc = await LoadAsync(db, scope, request.Id, true, ct); Version(doc, request.ExpectedVersion);
-                if (doc.Batch.BatchStatus != IvBatchStatuses.New || doc.PostingId is not null) throw new AdjustmentException("Only a NEW unposted adjustment can be edited.");
+                if (doc.Batch.BatchStatus != IvBatchStatuses.New) throw new AdjustmentException("Only a NEW adjustment can be edited.");
                 if (doc.WorkOrderId != order.Uid || WorkOrderError(order, doc.SnapshotRevision, doc.SnapshotHash) is not null) throw new AdjustmentException("The saved adjustment Work Order snapshot changed.", IvMasterErrorCode.Concurrency);
-                db.ProductionStockAdjustmentLines.RemoveRange(doc.Lines); db.IvTrxBatchDetails.RemoveRange(doc.Lines.Select(x => x.Detail)); doc.Lines.Clear(); doc.DocumentRevision++;
+                db.ProductionStockAdjustmentLines.RemoveRange(doc.Lines); db.IvTrxBatchDetails.RemoveRange(doc.Lines.Select(x => x.Detail)); doc.Lines.Clear();
             }
             doc.SnapshotRevision = order.SnapshotRevision; doc.SnapshotHash = order.SnapshotHash;
             doc.Batch.TrxDtTime = date; doc.Batch.RefNo = string.IsNullOrWhiteSpace(request.RefNo) ? doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture) : request.RefNo.Trim();
@@ -400,12 +405,31 @@ public sealed class ProductionStockAdjustmentService(
                     BatchNo = doc.Batch.BatchNo, DocumentRevision = doc.DocumentRevision, TrxLineNo = ++lineNo,
                     TrxType = IvTrxTypes.ProductionStockAdjustment, ICode = pool.ItemCode, IDesc = pool.Description,
                     Reason = reason, Remarks = input.Remarks?.Trim() };
-                doc.Lines.Add(new ProductionStockAdjustmentLine { Detail = detail, ProductionBalLotId = pool.Uid,
+                doc.Lines.Add(new ProductionStockAdjustmentLine { Detail = detail, DocumentRevision = doc.DocumentRevision, ProductionBalLotId = pool.Uid,
                     AdjustmentQty = IvQty.Round(input.AdjustmentQty), SourceUom = pool.Uom, BaseUom = pool.BaseUom,
                     SourceFactor = pool.ConversionFactorToBase, BaseQty = baseQty, ProposedUnitCost = proposed,
                     CostEvidenceType = evidence, CostOverrideReason = approvalReason, CostApprovedBy = approvedBy, CostApprovedAtUtc = approvedAt });
             }
-            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            await db.SaveChangesAsync(ct);
+            if (!await db.ProductionPostingLinks.AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.CommandType == ProductionPostingCommandTypes.ProductionStockAdjustmentPost
+                    && x.InventoryBatchNo == doc.Batch.BatchNo && x.DocumentRevision == doc.DocumentRevision
+                    && x.Status == ProductionPostingLinkStatuses.Draft, ct))
+            {
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = doc.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.ProductionStockAdjustmentPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = doc.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+                    ProductionDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = doc.Batch.BatchNo,
+                    SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = clock.Now, CreatedBy = User(scope)
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
             return IvMasterOperationResult<ProductionStockAdjustmentDocument>.Ok(await MapAsync(db, doc, ct));
         }
         catch (AdjustmentException e) { return Fail<ProductionStockAdjustmentDocument>(e.Message, e.Code); }
@@ -421,9 +445,9 @@ public sealed class ProductionStockAdjustmentService(
             await using var tx = await db.Database.BeginTransactionAsync(ct); await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
             var doc = await LoadAsync(db, scope, id, true, ct); Version(doc, expectedVersion);
             if (doc.Batch.BatchStatus == IvBatchStatuses.Posted) throw new AdjustmentException("Roll back the posted adjustment before archiving it.", IvMasterErrorCode.InUse);
-            if (doc.Batch.BatchStatus == IvBatchStatuses.New && doc.PostingId is null)
+            if (doc.Batch.BatchStatus == IvBatchStatuses.New && doc.PostingId is null && doc.ReversalPostingId is null)
             { db.ProductionStockAdjustmentLines.RemoveRange(doc.Lines); db.IvTrxBatchDetails.RemoveRange(doc.Lines.Select(x => x.Detail)); db.ProductionStockAdjustments.Remove(doc); db.IvTrxBatches.Remove(doc.Batch); }
-            else if (doc.Batch.BatchStatus == "REVERSED" && doc.ReversalPostingId is not null)
+            else if (doc.Batch.BatchStatus == IvBatchStatuses.New && (doc.PostingId is not null || doc.ReversalPostingId is not null))
             { doc.DeletedAtUtc = clock.Now; doc.DeletedBy = User(scope); doc.DeleteReason = "Historical Production Stock Adjustment archived."; doc.Batch.DeletedAtUtc = doc.DeletedAtUtc; doc.Batch.DeletedBy = doc.DeletedBy; doc.Batch.DeleteReason = doc.DeleteReason; }
             else throw new AdjustmentException("This Production Stock Adjustment cannot be deleted in its current state.", IvMasterErrorCode.InUse);
             await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return IvMasterOperationResult<bool>.Ok(true);
@@ -463,6 +487,34 @@ public sealed class ProductionStockAdjustmentService(
             if (doc.Batch.TrxType != IvTrxTypes.ProductionStockAdjustment || doc.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
                 throw new AdjustmentException(reversal ? "Only POSTED PADJ documents can be reversed." : "Only NEW PADJ documents can be posted.");
             if (reversal && doc.PostingId is not long) throw new AdjustmentException("The original PADJ posting is missing.");
+            var originalPostingId = doc.PostingId;
+            if (reversal && await ProductionPostingGenerationGuard.ValidateRollbackTargetAsync(
+                    db, originalPostingId!.Value, scope.CompanyCode, scope.BranchCode!, "PRODUCTION",
+                    ProductionDocumentTypes.ProductionStockAdjustment,
+                    doc.BatchId.ToString(CultureInfo.InvariantCulture), doc.DocumentRevision, ct)
+                is string generationError)
+                throw new AdjustmentException(generationError);
+            var postLink = await db.ProductionPostingLinks.SingleOrDefaultAsync(x =>
+                x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                && x.CommandType == ProductionPostingCommandTypes.ProductionStockAdjustmentPost
+                && x.InventoryBatchNo == doc.Batch.BatchNo && x.DocumentRevision == doc.DocumentRevision
+                && x.Status == (reversal ? ProductionPostingLinkStatuses.Succeeded : ProductionPostingLinkStatuses.Draft), ct);
+            if (postLink is null && !reversal)
+            {
+                postLink = new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = doc.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.ProductionStockAdjustmentPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = doc.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+                    ProductionDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = doc.Batch.BatchNo,
+                    SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = clock.Now, CreatedBy = User(scope)
+                };
+                db.ProductionPostingLinks.Add(postLink);
+                await db.SaveChangesAsync(ct);
+            }
+            if (postLink is null) throw new AdjustmentException("The current PADJ posting generation link is missing.");
             if (doc.Lines.Count == 0) throw new AdjustmentException("The adjustment has no lines.");
             var date = reversal ? clock.Now : doc.Batch.TrxDtTime; if (date > clock.Now) throw new AdjustmentException("Future adjustment dates are not allowed.");
             var order = await LockWorkOrderAsync(db, scope.CompanyCode, scope.BranchCode!, doc.WorkOrderId, ct);
@@ -488,19 +540,27 @@ public sealed class ProductionStockAdjustmentService(
                 SourceModule = "PRODUCTION", SourceDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
                 SourceDocumentId = doc.BatchId.ToString(CultureInfo.InvariantCulture), SourceDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture),
                 DocumentRevision = doc.DocumentRevision, PostingRole = reversal ? "REVERSAL" : "PRIMARY", EffectiveAt = date, Evidence = evidence,
-                ReversesPostingId = reversal ? doc.PostingId : null, ReasonText = reversal ? request.Reason!.Trim() : null }, ct);
+                ReversesPostingId = reversal ? originalPostingId : null, ReasonText = reversal ? request.Reason!.Trim() : null }, ct);
             if (begin.Error is not null) throw new AdjustmentException(begin.Error.Message);
             if (!begin.LedgerEnabled || begin.Context is null) throw new AdjustmentException("An active V2 stock ledger is required. No legacy PADJ posting is permitted.");
             var context = begin.Context;
-            var originalLink = reversal ? await db.ProductionPostingLinks.SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
-                && x.BranchCode == scope.BranchCode && x.CommandType == ProductionPostingCommandTypes.ProductionStockAdjustmentPost
-                && x.InventoryBatchNo == doc.Batch.BatchNo, ct) : null;
-            var link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = doc.WorkOrderId,
-                CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"), ProductionDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
-                ProductionDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = doc.Batch.BatchNo,
-                SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash, OriginalPostingLinkId = originalLink?.Uid,
-                CreatedDate = date, CreatedBy = User(scope), Status = ProductionPostingLinkStatuses.Pending };
-            db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct); context.Posting.ProductionPostingLinkId = link.Uid;
+            ProductionPostingLink link;
+            if (reversal)
+            {
+                link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = doc.WorkOrderId,
+                    CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"), DocumentRevision = doc.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+                    ProductionDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = doc.Batch.BatchNo,
+                    SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash, OriginalPostingLinkId = postLink.Uid,
+                    CreatedDate = date, CreatedBy = User(scope), Status = ProductionPostingLinkStatuses.Pending };
+                db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct);
+            }
+            else
+            {
+                link = postLink;
+                link.Status = ProductionPostingLinkStatuses.Pending;
+            }
+            context.Posting.ProductionPostingLinkId = link.Uid;
             IReadOnlyCollection<ProductionStockLeg> legs;
             IReadOnlyDictionary<string, ProductionInboundValuationAuthority> authorities = new Dictionary<string, ProductionInboundValuationAuthority>();
             if (reversal) legs = await BuildReversalLegsAsync(context, doc, pools, originalFacts, link, ct);
@@ -539,12 +599,45 @@ public sealed class ProductionStockAdjustmentService(
             link.Status = ProductionPostingLinkStatuses.Succeeded; link.CompletedDate = date;
             if (reversal)
             {
-                doc.ReversalPostingId = context.Posting.Id; doc.ReversalReason = request.Reason!.Trim(); doc.Batch.BatchStatus = "REVERSED";
+                doc.ReversalPostingId = context.Posting.Id; doc.ReversalReason = request.Reason!.Trim();
+                doc.DocumentRevision = checked(doc.DocumentRevision + 1); doc.Batch.BatchStatus = IvBatchStatuses.New;
                 doc.Batch.RollbackDate = date; doc.Batch.RollbackBy = User(scope); doc.Batch.RollbackCount++; doc.Batch.RollbackOperationId = request.RequestId;
+                short nextLineNo = 0;
+                foreach (var source in doc.Lines.OrderBy(x => x.Id).ToArray())
+                {
+                    var oldDetail = source.Detail;
+                    var detail = new IvTrxBatchDetail
+                    {
+                        Batch = doc.Batch, BatchId = doc.BatchId, CompanyCode = doc.CompanyCode, BranchCode = doc.BranchCode,
+                        BatchNo = doc.Batch.BatchNo, DocumentRevision = doc.DocumentRevision, TrxLineNo = ++nextLineNo,
+                        TrxType = IvTrxTypes.ProductionStockAdjustment, ICode = oldDetail.ICode, IDesc = oldDetail.IDesc,
+                        Reason = oldDetail.Reason, Remarks = oldDetail.Remarks
+                    };
+                    doc.Lines.Add(new ProductionStockAdjustmentLine
+                    {
+                        Adjustment = doc, BatchId = doc.BatchId, Detail = detail, DocumentRevision = doc.DocumentRevision,
+                        ProductionBalLotId = source.ProductionBalLotId, AdjustmentQty = source.AdjustmentQty,
+                        SourceUom = source.SourceUom, BaseUom = source.BaseUom, SourceFactor = source.SourceFactor,
+                        BaseQty = source.BaseQty, ProposedUnitCost = source.ProposedUnitCost, CostEvidenceType = source.CostEvidenceType,
+                        CostOverrideReason = source.CostOverrideReason, CostApprovedBy = source.CostApprovedBy,
+                        CostApprovedAtUtc = source.CostApprovedAtUtc
+                    });
+                }
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = doc.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.ProductionStockAdjustmentPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = doc.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+                    ProductionDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), InventoryBatchNo = doc.Batch.BatchNo,
+                    SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = date, CreatedBy = User(scope)
+                });
             }
             else
             {
                 doc.PostingId = context.Posting.Id; doc.Batch.BatchStatus = IvBatchStatuses.Posted; doc.Batch.PostedDate = date;
+                doc.ReversalPostingId = null; doc.ReversalReason = null;
                 doc.Batch.PostedBy = User(scope); doc.Batch.PostedCount++; doc.Batch.PostingOperationId = request.RequestId;
             }
             db.ProductionAuditEvents.Add(new ProductionAuditEvent { WorkOrderId = order.Uid,
@@ -797,20 +890,4 @@ public sealed class ProductionStockAdjustmentService(
         }
     }
 
-    public async Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> CreateCorrectionAsync(int id, CancellationToken ct = default)
-    {
-        try
-        {
-            var scope = await ScopeAsync(PermissionCodes.Add, ct); await using var db = await factory.CreateDbContextAsync(ct);
-            var original = await LoadAsync(db, scope, id, false, ct);
-            if (original.Batch.BatchStatus != "REVERSED" || original.ReversalPostingId is null) throw new AdjustmentException("Complete rollback before creating a correction.");
-            var order = await db.ProductionWorkOrders.AsNoTracking().SingleAsync(x => x.Uid == original.WorkOrderId, ct);
-            if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress)) throw new AdjustmentException("The Work Order must be active before creating a replacement adjustment.");
-            return await SaveCoreAsync(new ProductionStockAdjustmentSaveRequest { WorkOrderId = order.Uid, SnapshotRevision = order.SnapshotRevision,
-                SnapshotHash = order.SnapshotHash, EffectiveDate = clock.Now, RefNo = original.Batch.RefNo, Remarks = original.Batch.Remarks,
-                Lines = original.Lines.Select(x => new ProductionStockAdjustmentLineInput { ProductionBalLotId = x.ProductionBalLotId,
-                    AdjustmentQty = x.AdjustmentQty, Reason = x.Detail.Reason ?? ProductionStockAdjustmentReasons.Count, Remarks = x.Detail.Remarks }).ToList() }, id, ct);
-        }
-        catch (AdjustmentException e) { return Fail<ProductionStockAdjustmentDocument>(e.Message, e.Code); }
-    }
 }

@@ -327,7 +327,7 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private IvMiscReceiptService CreateMr()
     {
@@ -338,7 +338,7 @@ public class IvPeriodCloseGuardTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
         return new IvMiscReceiptService(
             _factory, tenant, access.Object, new RunningNumberService(),

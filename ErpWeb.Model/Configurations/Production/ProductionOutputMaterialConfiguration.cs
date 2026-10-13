@@ -25,6 +25,7 @@ public sealed class ProductionOutputMaterialConfiguration : IEntityTypeConfigura
         builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.ProductionOutputId).HasColumnName("ProductionOutputID");
+        builder.Property(x => x.DocumentRevision).HasDefaultValue(1);
         builder.Property(x => x.WorkOrderMaterialId).HasColumnName("WorkOrderMaterialID");
         builder.Property(x => x.HandoffFromOperationId).HasColumnName("HandoffFromOperationID");
         builder.Property(x => x.ComponentCode).HasMaxLength(30).IsRequired();
@@ -55,14 +56,14 @@ public sealed class ProductionOutputMaterialConfiguration : IEntityTypeConfigura
             .HasForeignKey(x => x.WorkOrderMaterialId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(x => new { x.ProductionOutputId, x.WorkOrderMaterialId })
+        builder.HasIndex(x => new { x.ProductionOutputId, x.DocumentRevision, x.WorkOrderMaterialId })
             .IsUnique()
             .HasFilter("[WorkOrderMaterialID] IS NOT NULL")
-            .HasDatabaseName("UQ_PrProductionOutputMaterial_Output_Material");
-        builder.HasIndex(x => x.ProductionOutputId)
+            .HasDatabaseName("UQ_PrProductionOutputMaterial_Output_Revision_Material");
+        builder.HasIndex(x => new { x.ProductionOutputId, x.DocumentRevision })
             .IsUnique()
             .HasFilter("[IsHandoff] = 1")
-            .HasDatabaseName("UQ_PrProductionOutputMaterial_Output_Handoff");
+            .HasDatabaseName("UQ_PrProductionOutputMaterial_Output_Revision_Handoff");
         builder.HasIndex(x => x.ProductionOutputId)
             .HasDatabaseName("IX_PrProductionOutputMaterial_Output");
         builder.HasIndex(x => x.WorkOrderMaterialId)

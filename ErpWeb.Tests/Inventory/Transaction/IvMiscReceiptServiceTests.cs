@@ -2,9 +2,11 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
@@ -245,6 +247,117 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         var line = Assert.Single(batch.Details);
         Assert.Equal("BIN1", line.ToLocation);
         Assert.Equal("SITE", line.LocationCode);
+    }
+
+    [Fact]
+    public async Task Save_future_dated_new_draft_and_edit_it_without_posting_stock()
+    {
+        var sut = CreateSut();
+        var request = ValidNonLotLine(FixedToday.AddDays(1));
+        var saved = await sut.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await sut.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Post_future_dated_mr_blocks_early_and_succeeds_on_transaction_date()
+    {
+        var sut = CreateSut(postingBusinessDate: FixedToday);
+        var saved = await sut.SaveNewAsync(ValidNonLotLine(FixedToday.AddDays(1)));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("cannot be posted until", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Null(batch.PostedDate);
+        Assert.Null(batch.PostedBy);
+        Assert.Equal(0, batch.PostedCount);
+        Assert.Null(batch.PostingOperationId);
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+
+        var postOnDate = await CreateSut(postingBusinessDate: FixedToday.AddDays(1)).PostAsync([saved.BatchNo]);
+        Assert.True(postOnDate.Succeeded, postOnDate.ErrorMessage);
+        await using var postedDb = await _factory.CreateDbContextAsync();
+        Assert.Equal(IvBatchStatuses.Posted,
+            (await postedDb.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo)).BatchStatus);
+        Assert.Equal(1, await postedDb.IvTrxHistories.CountAsync());
+        Assert.Single(await postedDb.IvBalLocs.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(StockCostMethods.MovingAverage)]
+    [InlineData(StockCostMethods.Fifo)]
+    [InlineData(StockCostMethods.Standard)]
+    public async Task Future_draft_posting_matches_a_draft_created_on_its_effective_date(string costMethod)
+    {
+        var effectiveDate = FixedToday.AddDays(1);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedCostPolicyAsync(db, costMethod);
+            db.IvStockMasters.Add(new IvStockMaster
+            {
+                CompanyCode = "DEMO",
+                ICode = "B100",
+                IDesc = "Equivalent valued item",
+                IClassCode = "RAW",
+                StdUom = "EA",
+                LotControl = false,
+                IsActive = true,
+                PurchasePrice = 12.5m
+            });
+            await db.SaveChangesAsync();
+            if (string.Equals(costMethod, StockCostMethods.Standard, StringComparison.Ordinal))
+            {
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 12.5m);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "B100", 12.5m);
+            }
+        }
+
+        var preparedEarly = CreateSut(
+            withLedger: true,
+            draftBusinessDate: FixedToday,
+            postingBusinessDate: effectiveDate);
+        var earlySave = await preparedEarly.SaveNewAsync(ValidNonLotLine(effectiveDate, "A100"));
+        Assert.True(earlySave.Succeeded, earlySave.ErrorMessage);
+        var earlyPost = await preparedEarly.PostAsync([earlySave.BatchNo]);
+        Assert.True(earlyPost.Succeeded, earlyPost.ErrorMessage);
+
+        var createdOnDate = CreateSut(
+            withLedger: true,
+            draftBusinessDate: effectiveDate,
+            postingBusinessDate: effectiveDate);
+        var onDateSave = await createdOnDate.SaveNewAsync(ValidNonLotLine(effectiveDate, "B100"));
+        Assert.True(onDateSave.Succeeded, onDateSave.ErrorMessage);
+        var onDatePost = await createdOnDate.PostAsync([onDateSave.BatchNo]);
+        Assert.True(onDatePost.Succeeded, onDatePost.ErrorMessage);
+
+        var preparedEarlySnapshot = await ReadCostingSnapshotAsync("A100");
+        var createdOnDateSnapshot = await ReadCostingSnapshotAsync("B100");
+        Assert.Equal(preparedEarlySnapshot.State, createdOnDateSnapshot.State);
+        Assert.Equal(preparedEarlySnapshot.FifoLayers, createdOnDateSnapshot.FifoLayers);
     }
 
     [Fact]
@@ -534,7 +647,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Save_rejects_backdated_trx_with_expiry_before_app_today()
+    public async Task Save_accepts_backdated_trx_when_expiry_is_after_transaction_date()
     {
         var sut = CreateSut();
         var req = ValidLotLineRequest();
@@ -545,8 +658,23 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             VendCode = "SUP01",
             Lines = [req]
         });
+        Assert.True(result.Succeeded, result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Save_rejects_expiry_before_future_transaction_date()
+    {
+        var req = ValidLotLineRequest();
+        req.ExpiryDate = FixedToday;
+        var result = await CreateSut().SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(1),
+            VendCode = "SUP01",
+            Lines = [req]
+        });
+
         Assert.False(result.Succeeded);
-        Assert.Contains("expiry", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("transaction date", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1066,16 +1194,16 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         Assert.Equal("OLD-SUP", lot.SupplierCode);
     }
 
-    private static IvMiscReceiptSaveRequest ValidNonLotLine(DateTime trxDate) =>
-        new() { TrxDate = trxDate, RefNo = "AUTO", VendCode = "SUP01", Lines = [ValidNonLotLineRequest()] };
+    private static IvMiscReceiptSaveRequest ValidNonLotLine(DateTime trxDate, string itemCode = "A100") =>
+        new() { TrxDate = trxDate, RefNo = "AUTO", VendCode = "SUP01", Lines = [ValidNonLotLineRequest(itemCode)] };
 
     private static IvMiscReceiptSaveRequest Wrap(IvMiscReceiptLineRequest line) =>
         new() { TrxDate = FixedToday, VendCode = "SUP01", Lines = [line] };
 
-    private static IvMiscReceiptLineRequest ValidNonLotLineRequest() =>
+    private static IvMiscReceiptLineRequest ValidNonLotLineRequest(string itemCode = "A100") =>
         new()
         {
-            ICode = "A100",
+            ICode = itemCode,
             ToWarehouse = "MAIN",
             ToLocation = "BIN1",
             Quantity = 10,
@@ -1124,6 +1252,59 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             Remarks = x.Remarks
         };
 
+    private async Task<(ReceiptCostSnapshot State, FifoLayerSnapshot[] FifoLayers)> ReadCostingSnapshotAsync(
+        string itemCode)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var balance = await db.IvBalLocs.SingleAsync(x => x.ICode == itemCode);
+        var history = await db.IvTrxHistories.SingleAsync(x => x.ICode == itemCode);
+        var fact = await db.StockValuationFacts.SingleAsync(x => x.InventoryHistoryId == history.Id);
+        var posting = await db.StockPostings.SingleAsync(x => x.Id == fact.StockPostingId);
+        var cost = await db.StockCostStates.SingleAsync(x => x.ItemCode == itemCode);
+        var fifoLayers = await db.StockFifoLayers
+            .Where(x => x.ItemCode == itemCode)
+            .OrderBy(x => x.ReceiptEffectiveAt)
+            .Select(x => new FifoLayerSnapshot(
+                x.ReceiptEffectiveAt,
+                x.OriginalQty,
+                x.RemainingQty,
+                x.OriginalValue,
+                x.AccumulatedAdjustment,
+                x.RemainingValue,
+                x.CurrentUnitCost,
+                x.Status,
+                x.WarehouseCode,
+                x.LotNo))
+            .ToArrayAsync();
+
+        return (new ReceiptCostSnapshot(
+            balance.StdQty,
+            balance.WhCode,
+            balance.LocCode,
+            balance.LotNo,
+            balance.IStatus,
+            history.TrxDtTime,
+            history.ToStdQty,
+            history.ToStdUom,
+            history.UnitPrice,
+            history.CostEvidenceType,
+            posting.EffectiveAt,
+            posting.BusinessDate,
+            fact.EffectiveAt,
+            fact.BusinessDate,
+            fact.BaseQty,
+            fact.UnitCost,
+            fact.CostAmount,
+            fact.BaseCostAmount,
+            fact.CostMethod,
+            fact.ValuationSource,
+            fact.ValuationStatus,
+            cost.OnHandBaseQty,
+            cost.InventoryValue,
+            cost.CurrentUnitCost,
+            cost.AverageUnitCost), fifoLayers);
+    }
+
     private IvMiscReceiptService CreateSut(
         bool canAdd = true,
         bool canAccess = true,
@@ -1131,7 +1312,10 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         bool canDelete = true,
         bool canPost = true,
         bool canRollback = true,
-        string? location = "SITE")
+        string? location = "SITE",
+        DateTime? postingBusinessDate = null,
+        DateTime? draftBusinessDate = null,
+        bool withLedger = false)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(
@@ -1166,21 +1350,39 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             .ReturnsAsync(canRollback);
 
         var postingRepo = new IvStockPostingRepository();
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(location: location);
+        IIvInventoryHistoryWriter? historyWriter = null;
+        IStockPostingCoordinator? coordinator = null;
+        if (withLedger)
+        {
+            historyWriter = new IvInventoryHistoryWriter();
+            coordinator = new StockPostingCoordinator(
+                _factory,
+                tenant,
+                new BranchStockTransactionLock(),
+                new StockPeriodGuard(),
+                new NoActiveStockFreezeGuard(),
+                new InventoryValuationService());
+        }
+
         var posting = new IvInventoryPostingService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(location: location),
+            tenant,
             access.Object,
             postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date),
+            historyWriter: historyWriter,
+            coordinator: coordinator);
 
         return new IvMiscReceiptService(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext(location: location),
+            tenant,
             access.Object,
             new RunningNumberService(),
-            new FixedCurrentDateService(FixedToday),
+            new FixedCurrentDateService(draftBusinessDate ?? FixedToday),
             new IvStockMasterRepository(_factory),
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),
@@ -1190,4 +1392,43 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             new IvUomConversionService(_factory),
             NullLogger<IvMiscReceiptService>.Instance);
     }
+
+    private sealed record ReceiptCostSnapshot(
+        decimal BalanceQty,
+        string Warehouse,
+        string Location,
+        string LotNo,
+        string ItemStatus,
+        DateTime TrxDate,
+        decimal? HistoryQty,
+        string? HistoryUom,
+        decimal? UnitPrice,
+        string? CostEvidenceType,
+        DateTime PostingEffectiveAt,
+        DateTime PostingBusinessDate,
+        DateTime FactEffectiveAt,
+        DateTime FactBusinessDate,
+        decimal BaseQty,
+        decimal UnitCost,
+        decimal CostAmount,
+        decimal BaseCostAmount,
+        string CostMethod,
+        string ValuationSource,
+        string ValuationStatus,
+        decimal OnHandBaseQty,
+        decimal InventoryValue,
+        decimal CurrentUnitCost,
+        decimal AverageUnitCost);
+
+    private sealed record FifoLayerSnapshot(
+        DateTime EffectiveAt,
+        decimal OriginalQty,
+        decimal RemainingQty,
+        decimal OriginalValue,
+        decimal AccumulatedAdjustment,
+        decimal RemainingValue,
+        decimal CurrentUnitCost,
+        string Status,
+        string? Warehouse,
+        string? LotNo);
 }

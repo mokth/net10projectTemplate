@@ -653,13 +653,16 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
                 OutputLotNo = "CHAIN",
                 SnapshotRevision = order.SnapshotRevision,
                 SnapshotHash = order.SnapshotHash,
-                PostingRequestId = token,
+                CreateRequestId = token,
+                CreateRequestFingerprint = new string('A', 64),
                 CreatedDate = new DateTime(2026, 10, 1),
                 CreatedBy = "admin",
                 RowVersion = [1],
             };
             db.ProductionPostingLinks.Add(link);
             db.ProductionOutputs.Add(output);
+            await db.SaveChangesAsync();
+            link.ProductionDocumentLineId = output.Uid;
             await db.SaveChangesAsync();
             var material = await db.ProductionWorkOrderMaterials.SingleAsync();
             db.ProductionOutputMaterials.Add(new ProductionOutputMaterial

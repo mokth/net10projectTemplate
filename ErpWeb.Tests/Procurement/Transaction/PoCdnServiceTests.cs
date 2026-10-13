@@ -248,7 +248,8 @@ public class PoCdnServiceTests : IAsyncLifetime
             common,
             new IvInventoryPostingService(
                 _factory, tenant, access.Object, new IvStockPostingRepository(),
-                common, new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance),
+                common, new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance,
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
             NullLogger<PoCdnService>.Instance);
     }
 

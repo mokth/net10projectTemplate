@@ -95,7 +95,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.ProductionOutputs.ToListAsync());
         Assert.Single(await db.ProductionPostingLinks.ToListAsync());
-        Assert.Equal(request.PostingRequestId, (await db.ProductionOutputs.SingleAsync()).PostingRequestId);
+        Assert.Equal(request.CreateRequestId, (await db.ProductionOutputs.SingleAsync()).CreateRequestId);
     }
 
     [Fact]
@@ -182,7 +182,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         {
             OutputId = created.Data!.Uid,
             WorkOrderOperationId = graph.OperationId,
-            PostingRequestId = request.PostingRequestId,
+            CreateRequestId = request.CreateRequestId,
             ProductionDate = request.ProductionDate,
             ShiftCode = request.ShiftCode,
             ActualMachineCode = request.ActualMachineCode,
@@ -255,7 +255,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
         {
             OutputId = created.Data!.Uid,
             WorkOrderOperationId = graph.OperationId + 999,
-            PostingRequestId = created.Data.PostingRequestId,
+            CreateRequestId = created.Data.CreateRequestId,
             ProductionDate = created.Data.ProductionDate,
             GoodQty = 1m,
             RowVersion = created.Data.RowVersion,
@@ -659,7 +659,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
     private static ProductionOutputCreateRequest Request(long operationId, string token) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = token,
+        CreateRequestId = token,
         ProductionDate = new DateTime(2026, 10, 1, 8, 0, 0),
         ShiftCode = "S1",
         ActualMachineCode = "MC1",
@@ -671,7 +671,7 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
     private static ProductionOutputCreateRequest ProcessRequest(long operationId, decimal goodQty, DateTime date) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = Guid.NewGuid().ToString("N"),
+        CreateRequestId = Guid.NewGuid().ToString("N"),
         ProductionDate = date,
         GoodQty = goodQty,
         OutputLotNo = "LOT-1",

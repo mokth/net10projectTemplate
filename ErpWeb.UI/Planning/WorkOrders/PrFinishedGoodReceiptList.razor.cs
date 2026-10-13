@@ -66,8 +66,7 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
     [
         new(string.Empty, "All statuses"),
         new("NEW", "New"),
-        new("POSTED", "Posted"),
-        new("REVERSED", "Reversed")
+        new("POSTED", "Posted")
     ];
 
     protected List<GridColumnData> Columns { get; } =
@@ -238,7 +237,7 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
             {
                 StatusMessage = ConfirmAction == "POST"
                     ? $"Posted {succeeded} document(s)."
-                    : $"Rolled back {succeeded} document(s).";
+                    : $"Rolled back {succeeded} document(s); each is open as NEW for editing and reposting.";
                 ConfirmVisible = false;
                 ConfirmReason = string.Empty;
                 _selectedRows.Clear();

@@ -328,7 +328,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         public ProductionOutputCreateRequest DailyRequest(long operationId, string? outputLotNo = null, decimal goodQty = 1m) => new()
         {
             WorkOrderOperationId = operationId,
-            PostingRequestId = Guid.NewGuid().ToString("N"),
+            CreateRequestId = Guid.NewGuid().ToString("N"),
             ProductionDate = BusinessTime,
             GoodQty = goodQty,
             OutputLotNo = outputLotNo ?? "LOT-DAILY-TRANSFER",

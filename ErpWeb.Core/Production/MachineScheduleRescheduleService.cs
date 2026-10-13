@@ -387,17 +387,17 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             .Where(x => affectedIds.Contains(x.WorkOrderOperationId)
                 && ((x.Status == ProductionOutputStatuses.New && x.DeletedAtUtc == null)
                     || x.Status == ProductionOutputStatuses.Posted
-                    || x.Status == ProductionOutputStatuses.Reversed))
-            .Select(x => new { x.WorkOrderOperationId, x.Status })
+                    || x.PostingId != null))
+            .Select(x => new { x.WorkOrderOperationId, x.Status, x.PostingId })
             .ToListAsync(cancellationToken);
-        foreach (var group in outputRows.GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in outputRows.GroupBy(x => x.PostingId is not null
+                     ? ProductionOutputStatuses.Posted : x.Status, StringComparer.OrdinalIgnoreCase))
         {
             var status = group.Key;
             var label = status switch
             {
                 ProductionOutputStatuses.New => "NEW Daily Production drafts",
                 ProductionOutputStatuses.Posted => "POSTED Daily Production history",
-                ProductionOutputStatuses.Reversed => "REVERSED Daily Production history",
                 _ => status
             };
             blockers.Add($"{group.Select(x => x.WorkOrderOperationId).Distinct().Count()} affected operation(s) have {label}; resolve them before rescheduling.");

@@ -107,8 +107,9 @@ internal static class ProductionLedgerTestFixture
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            new IvInventoryHistoryWriter(),
-            CreateCoordinator(factory, company, branch, valuation));
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            historyWriter: new IvInventoryHistoryWriter(),
+            coordinator: CreateCoordinator(factory, company, branch, valuation));
     }
 
     public static ProductionOutputService CreateProductionOutputService(

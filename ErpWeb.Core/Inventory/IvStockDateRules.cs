@@ -29,7 +29,8 @@ internal static class IvStockDateRules
     }
 
     public static string FutureMovementMessage(DateTime documentDate, DateTime businessDate) =>
-        $"Transaction date {documentDate:dd/MM/yyyy} is after the business date {businessDate:dd/MM/yyyy}.";
+        $"Transaction date {documentDate:dd/MM/yyyy} is after the business date {businessDate:dd/MM/yyyy}. " +
+        $"This document may remain NEW, but it cannot be posted until {documentDate:dd/MM/yyyy}.";
 
     public static string NullStockDateMessage(int balLocId) =>
         $"Stock balance Id {balLocId} has no stock date and cannot be used until it is repaired.";

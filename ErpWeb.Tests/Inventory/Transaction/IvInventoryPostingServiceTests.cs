@@ -134,6 +134,89 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
         await AssertInvariantAsync(db, bal.Id);
     }
 
+    [Theory]
+    [InlineData(IvTrxTypes.MiscellaneousReceipt, true)]
+    [InlineData(IvTrxTypes.CustomerReturn, true)]
+    [InlineData(IvTrxTypes.GoodsReceive, true)]
+    [InlineData(IvTrxTypes.MiscellaneousIssue, true)]
+    [InlineData(IvTrxTypes.Scrap, true)]
+    [InlineData(IvTrxTypes.VendorReturn, true)]
+    [InlineData(IvTrxTypes.StockAdjustment, true)]
+    [InlineData(IvTrxTypes.IssueToProduction, false)]
+    [InlineData(IvTrxTypes.SalesOut, false)]
+    public async Task Locked_core_applies_future_date_gate_only_to_normal_inventory_types(
+        string trxType,
+        bool shouldBlockFuturePost)
+    {
+        const int batchNo = 9100;
+        await using (var seed = await _factory.CreateDbContextAsync())
+        {
+            seed.IvTrxBatches.Add(new IvTrxBatch
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                BatchNo = batchNo,
+                TrxDtTime = FixedToday.AddDays(1),
+                TrxType = trxType,
+                BatchStatus = IvBatchStatuses.New,
+                RefNo = $"DATE-{trxType}"
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var posting = CreatePosting(FixedToday);
+        await using var db = await _factory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync();
+        Task<IvInventoryPostingBatchResult> postTask = trxType switch
+        {
+            IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.CustomerReturn or IvTrxTypes.GoodsReceive
+                or IvTrxTypes.ProductionStockReturn => posting.PostStockInInTransactionAsync(
+                    db, "DEMO", "HQ", "tester", batchNo, trxType),
+            IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap or IvTrxTypes.VendorReturn
+                or IvTrxTypes.IssueToProduction or IvTrxTypes.SalesOut => posting.PostStockOutInTransactionAsync(
+                    db, "DEMO", "HQ", "tester", batchNo, trxType),
+            _ => posting.PostStockAdjustmentInTransactionAsync(
+                db, "DEMO", "HQ", "tester", batchNo)
+        };
+
+        var result = await postTask;
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            shouldBlockFuturePost,
+            result.ErrorMessage?.Contains("cannot be posted until", StringComparison.OrdinalIgnoreCase));
+        await tx.RollbackAsync();
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var batch = await verify.IvTrxBatches.SingleAsync(x => x.BatchNo == batchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Null(batch.PostedDate);
+        Assert.Null(batch.PostedBy);
+        Assert.Equal(0, batch.PostedCount);
+        Assert.Null(batch.PostingOperationId);
+        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+        Assert.Empty(await verify.StockPostings.ToListAsync());
+        Assert.Empty(await verify.StockValuationFacts.ToListAsync());
+        Assert.Empty(await verify.StockFifoLayers.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(IvTrxTypes.MiscellaneousReceipt, true)]
+    [InlineData(IvTrxTypes.CustomerReturn, true)]
+    [InlineData(IvTrxTypes.GoodsReceive, true)]
+    [InlineData(IvTrxTypes.NonStockGoodsReceive, true)]
+    [InlineData(IvTrxTypes.MiscellaneousIssue, true)]
+    [InlineData(IvTrxTypes.Scrap, true)]
+    [InlineData(IvTrxTypes.VendorReturn, true)]
+    [InlineData(IvTrxTypes.StockTransfer, true)]
+    [InlineData(IvTrxTypes.StockAdjustment, true)]
+    [InlineData(IvTrxTypes.ProductionStockReturn, false)]
+    [InlineData(IvTrxTypes.IssueToProduction, false)]
+    [InlineData(IvTrxTypes.SalesOut, false)]
+    public void Business_date_gate_is_scoped_to_normal_inventory_types(string trxType, bool expected)
+    {
+        Assert.Equal(expected, IvInventoryPostingService.RequiresInventoryBusinessDateGate(trxType));
+    }
+
     [Fact]
     public async Task Post_revalidates_a_named_destination_bin_after_it_is_deactivated()
     {
@@ -307,16 +390,22 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
                     Uom = "EA",
                     IClassCode = "RAW",
                     IStatus = "ACTIVE",
+                    UnitPrice = 3m,
+                    PriceConfirmed = true,
                     ExpiryDate = FixedToday.AddDays(30),
                     Reason = "FOUND"
                 }
             ]
         };
         var save1 = await mr.SaveNewAsync(req);
-        Assert.True((await mr.PostAsync([save1.BatchNo])).Succeeded);
+        Assert.True(save1.Succeeded, save1.ErrorMessage);
+        var post1 = await mr.PostAsync([save1.BatchNo]);
+        Assert.True(post1.Succeeded, post1.ErrorMessage);
 
         var save2 = await mr.SaveNewAsync(req);
-        Assert.True((await mr.PostAsync([save2.BatchNo])).Succeeded);
+        Assert.True(save2.Succeeded, save2.ErrorMessage);
+        var post2 = await mr.PostAsync([save2.BatchNo]);
+        Assert.True(post2.Succeeded, post2.ErrorMessage);
 
         await using var db = await _factory.CreateDbContextAsync();
         var lot = Assert.Single(await db.IvLots.ToListAsync());
@@ -614,7 +703,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
         return new IvMiscReceiptService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -628,7 +717,7 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             NullLogger<IvMiscReceiptService>.Instance);
     }
 
-    private IIvInventoryPostingService CreatePosting() =>
+    private IvInventoryPostingService CreatePosting(DateTime? businessDate = null) =>
         new IvInventoryPostingService(
             _factory,
             InventoryTenantTestHelper.CreateTenantContext(),
@@ -636,7 +725,8 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(businessDate ?? DateTime.MaxValue.Date));
 
     private IIvInventoryReconciliationService CreateReconcile() =>
         new IvInventoryReconciliationService(

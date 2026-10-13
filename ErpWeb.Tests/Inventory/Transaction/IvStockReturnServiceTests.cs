@@ -248,6 +248,52 @@ public class IvStockReturnServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Save_future_dated_new_draft_and_edit_it_without_posting_stock()
+    {
+        var sut = CreateSut();
+        var request = ValidNonLotLine(FixedToday.AddDays(1));
+        var saved = await sut.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await sut.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Post_future_dated_cr_is_blocked_until_company_date_reaches_transaction_date()
+    {
+        var sut = CreateSut(postingBusinessDate: FixedToday);
+        var saved = await sut.SaveNewAsync(ValidNonLotLine(FixedToday.AddDays(1)));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("cannot be posted until", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Null(batch.PostedDate);
+        Assert.Null(batch.PostedBy);
+        Assert.Equal(0, batch.PostedCount);
+        Assert.Null(batch.PostingOperationId);
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
     public async Task Save_writes_NEW_CR_staging_without_lot_or_balance()
     {
         var sut = CreateSut();
@@ -572,7 +618,7 @@ public class IvStockReturnServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Save_rejects_backdated_trx_with_expiry_before_app_today()
+    public async Task Save_accepts_backdated_trx_when_expiry_is_after_transaction_date()
     {
         var sut = CreateSut();
         var req = ValidLotLineRequest();
@@ -582,8 +628,22 @@ public class IvStockReturnServiceTests : IAsyncLifetime
             TrxDate = new DateTime(2026, 8, 20),
             Lines = [req]
         });
+        Assert.True(result.Succeeded, result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Save_rejects_expiry_before_future_transaction_date()
+    {
+        var req = ValidLotLineRequest();
+        req.ExpiryDate = FixedToday;
+        var result = await CreateSut().SaveNewAsync(new IvStockReturnSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(1),
+            Lines = [req]
+        });
+
         Assert.False(result.Succeeded);
-        Assert.Contains("expiry", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("transaction date", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -938,7 +998,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
         bool canDelete = true,
         bool canPost = true,
         bool canRollback = true,
-        string? location = "SITE")
+        string? location = "SITE",
+        DateTime? postingBusinessDate = null)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(
@@ -980,7 +1041,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
             postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date));
 
         return new IvStockReturnService(
             _factory,

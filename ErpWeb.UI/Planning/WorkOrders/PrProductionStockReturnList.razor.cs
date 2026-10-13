@@ -23,7 +23,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     protected ProductionStockReturnGridDataSource DataSource = default!;
     protected string ConfirmCopy => ConfirmAction == "ROLLBACK" ? $"Roll back {_selected.Count} return(s)? Inventory and Production effects will be reversed." : $"Post {_selected.Count} return(s)? Unused material will move back to its exact source Inventory balances.";
     protected bool HasActiveFilters => !string.IsNullOrWhiteSpace(SearchText) || !string.IsNullOrWhiteSpace(StatusFilter);
-    protected IReadOnlyList<StatusChoice> Statuses { get; } = [new("", "All statuses"), new("NEW", "New"), new("POSTED", "Posted"), new("REVERSED", "Reversed")];
+    protected IReadOnlyList<StatusChoice> Statuses { get; } = [new("", "All statuses"), new("NEW", "New"), new("POSTED", "Posted")];
     protected List<GridColumnData> Columns { get; } = [
         new() { Caption="Batch", FieldName=nameof(ProductionStockReturnSummary.BatchNo), VisibleIndex=1, Size=GridColumnSize.DocumentNo },
         new() { Caption="Date", FieldName=nameof(ProductionStockReturnSummary.EffectiveDate), DataType="date", DisplayFormat="dd MMM yyyy", VisibleIndex=2, Size=GridColumnSize.Date },
@@ -89,7 +89,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
         Busy=true; ErrorMessage=null;
         try { foreach(var row in _selected.ToArray()) { var key=(row.Id,ConfirmAction); if(!_requests.TryGetValue(key,out var req)) _requests[key]=req=new(row.Id,row.RowVersion,Guid.NewGuid(),ConfirmAction=="ROLLBACK"?RollbackReason.Trim():null);
                 var result=ConfirmAction=="POST"?await Returns.PostAsync(req):await Returns.RollbackAsync(req); if(!result.Succeeded) throw new InvalidOperationException(result.Message); _requests.Remove(key); }
-            ConfirmVisible=false; StatusMessage=$"{ConfirmAction} completed for {_selected.Count} return(s)."; _selected.Clear(); await ReloadAsync(); }
+            ConfirmVisible=false; StatusMessage=ConfirmAction=="ROLLBACK"?$"Rolled back {_selected.Count} return(s); each is open as NEW for editing and reposting.":$"POST completed for {_selected.Count} return(s)."; _selected.Clear(); await ReloadAsync(); }
         catch(Exception ex) { ErrorMessage=ex.Message; } finally { Busy=false; }
     }
     private void RebuildButtons() { Buttons=[new(){Text="NEW",IConClass="fas fa-plus",Style="primary",Enabled=CanAdd},new(){Text="POST",IConClass="fas fa-check",Style="success",Enabled=CanPost},new(){Text="ROLLBACK",IConClass="fa-solid fa-rotate-left",Style="warning",Enabled=CanRollback}]; }

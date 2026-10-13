@@ -974,6 +974,7 @@ public sealed class SaCdnService : ISaCdnService
             return SaCdnOperationResult.Fail($"Select at most {SaCdnLimits.MaxPostSelection} documents.");
         }
 
+        var businessDate = _dates.Today.Date;
         var results = new List<SaCdnPostingItemResult>();
         var stop = false;
         foreach (var item in keyed)
@@ -986,7 +987,8 @@ public sealed class SaCdnService : ISaCdnService
 
             try
             {
-                var one = await PostOneAsync(context, item.DocNo, item.RowVersion, cancellationToken);
+                var one = await PostOneAsync(
+                    context, item.DocNo, item.RowVersion, businessDate, cancellationToken);
                 results.Add(one);
                 if (!one.Succeeded)
                 {
@@ -1398,6 +1400,7 @@ public sealed class SaCdnService : ISaCdnService
         UserContext context,
         string docNo,
         byte[]? expectedRowVersion,
+        DateTime businessDate,
         CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -1457,6 +1460,14 @@ public sealed class SaCdnService : ISaCdnService
                         "Document was changed by another user.");
                 }
                 db.Entry(cdn).Property(x => x.RowVersion).OriginalValue = expectedRowVersion;
+            }
+
+            if (TransactionPostingDateGuard.FutureDateError(
+                    cdn.DocDate,
+                    businessDate) is string futureDateError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaCdnPostingItemResult.Failed(docNo, futureDateError);
             }
 
             // For CN with InvNo: re-check remaining under invoice lock

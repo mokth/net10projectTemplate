@@ -511,11 +511,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var trxType = NormalizeTrxType(request.TrxType);
-        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
-        if (movementDateError is not null)
-        {
-            return IvGoodsReceiptOperationResult.Fail(movementDateError);
-        }
+        var trxDate = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvGoodsReceiptOperationResult.Fail(periodGuard);
@@ -613,11 +609,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         }
 
         var trxType = NormalizeTrxType(request.TrxType);
-        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
-        if (movementDateError is not null)
-        {
-            return IvGoodsReceiptOperationResult.Fail(movementDateError);
-        }
+        var trxDate = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvGoodsReceiptOperationResult.Fail(periodGuard);

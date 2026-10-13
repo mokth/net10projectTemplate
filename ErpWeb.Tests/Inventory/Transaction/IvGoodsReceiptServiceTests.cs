@@ -142,6 +142,113 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SaveNew_future_dated_gr_and_edit_keep_po_and_stock_unposted()
+    {
+        var po = await CreatePoAsync(qty: 10m);
+        var sut = CreateGrSut();
+        var request = GrRequest(po, recvQty: 4m);
+        request.TrxDate = FixedToday.AddDays(1);
+
+        var saved = await sut.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await sut.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        var detail = await db.PoOrderDetails.SingleAsync(x => x.PoNo == po.PoNo);
+        Assert.Equal(0m, detail.RecvQty);
+        Assert.Equal(10m, detail.BalanceQty);
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Post_future_dated_gr_is_blocked_and_po_quantity_stays_unposted()
+    {
+        var po = await CreatePoAsync(qty: 10m);
+        var sut = CreateGrSut(postingToday: FixedToday);
+        var request = GrRequest(po, recvQty: 4m);
+        request.TrxDate = FixedToday.AddDays(1);
+        var saved = await sut.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await sut.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("cannot be posted until", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Null(batch.PostedDate);
+        Assert.Equal(0, await db.PoOrderDetails.Where(x => x.PoNo == po.PoNo).Select(x => x.RecvQty).SingleAsync());
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+
+        var postOnDate = await CreateGrSut(postingToday: FixedToday.AddDays(2)).PostAsync([saved.BatchNo]);
+        Assert.True(postOnDate.Succeeded, postOnDate.ErrorMessage);
+        await using var postedDb = await _factory.CreateDbContextAsync();
+        Assert.Equal(4m, await postedDb.PoOrderDetails.Where(x => x.PoNo == po.PoNo).Select(x => x.RecvQty).SingleAsync());
+        Assert.Equal(IvBatchStatuses.Posted,
+            (await postedDb.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo)).BatchStatus);
+        Assert.Single(await postedDb.IvTrxHistories.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Save_and_post_future_dated_ng_keeps_po_unposted_until_effective_date()
+    {
+        var po = await CreatePoAsync(qty: 10m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.PoOrders.SingleAsync(x => x.PoNo == po.PoNo);
+            var line = await db.PoOrderDetails.SingleAsync(x => x.PoNo == po.PoNo);
+            order.OneTime = true;
+            line.OneTime = true;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateGrSut(postingToday: FixedToday);
+        var request = GrRequest(po, recvQty: 4m);
+        request.TrxType = IvTrxTypes.NonStockGoodsReceive;
+        request.TrxDate = FixedToday.AddDays(1);
+        var saved = await sut.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await sut.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        var post = await sut.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("cannot be posted until", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var batch = await verify.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Null(batch.PostedDate);
+        Assert.Equal(0, await verify.PoOrderDetails.Where(x => x.PoNo == po.PoNo).Select(x => x.RecvQty).SingleAsync());
+        Assert.Empty(await verify.IvTrxHistories.ToListAsync());
+        Assert.Empty(await verify.StockPostings.ToListAsync());
+        Assert.Empty(await verify.StockValuationFacts.ToListAsync());
+        Assert.Empty(await verify.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
     public async Task Post_updates_RecvQty_and_status()
     {
         var po = await CreatePoAsync(qty: 10m);
@@ -1040,7 +1147,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             NullLogger<PoOrderService>.Instance);
     }
 
-    private IvGoodsReceiptService CreateGrSut(bool withLedger = false)
+    private IvGoodsReceiptService CreateGrSut(bool withLedger = false, DateTime? postingToday = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
         var access = GrAccess();
@@ -1067,8 +1174,9 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            historyWriter,
-            coordinator);
+            currentDate: new FixedCurrentDateService(postingToday ?? DateTime.MaxValue.Date),
+            historyWriter: historyWriter,
+            coordinator: coordinator);
 
         return new IvGoodsReceiptService(
             _factory,

@@ -8,6 +8,7 @@ public class ProductionOutputMaterial
     public string BranchCode { get; set; } = string.Empty;
     public long ProductionOutputId { get; set; }
     public ProductionOutput? ProductionOutput { get; set; }
+    public int DocumentRevision { get; set; } = 1;
 
     public long? WorkOrderMaterialId { get; set; }
     public ProductionWorkOrderMaterial? WorkOrderMaterial { get; set; }

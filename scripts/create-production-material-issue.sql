@@ -63,7 +63,7 @@ BEGIN
         CONSTRAINT CK_PrMaterialMovement_Conversion CHECK (ConversionFactorToBase > 0),
         CONSTRAINT CK_PrMaterialMovement_Cost CHECK (UnitCost >= 0 AND TotalCost >= 0),
         CONSTRAINT CK_PrMaterialMovement_Type CHECK
-            (MovementType IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'CONSUME', N'ADJUST')),
+            (MovementType IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'RETURN_REVERSAL', N'CONSUME', N'CONSUME_REVERSAL', N'ADJUST')),
         CONSTRAINT FK_PrMaterialMovement_PrWorkOrder
             FOREIGN KEY (WorkOrderID) REFERENCES dbo.PrWorkOrder (UID),
         CONSTRAINT FK_PrMaterialMovement_PrWorkOrderMaterial
@@ -126,6 +126,9 @@ IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotHash') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD SnapshotHash varchar(64) NULL;
 IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'ProductionQtyThisIssue') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD ProductionQtyThisIssue decimal(18,4) NULL;
+IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionPostingLink ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1) WITH VALUES;
 GO
 
 IF OBJECT_ID(N'dbo.PrMaterialIssueLine', N'U') IS NULL
@@ -156,8 +159,10 @@ BEGIN
 END;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatch')
-    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_MaterialIssueBatch
-        ON dbo.PrProductionPostingLink(CompanyCode, BranchCode, CommandType, InventoryBatchNo)
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatch')
+    DROP INDEX UQ_PrProductionPostingLink_MaterialIssueBatch ON dbo.PrProductionPostingLink;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatchRevision')
+    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_MaterialIssueBatchRevision
+        ON dbo.PrProductionPostingLink(CompanyCode, BranchCode, CommandType, InventoryBatchNo, DocumentRevision)
         WHERE InventoryBatchNo IS NOT NULL AND CommandType = N'MATERIAL_ISSUE_POST';
 GO

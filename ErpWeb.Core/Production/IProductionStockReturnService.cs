@@ -14,7 +14,6 @@ public interface IProductionStockReturnService
     Task<IvMasterOperationResult<bool>> DeleteAsync(int id, byte[] expectedVersion, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockReturnDocument>> PostAsync(ProductionStockReturnCommand request, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionStockReturnDocument>> RollbackAsync(ProductionStockReturnCommand request, CancellationToken ct = default);
-    Task<IvMasterOperationResult<ProductionStockReturnDocument>> CreateCorrectionAsync(int id, CancellationToken ct = default);
 }
 
 public sealed class ProductionStockReturnQuery

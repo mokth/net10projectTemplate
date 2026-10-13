@@ -64,7 +64,7 @@ IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_PrMaterialMovem
     ALTER TABLE dbo.PrMaterialMovement DROP CONSTRAINT CK_PrMaterialMovement_Type;
 GO
 ALTER TABLE dbo.PrMaterialMovement WITH CHECK ADD CONSTRAINT CK_PrMaterialMovement_Type
-    CHECK ([MovementType] IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'CONSUME', N'CONSUME_REVERSAL', N'ADJUST'));
+    CHECK ([MovementType] IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'RETURN_REVERSAL', N'CONSUME', N'CONSUME_REVERSAL', N'ADJUST'));
 GO
 
 IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UQ_PrMaterialMovement_PostingLine' AND object_id = OBJECT_ID(N'dbo.PrMaterialMovement'))
@@ -88,6 +88,7 @@ BEGIN
         BranchCode nvarchar(5) NOT NULL,
         DocumentNo nvarchar(30) NOT NULL,
         Status nvarchar(20) NOT NULL,
+        DocumentRevision int NOT NULL CONSTRAINT DF_PrProductionOutput_DocumentRevision DEFAULT (1),
         WipConsumptionPolicy nvarchar(30) NOT NULL CONSTRAINT DF_PrProductionOutput_WipConsumptionPolicy DEFAULT (N'STRICT'),
         WorkOrderID bigint NOT NULL,
         RouteStepID bigint NOT NULL,
@@ -107,7 +108,11 @@ BEGIN
         OutputLotNo nvarchar(50) NOT NULL,
         SnapshotRevision int NOT NULL,
         SnapshotHash nvarchar(64) NOT NULL,
-        PostingRequestId nvarchar(64) NOT NULL,
+        CreateRequestId nvarchar(64) NOT NULL,
+        CreateRequestFingerprint varchar(64) NOT NULL,
+        PostingId bigint NULL,
+        ReversalPostingId bigint NULL,
+        ReversalReason nvarchar(500) NULL,
         PostedDate datetime2 NULL,
         PostedBy nvarchar(10) NULL,
         ReversedDate datetime2 NULL,
@@ -118,14 +123,158 @@ BEGIN
         ModifiedBy nvarchar(10) NULL,
         RowVersion rowversion NOT NULL,
         CONSTRAINT FK_PrProductionOutput_WorkOrder FOREIGN KEY (WorkOrderID) REFERENCES dbo.PrWorkOrder (UID),
-        CONSTRAINT CK_PrProductionOutput_Status CHECK ([Status] IN (N'NEW', N'POSTED', N'REVERSED')),
+        CONSTRAINT FK_PrProductionOutput_StockPosting_PostingId FOREIGN KEY (PostingId) REFERENCES dbo.StockPosting (Id),
+        CONSTRAINT FK_PrProductionOutput_StockPosting_ReversalPostingId FOREIGN KEY (ReversalPostingId) REFERENCES dbo.StockPosting (Id),
+        CONSTRAINT CK_PrProductionOutput_Status CHECK ([Status] IN (N'NEW', N'POSTED')),
+        CONSTRAINT CK_PrProductionOutput_DocumentRevision CHECK ([DocumentRevision] > 0),
         CONSTRAINT CK_PrProductionOutput_WipConsumptionPolicy CHECK ([WipConsumptionPolicy] IN (N'STRICT', N'SHARED_BOM_WIP')),
         CONSTRAINT CK_PrProductionOutput_Qty CHECK ([GoodQty] >= 0 AND [ScrapQty] >= 0 AND [RejectQty] >= 0 AND [HoldQty] >= 0)
     );
-    CREATE UNIQUE INDEX UQ_PrProductionOutput_DocumentNo ON dbo.PrProductionOutput (CompanyCode, BranchCode, DocumentNo);
-    CREATE UNIQUE INDEX UQ_PrProductionOutput_PostingRequest ON dbo.PrProductionOutput (PostingRequestId);
-    CREATE INDEX IX_PrProductionOutput_WorkOrder_Date ON dbo.PrProductionOutput (WorkOrderID, ProductionDate);
 END;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.check_constraints
+       WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput')
+         AND name = N'CK_PrProductionOutput_Status'
+         AND is_disabled = 0 AND is_not_trusted = 0
+         AND CHARINDEX(N'NEW', definition) > 0
+         AND CHARINDEX(N'POSTED', definition) > 0
+         AND CHARINDEX(N'REVERSED', definition) = 0)
+BEGIN
+    IF EXISTS (SELECT 1 FROM sys.check_constraints
+               WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput')
+                 AND name = N'CK_PrProductionOutput_Status')
+        ALTER TABLE dbo.PrProductionOutput DROP CONSTRAINT CK_PrProductionOutput_Status;
+
+    ALTER TABLE dbo.PrProductionOutput WITH CHECK
+        ADD CONSTRAINT CK_PrProductionOutput_Status CHECK ([Status] IN (N'NEW', N'POSTED'));
+END;
+GO
+
+/* Upgrade an existing Daily Production table before generation-scoped posting/index work. */
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrProductionOutput
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrProductionOutput_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.check_constraints
+       WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput')
+         AND name = N'CK_PrProductionOutput_DocumentRevision')
+BEGIN
+    ALTER TABLE dbo.PrProductionOutput WITH CHECK
+        ADD CONSTRAINT CK_PrProductionOutput_DocumentRevision CHECK ([DocumentRevision] > 0);
+END;
+GO
+
+/* Upgrade older Daily Production tables with stable create-request identity. */
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'CreateRequestId') IS NULL
+    ALTER TABLE dbo.PrProductionOutput ADD CreateRequestId nvarchar(64) NULL;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'CreateRequestFingerprint') IS NULL
+    ALTER TABLE dbo.PrProductionOutput ADD CreateRequestFingerprint varchar(64) NULL;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+BEGIN
+    UPDATE dbo.PrProductionOutput
+       SET CreateRequestId = COALESCE(CreateRequestId, LOWER(REPLACE(CONVERT(varchar(36), NEWID()), '-', ''))),
+           CreateRequestFingerprint = COALESCE(
+               CreateRequestFingerprint,
+               CONVERT(varchar(64), HASHBYTES('SHA2_256', CONCAT('LEGACY|', CONVERT(varchar(20), UID), '|', DocumentNo)), 2))
+     WHERE CreateRequestId IS NULL OR CreateRequestFingerprint IS NULL;
+END;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'CreateRequestId' AND is_nullable = 1)
+    ALTER TABLE dbo.PrProductionOutput ALTER COLUMN CreateRequestId nvarchar(64) NOT NULL;
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'CreateRequestFingerprint' AND is_nullable = 1)
+    ALTER TABLE dbo.PrProductionOutput ALTER COLUMN CreateRequestFingerprint varchar(64) NOT NULL;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'PostingId') IS NULL
+    ALTER TABLE dbo.PrProductionOutput ADD PostingId bigint NULL;
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionOutput', N'ReversalPostingId') IS NULL
+    ALTER TABLE dbo.PrProductionOutput ADD ReversalPostingId bigint NULL;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionOutput', N'U') IS NOT NULL
+   AND EXISTS (
+       SELECT 1
+       FROM dbo.PrProductionOutput o
+       OUTER APPLY (
+           SELECT COUNT_BIG(*) AS MatchCount
+           FROM dbo.StockPosting p
+           WHERE p.CompanyCode = o.CompanyCode
+             AND p.BranchCode = o.BranchCode
+             AND p.SourceModule = N'PRODUCTION'
+             AND p.SourceDocumentType = N'PRODUCTION_OUTPUT'
+             AND p.SourceDocumentId = CONVERT(nvarchar(64), o.UID)
+             AND p.DocumentRevision = o.DocumentRevision
+             AND p.PostingRole = N'PRIMARY') posting
+       WHERE o.Status = N'POSTED' AND o.PostingId IS NULL AND posting.MatchCount <> 1)
+    THROW 51101, 'Daily Production upgrade failed: a POSTED output does not have exactly one matching primary StockPosting.', 1;
+GO
+
+UPDATE o
+   SET PostingId = p.Id
+FROM dbo.PrProductionOutput o
+JOIN dbo.StockPosting p
+  ON p.CompanyCode = o.CompanyCode
+ AND p.BranchCode = o.BranchCode
+ AND p.SourceModule = N'PRODUCTION'
+ AND p.SourceDocumentType = N'PRODUCTION_OUTPUT'
+ AND p.SourceDocumentId = CONVERT(nvarchar(64), o.UID)
+ AND p.DocumentRevision = o.DocumentRevision
+ AND p.PostingRole = N'PRIMARY'
+WHERE o.Status = N'POSTED' AND o.PostingId IS NULL;
+GO
+
+IF OBJECT_ID(N'dbo.PrProductionPostingLink', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrProductionPostingLink
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'FK_PrProductionOutput_StockPosting_PostingId')
+    ALTER TABLE dbo.PrProductionOutput WITH CHECK ADD CONSTRAINT FK_PrProductionOutput_StockPosting_PostingId FOREIGN KEY (PostingId) REFERENCES dbo.StockPosting (Id);
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'FK_PrProductionOutput_StockPosting_ReversalPostingId')
+    ALTER TABLE dbo.PrProductionOutput WITH CHECK ADD CONSTRAINT FK_PrProductionOutput_StockPosting_ReversalPostingId FOREIGN KEY (ReversalPostingId) REFERENCES dbo.StockPosting (Id);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'UQ_PrProductionOutput_DocumentNo')
+    CREATE UNIQUE INDEX UQ_PrProductionOutput_DocumentNo ON dbo.PrProductionOutput (CompanyCode, BranchCode, DocumentNo);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'UQ_PrProductionOutput_CreateRequest')
+    CREATE UNIQUE INDEX UQ_PrProductionOutput_CreateRequest ON dbo.PrProductionOutput (CompanyCode, BranchCode, CreateRequestId);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'IX_PrProductionOutput_PostingId')
+    CREATE UNIQUE INDEX IX_PrProductionOutput_PostingId ON dbo.PrProductionOutput (PostingId) WHERE PostingId IS NOT NULL;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'IX_PrProductionOutput_ReversalPostingId')
+    CREATE UNIQUE INDEX IX_PrProductionOutput_ReversalPostingId ON dbo.PrProductionOutput (ReversalPostingId) WHERE ReversalPostingId IS NOT NULL;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionOutput') AND name = N'IX_PrProductionOutput_WorkOrder_Date')
+    CREATE INDEX IX_PrProductionOutput_WorkOrder_Date ON dbo.PrProductionOutput (WorkOrderID, ProductionDate);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_OutputGeneration')
+    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_OutputGeneration
+        ON dbo.PrProductionPostingLink (CompanyCode, BranchCode, CommandType, ProductionDocumentLineID, DocumentRevision)
+        WHERE ProductionDocumentLineID IS NOT NULL AND CommandType = N'OUTPUT_POST';
 GO
 
 /* Upgrade an existing Daily Production table. Existing and historical rows remain STRICT. */

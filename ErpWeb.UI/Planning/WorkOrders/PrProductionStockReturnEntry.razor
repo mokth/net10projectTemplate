@@ -105,14 +105,6 @@
                               Click="BeginDelete"
                               Enabled="@(!Busy)" />
                 }
-                @if (CanCorrection)
-                {
-                    <DxButton Text="CREATE CORRECTION"
-                              IconCssClass="fa-solid fa-copy"
-                              RenderStyle="ButtonRenderStyle.Secondary"
-                              Click="CreateCorrectionAsync"
-                              Enabled="@(!Busy)" />
-                }
             </div>
         </section>
 

@@ -259,7 +259,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
                         return;
                     }
 
-                    StatusMessage = $"Rolled back {succeeded} issue(s). Open each NEW draft to correct and re-post.";
+                    StatusMessage = $"Rolled back {succeeded} issue(s). Each NEW draft is ready for editing and reposting.";
                     await ReloadAsync();
                 }
                 else
@@ -497,7 +497,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
 
         ConfirmAction = "ROLLBACK";
         ConfirmReason = string.Empty;
-        ConfirmMessage = $"Roll back {_selectedRows.Count} selected issue(s)? Stock will be restored and the draft reopened for correction.";
+        ConfirmMessage = $"Roll back {_selectedRows.Count} selected issue(s)? Stock will be restored and the document reopened as NEW.";
         ConfirmVisible = true;
         return Task.CompletedTask;
     }

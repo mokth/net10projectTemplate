@@ -48,7 +48,8 @@ public sealed partial class ProductionMaterialIssueService
         {
             var savedLink = await identityDb.ProductionPostingLinks.SingleAsync(x => x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
-                && x.InventoryBatchNo == saved.Data.BatchNo, cancellationToken);
+                && x.InventoryBatchNo == saved.Data.BatchNo
+                && x.Status == ProductionPostingLinkStatuses.Draft, cancellationToken);
             savedLink.PostingRequestId = request.PostingRequestId;
             await identityDb.SaveChangesAsync(cancellationToken);
         }
@@ -59,7 +60,8 @@ public sealed partial class ProductionMaterialIssueService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var link = await db.ProductionPostingLinks.AsNoTracking().SingleAsync(x => x.CompanyCode == scope.CompanyCode
             && x.BranchCode == scope.BranchCode && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
-            && x.InventoryBatchNo == saved.Data.BatchNo, cancellationToken);
+            && x.InventoryBatchNo == saved.Data.BatchNo
+            && x.PostingRequestId == request.PostingRequestId, cancellationToken);
         return IvMasterOperationResult<ProductionMaterialIssuePostResult>.Ok(await BuildResultAsync(db, link, request.WorkOrderNo, cancellationToken));
     }
 

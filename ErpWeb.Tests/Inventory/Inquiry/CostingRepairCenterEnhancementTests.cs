@@ -370,7 +370,8 @@ public sealed partial class CostingDiagnosticCenterTests
                 CompanyCode = "DEMO", BranchCode = "HQ", DocumentNo = "DP-1", Status = "POSTED",
                 WorkOrderId = 1, RouteStepId = 1, WorkOrderOperationId = 1, ProductionDate = new DateTime(2026, 10, 2),
                 OutputUom = "EA", OutputItemCode = "ITEM-1", OutputLotNo = "L1", SnapshotRevision = 1,
-                SnapshotHash = new string('E', 64), PostingRequestId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                SnapshotHash = new string('E', 64), CreateRequestId = Guid.NewGuid().ToString("N"),
+                CreateRequestFingerprint = new string('B', 64),
                 CreatedDate = DateTime.UtcNow, CreatedBy = "tester", RowVersion = [1]
             };
             db.ProductionOutputs.Add(output);
@@ -416,7 +417,8 @@ public sealed partial class CostingDiagnosticCenterTests
         var output = new ProductionOutput
         {
             Uid = 5, DocumentNo = "DP-9", SnapshotRevision = 1,
-            PostingRequestId = "cccccccccccccccccccccccccccccccc"
+            CreateRequestId = "cccccccccccccccccccccccccccccccc",
+            CreateRequestFingerprint = new string('C', 64)
         };
         var command = ProductionOutputService.BuildOutputPostingCommand(output, false, new DateTime(2026, 10, 2), null, null, 77);
         Assert.Equal(77, command.ProductionPostingLinkId);

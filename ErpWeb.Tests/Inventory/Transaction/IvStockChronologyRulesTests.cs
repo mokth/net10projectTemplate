@@ -59,4 +59,15 @@ public sealed class IvStockMovementRulesTests
         Assert.Equal(new DateTime(2026, 10, 6), future);
         Assert.False(string.IsNullOrEmpty(futureError));
     }
+
+    [Fact]
+    public void ResolveDraftMovementDate_defaults_and_preserves_future_dates()
+    {
+        var business = new DateTime(2026, 10, 13);
+
+        Assert.Equal(business, IvStockMovementRules.ResolveDraftMovementDate(default, business));
+        Assert.Equal(new DateTime(2026, 10, 12), IvStockMovementRules.ResolveDraftMovementDate(new DateTime(2026, 10, 12, 18, 30, 0), business));
+        Assert.Equal(business, IvStockMovementRules.ResolveDraftMovementDate(business, business));
+        Assert.Equal(new DateTime(2026, 10, 14), IvStockMovementRules.ResolveDraftMovementDate(new DateTime(2026, 10, 14, 23, 59, 0), business));
+    }
 }

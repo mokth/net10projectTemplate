@@ -1327,6 +1327,7 @@ public sealed class SaDoService : ISaDoService
             return SaDoOperationResult.Fail($"Select at most {SaDoLimits.MaxPostSelection} delivery orders.");
         }
 
+        var businessDate = _dates.Today.Date;
         var results = new List<SaDoPostingItemResult>();
         var stop = false;
         foreach (var item in keyed)
@@ -1339,7 +1340,8 @@ public sealed class SaDoService : ISaDoService
 
             try
             {
-                var one = await PostOneAsync(context, item.DoNo, item.RowVersion, cancellationToken);
+                var one = await PostOneAsync(
+                    context, item.DoNo, item.RowVersion, businessDate, cancellationToken);
                 results.Add(one);
                 if (!one.Succeeded)
                 {
@@ -1647,6 +1649,7 @@ public sealed class SaDoService : ISaDoService
         UserContext context,
         string doNo,
         byte[]? expectedRowVersion,
+        DateTime businessDate,
         CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -1688,6 +1691,14 @@ public sealed class SaDoService : ISaDoService
                         "Delivery order was changed by another user.");
                 }
                 db.Entry(deliveryOrder).Property(x => x.RowVersion).OriginalValue = expectedRowVersion;
+            }
+
+            if (TransactionPostingDateGuard.FutureDateError(
+                    deliveryOrder.DoDate,
+                    businessDate) is string futureDateError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoPostingItemResult.Failed(doNo, futureDateError);
             }
 
             await db.Entry(deliveryOrder).Collection(x => x.Details).LoadAsync(cancellationToken);

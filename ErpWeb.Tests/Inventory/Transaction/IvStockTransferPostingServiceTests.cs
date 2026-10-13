@@ -118,6 +118,59 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Save_future_dated_new_transfer_keeps_both_balances_and_ledger_unchanged()
+    {
+        var srcId = await SeedBalLocAsync(24m, loc: "BIN1", unitPrice: 5m, cost: 120m);
+        var tr = CreateTr();
+        var request = TransferRequest(srcId, 10m, "BIN2");
+        request.TrxDate = FixedToday.AddDays(1);
+
+        var saved = await tr.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await tr.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Equal(24m, await db.IvBalLocs.Where(x => x.Id == srcId).Select(x => x.StdQty).SingleAsync());
+        Assert.False(await db.IvBalLocs.AnyAsync(x => x.LocCode == "BIN2"));
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Post_future_dated_transfer_is_blocked_without_moving_stock()
+    {
+        var srcId = await SeedBalLocAsync(24m, loc: "BIN1", unitPrice: 5m, cost: 120m);
+        var tr = CreateTr(postingToday: FixedToday);
+        var request = TransferRequest(srcId, 10m, "BIN2");
+        request.TrxDate = FixedToday.AddDays(1);
+        var saved = await tr.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        var post = await tr.PostAsync([saved.BatchNo]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("cannot be posted until", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Null(batch.PostedDate);
+        Assert.Equal(24m, await db.IvBalLocs.Where(x => x.Id == srcId).Select(x => x.StdQty).SingleAsync());
+        Assert.False(await db.IvBalLocs.AnyAsync(x => x.LocCode == "BIN2"));
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
     public async Task Post_nets_a_balance_that_is_both_source_and_destination()
     {
         var bin1Id = await SeedBalLocAsync(20m, loc: "BIN1", seedOpeningHistory: true);
@@ -634,7 +687,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             UnitPrice = 1m
         };
 
-    private IvStockTransferService CreateTr()
+    private IvStockTransferService CreateTr(DateTime? postingToday = null)
     {
         var access = Access();
         var tenant = InventoryTenantTestHelper.CreateTenantContext();
@@ -643,7 +696,8 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(postingToday ?? DateTime.MaxValue.Date));
 
         return new IvStockTransferService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -663,7 +717,7 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private static Mock<IAccessRightService> Access()
     {

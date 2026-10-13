@@ -1612,6 +1612,105 @@ public class SaDoServiceTests : IAsyncLifetime
         Assert.True(page.ListPage.TotalCount > page.ListPage.Rows.Count);
     }
 
+    [Fact]
+    public async Task Future_stock_DO_can_be_saved_edited_and_shipped_but_post_is_side_effect_free()
+    {
+        var futureStockDate = FixedToday.AddDays(1);
+        var futureDoDate = FixedToday.AddDays(2);
+        var balId = await SeedBalLocAsync(10m, transDate: futureStockDate);
+        var sut = CreateSut();
+
+        var save = await sut.SaveNewAsync(Request(qty: 5m, price: 10m, date: futureDoDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var edit = await UpdateDocAsync(
+            sut,
+            save.DoNo!,
+            Request(qty: 5m, price: 11m, date: futureDoDate));
+        Assert.True(edit.Succeeded, edit.ErrorMessage);
+
+        var shipment = await ShipAsync(sut, save.DoNo!);
+        Assert.True(shipment.Succeeded, shipment.ErrorMessage);
+
+        var post = await sut.PostAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("Transaction date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("business date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(SaDoStatuses.New, (await db.SaDos.SingleAsync(x => x.DoNo == save.DoNo)).Status);
+        Assert.Equal(10m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.RefNo == SaDoSpRefs.ToRefNo(save.DoNo!));
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Future_non_stock_DO_is_rejected_and_becomes_postable_when_business_date_catches_up()
+    {
+        var futureDate = FixedToday.AddDays(1);
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1", date: futureDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var blocked = await sut.PostAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))]);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("Transaction date", blocked.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SaDoStatuses.New, (await sut.GetAsync(save.DoNo!)).Document!.Status);
+
+        var caughtUp = CreateSut(currentDate: new FixedCurrentDateService(futureDate));
+        var posted = await caughtUp.PostAsync([Keyed(save.DoNo!, GetRowVersion(save.DoNo!))]);
+        Assert.True(posted.Succeeded, posted.Posting.Single().ErrorMessage);
+        Assert.Equal(SaDoStatuses.Posted, (await caughtUp.GetAsync(save.DoNo!)).Document!.Status);
+    }
+
+    [Fact]
+    public async Task Future_DO_with_stale_rowversion_returns_concurrency_error_first()
+    {
+        var sut = CreateSut();
+        var futureDate = FixedToday.AddDays(1);
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1", date: futureDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var edit = await UpdateDocAsync(
+            sut,
+            save.DoNo!,
+            Request(qty: 2m, price: 10m, iCode: "SVC1", date: futureDate));
+        Assert.True(edit.Succeeded, edit.ErrorMessage);
+
+        var post = await sut.PostAsync([Keyed(save.DoNo!, save.Document!.RowVersion)]);
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaDoPostReasonCodes.Concurrency, post.Posting.Single().ReasonCode);
+        Assert.Contains("changed by another user", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Future_DO_bulk_post_preserves_stop_on_first_failure()
+    {
+        var sut = CreateSut();
+        var validFirst = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        var future = await sut.SaveNewAsync(Request(
+            qty: 1m, price: 10m, iCode: "SVC1", date: FixedToday.AddDays(1)));
+        var validLast = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(validFirst.Succeeded, validFirst.ErrorMessage);
+        Assert.True(future.Succeeded, future.ErrorMessage);
+        Assert.True(validLast.Succeeded, validLast.ErrorMessage);
+
+        var result = await sut.PostAsync([
+            Keyed(validFirst.DoNo!, GetRowVersion(validFirst.DoNo!)),
+            Keyed(future.DoNo!, GetRowVersion(future.DoNo!)),
+            Keyed(validLast.DoNo!, GetRowVersion(validLast.DoNo!))]);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Posted", result.Posting[0].Outcome);
+        Assert.StartsWith("Failed:", result.Posting[1].Outcome, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Not attempted", result.Posting[2].Outcome);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(SaDoStatuses.Posted, (await db.SaDos.SingleAsync(x => x.DoNo == validFirst.DoNo)).Status);
+        Assert.Equal(SaDoStatuses.New, (await db.SaDos.SingleAsync(x => x.DoNo == future.DoNo)).Status);
+        Assert.Equal(SaDoStatuses.New, (await db.SaDos.SingleAsync(x => x.DoNo == validLast.DoNo)).Status);
+    }
+
     // ───────────────────────────────────────────────────────
     // Helper: create a POSTED→CLOSED DO
     // ───────────────────────────────────────────────────────
@@ -1793,7 +1892,8 @@ public class SaDoServiceTests : IAsyncLifetime
         string location = "SITE",
         IDocumentNumberingService? numbering = null,
         IInventoryTenantContext? tenant = null,
-        Mock<IAccessRightService>? access = null)
+        Mock<IAccessRightService>? access = null,
+        ICurrentDateService? currentDate = null)
     {
         tenant ??= InventoryTenantTestHelper.CreateTenantContext(location: location);
         var postingRepo = new IvStockPostingRepository();
@@ -1805,7 +1905,7 @@ public class SaDoServiceTests : IAsyncLifetime
             tenant,
             accessObj,
             numbering ?? new FakeDoDocumentNumberingService(),
-            new FixedCurrentDateService(FixedToday),
+            currentDate ?? new FixedCurrentDateService(FixedToday),
             new SaDoRepository(),
             new SaCustRepository(_factory),
             new IvStockMasterRepository(_factory),
@@ -1828,7 +1928,8 @@ public class SaDoServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private static Mock<IAccessRightService> Access()
     {

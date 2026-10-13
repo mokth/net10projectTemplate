@@ -25,6 +25,16 @@ CREATE TABLE [PrFinishedGoodReceipt] (
 );
 END;
 GO
+
+IF OBJECT_ID(N'dbo.PrFinishedGoodReceipt', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrFinishedGoodReceipt', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrFinishedGoodReceipt
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrFinishedGoodReceipt_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
 IF OBJECT_ID(N'dbo.PrFinishedGoodPriceSnapshot', N'U') IS NULL
 BEGIN
 CREATE TABLE [PrFinishedGoodPriceSnapshot] (
@@ -86,6 +96,7 @@ BEGIN
 CREATE TABLE [PrFinishedGoodSource] (
     [Id] bigint NOT NULL IDENTITY,
     [BatchId] int NOT NULL,
+    [DocumentRevision] int NOT NULL CONSTRAINT [DF_PrFinishedGoodSource_DocumentRevision] DEFAULT (1),
     [DetailId] int NOT NULL,
     [ProductionBalLotId] bigint NOT NULL,
     [RequestedQty] decimal(18,4) NOT NULL,
@@ -101,6 +112,16 @@ CREATE TABLE [PrFinishedGoodSource] (
 );
 END;
 GO
+
+IF OBJECT_ID(N'dbo.PrFinishedGoodSource', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrFinishedGoodSource', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrFinishedGoodSource
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrFinishedGoodSource_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
 IF OBJECT_ID(N'dbo.PrPoolValuation', N'U') IS NULL
 BEGIN
 CREATE TABLE [PrPoolValuation] (
@@ -206,8 +227,8 @@ GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrFinishedGoodReceipt') AND name=N'IX_PrFinishedGoodReceipt_WorkOrderId')
 CREATE INDEX [IX_PrFinishedGoodReceipt_WorkOrderId] ON [PrFinishedGoodReceipt] ([WorkOrderId]);
 GO
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrFinishedGoodSource') AND name=N'IX_PrFinishedGoodSource_BatchId_ProductionBalLotId')
-CREATE INDEX [IX_PrFinishedGoodSource_BatchId_ProductionBalLotId] ON [PrFinishedGoodSource] ([BatchId], [ProductionBalLotId]);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrFinishedGoodSource') AND name=N'IX_PrFinishedGoodSource_BatchId_DocumentRevision_ProductionBalLotId')
+CREATE INDEX [IX_PrFinishedGoodSource_BatchId_DocumentRevision_ProductionBalLotId] ON [PrFinishedGoodSource] ([BatchId], [DocumentRevision], [ProductionBalLotId]);
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrFinishedGoodSource') AND name=N'IX_PrFinishedGoodSource_DetailId')
 CREATE UNIQUE INDEX [IX_PrFinishedGoodSource_DetailId] ON [PrFinishedGoodSource] ([DetailId]);

@@ -300,6 +300,33 @@ public class IvVendorReturnPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Save_future_dated_new_vendor_return_keeps_po_and_stock_unposted()
+    {
+        var balId = await SeedBalLocAsync(100m);
+        var mi = CreateMi();
+        var request = IssueRequest(balId, 30m);
+        request.TrxDate = FixedToday.AddDays(1);
+
+        var saved = await mi.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await mi.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        Assert.Equal(0m, await db.PoOrderDetails.Where(x => x.PoNo == VrPoNo).Select(x => x.ReturnQty).SingleAsync());
+        Assert.Empty(await db.IvTrxHistories.ToListAsync());
+        Assert.Empty(await db.StockPostings.ToListAsync());
+        Assert.Empty(await db.StockValuationFacts.ToListAsync());
+        Assert.Empty(await db.StockFifoLayers.ToListAsync());
+    }
+
+    [Fact]
     public async Task Line_without_po_link_rejected_at_save()
     {
         var balId = await SeedBalLocAsync(100m);
@@ -504,7 +531,7 @@ public class IvVendorReturnPostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
         return new IvVendorReturnService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -524,7 +551,7 @@ public class IvVendorReturnPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private IIvInventoryLookupService CreateLookups()
     {

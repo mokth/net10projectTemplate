@@ -1837,7 +1837,8 @@ public class SaDocApplicationTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private static Mock<IAccessRightService> Access()
     {

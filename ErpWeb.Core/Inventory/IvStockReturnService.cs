@@ -278,12 +278,15 @@ public sealed class IvStockReturnService : IIvStockReturnService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var trxDate = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
+
         var validatedResult = await ValidateLinesAsync(
             db,
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
             excludeBatchNo: 0,
+            trxDate,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -299,15 +302,6 @@ public sealed class IvStockReturnService : IIvStockReturnService
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
         var refNo = NormalizeRefNo(request.RefNo, batchNo);
-        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
-
-        if (movementDateError is not null)
-
-        {
-
-            return IvStockReturnOperationResult.Fail(movementDateError);
-
-        }
 
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
@@ -400,6 +394,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
         }
 
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        var trxDate = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
 
         var validatedResult = await ValidateLinesAsync(
             db,
@@ -407,6 +402,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
             context.CompanyCode!,
             context.BranchCode!,
             batch.BatchNo,
+            trxDate,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -415,11 +411,6 @@ public sealed class IvStockReturnService : IIvStockReturnService
 
         var now = DateTime.UtcNow;
         var userId = Truncate(context.UserId!, 10);
-        var (trxDate, movementDateError) = IvStockMovementRules.ResolveMovementDate(request.TrxDate, _dates.Today);
-        if (movementDateError is not null)
-        {
-            return IvStockReturnOperationResult.Fail(movementDateError);
-        }
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!, trxDate, cancellationToken) is string periodGuard)
         {
             return IvStockReturnOperationResult.Fail(periodGuard);
@@ -642,6 +633,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
         string companyCode,
         string branchCode,
         int excludeBatchNo,
+        DateTime trxDate,
         CancellationToken cancellationToken)
     {
         if (lines is null || lines.Count == 0)
@@ -672,6 +664,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
                 lineNo,
                 excludeBatchNo,
                 claimed,
+                trxDate,
                 cancellationToken);
             if (error.ErrorMessage is not null)
             {
@@ -733,6 +726,7 @@ public sealed class IvStockReturnService : IIvStockReturnService
         short lineNo,
         int excludeBatchNo,
         Dictionary<(string InvNo, short Line), decimal> claimed,
+        DateTime trxDate,
         CancellationToken cancellationToken)
     {
         var sourceInvNo = (line.SourceInvNo ?? string.Empty).Trim();
@@ -907,10 +901,9 @@ public sealed class IvStockReturnService : IIvStockReturnService
                 return ($"Line {lineNo}: expiry date is required for lot-controlled item '{item.ICode}'.", null);
             }
 
-            var today = _dates.Today.Date;
-            if (expiry.Value.Date < today)
+            if (expiry.Value.Date < trxDate.Date)
             {
-                return ($"Line {lineNo}: expiry date cannot be earlier than today.", null);
+                return ($"Line {lineNo}: expiry date cannot be earlier than the transaction date.", null);
             }
 
             toLotNo = lot;

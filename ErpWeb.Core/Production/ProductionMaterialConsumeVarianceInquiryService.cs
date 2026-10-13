@@ -205,6 +205,7 @@ public sealed class ProductionMaterialConsumeVarianceInquiryService : IProductio
             where fact.CompanyCode == scope.CompanyCode
                 && fact.BranchCode == scope.BranchCode
                 && !fact.IsHandoff
+                && fact.DocumentRevision == output.DocumentRevision
                 && output.Status == status
                 && (dateFrom == null || output.ProductionDate >= dateFrom)
                 && (dateToExclusive == null || output.ProductionDate < dateToExclusive)

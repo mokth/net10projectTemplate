@@ -190,7 +190,6 @@ public sealed class MachineScheduleRescheduleServiceTests
     [Theory]
     [InlineData(ProductionOutputStatuses.New, "NEW Daily Production drafts")]
     [InlineData(ProductionOutputStatuses.Posted, "POSTED Daily Production history")]
-    [InlineData(ProductionOutputStatuses.Reversed, "REVERSED Daily Production history")]
     public async Task Schedule_change_is_blocked_by_any_existing_daily_production_state(
         string outputStatus,
         string expectedBlocker)
@@ -449,7 +448,7 @@ public sealed class MachineScheduleRescheduleServiceTests
         Assert.True(created.Succeeded, created.Message);
         await using var verify = fixture.Factory.CreateDbContext();
         var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == seeded.Request.WorkOrderId);
-        var persistedOutput = await verify.ProductionOutputs.SingleAsync(x => x.PostingRequestId == createRequest.PostingRequestId);
+        var persistedOutput = await verify.ProductionOutputs.SingleAsync(x => x.CreateRequestId == createRequest.CreateRequestId);
         Assert.Equal(ProductionOutputStatuses.New, persistedOutput.Status);
         Assert.Equal(order.SnapshotHash, persistedOutput.SnapshotHash);
         Assert.Equal(order.SnapshotRevision, persistedOutput.SnapshotRevision);
@@ -584,10 +583,7 @@ public sealed class MachineScheduleRescheduleServiceTests
         Assert.Contains(committed.ErrorCode, new[] { IvMasterErrorCode.Validation, IvMasterErrorCode.Concurrency });
         if (committed.ErrorCode == IvMasterErrorCode.Validation)
         {
-            Assert.True(
-                committed.Message.Contains("POSTED Daily Production history", StringComparison.Ordinal)
-                || committed.Message.Contains("REVERSED Daily Production history", StringComparison.Ordinal),
-                committed.Message);
+            Assert.Contains("POSTED Daily Production history", committed.Message, StringComparison.Ordinal);
         }
         else
         {
@@ -596,7 +592,9 @@ public sealed class MachineScheduleRescheduleServiceTests
         await using var verify = fixture.Factory.CreateDbContext();
         var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == seeded.Request.WorkOrderId);
         var output = await verify.ProductionOutputs.SingleAsync(x => x.Uid == create.Data.Uid);
-        Assert.Equal(ProductionOutputStatuses.Reversed, output.Status);
+        Assert.Equal(ProductionOutputStatuses.New, output.Status);
+        Assert.NotNull(output.PostingId);
+        Assert.NotNull(output.ReversalPostingId);
         Assert.Equal(0, order.ScheduleRevision);
         Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), order.PlannedStartDateTime);
     }
@@ -773,7 +771,7 @@ public sealed class MachineScheduleRescheduleServiceTests
     private static ProductionOutputCreateRequest CreateDailyProductionRequest(long operationId) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = Guid.NewGuid().ToString("N"),
+        CreateRequestId = Guid.NewGuid().ToString("N"),
         ProductionDate = new DateTime(2026, 10, 1),
         GoodQty = 1m,
         OutputLotNo = "RACE-LOT"
@@ -1167,7 +1165,8 @@ public sealed class MachineScheduleRescheduleServiceTests
                 OutputLotNo = "TEST-LOT",
                 SnapshotRevision = schedule.SnapshotRevision,
                 SnapshotHash = schedule.SnapshotHash,
-                PostingRequestId = Guid.NewGuid().ToString("N"),
+                CreateRequestId = Guid.NewGuid().ToString("N"),
+                CreateRequestFingerprint = new string('A', 64),
                 CreatedDate = new DateTime(2026, 10, 1),
                 CreatedBy = "test",
                 RowVersion = [9]

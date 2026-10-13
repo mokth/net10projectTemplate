@@ -11,6 +11,8 @@ public class ProductionPostingLink
     public string BranchCode { get; set; } = string.Empty;
     public string CommandType { get; set; } = string.Empty;
     public string PostingRequestId { get; set; } = string.Empty;
+    /// <summary>The business document posting generation associated with this command.</summary>
+    public int DocumentRevision { get; set; } = 1;
     public long WorkOrderId { get; set; }
     public ProductionWorkOrder? WorkOrder { get; set; }
     public string? ProductionDocumentType { get; set; }

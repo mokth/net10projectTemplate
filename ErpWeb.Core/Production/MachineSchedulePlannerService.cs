@@ -691,10 +691,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 .Where(x => operationIdBatch.Contains(x.WorkOrderOperationId)
                     && ((x.Status == ProductionOutputStatuses.New && x.DeletedAtUtc == null)
                         || x.Status == ProductionOutputStatuses.Posted
-                        || x.Status == ProductionOutputStatuses.Reversed))
-                .Select(x => new { x.WorkOrderOperationId, x.Status })
+                        || x.PostingId != null))
+                .Select(x => new { x.WorkOrderOperationId, x.Status, x.PostingId })
                 .ToListAsync(cancellationToken);
-            outputStates.AddRange(batch.Select(x => (x.WorkOrderOperationId, x.Status)));
+            outputStates.AddRange(batch.Select(x => (x.WorkOrderOperationId,
+                x.PostingId is not null ? ProductionOutputStatuses.Posted : x.Status)));
         }
 
         var outputStatusesByOperation = outputStates
@@ -711,12 +712,6 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 job.IsLocked = true;
                 job.ExecutionStatus = "POSTED";
                 job.LockReason = "Posted Daily Production is execution history and blocks rescheduling.";
-            }
-            else if (outputStatuses?.Contains(ProductionOutputStatuses.Reversed) == true)
-            {
-                job.IsLocked = true;
-                job.ExecutionStatus = "REVERSED";
-                job.LockReason = "Reversed Daily Production remains execution history and blocks rescheduling.";
             }
             else if (outputStatuses?.Contains(ProductionOutputStatuses.New) == true)
             {

@@ -97,7 +97,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
-    public async Task Partial_receipt_replay_exact_history_reversal_and_correction()
+    public async Task Partial_receipt_reopens_same_document_and_reposts_as_new_generation()
     {
         var f = await CreateAsync(); if (f is null) return;
         var saved = await f.Service.SaveAsync(f.Draft(6)); Assert.True(saved.Succeeded, saved.Message);
@@ -137,15 +137,32 @@ public sealed class FinishedGoodReceiptSqlServerTests
         Assert.False(deniedRollback.Succeeded);
         Assert.Contains("Access denied", deniedRollback.Message, StringComparison.OrdinalIgnoreCase);
         f.CanRollbackAccess = true;
-        var reversed = await f.Service.RollbackAsync(reverseRequest); Assert.True(reversed.Succeeded, reversed.Message); Assert.Equal("REVERSED", reversed.Data!.Status);
+        var rolledBack = await f.Service.RollbackAsync(reverseRequest); Assert.True(rolledBack.Succeeded, rolledBack.Message);
+        Assert.Equal("NEW", rolledBack.Data!.Status);
+        Assert.Equal(2, rolledBack.Data.Revision);
+        Assert.Equal(posted.Data.PostingId, rolledBack.Data.PostingId);
+        Assert.NotNull(rolledBack.Data.ReversalPostingId);
         Assert.True((await f.Service.RollbackAsync(reverseRequest)).Succeeded);
         Assert.Equal(posted.Data.PostingId, (await f.Service.PostAsync(request)).Data!.PostingId);
-        var correction = await f.Service.CreateCorrectionAsync(saved.Data.Id); Assert.True(correction.Succeeded, correction.Message);
-        Assert.NotEqual(saved.Data.Id, correction.Data!.Id); Assert.Null(correction.Data.PostingId);
+
+        var repostRequest = new FinishedGoodReceiptCommand(
+            saved.Data.Id, rolledBack.Data.RowVersion, Guid.NewGuid());
+        var reposted = await f.Service.PostAsync(repostRequest);
+        Assert.True(reposted.Succeeded, reposted.Message);
+        Assert.Equal("POSTED", reposted.Data!.Status);
+        Assert.Equal(2, reposted.Data.Revision);
+        Assert.NotEqual(posted.Data.PostingId, reposted.Data.PostingId);
+        Assert.Null(reposted.Data.ReversalPostingId);
+
         await using var verify = await f.Factory.CreateDbContextAsync();
-        Assert.Equal(120, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).TotalCost);
-        Assert.Equal(0, (await verify.IvBalLocs.SingleAsync(x => x.CompanyCode == f.Company)).StdQty);
-        Assert.Empty(await verify.IvLots.Where(x => x.CompanyCode == f.Company).ToListAsync());
+        Assert.Equal(48, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).TotalCost);
+        Assert.Equal(6, (await verify.IvBalLocs.SingleAsync(x => x.CompanyCode == f.Company)).StdQty);
+        var generations = await verify.ProductionPostingLinks
+            .Where(x => x.InventoryBatchNo == saved.Data.BatchNo
+                && x.CommandType == ProductionPostingCommandTypes.FinishedGoodReceiptPost)
+            .OrderBy(x => x.DocumentRevision).ToListAsync();
+        Assert.Equal([1, 2], generations.Select(x => x.DocumentRevision));
+        Assert.All(generations, x => Assert.Equal(ProductionPostingLinkStatuses.Succeeded, x.Status));
     }
 
     [Fact]
@@ -173,9 +190,11 @@ public sealed class FinishedGoodReceiptSqlServerTests
 
         var reversed = await f.Service.RollbackAsync(new(posted.Data.Id, posted.Data.RowVersion, Guid.NewGuid(), "Trace test"));
         Assert.True(reversed.Succeeded, reversed.Message);
+        Assert.Equal("NEW", reversed.Data!.Status);
         var reversedTrace = await f.Service.GetCostTraceAsync(saved.Data.Id, sourceId);
         Assert.True(reversedTrace.Succeeded, reversedTrace.Message);
         Assert.Equal(72, reversedTrace.Data!.ExactPostedValue);
+        Assert.Equal("REVERSED", reversedTrace.Data.DocumentStatus);
         Assert.Equal(reversed.Data.ReversalPostingId, reversedTrace.Data.ReversalPostingId);
     }
 

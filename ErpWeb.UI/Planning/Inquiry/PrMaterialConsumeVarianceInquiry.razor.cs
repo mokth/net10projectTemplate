@@ -44,7 +44,6 @@ public partial class PrMaterialConsumeVarianceInquiry : PageBase
     protected IReadOnlyList<ProductionOutputChoice> StatusChoices { get; } =
     [
         new(ProductionOutputStatuses.Posted, "POSTED"),
-        new(ProductionOutputStatuses.Reversed, "REVERSED"),
     ];
 
     protected IReadOnlyList<ProductionOutputChoice> ReasonChoices { get; } =

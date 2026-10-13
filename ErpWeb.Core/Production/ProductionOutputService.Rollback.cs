@@ -62,15 +62,24 @@ public sealed partial class ProductionOutputService
                 return Fail("The Daily Production Work Order changed while rolling back; reload and retry.", IvMasterErrorCode.Concurrency);
             if (output.DeletedAtUtc is not null)
                 return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
-            if (output.Status == ProductionOutputStatuses.Reversed)
-                return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.Posted)
                 return Fail("Only POSTED Daily Production documents can be rolled back.");
+            if (output.PostingId is not long originalPostingId)
+                return Fail("The current PRIMARY posting pointer is missing.");
+
+            var generationError = await ProductionPostingGenerationGuard.ValidateRollbackTargetAsync(
+                db, originalPostingId, scope.CompanyCode, scope.BranchCode!, "PRODUCTION",
+                ProductionDocumentTypes.ProductionOutput, output.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                output.DocumentRevision, cancellationToken);
+            if (generationError is not null)
+                return Fail(generationError);
 
             var postLink = await LockOutputPostLinkAsync(
-                db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
+                db, scope.CompanyCode, scope.BranchCode!, output.Uid, output.DocumentRevision, cancellationToken);
             if (postLink is null || postLink.Status != ProductionPostingLinkStatuses.Succeeded)
                 return Fail("Original OUTPUT_POST link was not found or is not SUCCEEDED.");
+            if (postLink.DocumentRevision != output.DocumentRevision || postLink.ProductionDocumentLineId != output.Uid)
+                return Fail("Original OUTPUT_POST link does not match the current generation.");
 
             var order = await LockWorkOrderAsync(db, output.WorkOrderId, cancellationToken);
             if (order is null) return Fail("Work Order was not found.", IvMasterErrorCode.NotFound);
@@ -127,6 +136,7 @@ public sealed partial class ProductionOutputService
                 ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
                 ProductionDocumentNo = output.DocumentNo,
                 ProductionDocumentLineId = output.Uid,
+                DocumentRevision = output.DocumentRevision,
                 OriginalPostingLinkId = postLink.Uid,
                 SnapshotRevision = order.SnapshotRevision,
                 SnapshotHash = order.SnapshotHash,
@@ -138,21 +148,16 @@ public sealed partial class ProductionOutputService
             await db.SaveChangesAsync(cancellationToken);
 
             StockPostingContext? ledgerContext = null;
-            var originalPostingId = await db.ProductionBalLotMovements.AsNoTracking()
-                .Where(x => x.ProductionOutputId == output.Uid && x.PostingLinkId == postLink.Uid && x.StockPostingId != null)
-                .Select(x => x.StockPostingId)
-                .FirstOrDefaultAsync(cancellationToken);
+            var currentMaterialRows = await db.ProductionOutputMaterials.AsNoTracking()
+                .Where(x => x.ProductionOutputId == output.Uid && x.DocumentRevision == output.DocumentRevision)
+                .OrderBy(x => x.IsHandoff).ThenBy(x => x.WorkOrderMaterialId).ToListAsync(cancellationToken);
             var command = BuildOutputPostingCommand(
-                output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId, rollbackLink.Uid);
+                output, reversal: true, _clock.Now, request.PostingRequestId, originalPostingId, rollbackLink.Uid, currentMaterialRows);
             var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
             if (ledger.Error is not null)
                 return Fail(ledger.Error.Message);
-            if (!ledger.LedgerEnabled && await db.ProductionConversionCostFacts.AnyAsync(
-                    x => x.ProductionOutputId == output.Uid && x.ReversesFactId == null,
-                    cancellationToken))
-            {
-                return Fail("Rollback of absorbed conversion costing requires an active V2 stock ledger.");
-            }
+            if (!ledger.LedgerEnabled || ledger.Context is null)
+                return Fail("Daily Production rollback requires an active V2 stock ledger.");
             ledgerContext = ledger.Context;
 
             // Prefix-balance guard for PRODUCE before mutating.
@@ -164,6 +169,7 @@ public sealed partial class ProductionOutputService
                 .ToListAsync(cancellationToken);
             var originalConversionFacts = await db.ProductionConversionCostFacts
                 .Where(x => x.ProductionOutputId == output.Uid
+                    && x.StockPostingId == originalPostingId
                     && produceMovements.Select(m => m.Uid).Contains(x.ProductionMovementId)
                     && x.ReversesFactId == null)
                 .OrderBy(x => x.Id)
@@ -460,15 +466,64 @@ public sealed partial class ProductionOutputService
                 db, materials.Select(x => x.Uid).ToList(), output.Uid,
                 ProductionOutputProjectionTransition.ExcludeCurrentRollback, cancellationToken);
 
-            output.Status = ProductionOutputStatuses.Reversed;
+            output.Status = ProductionOutputStatuses.New;
+            output.PostingId = originalPostingId;
+            output.ReversalPostingId = ledgerContext.Posting.Id;
+            output.ReversalReason = Truncate(request.Reason, 500);
+            output.DocumentRevision = checked(output.DocumentRevision + 1);
             output.ReversedDate = now;
             output.ReversedBy = user;
-            postLink.Status = ProductionPostingLinkStatuses.Reversed;
-            postLink.ResultMessage = $"Reversed by {request.PostingRequestId}.";
             rollbackLink.Status = ProductionPostingLinkStatuses.Succeeded;
             rollbackLink.ResultCode = "OK";
             rollbackLink.ResultMessage = Truncate(request.Reason, 250);
             rollbackLink.CompletedDate = now;
+
+            foreach (var fact in currentMaterialRows)
+            {
+                db.ProductionOutputMaterials.Add(new ProductionOutputMaterial
+                {
+                    CompanyCode = fact.CompanyCode,
+                    BranchCode = fact.BranchCode,
+                    ProductionOutputId = output.Uid,
+                    DocumentRevision = output.DocumentRevision,
+                    WorkOrderMaterialId = fact.WorkOrderMaterialId,
+                    IsHandoff = fact.IsHandoff,
+                    HandoffFromOperationId = fact.HandoffFromOperationId,
+                    ComponentCode = fact.ComponentCode,
+                    RequiredUom = fact.RequiredUom,
+                    SupplySource = fact.SupplySource,
+                    IssueMethod = fact.IssueMethod,
+                    TolerancePercent = fact.TolerancePercent,
+                    WoBomRequiredQty = fact.WoBomRequiredQty,
+                    ConversionFactorToBase = fact.ConversionFactorToBase,
+                    BaseUom = fact.BaseUom,
+                    StandardQty = fact.StandardQty,
+                    ConsumeQty = fact.ConsumeQty,
+                    VarianceQty = fact.VarianceQty,
+                    VarianceReasonCode = fact.VarianceReasonCode,
+                    VarianceReasonText = fact.VarianceReasonText,
+                    CreatedDate = now,
+                    CreatedBy = user,
+                });
+            }
+
+            db.ProductionPostingLinks.Add(new ProductionPostingLink
+            {
+                CompanyCode = scope.CompanyCode,
+                BranchCode = scope.BranchCode!,
+                CommandType = ProductionPostingCommandTypes.OutputPost,
+                PostingRequestId = Guid.NewGuid().ToString("N"),
+                DocumentRevision = output.DocumentRevision,
+                WorkOrderId = output.WorkOrderId,
+                ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+                ProductionDocumentNo = output.DocumentNo,
+                ProductionDocumentLineId = output.Uid,
+                SnapshotRevision = output.SnapshotRevision,
+                SnapshotHash = output.SnapshotHash,
+                Status = ProductionPostingLinkStatuses.Draft,
+                CreatedDate = now,
+                CreatedBy = user,
+            });
 
             db.ProductionAuditEvents.Add(new ProductionAuditEvent
             {

@@ -99,7 +99,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         {
             OutputId = created.Data.Uid,
             WorkOrderOperationId = graph.OperationId,
-            PostingRequestId = created.Data.PostingRequestId,
+            CreateRequestId = created.Data.CreateRequestId,
             ProductionDate = created.Data.ProductionDate,
             GoodQty = 200m,
             OutputLotNo = "LOT-1",
@@ -218,9 +218,14 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         Assert.True(rollback.Succeeded, rollback.Message);
 
         await using var db = await _factory.CreateDbContextAsync();
-        var fact = await db.ProductionOutputMaterials.SingleAsync(x => !x.IsHandoff);
+        var output = await db.ProductionOutputs.SingleAsync();
+        var fact = await db.ProductionOutputMaterials.SingleAsync(x =>
+            !x.IsHandoff && x.DocumentRevision == output.DocumentRevision);
         Assert.Equal(105m, fact.ConsumeQty);
-        Assert.Equal(ProductionOutputStatuses.Reversed, (await db.ProductionOutputs.SingleAsync()).Status);
+        Assert.Equal(ProductionOutputStatuses.New, output.Status);
+        Assert.Equal(2, output.DocumentRevision);
+        Assert.NotNull(output.PostingId);
+        Assert.NotNull(output.ReversalPostingId);
         var material = await db.ProductionWorkOrderMaterials.SingleAsync(x => x.Uid == graph.MaterialId);
         Assert.Equal(0m, material.ConsumedQty);
         Assert.Equal(0m, material.VarianceQty);
@@ -334,7 +339,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var output = await CreatePostedHeaderAsync(db, graph, "DP-LEGACY");
-            output.Status = ProductionOutputStatuses.Reversed;
+            output.Status = ProductionOutputStatuses.New;
             output.GoodQty = 100m;
             await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
             db.ProductionMaterialMovements.AddRange(
@@ -423,7 +428,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         long operationId, string token, decimal goodQty = 2m, string lot = "LOT-1") => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = token,
+        CreateRequestId = token,
         ProductionDate = new DateTime(2026, 10, 1, 8, 0, 0),
         ShiftCode = "S1",
         ActualMachineCode = "MC1",
@@ -482,7 +487,8 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
             OutputItemCode = "FG-OUT",
             OutputLotNo = "LOT-X",
             SnapshotHash = new string('A', 64),
-            PostingRequestId = Guid.NewGuid().ToString("N"),
+            CreateRequestId = Guid.NewGuid().ToString("N"),
+            CreateRequestFingerprint = new string('A', 64),
             PostedBy = "admin",
             CreatedDate = DateTime.UtcNow,
             CreatedBy = "TEST",

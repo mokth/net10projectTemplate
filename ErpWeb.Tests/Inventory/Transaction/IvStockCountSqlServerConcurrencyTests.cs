@@ -321,7 +321,7 @@ public class IvStockCountSqlServerConcurrencyTests
             var common = new IvStockCommonRepository(factory);
             var posting = new IvInventoryPostingService(
                 factory, tenant, access.Object, postingRepo, common,
-                new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance);
+                new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
             var service = new IvStockCountService(
                 factory, tenant, access.Object, new RunningNumberService(), clock,

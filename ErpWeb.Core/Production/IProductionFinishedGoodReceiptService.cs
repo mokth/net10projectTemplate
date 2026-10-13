@@ -15,7 +15,6 @@ public interface IProductionFinishedGoodReceiptService
     Task<IvMasterOperationResult<bool>> DeleteAsync(int id, byte[] expectedVersion, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> PostAsync(FinishedGoodReceiptCommand request, CancellationToken ct = default);
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> RollbackAsync(FinishedGoodReceiptCommand request, CancellationToken ct = default);
-    Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> CreateCorrectionAsync(int id, CancellationToken ct = default);
 }
 
 public sealed class FinishedGoodReceiptQuery
@@ -141,6 +140,7 @@ public sealed class FinishedGoodCostTrace
     public int ReceiptId { get; init; }
     public int BatchNo { get; init; }
     public long SourceId { get; init; }
+    public int DocumentRevision { get; init; }
     public long ProductionBalLotId { get; init; }
     public string DocumentStatus { get; init; } = "";
     public string TraceStatus { get; init; } = "";

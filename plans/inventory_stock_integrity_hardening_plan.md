@@ -171,13 +171,16 @@ For every BalLoc touched by the rollback batch, reject if a remaining history ro
 
 Document dates are stored at midnight on `IvTrxBatch.TrxDtTime`, so date-only cannot order same-day posts for rollback.
 
-## INV-06 — No normal future-dated stock movement
+## INV-06 — No future-dated posted stock movement
 
 ```text
-TransactionDate > BusinessDate  =>  reject
+NEW normal Inventory draft with TransactionDate > BusinessDate  =>  allowed
+POST with TransactionDate > BusinessDate                        =>  reject
 ```
 
-Plus existing period-close. Applies to GR, MR, CR, MI, SC, VR, TR, ADJ, IP, SP, Stock Count posting date. Planning dates (PO required date, WO planned date) are outside this rule.
+A future-dated NEW document is preparation only; it does not change stock, history, valuation, FIFO layers, or posted PO quantities. POST requires the company business date to reach the transaction date, then all existing period-close, stock-date, chronology, quantity, source, lot, and costing rules continue to apply.
+
+For this lifecycle change, the future-draft behavior applies to normal Inventory transaction codes MR, CR, GR, NG, MI, SC, VR, TR, and ADJ. Production/Sales transaction policy remains unchanged. Stock Count continues to reject future count dates through its own validation. Planning dates (PO required date, WO planned date) are outside this rule.
 
 ## INV-07 — Posted history is immutable
 

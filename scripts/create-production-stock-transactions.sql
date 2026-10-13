@@ -133,6 +133,7 @@ BEGIN
 CREATE TABLE [PrProductionStockAdjustmentLine] (
     [Id] bigint NOT NULL IDENTITY,
     [BatchId] int NOT NULL,
+    [DocumentRevision] int NOT NULL CONSTRAINT [DF_PrProductionStockAdjustmentLine_DocumentRevision] DEFAULT (1),
     [DetailId] int NOT NULL,
     [ProductionBalLotId] bigint NOT NULL,
     [AdjustmentQty] decimal(18,4) NOT NULL,
@@ -159,6 +160,7 @@ BEGIN
 CREATE TABLE [PrProductionStockReturnLine] (
     [Id] bigint NOT NULL IDENTITY,
     [BatchId] int NOT NULL,
+    [DocumentRevision] int NOT NULL CONSTRAINT [DF_PrProductionStockReturnLine_DocumentRevision] DEFAULT (1),
     [DetailId] int NOT NULL,
     [ProductionBalLotId] bigint NOT NULL,
     [SourceIssueMovementId] bigint NOT NULL,
@@ -239,8 +241,37 @@ CREATE TABLE [PrProductionStockReturnFact] (
 );
 END;
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_StockTransactionBatch')
-CREATE UNIQUE INDEX [UQ_PrProductionPostingLink_StockTransactionBatch] ON [PrProductionPostingLink] ([CompanyCode], [BranchCode], [CommandType], [InventoryBatchNo]) WHERE [InventoryBatchNo] IS NOT NULL AND [CommandType] IN ('PRODUCTION_STOCK_RETURN_POST','PRODUCTION_STOCK_ADJUSTMENT_POST');
+/* Upgrade pre-existing transaction tables before generation-scoped indexes and validation. */
+IF OBJECT_ID(N'dbo.PrProductionPostingLink', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionPostingLink ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1) WITH VALUES;
+IF OBJECT_ID(N'dbo.PrProductionStockAdjustment', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionStockAdjustment', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionStockAdjustment ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionStockAdjustment_DocumentRevision DEFAULT (1) WITH VALUES;
+IF OBJECT_ID(N'dbo.PrProductionStockReturn', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionStockReturn', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionStockReturn ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionStockReturn_DocumentRevision DEFAULT (1) WITH VALUES;
+IF OBJECT_ID(N'dbo.PrProductionStockAdjustmentLine', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionStockAdjustmentLine', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionStockAdjustmentLine ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionStockAdjustmentLine_DocumentRevision DEFAULT (1) WITH VALUES;
+IF OBJECT_ID(N'dbo.PrProductionStockReturnLine', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionStockReturnLine', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionStockReturnLine ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionStockReturnLine_DocumentRevision DEFAULT (1) WITH VALUES;
+
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustmentLine') AND name = N'IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId')
+    DROP INDEX IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId ON dbo.PrProductionStockAdjustmentLine;
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockReturnLine') AND name = N'IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId')
+    DROP INDEX IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId ON dbo.PrProductionStockReturnLine;
+
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_StockTransactionBatch')
+    DROP INDEX UQ_PrProductionPostingLink_StockTransactionBatch ON dbo.PrProductionPostingLink;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_StockTransactionBatchRevision')
+    EXEC(N'CREATE UNIQUE INDEX [UQ_PrProductionPostingLink_StockTransactionBatchRevision] ON [PrProductionPostingLink] ([CompanyCode], [BranchCode], [CommandType], [InventoryBatchNo], [DocumentRevision]) WHERE [InventoryBatchNo] IS NOT NULL AND [CommandType] IN (''PRODUCTION_STOCK_RETURN_POST'',''PRODUCTION_STOCK_ADJUSTMENT_POST'',''FG_RECEIPT_POST'');');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustment') AND name = N'IX_PrProductionStockAdjustment_CompanyCode_BranchCode_WorkOrderId')
 CREATE INDEX [IX_PrProductionStockAdjustment_CompanyCode_BranchCode_WorkOrderId] ON [PrProductionStockAdjustment] ([CompanyCode], [BranchCode], [WorkOrderId]);
@@ -278,8 +309,8 @@ CREATE INDEX [IX_PrProductionStockAdjustmentFact_StandardCostRevisionId] ON [PrP
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustmentFact') AND name = N'IX_PrProductionStockAdjustmentFact_StockPostingId_AdjustmentLineId')
 CREATE UNIQUE INDEX [IX_PrProductionStockAdjustmentFact_StockPostingId_AdjustmentLineId] ON [PrProductionStockAdjustmentFact] ([StockPostingId], [AdjustmentLineId]);
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustmentLine') AND name = N'IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId')
-CREATE UNIQUE INDEX [IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId] ON [PrProductionStockAdjustmentLine] ([BatchId], [ProductionBalLotId]);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustmentLine') AND name = N'IX_PrProductionStockAdjustmentLine_BatchId_DocumentRevision_ProductionBalLotId')
+    EXEC(N'CREATE UNIQUE INDEX [IX_PrProductionStockAdjustmentLine_BatchId_DocumentRevision_ProductionBalLotId] ON [PrProductionStockAdjustmentLine] ([BatchId], [DocumentRevision], [ProductionBalLotId]);');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockAdjustmentLine') AND name = N'IX_PrProductionStockAdjustmentLine_DetailId')
 CREATE UNIQUE INDEX [IX_PrProductionStockAdjustmentLine_DetailId] ON [PrProductionStockAdjustmentLine] ([DetailId]);
@@ -329,8 +360,8 @@ CREATE INDEX [IX_PrProductionStockReturnFact_SourceIssueMovementId] ON [PrProduc
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockReturnFact') AND name = N'IX_PrProductionStockReturnFact_StockPostingId_ReturnLineId')
 CREATE UNIQUE INDEX [IX_PrProductionStockReturnFact_StockPostingId_ReturnLineId] ON [PrProductionStockReturnFact] ([StockPostingId], [ReturnLineId]);
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockReturnLine') AND name = N'IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId')
-CREATE UNIQUE INDEX [IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId] ON [PrProductionStockReturnLine] ([BatchId], [ProductionBalLotId]);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockReturnLine') AND name = N'IX_PrProductionStockReturnLine_BatchId_DocumentRevision_ProductionBalLotId')
+    EXEC(N'CREATE UNIQUE INDEX [IX_PrProductionStockReturnLine_BatchId_DocumentRevision_ProductionBalLotId] ON [PrProductionStockReturnLine] ([BatchId], [DocumentRevision], [ProductionBalLotId]);');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionStockReturnLine') AND name = N'IX_PrProductionStockReturnLine_DetailId')
 CREATE UNIQUE INDEX [IX_PrProductionStockReturnLine_DetailId] ON [PrProductionStockReturnLine] ([DetailId]);
@@ -382,6 +413,7 @@ END;');
 -- Verify the deployed schema, including reruns against an existing database.
 DECLARE @ExpectedColumns TABLE(TableName sysname,ColumnName sysname,TypeName sysname,MaxLength int NULL,PrecisionValue int NULL,ScaleValue int NULL,IsNullable bit,IsIdentity bit);
 INSERT @ExpectedColumns VALUES
+(N'PrProductionPostingLink',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'BatchId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'CompanyCode',N'nvarchar',10,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'BranchCode',N'nvarchar',10,NULL,NULL,0,0),
@@ -423,6 +455,7 @@ INSERT @ExpectedColumns VALUES
 (N'PrProductionStockReturnPriceSnapshot',N'PostedPriceEvidence',N'nvarchar',400,NULL,NULL,1,0),
 (N'PrProductionStockAdjustmentLine',N'Id',N'bigint',NULL,NULL,NULL,0,1),
 (N'PrProductionStockAdjustmentLine',N'BatchId',N'int',NULL,NULL,NULL,0,0),
+(N'PrProductionStockAdjustmentLine',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'DetailId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'ProductionBalLotId',N'bigint',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'AdjustmentQty',N'decimal',NULL,18,4,0,0),
@@ -437,6 +470,7 @@ INSERT @ExpectedColumns VALUES
 (N'PrProductionStockAdjustmentLine',N'CostApprovedAtUtc',N'datetime2',NULL,NULL,7,1,0),
 (N'PrProductionStockReturnLine',N'Id',N'bigint',NULL,NULL,NULL,0,1),
 (N'PrProductionStockReturnLine',N'BatchId',N'int',NULL,NULL,NULL,0,0),
+(N'PrProductionStockReturnLine',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'DetailId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'ProductionBalLotId',N'bigint',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'SourceIssueMovementId',N'bigint',NULL,NULL,NULL,0,0),
@@ -527,7 +561,7 @@ IF EXISTS (SELECT 1 FROM @ExpectedFks e WHERE NOT EXISTS
  THROW 51177, 'Production stock schema failed: missing, untrusted or non-restrict lineage foreign key.', 1;
 DECLARE @ExpectedIndexes TABLE(TableName sysname,IndexName sysname,IsUnique bit,HasFilter bit,ColumnNames nvarchar(1000));
 INSERT @ExpectedIndexes VALUES
-(N'PrProductionPostingLink',N'UQ_PrProductionPostingLink_StockTransactionBatch',1,1,N'CompanyCode,BranchCode,CommandType,InventoryBatchNo'),
+(N'PrProductionPostingLink',N'UQ_PrProductionPostingLink_StockTransactionBatchRevision',1,1,N'CompanyCode,BranchCode,CommandType,InventoryBatchNo,DocumentRevision'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_CompanyCode_BranchCode_WorkOrderId',0,0,N'CompanyCode,BranchCode,WorkOrderId'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_CorrectedBatchId',0,0,N'CorrectedBatchId'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_PostingId',1,1,N'PostingId'),
@@ -540,7 +574,7 @@ INSERT @ExpectedIndexes VALUES
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_ReversesFactId',1,1,N'ReversesFactId'),
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_StandardCostRevisionId',0,0,N'StandardCostRevisionId'),
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_StockPostingId_AdjustmentLineId',1,0,N'StockPostingId,AdjustmentLineId'),
-(N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId',1,0,N'BatchId,ProductionBalLotId'),
+(N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_BatchId_DocumentRevision_ProductionBalLotId',1,0,N'BatchId,DocumentRevision,ProductionBalLotId'),
 (N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_DetailId',1,0,N'DetailId'),
 (N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_ProductionBalLotId',0,0,N'ProductionBalLotId'),
 (N'PrProductionStockReturn',N'IX_PrProductionStockReturn_CompanyCode_BranchCode_WorkOrderId',0,0,N'CompanyCode,BranchCode,WorkOrderId'),
@@ -557,7 +591,7 @@ INSERT @ExpectedIndexes VALUES
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_ReversesFactId',1,1,N'ReversesFactId'),
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_SourceIssueMovementId',0,0,N'SourceIssueMovementId'),
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_StockPostingId_ReturnLineId',1,0,N'StockPostingId,ReturnLineId'),
-(N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId',1,0,N'BatchId,ProductionBalLotId'),
+(N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_BatchId_DocumentRevision_ProductionBalLotId',1,0,N'BatchId,DocumentRevision,ProductionBalLotId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_DetailId',1,0,N'DetailId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_ProductionBalLotId',0,0,N'ProductionBalLotId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_SourceIssueMovementId',0,0,N'SourceIssueMovementId'),

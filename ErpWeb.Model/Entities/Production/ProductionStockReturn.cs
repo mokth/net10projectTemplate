@@ -31,6 +31,7 @@ public sealed class ProductionStockReturnLine
     public ProductionStockReturn Return { get; set; } = null!;
     public int DetailId { get; set; }
     public IvTrxBatchDetail Detail { get; set; } = null!;
+    public int DocumentRevision { get; set; } = 1;
     public long ProductionBalLotId { get; set; }
     public long SourceIssueMovementId { get; set; }
     public decimal RequestedQty { get; set; }

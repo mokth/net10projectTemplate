@@ -30,6 +30,7 @@ public sealed class ProductionFinishedGoodSource
     public ProductionFinishedGoodReceipt Receipt { get; set; } = null!;
     public int DetailId { get; set; }
     public IvTrxBatchDetail Detail { get; set; } = null!;
+    public int DocumentRevision { get; set; } = 1;
     public long ProductionBalLotId { get; set; }
     public decimal RequestedQty { get; set; }
     public string SourceUom { get; set; } = "";

@@ -265,7 +265,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Recovery_requires_new_draft_after_rollback()
+    public async Task Rollback_reopens_same_generation_id_and_repost_uses_new_posting_generation()
     {
         var graph = await SeedTwoProcessAsync("WO-H7");
         var sut = CreateService();
@@ -280,13 +280,27 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         });
         Assert.True(rollback.Succeeded, rollback.Message);
 
-        var repostSame = await sut.PostAsync(p1.Data.Uid);
-        Assert.False(repostSame.Succeeded);
-        Assert.Contains("Only NEW drafts", repostSame.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("NEW", rollback.Data!.Status);
+        Assert.Equal(2, rollback.Data.DocumentRevision);
+        Assert.Equal(p1.Data.PostingId, rollback.Data.PostingId);
+        Assert.NotNull(rollback.Data.ReversalPostingId);
 
-        var replacement = await CreateAndPostAsync(sut, graph.Process1Id, 10m);
-        Assert.True(replacement.Succeeded, replacement.Message);
-        Assert.NotEqual(p1.Data.PostingRequestId, replacement.Data!.PostingRequestId);
+        var reposted = await sut.PostAsync(p1.Data.Uid);
+        Assert.True(reposted.Succeeded, reposted.Message);
+        Assert.Equal("POSTED", reposted.Data!.Status);
+        Assert.Equal(2, reposted.Data.DocumentRevision);
+        Assert.NotEqual(p1.Data.PostingId, reposted.Data.PostingId);
+        Assert.Null(reposted.Data.ReversalPostingId);
+        Assert.Equal(p1.Data.CreateRequestId, reposted.Data.CreateRequestId);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var postLinks = await db.ProductionPostingLinks
+            .Where(x => x.ProductionDocumentLineId == p1.Data.Uid
+                && x.CommandType == ProductionPostingCommandTypes.OutputPost)
+            .OrderBy(x => x.DocumentRevision)
+            .ToListAsync();
+        Assert.Equal([1, 2], postLinks.Select(x => x.DocumentRevision));
+        Assert.All(postLinks, x => Assert.Equal(ProductionPostingLinkStatuses.Succeeded, x.Status));
     }
 
     [Fact]
@@ -482,7 +496,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         DateTime? date = null) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = token,
+        CreateRequestId = token,
         ProductionDate = date ?? new DateTime(2026, 10, 1, 8, 0, 0),
         GoodQty = good,
         ScrapQty = scrap,

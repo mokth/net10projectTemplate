@@ -210,6 +210,7 @@ public sealed partial class ProductionMaterialIssueService
                 CreatedDate = now, CreatedBy = user };
             link = new ProductionPostingLink { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
                 CommandType = ProductionPostingCommandTypes.MaterialIssuePost, PostingRequestId = Guid.NewGuid().ToString("N"),
+                DocumentRevision = 1,
                 WorkOrderId = order.Uid, ProductionDocumentType = ProductionDocumentTypes.MaterialIssue, InventoryBatchNo = batchNo,
                 SnapshotRevision = order.SnapshotRevision, SnapshotHash = order.SnapshotHash,
                 ProductionQtyThisIssue = IvQty.Round(request.ProductionQtyThisIssue),
@@ -279,6 +280,7 @@ public sealed partial class ProductionMaterialIssueService
             link!.ProductionQtyThisIssue = IvQty.Round(request.ProductionQtyThisIssue);
         }
 
+        link!.DocumentRevision = pendingMaps.Max(x => x.Detail.DocumentRevision);
         await db.SaveChangesAsync(ct);
         foreach (var row in pendingMaps)
             db.ProductionMaterialIssueLines.Add(new ProductionMaterialIssueLine { CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
@@ -303,6 +305,7 @@ public sealed partial class ProductionMaterialIssueService
             CompanyCode = company,
             BranchCode = branch,
             BatchNo = batchNo,
+            DocumentRevision = 1,
             TrxLineNo = trxLine,
             TrxType = IvTrxTypes.IssueToProduction
         };
@@ -366,6 +369,6 @@ public sealed partial class ProductionMaterialIssueService
             : await db.IvTrxBatches.SingleOrDefaultAsync(x => x.CompanyCode == company && x.BranchCode == branch && x.BatchNo == batchNo && x.TrxType == IvTrxTypes.IssueToProduction, ct);
     private static async Task<ProductionPostingLink?> LockIssueLinkByBatchAsync(AppDbContext db, string company, string branch, int batchNo, CancellationToken ct) =>
         db.Database.IsSqlServer()
-            ? await db.ProductionPostingLinks.FromSqlInterpolated($@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.MaterialIssuePost} AND InventoryBatchNo={batchNo}").SingleOrDefaultAsync(ct)
-            : await db.ProductionPostingLinks.SingleOrDefaultAsync(x => x.CompanyCode == company && x.BranchCode == branch && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost && x.InventoryBatchNo == batchNo, ct);
+            ? await db.ProductionPostingLinks.FromSqlInterpolated($@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.MaterialIssuePost} AND InventoryBatchNo={batchNo} AND Status={ProductionPostingLinkStatuses.Draft}").SingleOrDefaultAsync(ct)
+            : await db.ProductionPostingLinks.SingleOrDefaultAsync(x => x.CompanyCode == company && x.BranchCode == branch && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost && x.InventoryBatchNo == batchNo && x.Status == ProductionPostingLinkStatuses.Draft, ct);
 }

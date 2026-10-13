@@ -14,6 +14,9 @@ IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'SnapshotHash') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD SnapshotHash varchar(64) NULL;
 IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'ProductionQtyThisIssue') IS NULL
     ALTER TABLE dbo.PrProductionPostingLink ADD ProductionQtyThisIssue decimal(18,4) NULL;
+IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+    ALTER TABLE dbo.PrProductionPostingLink ADD DocumentRevision int NOT NULL
+        CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1) WITH VALUES;
 
 IF OBJECT_ID(N'dbo.PrMaterialIssueLine', N'U') IS NULL
 BEGIN
@@ -50,9 +53,11 @@ BEGIN
     CREATE INDEX IX_PrMaterialIssueLine_Operation ON dbo.PrMaterialIssueLine(WorkOrderOperationID, WorkOrderMaterialID);
 END;
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatch')
-    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_MaterialIssueBatch
-        ON dbo.PrProductionPostingLink(CompanyCode, BranchCode, CommandType, InventoryBatchNo)
-        WHERE InventoryBatchNo IS NOT NULL AND CommandType = N'MATERIAL_ISSUE_POST';
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatch')
+    DROP INDEX UQ_PrProductionPostingLink_MaterialIssueBatch ON dbo.PrProductionPostingLink;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatchRevision')
+    EXEC(N'CREATE UNIQUE INDEX UQ_PrProductionPostingLink_MaterialIssueBatchRevision
+        ON dbo.PrProductionPostingLink(CompanyCode, BranchCode, CommandType, InventoryBatchNo, DocumentRevision)
+        WHERE InventoryBatchNo IS NOT NULL AND CommandType = N''MATERIAL_ISSUE_POST'';');
 
 COMMIT TRANSACTION;

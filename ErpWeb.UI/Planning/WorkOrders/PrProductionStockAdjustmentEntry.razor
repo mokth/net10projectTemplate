@@ -34,7 +34,6 @@
                 @if (ShowPost) { <DxButton Text="POST" IconCssClass="fa-solid fa-check" RenderStyle="ButtonRenderStyle.Success" Click="BeginPost" Enabled="@(!Busy)" /> }
                 @if (CanRollback) { <DxButton Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left" RenderStyle="ButtonRenderStyle.Warning" Click="BeginRollback" Enabled="@(!Busy)" /> }
                 @if (CanDelete) { <DxButton Text="DELETE" IconCssClass="fa-solid fa-trash" RenderStyle="ButtonRenderStyle.Danger" Click="BeginDelete" Enabled="@(!Busy)" /> }
-                @if (CanCorrection) { <DxButton Text="CREATE CORRECTION" RenderStyle="ButtonRenderStyle.Secondary" Click="CreateCorrectionAsync" Enabled="@(!Busy)" /> }
             </div>
         </section>
 

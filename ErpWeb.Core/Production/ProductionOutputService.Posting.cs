@@ -45,8 +45,10 @@ public sealed partial class ProductionOutputService
                 return Fail("Only NEW drafts can be posted.");
             var wipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy);
 
-            var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.PostingRequestId, cancellationToken);
+            var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.Uid, output.DocumentRevision, cancellationToken);
             if (link is null) return Fail("Posting link was not found.");
+            if (link.DocumentRevision != output.DocumentRevision)
+                return Fail("The current posting link revision does not match the Daily Production document.", IvMasterErrorCode.Concurrency);
             if (link.Status == ProductionPostingLinkStatuses.Succeeded)
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (link.Status != ProductionPostingLinkStatuses.Draft)
@@ -87,8 +89,11 @@ public sealed partial class ProductionOutputService
             if (!sequence.IsEligible)
                 return Fail(sequence.BlockingReason!);
 
+            var currentMaterialRows = await db.ProductionOutputMaterials.AsNoTracking()
+                .Where(x => x.ProductionOutputId == output.Uid && x.DocumentRevision == output.DocumentRevision)
+                .OrderBy(x => x.IsHandoff).ThenBy(x => x.WorkOrderMaterialId).ToListAsync(cancellationToken);
             var command = BuildOutputPostingCommand(
-                output, reversal: false, output.ProductionDate, null, null, link.Uid);
+                output, reversal: false, output.ProductionDate, link.PostingRequestId, null, link.Uid, currentMaterialRows);
             var ledger = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
             if (ledger.Error is not null) return Fail(ledger.Error.Message);
             if (ledger.WasReplay)
@@ -184,7 +189,7 @@ public sealed partial class ProductionOutputService
                 await LockMaterialAsync(db, materialId, cancellationToken);
 
             var outputFacts = await db.ProductionOutputMaterials
-                .Where(x => x.ProductionOutputId == output.Uid)
+                .Where(x => x.ProductionOutputId == output.Uid && x.DocumentRevision == output.DocumentRevision)
                 .ToListAsync(cancellationToken);
             foreach (var material in materials)
             {
@@ -589,6 +594,9 @@ public sealed partial class ProductionOutputService
                 order.Status = ProductionWorkOrderStatuses.InProgress;
 
             output.Status = ProductionOutputStatuses.Posted;
+            output.PostingId = ledgerContext.Posting.Id;
+            output.ReversalPostingId = null;
+            output.ReversalReason = null;
             output.PostedDate = now;
             output.PostedBy = user;
             link.Status = ProductionPostingLinkStatuses.Succeeded;
@@ -640,19 +648,23 @@ public sealed partial class ProductionOutputService
         ProductionOutput output,
         bool reversal,
         DateTime effectiveAt,
-        string? reversalRequestId,
+        string? postingRequestId,
         long? reversesPostingId,
-        long? productionPostingLinkId = null)
+        long? productionPostingLinkId = null,
+        IReadOnlyCollection<ProductionOutputMaterial>? currentMaterials = null)
     {
-        var requestId = Guid.ParseExact(
-            reversal ? reversalRequestId! : output.PostingRequestId, "N");
+        var requestId = Guid.ParseExact(postingRequestId!, "N");
         var evidence = StockPostingFingerprint.Create(
             new
             {
-                output.Uid, output.DocumentNo, output.SnapshotRevision,
+                output.Uid, output.DocumentNo, output.DocumentRevision, output.SnapshotRevision, output.SnapshotHash,
                 output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty,
                 output.OutputItemCode, output.OutputUom, output.OutputLotNo,
                 WipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy),
+                Materials = (currentMaterials ?? []).OrderBy(x => x.IsHandoff).ThenBy(x => x.WorkOrderMaterialId)
+                    .Select(x => new { x.IsHandoff, x.WorkOrderMaterialId, x.HandoffFromOperationId, x.ConsumeQty,
+                        x.StandardQty, x.VarianceQty, x.VarianceReasonCode, x.VarianceReasonText, x.RequiredUom,
+                        x.BaseUom, x.ConversionFactorToBase, x.WoBomRequiredQty }).ToArray(),
                 effectiveAt, reversal, reversesPostingId
             },
             new { output.WorkOrderId, output.WorkOrderOperationId, output.RouteStepId });
@@ -664,7 +676,7 @@ public sealed partial class ProductionOutputService
             SourceDocumentType = ProductionDocumentTypes.ProductionOutput,
             SourceDocumentId = output.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
             SourceDocumentNo = output.DocumentNo,
-            DocumentRevision = output.SnapshotRevision,
+            DocumentRevision = output.DocumentRevision,
             PostingRole = reversal ? "REVERSAL" : "PRIMARY",
             EffectiveAt = effectiveAt,
             Evidence = evidence,
@@ -971,15 +983,15 @@ public sealed partial class ProductionOutputService
                 x.Uid == id && x.CompanyCode == company && x.BranchCode == branch, ct);
 
     private static async Task<ProductionPostingLink?> LockOutputPostLinkAsync(
-        AppDbContext db, string company, string branch, string requestId, CancellationToken ct) =>
+        AppDbContext db, string company, string branch, long outputId, int documentRevision, CancellationToken ct) =>
         db.Database.IsSqlServer()
             ? await db.ProductionPostingLinks.FromSqlInterpolated(
-                $@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.OutputPost} AND PostingRequestId={requestId}")
+                $@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.OutputPost} AND ProductionDocumentLineID={outputId} AND DocumentRevision={documentRevision}")
                 .FirstOrDefaultAsync(ct)
             : await db.ProductionPostingLinks.FirstOrDefaultAsync(x =>
                 x.CompanyCode == company && x.BranchCode == branch
                 && x.CommandType == ProductionPostingCommandTypes.OutputPost
-                && x.PostingRequestId == requestId, ct);
+                && x.ProductionDocumentLineId == outputId && x.DocumentRevision == documentRevision, ct);
 
     private static async Task<ProductionWorkOrder?> LockWorkOrderAsync(AppDbContext db, long id, CancellationToken ct) =>
         db.Database.IsSqlServer()

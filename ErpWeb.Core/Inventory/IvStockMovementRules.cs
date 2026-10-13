@@ -49,6 +49,13 @@ internal static class IvStockMovementRules
             : string.Empty;
 
     /// <summary>
+    /// Normalizes a document date for a NEW inventory draft without applying posting-date
+    /// eligibility. A future date is valid while the document remains unposted.
+    /// </summary>
+    public static DateTime ResolveDraftMovementDate(DateTime requestedDate, DateTime businessDate) =>
+        requestedDate == default ? businessDate.Date : requestedDate.Date;
+
+    /// <summary>
     /// Defaults a missing document date to the business date, then rejects future movement dates.
     /// </summary>
     public static (DateTime Date, string? Error) ResolveMovementDate(

@@ -401,7 +401,7 @@ public class PoCdnSqlServerConcurrencyTests : IAsyncLifetime
             common,
             new IvInventoryPostingService(
                 _factory!, tenant, access.Object, new IvStockPostingRepository(),
-                common, new PoOrderRepository(), _postLog),
+                common, new PoOrderRepository(), _postLog, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
             _cdnLog);
     }
 

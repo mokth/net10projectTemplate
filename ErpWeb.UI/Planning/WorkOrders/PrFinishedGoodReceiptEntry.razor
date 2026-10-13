@@ -103,14 +103,6 @@
                               Click="@OpenDeleteConfirm"
                               Enabled="@(!IsSubmitting)" />
                 }
-                @if (CanCreateCorrection)
-                {
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="CREATE CORRECTION"
-                              IconCssClass="fa-solid fa-plus"
-                              Click="@CreateCorrectionAsync"
-                              Enabled="@(!IsSubmitting)" />
-                }
             </div>
         </section>
 

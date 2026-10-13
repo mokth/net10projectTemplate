@@ -299,7 +299,7 @@ public sealed class TransactionDeletePolicyService : ITransactionDeletePolicySer
             downstreamReason: null,
             eInvoiceReason: null,
             postings: evidence.Postings,
-            reversedLifecycle: string.Equals(output.Status, ProductionOutputStatuses.Reversed, StringComparison.OrdinalIgnoreCase));
+            reversedLifecycle: output.ReversalPostingId is not null);
     }
 
     private static async Task<TransactionDeleteDecision> EvaluateFinishedGoodAsync(

@@ -94,6 +94,16 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _connection.DisposeAsync();
 
+    private async Task<(int Histories, int Postings, int Facts, int Layers)> ReadPostingCountsAsync()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return (
+            await db.IvTrxHistories.CountAsync(),
+            await db.StockPostings.CountAsync(),
+            await db.StockValuationFacts.CountAsync(),
+            await db.StockFifoLayers.CountAsync());
+    }
+
     [Fact]
     public async Task Post_decreases_stock_writes_history_and_posts()
     {
@@ -113,6 +123,105 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
         var detail = await db.IvTrxBatchDetails.SingleAsync();
         Assert.Equal(balId, detail.FromBalLocId);
         Assert.Null(detail.FromLotId);
+    }
+
+    [Fact]
+    public async Task Save_future_dated_new_issue_keeps_balance_and_ledger_unchanged()
+    {
+        var balId = await SeedBalLocAsync(100m);
+        var before = await ReadPostingCountsAsync();
+        var mi = CreateMi();
+        var request = IssueRequest(balId, 30m);
+        request.TrxDate = FixedToday.AddDays(1);
+
+        var saved = await mi.SaveNewAsync(request);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        request.TrxDate = FixedToday.AddDays(2);
+        var updated = await mi.UpdateAsync(saved.BatchNo, request);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(FixedToday.AddDays(2), batch.TrxDtTime);
+        Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        Assert.Equal(before, await ReadPostingCountsAsync());
+    }
+
+    [Fact]
+    public async Task Future_issue_revalidates_stock_that_changed_before_its_post_date()
+    {
+        var balId = await SeedBalLocAsync(100m);
+        var effectiveDate = FixedToday.AddDays(1);
+        var futureIssue = CreateMi(postingBusinessDate: effectiveDate);
+        var savedFuture = await futureIssue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = effectiveDate,
+            Lines = [IssueLine(balId, 80m)]
+        });
+        Assert.True(savedFuture.Succeeded, savedFuture.ErrorMessage);
+
+        var currentIssue = CreateMi(postingBusinessDate: FixedToday);
+        var savedCurrent = await currentIssue.SaveNewAsync(IssueRequest(balId, 50m));
+        Assert.True(savedCurrent.Succeeded, savedCurrent.ErrorMessage);
+        var currentPost = await currentIssue.PostAsync([savedCurrent.BatchNo]);
+        Assert.True(currentPost.Succeeded, currentPost.ErrorMessage);
+
+        var futurePost = await CreateMi(postingBusinessDate: effectiveDate).PostAsync([savedFuture.BatchNo]);
+        Assert.False(futurePost.Succeeded);
+        Assert.Contains("Insufficient quantity", futurePost.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var futureBatch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == savedFuture.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, futureBatch.BatchStatus);
+        Assert.Null(futureBatch.PostedDate);
+        Assert.Null(futureBatch.PostedBy);
+        Assert.Equal(0, futureBatch.PostedCount);
+        Assert.Null(futureBatch.PostingOperationId);
+        Assert.Equal(50m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        var history = Assert.Single(await db.IvTrxHistories.ToListAsync());
+        Assert.Equal(savedCurrent.BatchNo, history.BatchNo);
+        Assert.Equal((1, 0, 0, 0), await ReadPostingCountsAsync());
+    }
+
+    [Fact]
+    public async Task Future_issue_cannot_post_ahead_of_an_existing_later_movement()
+    {
+        var balId = await SeedBalLocAsync(100m);
+        var futureDate = FixedToday.AddDays(1);
+        var laterDate = futureDate.AddDays(1);
+        var futureIssue = CreateMi(postingBusinessDate: laterDate);
+        var savedFuture = await futureIssue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = futureDate,
+            Lines = [IssueLine(balId, 10m)]
+        });
+        Assert.True(savedFuture.Succeeded, savedFuture.ErrorMessage);
+
+        var laterIssue = CreateMi(postingBusinessDate: laterDate);
+        var savedLater = await laterIssue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = laterDate,
+            Lines = [IssueLine(balId, 10m)]
+        });
+        Assert.True(savedLater.Succeeded, savedLater.ErrorMessage);
+        var laterPost = await laterIssue.PostAsync([savedLater.BatchNo]);
+        Assert.True(laterPost.Succeeded, laterPost.ErrorMessage);
+
+        var earlyPost = await CreateMi(postingBusinessDate: laterDate).PostAsync([savedFuture.BatchNo]);
+        Assert.False(earlyPost.Succeeded);
+        Assert.Contains("Stock balance is dated", earlyPost.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(laterDate.ToString("dd/MM/yyyy"), earlyPost.ErrorMessage);
+        Assert.Contains(futureDate.ToString("dd/MM/yyyy"), earlyPost.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var futureBatch = await db.IvTrxBatches.SingleAsync(x => x.BatchNo == savedFuture.BatchNo);
+        Assert.Equal(IvBatchStatuses.New, futureBatch.BatchStatus);
+        Assert.Equal(0, futureBatch.PostedCount);
+        Assert.Equal(90m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        var history = Assert.Single(await db.IvTrxHistories.ToListAsync());
+        Assert.Equal(savedLater.BatchNo, history.BatchNo);
     }
 
     [Fact]
@@ -369,7 +478,7 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             UnitPrice = 1m
         };
 
-    private IvMiscIssueService CreateMi()
+    private IvMiscIssueService CreateMi(DateTime? postingBusinessDate = null, DateTime? draftBusinessDate = null)
     {
         var access = Access();
         var tenant = InventoryTenantTestHelper.CreateTenantContext();
@@ -378,11 +487,12 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date));
 
         return new IvMiscIssueService(
             _factory, tenant, access.Object, new RunningNumberService(),
-            new FixedCurrentDateService(FixedToday),
+            new FixedCurrentDateService(draftBusinessDate ?? FixedToday),
             new IvStockMasterRepository(_factory),
             new IvStockCommonRepository(_factory),
             new IvStockTransactionRepository(),
@@ -398,7 +508,7 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private IIvInventoryLookupService CreateLookups()
     {

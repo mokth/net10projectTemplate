@@ -1,6 +1,6 @@
 namespace ErpWeb.Model.Entities.Production;
 
-/// <summary>Daily Production / production output document (NEW → POSTED → REVERSED).</summary>
+/// <summary>Daily Production / production output document (NEW → POSTED → NEW).</summary>
 public class ProductionOutput
 {
     public long Uid { get; set; }
@@ -8,6 +8,7 @@ public class ProductionOutput
     public string BranchCode { get; set; } = string.Empty;
     public string DocumentNo { get; set; } = string.Empty;
     public string Status { get; set; } = ProductionOutputStatuses.New;
+    public int DocumentRevision { get; set; } = 1;
     /// <summary>Consumption source policy fixed when this draft is created; legacy rows default to STRICT.</summary>
     public string WipConsumptionPolicy { get; set; } = ProductionWipConsumptionPolicies.Strict;
 
@@ -36,7 +37,11 @@ public class ProductionOutput
 
     public int SnapshotRevision { get; set; }
     public string SnapshotHash { get; set; } = string.Empty;
-    public string PostingRequestId { get; set; } = string.Empty;
+    public string CreateRequestId { get; set; } = string.Empty;
+    public string CreateRequestFingerprint { get; set; } = string.Empty;
+    public long? PostingId { get; set; }
+    public long? ReversalPostingId { get; set; }
+    public string? ReversalReason { get; set; }
 
     public DateTime? PostedDate { get; set; }
     public string? PostedBy { get; set; }

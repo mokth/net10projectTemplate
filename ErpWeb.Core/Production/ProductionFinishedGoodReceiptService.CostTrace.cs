@@ -33,38 +33,44 @@ public sealed partial class ProductionFinishedGoodReceiptService
             if (source is null)
                 return Fail<FinishedGoodCostTrace>("Finished Good Receipt source line was not found.", IvMasterErrorCode.NotFound);
 
-            if (receipt.Batch.BatchStatus is not ("POSTED" or "REVERSED"))
+            var fact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.BatchId == receiptId
+                    && x.SourceId == sourceId && x.ReversesFactId == null, ct);
+            if (fact is null)
                 return Fail<FinishedGoodCostTrace>("Authoritative posted cost trace is available after posting.");
-            if (receipt.PostingId is not long originalPostingId)
-                return Fail<FinishedGoodCostTrace>("The original FG posting identity is missing.");
+            var originalPostingId = fact.StockPostingId;
+            var originalPosting = await db.StockPostings.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == originalPostingId
+                    && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && x.SourceModule == "PRODUCTION"
+                    && x.SourceDocumentType == ProductionDocumentTypes.FinishedGoodReceipt
+                    && x.SourceDocumentId == receiptId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    && x.DocumentRevision == source.DocumentRevision && x.PostingRole == "PRIMARY"
+                    && x.SealedAtUtc != null, ct);
+            if (originalPosting is null)
+                return Fail<FinishedGoodCostTrace>("The source generation has no matching sealed FG PRIMARY.");
+            var reversalPostingId = await db.StockPostings.AsNoTracking()
+                .Where(x => x.ReversesPostingId == originalPostingId
+                    && x.PostingRole == "REVERSAL" && x.SealedAtUtc != null)
+                .Select(x => (long?)x.Id).SingleOrDefaultAsync(ct);
 
             var pool = await db.ProductionBalLots.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.Uid == source.ProductionBalLotId
                     && x.CompanyCode == scope.CompanyCode
                     && x.BranchCode == scope.BranchCode, ct);
-            var fact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
-                .SingleOrDefaultAsync(x => x.BatchId == receiptId
-                    && x.SourceId == sourceId
-                    && x.StockPostingId == originalPostingId
-                    && x.ReversesFactId == null, ct);
-
-            if (fact is null)
-                return Fail<FinishedGoodCostTrace>("The original FG value fact is missing.");
             if (pool is null)
             {
                 return IvMasterOperationResult<FinishedGoodCostTrace>.Ok(BuildInconsistentTrace(
                     receipt, source, null, fact, null, null, null, null,
-                    ["The source production pool is missing from the stored evidence."]));
+                    ["The source production pool is missing from the stored evidence."],
+                    documentStatus: reversalPostingId is null ? "POSTED" : "REVERSED",
+                    reversalPostingId: reversalPostingId));
             }
 
             var orderNo = await db.ProductionWorkOrders.AsNoTracking()
                 .Where(x => x.Uid == receipt.WorkOrderId)
                 .Select(x => x.WorkOrderNo)
                 .SingleOrDefaultAsync(ct) ?? pool.WorkOrderNo;
-            var originalPosting = await db.StockPostings.AsNoTracking()
-                .SingleOrDefaultAsync(x => x.Id == originalPostingId
-                    && x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode, ct);
             var movement = await db.ProductionBalLotMovements.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.Uid == fact.ProductionMovementId, ct);
             var history = await db.IvTrxHistories.AsNoTracking()
@@ -76,7 +82,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     && x.DestinationBalanceId == fact.DestinationBalanceId, ct);
 
             var metadata = new TraceMetadata(receipt, source, pool, fact, orderNo, originalPostingId,
-                movement, history, evidence, snapshot);
+                movement, history, evidence, snapshot, reversalPostingId);
             AddAuthorityWarnings(metadata, scope, originalPosting);
 
             var originalFacts = await db.ProductionFinishedGoodFactRows.AsNoTracking()
@@ -115,7 +121,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             if (metadata.Warnings.Count > 0)
             {
                 return IvMasterOperationResult<FinishedGoodCostTrace>.Ok(BuildInconsistentTrace(
-                    receipt, source, pool, fact, movement, history, evidence, snapshot, metadata.Warnings));
+                    receipt, source, pool, fact, movement, history, evidence, snapshot, metadata.Warnings,
+                    documentStatus: metadata.DocumentStatus, reversalPostingId: metadata.ReversalPostingId));
             }
 
             try
@@ -199,7 +206,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 metadata.Warnings.Add(e.Message);
                 return IvMasterOperationResult<FinishedGoodCostTrace>.Ok(BuildInconsistentTrace(
                     receipt, source, pool, fact, movement, history, evidence, snapshot, metadata.Warnings,
-                    metadata.PoolBaseQtyBeforePosting, metadata.PoolValueBeforePosting));
+                    metadata.PoolBaseQtyBeforePosting, metadata.PoolValueBeforePosting,
+                    metadata.DocumentStatus, metadata.ReversalPostingId));
             }
         }
         catch (FgException e) { return Fail<FinishedGoodCostTrace>(e.Message, e.Code); }
@@ -271,25 +279,24 @@ public sealed partial class ProductionFinishedGoodReceiptService
         IvTrxHistory? originalHistory,
         CancellationToken ct)
     {
-        if (receipt.Batch.BatchStatus != "REVERSED")
+        var reversalPostingId = await db.StockPostings.AsNoTracking()
+            .Where(x => x.ReversesPostingId == originalFact.StockPostingId
+                && x.PostingRole == "REVERSAL" && x.SealedAtUtc != null)
+            .Select(x => (long?)x.Id).SingleOrDefaultAsync(ct);
+        if (reversalPostingId is null)
             return [];
-
         var warnings = new List<string>();
-        if (receipt.ReversalPostingId is not long reversalPostingId)
-        {
-            warnings.Add("The reversed receipt has no reversal StockPosting.");
-            return warnings;
-        }
+        var reversalId = reversalPostingId.Value;
 
         var reversalPosting = await db.StockPostings.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == reversalPostingId, ct);
+            .SingleOrDefaultAsync(x => x.Id == reversalId, ct);
         if (reversalPosting is null || reversalPosting.SealedAtUtc is null
-            || reversalPosting.ReversesPostingId != receipt.PostingId)
+            || reversalPosting.ReversesPostingId != originalFact.StockPostingId)
             warnings.Add("The reversal StockPosting does not link to the original sealed posting.");
 
         var reversalFact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
             .SingleOrDefaultAsync(x => x.BatchId == receipt.BatchId
-                && x.StockPostingId == reversalPostingId
+                && x.StockPostingId == reversalId
                 && x.ReversesFactId == originalFact.Id, ct);
         if (reversalFact is null
             || reversalFact.TotalValue != originalFact.TotalValue
@@ -300,7 +307,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         {
             var reversalMovement = await db.ProductionBalLotMovements.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.OriginalMovementId == originalMovement.Uid
-                    && x.StockPostingId == reversalPostingId
+                    && x.StockPostingId == reversalId
                     && x.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal, ct);
             if (reversalMovement is null
                 || reversalMovement.TotalCost != originalMovement.TotalCost
@@ -312,7 +319,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         {
             var reversalHistory = await db.IvTrxHistories.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.ReversesHistoryId == originalHistory.Id
-                    && x.StockPostingId == reversalPostingId, ct);
+                    && x.StockPostingId == reversalId, ct);
             if (reversalHistory is null
                 || reversalHistory.ExactTransferredValue != originalHistory.ExactTransferredValue
                 || reversalHistory.EvidenceBaseQty != originalHistory.EvidenceBaseQty)
@@ -339,13 +346,16 @@ public sealed partial class ProductionFinishedGoodReceiptService
         ProductionFinishedGoodPriceSnapshot? snapshot,
         IReadOnlyList<string> warnings,
         decimal poolQty = 0m,
-        decimal poolValue = 0m) => new()
+        decimal poolValue = 0m,
+        string? documentStatus = null,
+        long? reversalPostingId = null) => new()
         {
             ReceiptId = receipt.BatchId,
             BatchNo = receipt.Batch.BatchNo,
             SourceId = source.Id,
             ProductionBalLotId = source.ProductionBalLotId,
-            DocumentStatus = receipt.Batch.BatchStatus,
+            DocumentStatus = documentStatus ?? receipt.Batch.BatchStatus,
+            DocumentRevision = source.DocumentRevision,
             TraceStatus = CostTraceStatuses.Inconsistent,
             WorkOrderNo = pool?.WorkOrderNo ?? "",
             ItemCode = pool?.ItemCode ?? "",
@@ -365,7 +375,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             PoolValueBeforePosting = poolValue,
             OriginalPostingId = fact.StockPostingId,
             ProductionMovementId = fact.ProductionMovementId,
-            ReversalPostingId = receipt.ReversalPostingId,
+            ReversalPostingId = reversalPostingId,
             Warnings = warnings.Distinct(StringComparer.Ordinal).ToArray()
         };
 
@@ -380,7 +390,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             BatchNo = metadata.Receipt.Batch.BatchNo,
             SourceId = metadata.Source.Id,
             ProductionBalLotId = metadata.Pool.Uid,
-            DocumentStatus = metadata.Receipt.Batch.BatchStatus,
+            DocumentStatus = metadata.DocumentStatus,
+            DocumentRevision = metadata.Source.DocumentRevision,
             TraceStatus = status,
             WorkOrderNo = metadata.WorkOrderNo,
             ItemCode = metadata.Pool.ItemCode,
@@ -400,7 +411,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             PoolValueBeforePosting = metadata.PoolValueBeforePosting,
             OriginalPostingId = metadata.OriginalPostingId,
             ProductionMovementId = metadata.Fact.ProductionMovementId,
-            ReversalPostingId = metadata.Receipt.ReversalPostingId,
+            ReversalPostingId = metadata.ReversalPostingId,
             Components = components,
             Details = details,
             Warnings = metadata.Warnings.Concat(warnings).Distinct(StringComparer.Ordinal).ToArray()
@@ -446,7 +457,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             ProductionBalLotMovement? movement,
             IvTrxHistory? history,
             ProductionValuationEvidence? evidence,
-            ProductionFinishedGoodPriceSnapshot? snapshot)
+            ProductionFinishedGoodPriceSnapshot? snapshot,
+            long? reversalPostingId)
         {
             Receipt = receipt;
             Source = source;
@@ -458,6 +470,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             History = history;
             Evidence = evidence;
             Snapshot = snapshot;
+            ReversalPostingId = reversalPostingId;
+            DocumentStatus = reversalPostingId is null ? "POSTED" : "REVERSED";
         }
 
         public ProductionFinishedGoodReceipt Receipt { get; }
@@ -470,6 +484,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
         public IvTrxHistory? History { get; }
         public ProductionValuationEvidence? Evidence { get; }
         public ProductionFinishedGoodPriceSnapshot? Snapshot { get; }
+        public long? ReversalPostingId { get; }
+        public string DocumentStatus { get; }
         public int ValuationGeneration { get; set; }
         public decimal PoolBaseQtyBeforePosting { get; set; }
         public decimal PoolValueBeforePosting { get; set; }

@@ -28,4 +28,4 @@ WHERE m.LedgerVersion=2 AND e.MovementId IS NULL;
 SELECT r.BatchId,'UNSEALED_OR_MISSING_POSTING' AS Exception
 FROM dbo.PrFinishedGoodReceipt r JOIN dbo.IvTrxBatch b ON b.ID=r.BatchId
 LEFT JOIN dbo.StockPosting p ON p.ID=r.PostingId
-WHERE b.BatchStatus IN ('POSTED','REVERSED') AND (p.ID IS NULL OR p.SealedAtUtc IS NULL);
+WHERE r.PostingId IS NOT NULL AND (p.ID IS NULL OR p.SealedAtUtc IS NULL);

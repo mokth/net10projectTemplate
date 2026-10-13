@@ -170,9 +170,9 @@
                         <small>@(Document.PostedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
                     </div>
                     <div class="pr-dp-meta__item">
-                        <span class="iv-field__label">Reversed</span>
+                        <span class="iv-field__label">Last Rollback By</span>
                         <strong>@(Document.ReversedBy ?? "—")</strong>
-                        <small>@(Document.ReversedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
+                        <small>Last rollback: @(Document.ReversedDate?.ToString("dd MMM yyyy HH:mm") ?? "—")</small>
                     </div>
                 </div>
             </section>

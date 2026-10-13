@@ -1,0 +1,656 @@
+{
+  "_D": "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+  "_A": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+  "_B": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+  "Invoice": [
+    {
+      "UBLExtensions": [
+        {
+          "UBLExtension": [
+            {
+              "ExtensionURI": [
+                {
+                  "_": "urn:oasis:names:specification:ubl:dsig:enveloped:xades"
+                }
+              ],
+              "ExtensionContent": [
+                {
+                  "UBLDocumentSignatures": [
+                    {
+                      "SignatureInformation": [
+                        {
+                          "ID": [
+                            {
+                              "_": "urn:oasis:names:specification:ubl:signature:1"
+                            }
+                          ],
+                          "ReferencedSignatureID": [
+                            {
+                              "_": "urn:oasis:names:specification:ubl:signature:Invoice"
+                            }
+                          ],
+                          "Signature": [
+                            {
+                              "Id": "signature",
+                              "SignedInfo": [
+                                {
+                                  "SignatureMethod": [
+                                    {
+                                      "_": "",
+                                      "Algorithm": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+                                    }
+                                  ],
+                                  "Reference": [
+                                    {
+                                      "Id": "id-doc-signed-data",
+                                      "Type": "",
+                                      "URI": "",
+                                      "DigestMethod": [
+                                        {
+                                          "_": "",
+                                          "Algorithm": "http://www.w3.org/2001/04/xmlenc#sha256"
+                                        }
+                                      ],
+                                      "DigestValue": [
+                                        {
+                                          "_": "cpJI+5sw/g3ZW6mMt8WkBwFPtrxPQMMKPHee6PJ0kxw="
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "Id": "id-xades-signed-props",
+                                      "Type": "http://uri.etsi.org/01903/v1.3.2#SignedProperties",
+                                      "URI": "#id-xades-signed-props",
+                                      "DigestMethod": [
+                                        {
+                                          "_": "",
+                                          "Algorithm": "http://www.w3.org/2001/04/xmlenc#sha256"
+                                        }
+                                      ],
+                                      "DigestValue": [
+                                        {
+                                          "_": "JXkXE7KnAIK3Uh8Lh6ltTvVVa6yN01N9HLxxh0nOsd8="
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ],
+                              "SignatureValue": [
+                                {
+                                  "_": "RSVZklWH9c27PM2fooCTBd5wgoA8Yi6Ue9/1p4mqR5AGetsRFyAqis6SsPaiwTJls/hZKFY/puwcyF5z1047cxcy53ZAbbiCbaQWEgs04BE/zq/Ok+m6DzIhajY5xcm8JKeFa9MGFMJ20N4j3UdGhxhOySjau2kFah/hfdQlZ0jJKoppfYBFbBmZnPGy7RG3HjTq7Lu4IWbZf7SadWz36v5brGfvW3ASIgGMbJ7OEtMJObXNqfU0/Na9MgdysmPptW+i1cWoILeyE2fkFtHXsbi+yApRei/nXCtO62QTDXt9GDkwRyasd0nheCKh0noq4QPcrJauysDfswIu/B4QVA=="
+                                }
+                              ],
+                              "KeyInfo": [
+                                {
+                                  "KeyValue": [
+                                    {
+                                      "RSAKeyValue": [
+                                        {
+                                          "Modulus": [
+                                            {
+                                              "_": "km1YVNCx7ArUPevfgeCNW5yZEdnJhNj2DjWosij5j1UEYh3xhTDe1VI3kxxOR6DFkd8On9L5Vj52dcX3w+XHOoK8ZrOhpNFeSrWWC+cHOgwaOXKB+RHCO7UJflz28kqjSh8p0nDpkTrI1nc8aOYddtjjqUOj1U+mkIiu4PnjZkW0SOMB2IB5usioY3GgabzVdOrrq4SYPqBeErR5Av/D2azl2Hojg7rJWvmeDWEKFd/H8a5S4fqASahMTafBy9Xyi0YQ12SedaAD4NGIEU1y5LKnu6p9ceRrAAa4QKKfOUPJls9JRrIghejDMCVqVE3WHliHJPfin6GOVqSys5jeGQ=="
+                                            }
+                                          ],
+                                          "Exponent": [
+                                            {
+                                              "_": "AQAB"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "X509Data": [
+                                    {
+                                      "X509Certificate": [
+                                        {
+                                          "_": "MIIEizCCA3OgAwIBAgIEATz9wzANBgkqhkiG9w0BAQsFADBvMQswCQYDVQQGEwJNWTEOMAwGA1UEChMFTEhETk0xNjA0BgNVBAsTLVRlcm1zIG9mIHVzZSBhdCBodHRwOi8vd3d3LnBvc2RpZ2ljZXJ0LmNvbS5teTEYMBYGA1UEAxMPTEhETk0gU3ViIENBIEczMB4XDTI2MDcyNzA2MTE0MloXDTI3MDkxNzA3NTYzN1owgaoxCzAJBgNVBAYTAk1ZMSQwIgYDVQQKExtXSU5DT00gSVQgU09MVVRJT05TIFNETiBCSEQxFTATBgNVBGETDEMyMDQwNzc3NzEwMDEkMCIGA1UEAxMbV0lOQ09NIElUIFNPTFVUSU9OUyBTRE4gQkhEMRUwEwYDVQQFEwwyMDA4MDEwMTI5NDMxITAfBgkqhkiG9w0BCQEWEmhyQHdpbmNvbS10ZWNoLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAJJtWFTQsewK1D3r34HgjVucmRHZyYTY9g41qLIo+Y9VBGId8YUw3tVSN5McTkegxZHfDp/S+VY+dnXF98PlxzqCvGazoaTRXkq1lgvnBzoMGjlygfkRwju1CX5c9vJKo0ofKdJw6ZE6yNZ3PGjmHXbY46lDo9VPppCIruD542ZFtEjjAdiAebrIqGNxoGm81XTq66uEmD6gXhK0eQL/w9ms5dh6I4O6yVr5ng1hChXfx/GuUuH6gEmoTE2nwcvV8otGENdknnWgA+DRiBFNcuSyp7uqfXHkawAGuECinzlDyZbPSUayIIXowzAlalRN1h5YhyT34p+hjlaksrOY3hkCAwEAAaOB8jCB7zAfBgNVHSUEGDAWBggrBgEFBQcDBAYKKwYBBAGCNwoDDDARBgNVHQ4ECgQIQCDTRa/CEp4wUwYDVR0gBEwwSjBIBgkrBgEEAYOKRQEwOzA5BggrBgEFBQcCARYtaHR0cHM6Ly93d3cucG9zZGlnaWNlcnQuY29tLm15L3JlcG9zaXRvcnkvY3BzMBMGA1UdIwQMMAqACEDf4siP5uZaMA4GA1UdDwEB/wQEAwIGQDA/BgNVHR8EODA2MDSgMqAwhi5odHRwOi8vY3JsLnBvc2RpZ2ljZXJ0LmNvbS5teS9MSEROTVN1YkNBRzMuY3JsMA0GCSqGSIb3DQEBCwUAA4IBAQCuxwFSv7/umy5zg7cbT5n5hs9PP9R2BHgtvwQJOnopXm2P7yY+1qn7ztNbFgaFXia6DSV8ur8AD71V1Z3rfOrmhv1/4B1r/G8lL9YcxaISI1YzucF+/poTL6fF/XWovhWVMxxsusjnF4ExzgTCyW44aKfqTDGMP8qBlIeuGY1d1aMk9zxpW6jC7+SIMhnpSeox5RZFlXWLJMgMuGvmlgpIetJqzObMpDUFUvH1kn6OIkRa5HTnUUNmMcSTnze6OfbTSAlw01RKOoPrNFRkRh4Sxq4n1L6y9EYq3CQyr9HqYtEG+JFlXDvjckdkkzlTQ9Wq5Ek9M5nW5RDrO68FGq6J"
+                                        }
+                                      ],
+                                      "X509SubjectName": [
+                                        {
+                                          "_": "E=hr@wincom-tech.com, SERIALNUMBER=200801012943, CN=WINCOM IT SOLUTIONS SDN BHD, OID.2.5.4.97=C20407777100, O=WINCOM IT SOLUTIONS SDN BHD, C=MY"
+                                        }
+                                      ],
+                                      "X509IssuerSerial": [
+                                        {
+                                          "X509IssuerName": [
+                                            {
+                                              "_": "CN=LHDNM Sub CA G3, OU=Terms of use at http://www.posdigicert.com.my, O=LHDNM, C=MY"
+                                            }
+                                          ],
+                                          "X509SerialNumber": [
+                                            {
+                                              "_": "20774339"
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ],
+                              "Object": [
+                                {
+                                  "QualifyingProperties": [
+                                    {
+                                      "Target": "signature",
+                                      "SignedProperties": [
+                                        {
+                                          "Id": "id-xades-signed-props",
+                                          "SignedSignatureProperties": [
+                                            {
+                                              "SigningTime": [
+                                                {
+                                                  "_": "2026-09-24T11:05:46Z"
+                                                }
+                                              ],
+                                              "SigningCertificate": [
+                                                {
+                                                  "Cert": [
+                                                    {
+                                                      "CertDigest": [
+                                                        {
+                                                          "DigestMethod": [
+                                                            {
+                                                              "_": "",
+                                                              "Algorithm": "http://www.w3.org/2001/04/xmlenc#sha256"
+                                                            }
+                                                          ],
+                                                          "DigestValue": [
+                                                            {
+                                                              "_": "0B/xlsX8FXbiY+Jeu9eJ7ErdngrW6+z5YsfVlp4Nslg="
+                                                            }
+                                                          ]
+                                                        }
+                                                      ],
+                                                      "IssuerSerial": [
+                                                        {
+                                                          "X509IssuerName": [
+                                                            {
+                                                              "_": "CN=LHDNM Sub CA G3, OU=Terms of use at http://www.posdigicert.com.my, O=LHDNM, C=MY"
+                                                            }
+                                                          ],
+                                                          "X509SerialNumber": [
+                                                            {
+                                                              "_": "20774339"
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "ID": [
+        {
+          "_": "SBC2609-0001"
+        }
+      ],
+      "IssueDate": [
+        {
+          "_": "2026-09-24"
+        }
+      ],
+      "IssueTime": [
+        {
+          "_": "03:05:00Z"
+        }
+      ],
+      "InvoiceTypeCode": [
+        {
+          "_": "12",
+          "listVersionID": "1.1"
+        }
+      ],
+      "DocumentCurrencyCode": [
+        {
+          "_": "MYR"
+        }
+      ],
+      "TaxCurrencyCode": [
+        {
+          "_": "MYR"
+        }
+      ],
+      "Signature": [
+        {
+          "ID": [
+            {
+              "_": "urn:oasis:names:specification:ubl:signature:Invoice"
+            }
+          ],
+          "SignatureMethod": [
+            {
+              "_": "urn:oasis:names:specification:ubl:dsig:enveloped:xades"
+            }
+          ]
+        }
+      ],
+      "BillingReference": [
+        {
+          "InvoiceDocumentReference": [
+            {
+              "ID": [
+                {
+                  "_": "SBI2609-0001"
+                }
+              ],
+              "UUID": [
+                {
+                  "_": "YJDQG6A2QSY3703FCHZ9P63M10"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "AccountingSupplierParty": [
+        {
+          "Party": [
+            {
+              "IndustryClassificationCode": [
+                {
+                  "_": "62010",
+                  "name": "Computer programming activities"
+                }
+              ],
+              "PartyIdentification": [
+                {
+                  "ID": [
+                    {
+                      "_": "C20407777100",
+                      "schemeID": "TIN"
+                    }
+                  ]
+                },
+                {
+                  "ID": [
+                    {
+                      "_": "200801012943",
+                      "schemeID": "BRN"
+                    }
+                  ]
+                },
+                {
+                  "ID": [
+                    {
+                      "_": "",
+                      "schemeID": "SST"
+                    }
+                  ]
+                }
+              ],
+              "PostalAddress": [
+                {
+                  "CityName": [
+                    {
+                      "_": "Johor Bahru"
+                    }
+                  ],
+                  "CountrySubentityCode": [
+                    {
+                      "_": "01"
+                    }
+                  ],
+                  "AddressLine": [
+                    {
+                      "Line": [
+                        {
+                          "_": "6, Jln Kempas Utama 2/5"
+                        }
+                      ]
+                    },
+                    {
+                      "Line": [
+                        {
+                          "_": "Taman Kempas Utama"
+                        }
+                      ]
+                    },
+                    {
+                      "Line": [
+                        {
+                          "_": "81300 Johor Bahru"
+                        }
+                      ]
+                    }
+                  ],
+                  "Country": [
+                    {
+                      "IdentificationCode": [
+                        {
+                          "_": "MYS",
+                          "listID": "ISO3166-1",
+                          "listAgencyID": "6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "PartyLegalEntity": [
+                {
+                  "RegistrationName": [
+                    {
+                      "_": "Alpha Supplier"
+                    }
+                  ]
+                }
+              ],
+              "Contact": [
+                {
+                  "Telephone": [
+                    {
+                      "_": "+6075625282"
+                    }
+                  ],
+                  "ElectronicMail": [
+                    {
+                      "_": "sales@wincom-tech.com"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "AccountingCustomerParty": [
+        {
+          "Party": [
+            {
+              "PartyIdentification": [
+                {
+                  "ID": [
+                    {
+                      "_": "C24029452010",
+                      "schemeID": "TIN"
+                    }
+                  ]
+                },
+                {
+                  "ID": [
+                    {
+                      "_": "202001000001",
+                      "schemeID": "BRN"
+                    }
+                  ]
+                }
+              ],
+              "PostalAddress": [
+                {
+                  "CityName": [
+                    {
+                      "_": "Kuala Lumpur"
+                    }
+                  ],
+                  "CountrySubentityCode": [
+                    {
+                      "_": "01"
+                    }
+                  ],
+                  "AddressLine": [
+                    {
+                      "Line": [
+                        {
+                          "_": "1 Demo Street"
+                        }
+                      ]
+                    }
+                  ],
+                  "Country": [
+                    {
+                      "IdentificationCode": [
+                        {
+                          "_": "MYS",
+                          "listID": "ISO3166-1",
+                          "listAgencyID": "6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "PartyLegalEntity": [
+                {
+                  "RegistrationName": [
+                    {
+                      "_": "Demo Company Sdn. Bhd."
+                    }
+                  ]
+                }
+              ],
+              "Contact": [
+                {
+                  "Telephone": [
+                    {
+                      "_": "+6075582156"
+                    }
+                  ],
+                  "ElectronicMail": [
+                    {
+                      "_": "info@demo.local"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "TaxTotal": [
+        {
+          "TaxAmount": [
+            {
+              "_": 0.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "TaxSubtotal": [
+            {
+              "TaxableAmount": [
+                {
+                  "_": 1.0,
+                  "currencyID": "MYR"
+                }
+              ],
+              "TaxAmount": [
+                {
+                  "_": 0.0,
+                  "currencyID": "MYR"
+                }
+              ],
+              "TaxCategory": [
+                {
+                  "ID": [
+                    {
+                      "_": "06"
+                    }
+                  ],
+                  "TaxScheme": [
+                    {
+                      "ID": [
+                        {
+                          "_": "OTH",
+                          "schemeID": "UN/ECE 5153",
+                          "schemeAgencyID": "6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "LegalMonetaryTotal": [
+        {
+          "LineExtensionAmount": [
+            {
+              "_": 1.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "TaxExclusiveAmount": [
+            {
+              "_": 1.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "TaxInclusiveAmount": [
+            {
+              "_": 1.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "AllowanceTotalAmount": [
+            {
+              "_": 0.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "PayableAmount": [
+            {
+              "_": 1.0,
+              "currencyID": "MYR"
+            }
+          ]
+        }
+      ],
+      "InvoiceLine": [
+        {
+          "ID": [
+            {
+              "_": "1"
+            }
+          ],
+          "InvoicedQuantity": [
+            {
+              "_": 1.0,
+              "unitCode": "H87"
+            }
+          ],
+          "LineExtensionAmount": [
+            {
+              "_": 1.0,
+              "currencyID": "MYR"
+            }
+          ],
+          "TaxTotal": [
+            {
+              "TaxAmount": [
+                {
+                  "_": 0.0,
+                  "currencyID": "MYR"
+                }
+              ],
+              "TaxSubtotal": [
+                {
+                  "TaxableAmount": [
+                    {
+                      "_": 1.0,
+                      "currencyID": "MYR"
+                    }
+                  ],
+                  "TaxAmount": [
+                    {
+                      "_": 0.0,
+                      "currencyID": "MYR"
+                    }
+                  ],
+                  "Percent": [
+                    {
+                      "_": 0.0
+                    }
+                  ],
+                  "TaxCategory": [
+                    {
+                      "ID": [
+                        {
+                          "_": "06"
+                        }
+                      ],
+                      "TaxScheme": [
+                        {
+                          "ID": [
+                            {
+                              "_": "OTH",
+                              "schemeID": "UN/ECE 5153",
+                              "schemeAgencyID": "6"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "Item": [
+            {
+              "CommodityClassification": [
+                {
+                  "ItemClassificationCode": [
+                    {
+                      "_": "022",
+                      "listID": "CLASS"
+                    }
+                  ]
+                }
+              ],
+              "Description": [
+                {
+                  "_": "3232323"
+                }
+              ]
+            }
+          ],
+          "Price": [
+            {
+              "PriceAmount": [
+                {
+                  "_": 1.0,
+                  "currencyID": "MYR"
+                }
+              ]
+            }
+          ],
+          "ItemPriceExtension": [
+            {
+              "Amount": [
+                {
+                  "_": 1.0,
+                  "currencyID": "MYR"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

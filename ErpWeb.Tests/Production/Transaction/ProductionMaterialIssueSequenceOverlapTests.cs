@@ -259,12 +259,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         var secondRollback = await returns.RollbackAsync(
             new(second.Id, secondPost.Data!.RowVersion, Guid.NewGuid(), "Reverse later return first"));
         Assert.True(secondRollback.Succeeded, secondRollback.Message);
-        Assert.Equal("REVERSED", secondRollback.Data!.Status);
+        Assert.Equal("NEW", secondRollback.Data!.Status);
 
         var firstRollback = await returns.RollbackAsync(
             new(first.Id, firstPost.Data.RowVersion, Guid.NewGuid(), "Reverse earlier return second"));
         Assert.True(firstRollback.Succeeded, firstRollback.Message);
-        Assert.Equal("REVERSED", firstRollback.Data!.Status);
+        Assert.Equal("NEW", firstRollback.Data!.Status);
 
         await using var db = await _factory.CreateDbContextAsync();
         var reversalFact = await db.ProductionStockReturnFacts.AsNoTracking()
@@ -393,7 +393,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     private static ProductionOutputCreateRequest OutputRequest(long operationId, decimal good, DateTime date) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = Guid.NewGuid().ToString("N"),
+        CreateRequestId = Guid.NewGuid().ToString("N"),
         ProductionDate = date,
         GoodQty = good,
         OutputLotNo = "LOT-1",

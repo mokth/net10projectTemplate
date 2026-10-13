@@ -22,8 +22,21 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IIvStockCommonRepository _common;
     private readonly IPoOrderRepository _poOrders;
     private readonly ILogger<IvInventoryPostingService> _logger;
+    private readonly ICurrentDateService _currentDate;
     private readonly IIvInventoryHistoryWriter? _historyWriter;
     private readonly IStockPostingCoordinator? _coordinator;
+    private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        IvTrxTypes.MiscellaneousReceipt,
+        IvTrxTypes.CustomerReturn,
+        IvTrxTypes.GoodsReceive,
+        IvTrxTypes.NonStockGoodsReceive,
+        IvTrxTypes.MiscellaneousIssue,
+        IvTrxTypes.Scrap,
+        IvTrxTypes.VendorReturn,
+        IvTrxTypes.StockTransfer,
+        IvTrxTypes.StockAdjustment
+    };
 
     public IvInventoryPostingService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -33,6 +46,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IIvStockCommonRepository common,
         IPoOrderRepository poOrders,
         ILogger<IvInventoryPostingService> logger,
+        ICurrentDateService currentDate,
         IIvInventoryHistoryWriter? historyWriter = null,
         IStockPostingCoordinator? coordinator = null)
     {
@@ -43,8 +57,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _common = common;
         _poOrders = poOrders;
         _logger = logger;
+        _currentDate = currentDate;
         _historyWriter = historyWriter;
         _coordinator = coordinator;
+    }
+
+    internal static bool RequiresInventoryBusinessDateGate(string? trxType) =>
+        !string.IsNullOrWhiteSpace(trxType) && NormalInventoryFutureDraftTypes.Contains(trxType);
+
+    private string? FuturePostDateError(IvTrxBatch batch)
+    {
+        if (!RequiresInventoryBusinessDateGate(batch.TrxType))
+        {
+            return null;
+        }
+
+        var error = IvStockMovementRules.EnsureValidMovementDate(batch.TrxDtTime, _currentDate.Today);
+        return string.IsNullOrWhiteSpace(error) ? null : error;
     }
 
     public async Task<StockPostingBeginResult> BeginPostingInTransactionAsync(
@@ -408,6 +437,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
+        if (FuturePostDateError(batch) is string futureDateError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1005,6 +1039,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
+        if (FuturePostDateError(batch) is string futureDateError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Only NEW goods receipts can be posted.");
@@ -1185,6 +1224,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
+        if (FuturePostDateError(batch) is string futureDateError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
@@ -1968,6 +2012,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
         }
 
+        if (FuturePostDateError(batch) is string futureDateError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
+        }
+
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutOnlyNewCanPostMessage(expectedTrxType));
@@ -2411,6 +2460,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode, branchCode, batch.TrxDtTime, cancellationToken) is string periodGuard)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, periodGuard);
+        }
+
+        if (FuturePostDateError(batch) is string futureDateError)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
         }
 
         if (!string.Equals(batch.BatchStatus, IvBatchStatuses.New, StringComparison.OrdinalIgnoreCase))

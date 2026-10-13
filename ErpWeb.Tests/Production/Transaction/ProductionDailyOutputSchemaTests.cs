@@ -59,7 +59,7 @@ public sealed class ProductionDailyOutputSchemaTests
         Assert.Equal("PrProductionOutput", entity.GetTableName());
         Assert.Equal(ProductionOutputStatuses.New, "NEW");
         Assert.Equal(ProductionOutputStatuses.Posted, "POSTED");
-        Assert.Equal(ProductionOutputStatuses.Reversed, "REVERSED");
+        Assert.DoesNotContain("REVERSED", string.Join(' ', entity.GetCheckConstraints().Select(x => x.Sql)), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(ProductionPostingCommandTypes.OutputPost, "OUTPUT_POST");
         Assert.Equal(ProductionPostingCommandTypes.OutputRollback, "OUTPUT_ROLLBACK");
         Assert.Equal(RunningNumberKeys.ProductionDailyOutput, "PR_DAILY_OUTPUT");

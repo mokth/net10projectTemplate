@@ -116,7 +116,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),
             new FixedCurrentDateService(DateTime.Today),
@@ -211,7 +211,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),
             new FixedCurrentDateService(DateTime.Today),
@@ -378,7 +378,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         var cr = new IvStockReturnService(
             factory, tenant, access.Object, new RunningNumberService(),
             new FixedCurrentDateService(DateTime.Today),
@@ -481,7 +481,7 @@ public class IvInventoryPostingSqlServerConcurrencyTests
             factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
         var mr = new IvMiscReceiptService(
             factory, tenant, access.Object, new RunningNumberService(),
             new FixedCurrentDateService(DateTime.Today),

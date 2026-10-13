@@ -347,7 +347,7 @@
                                 <Template>
                                     <DxDateEdit @bind-Date="@Popup.ExpiryDate"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                MinDate="@AppToday"
+                                                MinDate="@Header.TrxDate.Date"
                                                 Enabled="@Popup.LotControl"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                 </Template>

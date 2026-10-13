@@ -63,7 +63,7 @@ public partial class PrDailyProductionEntry : PageBase
     protected string OutputItemCode = string.Empty;
     protected string OutputUom = string.Empty;
     protected string OutputType = string.Empty;
-    protected string PostingRequestId = string.Empty;
+    protected string CreateRequestId = string.Empty;
     protected byte[] RowVersion = [];
 
     protected DateTime ProductionDate = DateTime.Now;
@@ -270,7 +270,7 @@ public partial class PrDailyProductionEntry : PageBase
         Document = null;
         CurrentOutputId = null;
         DocumentNo = string.Empty;
-        PostingRequestId = Guid.NewGuid().ToString("N");
+        CreateRequestId = Guid.NewGuid().ToString("N");
         WorkOrderNo = workspace.Data.Operation.WorkOrderNo;
         OutputItemCode = workspace.Data.Operation.OutputItemCode;
         OutputUom = workspace.Data.Operation.OutputUom ?? string.Empty;
@@ -334,7 +334,7 @@ public partial class PrDailyProductionEntry : PageBase
         OutputItemCode = d.OutputItemCode;
         OutputUom = d.OutputUom;
         OutputType = d.OutputType ?? string.Empty;
-        PostingRequestId = d.PostingRequestId;
+        CreateRequestId = d.CreateRequestId;
         RowVersion = d.RowVersion;
 
         var workspace = await Outputs.GetDocumentWorkspaceAsync(outputId);
@@ -430,7 +430,7 @@ public partial class PrDailyProductionEntry : PageBase
                 var created = await Outputs.CreateAsync(new ProductionOutputCreateRequest
                 {
                     WorkOrderOperationId = SelectedOperationId.Value,
-                    PostingRequestId = PostingRequestId,
+                    CreateRequestId = CreateRequestId,
                     ProductionDate = ProductionDate,
                     ShiftCode = ShiftCode,
                     ActualMachineCode = ActualMachineCode,
@@ -457,7 +457,7 @@ public partial class PrDailyProductionEntry : PageBase
             {
                 OutputId = CurrentOutputId.Value,
                 WorkOrderOperationId = SelectedOperationId.Value,
-                PostingRequestId = PostingRequestId,
+                CreateRequestId = CreateRequestId,
                 ProductionDate = ProductionDate,
                 ShiftCode = ShiftCode,
                 ActualMachineCode = ActualMachineCode,
@@ -583,7 +583,7 @@ public partial class PrDailyProductionEntry : PageBase
 
             RollbackConfirmVisible = false;
             await LoadDocumentAsync(result.Data.Uid);
-            StatusMessage = $"Rolled back {DocumentNo}.";
+            StatusMessage = $"{DocumentNo} was reopened as NEW after rollback.";
         }
         finally
         {
@@ -615,7 +615,7 @@ public partial class PrDailyProductionEntry : PageBase
     private void ResetFormFields()
     {
         DocumentNo = WorkOrderNo = OutputItemCode = OutputUom = OutputType = string.Empty;
-        PostingRequestId = Guid.NewGuid().ToString("N");
+        CreateRequestId = Guid.NewGuid().ToString("N");
         ShiftCode = ActualMachineCode = OperatorCode = null;
         OutputLotNo = string.Empty;
         GoodQty = ScrapQty = RejectQty = HoldQty = 0m;

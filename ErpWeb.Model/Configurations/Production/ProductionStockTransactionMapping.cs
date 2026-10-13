@@ -34,7 +34,8 @@ internal static class ProductionStockTransactionMapping
         b.Property<string>("SourceUom").HasMaxLength(10).IsRequired();
         b.Property<string>("BaseUom").HasMaxLength(10).IsRequired();
         b.HasIndex("DetailId").IsUnique();
-        b.HasIndex("BatchId", "ProductionBalLotId").IsUnique();
+        b.Property<int>("DocumentRevision").HasDefaultValue(1);
+        b.HasIndex("BatchId", "DocumentRevision", "ProductionBalLotId").IsUnique();
     }
 
     internal static void Fact<T>(EntityTypeBuilder<T> b, string lineId) where T : class

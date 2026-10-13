@@ -54,6 +54,7 @@ IF EXISTS (SELECT 1 FROM (VALUES (N'SourceIssueMovementID'),(N'ReversesMaterialM
 -- Verify the deployed schema, including reruns against an existing database.
 DECLARE @ExpectedColumns TABLE(TableName sysname,ColumnName sysname,TypeName sysname,MaxLength int NULL,PrecisionValue int NULL,ScaleValue int NULL,IsNullable bit,IsIdentity bit);
 INSERT @ExpectedColumns VALUES
+(N'PrProductionPostingLink',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'BatchId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'CompanyCode',N'nvarchar',10,NULL,NULL,0,0),
 (N'PrProductionStockAdjustment',N'BranchCode',N'nvarchar',10,NULL,NULL,0,0),
@@ -95,6 +96,7 @@ INSERT @ExpectedColumns VALUES
 (N'PrProductionStockReturnPriceSnapshot',N'PostedPriceEvidence',N'nvarchar',400,NULL,NULL,1,0),
 (N'PrProductionStockAdjustmentLine',N'Id',N'bigint',NULL,NULL,NULL,0,1),
 (N'PrProductionStockAdjustmentLine',N'BatchId',N'int',NULL,NULL,NULL,0,0),
+(N'PrProductionStockAdjustmentLine',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'DetailId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'ProductionBalLotId',N'bigint',NULL,NULL,NULL,0,0),
 (N'PrProductionStockAdjustmentLine',N'AdjustmentQty',N'decimal',NULL,18,4,0,0),
@@ -109,6 +111,7 @@ INSERT @ExpectedColumns VALUES
 (N'PrProductionStockAdjustmentLine',N'CostApprovedAtUtc',N'datetime2',NULL,NULL,7,1,0),
 (N'PrProductionStockReturnLine',N'Id',N'bigint',NULL,NULL,NULL,0,1),
 (N'PrProductionStockReturnLine',N'BatchId',N'int',NULL,NULL,NULL,0,0),
+(N'PrProductionStockReturnLine',N'DocumentRevision',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'DetailId',N'int',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'ProductionBalLotId',N'bigint',NULL,NULL,NULL,0,0),
 (N'PrProductionStockReturnLine',N'SourceIssueMovementId',N'bigint',NULL,NULL,NULL,0,0),
@@ -199,7 +202,7 @@ IF EXISTS (SELECT 1 FROM @ExpectedFks e WHERE NOT EXISTS
  THROW 51177, 'Production stock schema failed: missing, untrusted or non-restrict lineage foreign key.', 1;
 DECLARE @ExpectedIndexes TABLE(TableName sysname,IndexName sysname,IsUnique bit,HasFilter bit,ColumnNames nvarchar(1000));
 INSERT @ExpectedIndexes VALUES
-(N'PrProductionPostingLink',N'UQ_PrProductionPostingLink_StockTransactionBatch',1,1,N'CompanyCode,BranchCode,CommandType,InventoryBatchNo'),
+(N'PrProductionPostingLink',N'UQ_PrProductionPostingLink_StockTransactionBatchRevision',1,1,N'CompanyCode,BranchCode,CommandType,InventoryBatchNo,DocumentRevision'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_CompanyCode_BranchCode_WorkOrderId',0,0,N'CompanyCode,BranchCode,WorkOrderId'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_CorrectedBatchId',0,0,N'CorrectedBatchId'),
 (N'PrProductionStockAdjustment',N'IX_PrProductionStockAdjustment_PostingId',1,1,N'PostingId'),
@@ -212,7 +215,7 @@ INSERT @ExpectedIndexes VALUES
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_ReversesFactId',1,1,N'ReversesFactId'),
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_StandardCostRevisionId',0,0,N'StandardCostRevisionId'),
 (N'PrProductionStockAdjustmentFact',N'IX_PrProductionStockAdjustmentFact_StockPostingId_AdjustmentLineId',1,0,N'StockPostingId,AdjustmentLineId'),
-(N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_BatchId_ProductionBalLotId',1,0,N'BatchId,ProductionBalLotId'),
+(N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_BatchId_DocumentRevision_ProductionBalLotId',1,0,N'BatchId,DocumentRevision,ProductionBalLotId'),
 (N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_DetailId',1,0,N'DetailId'),
 (N'PrProductionStockAdjustmentLine',N'IX_PrProductionStockAdjustmentLine_ProductionBalLotId',0,0,N'ProductionBalLotId'),
 (N'PrProductionStockReturn',N'IX_PrProductionStockReturn_CompanyCode_BranchCode_WorkOrderId',0,0,N'CompanyCode,BranchCode,WorkOrderId'),
@@ -229,7 +232,7 @@ INSERT @ExpectedIndexes VALUES
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_ReversesFactId',1,1,N'ReversesFactId'),
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_SourceIssueMovementId',0,0,N'SourceIssueMovementId'),
 (N'PrProductionStockReturnFact',N'IX_PrProductionStockReturnFact_StockPostingId_ReturnLineId',1,0,N'StockPostingId,ReturnLineId'),
-(N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_BatchId_ProductionBalLotId',1,0,N'BatchId,ProductionBalLotId'),
+(N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_BatchId_DocumentRevision_ProductionBalLotId',1,0,N'BatchId,DocumentRevision,ProductionBalLotId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_DetailId',1,0,N'DetailId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_ProductionBalLotId',0,0,N'ProductionBalLotId'),
 (N'PrProductionStockReturnLine',N'IX_PrProductionStockReturnLine_SourceIssueMovementId',0,0,N'SourceIssueMovementId'),

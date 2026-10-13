@@ -4,11 +4,16 @@ SET XACT_ABORT ON;
 IF OBJECT_ID(N'dbo.PrMaterialIssueLine', N'U') IS NOT NULL
     THROW 51300, 'PrMaterialIssueLine already exists; review the installed draft schema before continuing.', 1;
 
+IF COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+    THROW 51304, 'Production posting links must include DocumentRevision before material-issue draft setup.', 1;
+
+/* Keep the column reference dynamic so SQL Server does not bind it before the guard above. */
+EXEC sys.sp_executesql N'
 IF EXISTS (
     SELECT 1 FROM dbo.PrProductionPostingLink
-    WHERE CommandType = N'MATERIAL_ISSUE_POST' AND InventoryBatchNo IS NOT NULL
-    GROUP BY CompanyCode, BranchCode, InventoryBatchNo HAVING COUNT(*) > 1)
-    THROW 51301, 'Duplicate material-issue posting links exist for an inventory batch.', 1;
+    WHERE CommandType = N''MATERIAL_ISSUE_POST'' AND InventoryBatchNo IS NOT NULL
+    GROUP BY CompanyCode, BranchCode, InventoryBatchNo, DocumentRevision HAVING COUNT(*) > 1)
+    THROW 51301, ''Duplicate material-issue posting links exist for an inventory batch generation.'', 1;';
 
 IF EXISTS (
     SELECT 1 FROM dbo.PrMaterialMovement m

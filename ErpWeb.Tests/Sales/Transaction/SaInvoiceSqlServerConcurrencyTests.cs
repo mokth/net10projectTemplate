@@ -685,7 +685,7 @@ public class SaInvoiceSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
         return new SaInvoiceService(
             factory,

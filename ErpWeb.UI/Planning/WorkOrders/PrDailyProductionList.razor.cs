@@ -67,8 +67,7 @@ public partial class PrDailyProductionList : PageBase, IDisposable
     [
         new(string.Empty, "All statuses"),
         new(ProductionOutputStatuses.New, "New"),
-        new(ProductionOutputStatuses.Posted, "Posted"),
-        new(ProductionOutputStatuses.Reversed, "Reversed")
+        new(ProductionOutputStatuses.Posted, "Posted")
     ];
 
     protected List<GridColumnData> Columns { get; } =
@@ -243,7 +242,7 @@ public partial class PrDailyProductionList : PageBase, IDisposable
             {
                 StatusMessage = action == "POST"
                     ? $"Posted {succeeded} document(s)."
-                    : $"Rolled back {succeeded} document(s).";
+                    : $"Rolled back {succeeded} document(s); each is open as NEW for editing and reposting.";
                 ConfirmVisible = false;
                 ConfirmReason = string.Empty;
                 _selectedRows.Clear();

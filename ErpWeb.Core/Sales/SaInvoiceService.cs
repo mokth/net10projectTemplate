@@ -1369,6 +1369,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 $"Select at most {SaInvoiceLimits.MaxPostSelection} invoices.");
         }
 
+        var businessDate = _dates.Today.Date;
         var results = new List<SaInvoicePostingItemResult>();
         var stop = false;
         foreach (var no in nos)
@@ -1381,7 +1382,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
             try
             {
-                var one = await PostOneAsync(context, no, cancellationToken);
+                var one = await PostOneAsync(context, no, businessDate, cancellationToken);
                 results.Add(one);
                 if (!one.Succeeded)
                 {
@@ -1459,6 +1460,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
     private async Task<SaInvoicePostingItemResult> PostOneAsync(
         UserContext context,
         string invNo,
+        DateTime businessDate,
         CancellationToken cancellationToken,
         byte[]? expectedRowVersion = null)
     {
@@ -1502,6 +1504,14 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 }
 
                 db.Entry(invoice).Property(x => x.RowVersion).OriginalValue = expectedRowVersion;
+            }
+
+            if (TransactionPostingDateGuard.FutureDateError(
+                    invoice.InvDate,
+                    businessDate) is string futureDateError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(invNo, futureDateError);
             }
 
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);

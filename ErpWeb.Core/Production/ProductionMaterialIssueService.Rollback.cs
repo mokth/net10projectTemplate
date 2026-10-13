@@ -46,19 +46,36 @@ public sealed partial class ProductionMaterialIssueService
                 return RollbackFail(IvMasterErrorCode.Concurrency, "This rollback request is already being processed.");
             }
 
-            var originalLink = await LockOriginalIssueLinkAsync(
-                db, scope.CompanyCode, scope.BranchCode!, request.InventoryBatchNo, cancellationToken);
-            if (originalLink is null)
-                return RollbackFail(IvMasterErrorCode.NotFound, "Issue to Production was not found.");
-            if (originalLink.Status != ProductionPostingLinkStatuses.Succeeded)
-                return RollbackFail(IvMasterErrorCode.Validation, "Only a successfully posted Issue to Production can be rolled back.");
-
             var batch = await _stockPosting.LockBatchForUpdateAsync(
                 db, scope.CompanyCode, scope.BranchCode!, request.InventoryBatchNo, cancellationToken);
             if (batch is null || batch.TrxType != IvTrxTypes.IssueToProduction)
                 return RollbackFail(IvMasterErrorCode.NotFound, "Issue to Production was not found.");
             if (batch.BatchStatus != IvBatchStatuses.Posted)
                 return RollbackFail(IvMasterErrorCode.Validation, "Only POSTED Issue to Production documents can be rolled back.");
+            var currentRevision = await db.IvTrxBatchDetails
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && x.BatchId == batch.Id && x.TrxType == IvTrxTypes.IssueToProduction)
+                .Select(x => (int?)x.DocumentRevision).MaxAsync(cancellationToken);
+            if (currentRevision is null or <= 0)
+                return RollbackFail(IvMasterErrorCode.Validation, "The current inventory issue revision was not found.");
+            var originalLink = await LockOriginalIssueLinkAsync(
+                db, scope.CompanyCode, scope.BranchCode!, request.InventoryBatchNo, currentRevision.Value, cancellationToken);
+            if (originalLink is null || originalLink.Status != ProductionPostingLinkStatuses.Succeeded)
+                return RollbackFail(IvMasterErrorCode.Validation, "The current Issue to Production generation has no successful POST link.");
+            var originalPostingId = await db.StockPostings.AsNoTracking()
+                .Where(x => x.ProductionPostingLinkId == originalLink.Uid
+                    && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && x.SourceModule == "INVENTORY" && x.SourceDocumentType == batch.TrxType
+                    && x.SourceDocumentId == batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    && x.DocumentRevision == currentRevision.Value && x.PostingRole == "PRIMARY")
+                .Select(x => (long?)x.Id).SingleOrDefaultAsync(cancellationToken);
+            if (originalPostingId is null)
+                return RollbackFail(IvMasterErrorCode.Validation, "The sealed V2 PRIMARY for this Issue to Production generation was not found.");
+            if (await ProductionPostingGenerationGuard.ValidateRollbackTargetAsync(
+                    db, originalPostingId.Value, scope.CompanyCode, scope.BranchCode!, "INVENTORY", batch.TrxType,
+                    batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), currentRevision.Value, cancellationToken)
+                is string generationError)
+                return RollbackFail(IvMasterErrorCode.Validation, generationError);
             var effectiveAt = await ErpWeb.Core.StockLedger.StockBusinessTime.NowAsync(
                 db, scope.CompanyCode, cancellationToken);
             var ledger = await _inventoryPosting.BeginPostingInTransactionAsync(
@@ -66,6 +83,11 @@ public sealed partial class ProductionMaterialIssueService
                 true, effectiveAt, cancellationToken);
             if (ledger.Error is not null)
                 return RollbackFail(IvMasterErrorCode.Validation, ledger.Error.Message);
+            if (!ledger.LedgerEnabled || ledger.Context is null)
+                return RollbackFail(IvMasterErrorCode.Validation, "Issue to Production rollback requires an active V2 stock ledger for this company/branch.");
+            if (ledger.WasReplay)
+                return RollbackFail(IvMasterErrorCode.Concurrency, "A sealed V2 rollback already exists for this generation, but the document is still POSTED. Run posting reconciliation.");
+            var ledgerContext = ledger.Context;
 
             var order = await LockWorkOrderByIdAsync(db, originalLink.WorkOrderId, cancellationToken);
             if (order is null)
@@ -124,6 +146,7 @@ public sealed partial class ProductionMaterialIssueService
                 ProductionDocumentType = ProductionDocumentTypes.MaterialIssue,
                 ProductionDocumentNo = request.InventoryBatchNo.ToString(),
                 InventoryBatchNo = request.InventoryBatchNo,
+                DocumentRevision = currentRevision.Value,
                 OriginalPostingLinkId = originalLink.Uid,
                 Status = ProductionPostingLinkStatuses.Pending,
                 CreatedDate = now,
@@ -143,13 +166,13 @@ public sealed partial class ProductionMaterialIssueService
             }
 
             var rolledBack = await _inventoryPosting.RollBackStockOutInTransactionAsync(
-                ledger.Context,
+                ledgerContext,
                 db, scope.CompanyCode, scope.BranchCode!, user, request.InventoryBatchNo,
                 IvTrxTypes.IssueToProduction, cancellationToken);
             if (!rolledBack.Succeeded)
                 return RollbackFail(IvMasterErrorCode.Validation, rolledBack.ErrorMessage ?? "Inventory rollback failed.");
 
-            // Inventory MI rollback restores BalLoc and returns the batch to NEW for correction/re-post.
+            // Inventory MI rollback restores BalLoc and returns the batch to NEW for editing and reposting.
             // Keep that status (do not cancel) so users can adjust qty/lot and post again.
             batch.BatchStatus = IvBatchStatuses.New;
 
@@ -185,7 +208,7 @@ public sealed partial class ProductionMaterialIssueService
                     WorkOrderMaterialId = original.WorkOrderMaterialId,
                     WorkOrderOperationId = original.WorkOrderOperationId,
                     MovementType = ProductionMaterialMovementTypes.IssueReversal,
-                    MovementDate = ledger.Context?.Posting.EffectiveAt ?? now,
+                    MovementDate = ledgerContext.Posting.EffectiveAt,
                     ItemCode = original.ItemCode,
                     Qty = original.Qty,
                     Uom = original.Uom,
@@ -207,7 +230,7 @@ public sealed partial class ProductionMaterialIssueService
                     UnitCost = original.UnitCost,
                     TotalCost = original.TotalCost,
                     PostingLinkId = rollbackLink.Uid,
-                    StockPostingId = ledger.Context?.Posting.Id,
+                    StockPostingId = ledgerContext.Posting.Id,
                     OriginalMovementId = original.Uid,
                     Reason = "ROLLBACK",
                     Remarks = Truncate(request.Reason, 250),
@@ -215,13 +238,6 @@ public sealed partial class ProductionMaterialIssueService
                     CreatedBy = user
                 });
 
-                // Archive the reversed ISSUE under the rollback link so the post link can accept a new
-                // ISSUE row on the same InventoryBatchDetailId after the draft is corrected and re-posted.
-                if (ledger.Context is null)
-                {
-                    original.PostingLinkId = rollbackLink.Uid;
-                    original.InventoryHistoryId = null;
-                }
             }
 
             var facts = await ProductionMaterialExecutionFacts.ReadAsync(db, scope.CompanyCode, scope.BranchCode!, materialIds, cancellationToken);
@@ -260,30 +276,27 @@ public sealed partial class ProductionMaterialIssueService
                     OriginalMovementId = original.ProductionBalLotMovementId,
                     DocumentType = ProductionDocumentTypes.MaterialIssue,
                     DocumentNo = request.InventoryBatchNo.ToString(),
-                    MovementDate = ledger.Context?.Posting.EffectiveAt ?? original.MovementDate,
+                    MovementDate = ledgerContext.Posting.EffectiveAt,
                     CreatedDate = now,
                     CreatedBy = user,
                 });
-                if (ledger.Context is not null)
-                {
-                    var reversal = db.ChangeTracker.Entries<ProductionBalLotMovement>()
-                        .Where(x => x.State == EntityState.Added)
-                        .Select(x => x.Entity)
-                        .Last();
-                    reversal.LedgerVersion = 2;
-                    reversal.LedgerEpochId = ledger.Context.Epoch.Id;
-                    reversal.StockPostingId = ledger.Context.Posting.Id;
-                    reversal.PostingLineNo = db.ChangeTracker.Entries<ProductionBalLotMovement>()
-                        .Count(x => x.State == EntityState.Added && x.Entity.StockPostingId == ledger.Context.Posting.Id);
-                    reversal.CompanyCode = original.CompanyCode;
-                    reversal.BranchCode = original.BranchCode;
-                    reversal.ItemCode = original.ItemCode;
-                    reversal.WorkOrderNo = order.WorkOrderNo;
-                    reversal.ConversionFactorToBase = original.ConversionFactorToBase;
-                    reversal.SourceLineId = original.InventoryTrxLineNo?.ToString() ?? original.Uid.ToString();
-                    reversal.SplitOrdinal = 0;
-                    reversal.ValuationStatus = "UNVALUED";
-                }
+                var reversal = db.ChangeTracker.Entries<ProductionBalLotMovement>()
+                    .Where(x => x.State == EntityState.Added)
+                    .Select(x => x.Entity)
+                    .Last();
+                reversal.LedgerVersion = 2;
+                reversal.LedgerEpochId = ledgerContext.Epoch.Id;
+                reversal.StockPostingId = ledgerContext.Posting.Id;
+                reversal.PostingLineNo = db.ChangeTracker.Entries<ProductionBalLotMovement>()
+                    .Count(x => x.State == EntityState.Added && x.Entity.StockPostingId == ledgerContext.Posting.Id);
+                reversal.CompanyCode = original.CompanyCode;
+                reversal.BranchCode = original.BranchCode;
+                reversal.ItemCode = original.ItemCode;
+                reversal.WorkOrderNo = order.WorkOrderNo;
+                reversal.ConversionFactorToBase = original.ConversionFactorToBase;
+                reversal.SourceLineId = original.InventoryTrxLineNo?.ToString() ?? original.Uid.ToString();
+                reversal.SplitOrdinal = 0;
+                reversal.ValuationStatus = "UNVALUED";
                 pile.Qty = 0m;
                 pile.BaseQty = 0m;
                 pile.TotalCost = 0m;
@@ -291,16 +304,51 @@ public sealed partial class ProductionMaterialIssueService
                 pile.LastMovementDate = original.MovementDate;
             }
 
-            // Reopen the same post link as a NEW draft so the user can edit qty/lot and re-post.
-            originalLink.Status = ProductionPostingLinkStatuses.Draft;
-            originalLink.PostingOperationId = null;
-            originalLink.ResultCode = null;
-            originalLink.ResultMessage = $"Reopened after rollback {request.PostingRequestId}.";
-            originalLink.CompletedDate = null;
+            var nextRevision = await db.IvTrxBatchDetails
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && x.BatchId == batch.Id && x.TrxType == IvTrxTypes.IssueToProduction)
+                .Select(x => (int?)x.DocumentRevision).MaxAsync(cancellationToken);
+            if (nextRevision != checked(currentRevision.Value + 1))
+                return RollbackFail(IvMasterErrorCode.Validation, "Inventory rollback did not advance the issue detail generation exactly once.");
+            var activeMaps = await db.ProductionMaterialIssueLines
+                .Where(x => x.PostingLinkId == originalLink.Uid && x.DocumentRevision == currentRevision.Value)
+                .ToListAsync(cancellationToken);
+            if (activeMaps.Count == 0 || activeMaps.Any(x => x.DocumentRevision != currentRevision.Value))
+                return RollbackFail(IvMasterErrorCode.Validation, "The current production issue allocation map is incomplete.");
+            var nextPostLink = new ProductionPostingLink
+            {
+                CompanyCode = originalLink.CompanyCode,
+                BranchCode = originalLink.BranchCode,
+                CommandType = ProductionPostingCommandTypes.MaterialIssuePost,
+                PostingRequestId = Guid.NewGuid().ToString("N"),
+                DocumentRevision = nextRevision.Value,
+                WorkOrderId = originalLink.WorkOrderId,
+                ProductionDocumentType = originalLink.ProductionDocumentType,
+                ProductionDocumentNo = originalLink.ProductionDocumentNo,
+                InventoryBatchNo = originalLink.InventoryBatchNo,
+                SnapshotRevision = originalLink.SnapshotRevision,
+                SnapshotHash = originalLink.SnapshotHash,
+                ProductionQtyThisIssue = originalLink.ProductionQtyThisIssue,
+                Status = ProductionPostingLinkStatuses.Draft,
+                CreatedDate = now,
+                CreatedBy = user
+            };
+            db.ProductionPostingLinks.Add(nextPostLink);
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var map in activeMaps)
+            {
+                var detailRevision = await db.IvTrxBatchDetails.AsNoTracking()
+                    .Where(x => x.Id == map.InventoryBatchDetailId)
+                    .Select(x => (int?)x.DocumentRevision).SingleOrDefaultAsync(cancellationToken);
+                if (detailRevision != nextRevision)
+                    return RollbackFail(IvMasterErrorCode.Validation, "An inventory detail does not match the new issue generation.");
+                map.PostingLinkId = nextPostLink.Uid;
+                map.DocumentRevision = nextRevision.Value;
+            }
             rollbackLink.PostingOperationId = rolledBack.OperationId?.ToString("N");
             rollbackLink.Status = ProductionPostingLinkStatuses.Succeeded;
             rollbackLink.ResultCode = "OK";
-            rollbackLink.ResultMessage = $"Rolled back IP batch {request.InventoryBatchNo}; draft reopened for correction.";
+            rollbackLink.ResultMessage = $"Rolled back IP batch {request.InventoryBatchNo}; generation {nextRevision.Value} is ready for editing and reposting.";
             rollbackLink.CompletedDate = now;
             db.ProductionAuditEvents.Add(new ProductionAuditEvent
             {
@@ -315,13 +363,10 @@ public sealed partial class ProductionMaterialIssueService
             });
 
             await db.SaveChangesAsync(cancellationToken);
-            if (ledger.Context is not null)
-            {
-                var balanceReversals = await db.ProductionBalLotMovements.Where(x => x.StockPostingId == ledger.Context.Posting.Id).ToListAsync(cancellationToken);
-                await ProductionPoolValuationService.RecordAsync(ledger.Context, balanceReversals, cancellationToken);
-                ledger.Context.Posting.ProductionPostingLinkId = rollbackLink.Uid;
-                await _inventoryPosting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
-            }
+            var balanceReversals = await db.ProductionBalLotMovements.Where(x => x.StockPostingId == ledgerContext.Posting.Id).ToListAsync(cancellationToken);
+            await ProductionPoolValuationService.RecordAsync(ledgerContext, balanceReversals, cancellationToken);
+            ledgerContext.Posting.ProductionPostingLinkId = rollbackLink.Uid;
+            await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Ok(
                 await BuildRollbackResultAsync(db, rollbackLink, cancellationToken));
@@ -380,10 +425,10 @@ public sealed partial class ProductionMaterialIssueService
     }
 
     private static async Task<ProductionPostingLink?> LockOriginalIssueLinkAsync(
-        AppDbContext db, string company, string branch, int batchNo, CancellationToken ct) =>
+        AppDbContext db, string company, string branch, int batchNo, int documentRevision, CancellationToken ct) =>
         db.Database.IsSqlServer()
-            ? await db.ProductionPostingLinks.FromSqlInterpolated($@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.MaterialIssuePost} AND InventoryBatchNo={batchNo}").SingleOrDefaultAsync(ct)
-            : await db.ProductionPostingLinks.SingleOrDefaultAsync(x => x.CompanyCode == company && x.BranchCode == branch && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost && x.InventoryBatchNo == batchNo, ct);
+            ? await db.ProductionPostingLinks.FromSqlInterpolated($@"SELECT * FROM dbo.PrProductionPostingLink WITH (UPDLOCK, HOLDLOCK) WHERE CompanyCode={company} AND BranchCode={branch} AND CommandType={ProductionPostingCommandTypes.MaterialIssuePost} AND InventoryBatchNo={batchNo} AND DocumentRevision={documentRevision}").SingleOrDefaultAsync(ct)
+            : await db.ProductionPostingLinks.SingleOrDefaultAsync(x => x.CompanyCode == company && x.BranchCode == branch && x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost && x.InventoryBatchNo == batchNo && x.DocumentRevision == documentRevision, ct);
 
     private static async Task<ProductionWorkOrder?> LockWorkOrderByIdAsync(
         AppDbContext db, long id, CancellationToken ct) =>

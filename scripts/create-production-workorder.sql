@@ -940,6 +940,7 @@ BEGIN
         BranchCode nvarchar(5) NOT NULL,
         CommandType nvarchar(40) NOT NULL,
         PostingRequestId nvarchar(64) NOT NULL,
+        DocumentRevision int NOT NULL CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1),
         WorkOrderID bigint NOT NULL,
         ProductionDocumentType nvarchar(30) NULL,
         ProductionDocumentNo nvarchar(40) NULL,
@@ -964,6 +965,35 @@ BEGIN
     CREATE INDEX IX_PrProductionPostingLink_Order_Command_Status
         ON dbo.PrProductionPostingLink (WorkOrderID, CommandType, Status);
 END;
+GO
+
+/* Upgrade a posting-link table created before posting generations were introduced. */
+IF OBJECT_ID(N'dbo.PrProductionPostingLink', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.PrProductionPostingLink', N'DocumentRevision') IS NULL
+BEGIN
+    ALTER TABLE dbo.PrProductionPostingLink
+        ADD DocumentRevision int NOT NULL
+            CONSTRAINT DF_PrProductionPostingLink_DocumentRevision DEFAULT (1) WITH VALUES;
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_MaterialIssueBatchRevision')
+    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_MaterialIssueBatchRevision
+        ON dbo.PrProductionPostingLink (CompanyCode, BranchCode, CommandType, InventoryBatchNo, DocumentRevision)
+        WHERE InventoryBatchNo IS NOT NULL AND CommandType = N'MATERIAL_ISSUE_POST';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_OutputGeneration')
+    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_OutputGeneration
+        ON dbo.PrProductionPostingLink (CompanyCode, BranchCode, CommandType, ProductionDocumentLineID, DocumentRevision)
+        WHERE ProductionDocumentLineID IS NOT NULL AND CommandType = N'OUTPUT_POST';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionPostingLink') AND name = N'UQ_PrProductionPostingLink_StockTransactionBatchRevision')
+    CREATE UNIQUE INDEX UQ_PrProductionPostingLink_StockTransactionBatchRevision
+        ON dbo.PrProductionPostingLink (CompanyCode, BranchCode, CommandType, InventoryBatchNo, DocumentRevision)
+        WHERE InventoryBatchNo IS NOT NULL
+          AND CommandType IN (N'PRODUCTION_STOCK_RETURN_POST', N'PRODUCTION_STOCK_ADJUSTMENT_POST', N'FG_RECEIPT_POST');
 GO
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1013,7 +1043,7 @@ BEGIN
         CONSTRAINT CK_PrMaterialMovement_Conversion CHECK (ConversionFactorToBase > 0),
         CONSTRAINT CK_PrMaterialMovement_Cost CHECK (UnitCost >= 0 AND TotalCost >= 0),
         CONSTRAINT CK_PrMaterialMovement_Type CHECK
-            (MovementType IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'CONSUME', N'ADJUST')),
+            (MovementType IN (N'ISSUE', N'ISSUE_REVERSAL', N'RETURN', N'RETURN_REVERSAL', N'CONSUME', N'CONSUME_REVERSAL', N'ADJUST')),
         CONSTRAINT FK_PrMaterialMovement_PrWorkOrder FOREIGN KEY (WorkOrderID) REFERENCES dbo.PrWorkOrder (UID),
         CONSTRAINT FK_PrMaterialMovement_PrWorkOrderMaterial FOREIGN KEY (WorkOrderMaterialID) REFERENCES dbo.PrWorkOrderMaterial (UID),
         CONSTRAINT FK_PrMaterialMovement_PrWorkOrderOperation FOREIGN KEY (WorkOrderOperationID) REFERENCES dbo.PrWorkOrderOperation (UID),

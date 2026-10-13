@@ -54,7 +54,6 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
     protected bool ShowPost => Id > 0 && Document.Status == "NEW" && CanPostAccess;
     protected bool CanRollback => Id > 0 && Document.Status == "POSTED" && CanRollbackAccess;
     protected bool CanDelete => Id > 0 && Document.Status == "NEW" && CanDeleteAccess;
-    protected bool CanCorrection => Id > 0 && Document.Status == "REVERSED" && CanAdd;
     protected bool CanEditDraft => Id > 0 && Document.Status == "NEW" && IsView && CanEdit;
     protected bool CanChangeWorkOrder => CanEditFields && Id == 0 && Document.WorkOrderId > 0;
     protected bool CanAddMoreSources => Editors.Count < 100;
@@ -403,7 +402,7 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
             Document = result.Data;
             _pending = null;
             RollbackVisible = false;
-            StatusMessage = "Production Stock Adjustment reversed.";
+            StatusMessage = "Production Stock Adjustment reopened as NEW after rollback.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { Busy = false; }
@@ -423,20 +422,6 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { Busy = false; DeleteConfirmVisible = false; }
-    }
-
-    protected async Task CreateCorrectionAsync()
-    {
-        if (!CanCorrection || Busy) return;
-        Busy = true;
-        try
-        {
-            var result = await Adjustments.CreateCorrectionAsync(Id);
-            if (!result.Succeeded || result.Data is null) throw new InvalidOperationException(result.Message);
-            Navigation.NavigateTo($"/planning/stock-adjustments/{result.Data.Id}/edit");
-        }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { Busy = false; }
     }
 
     protected void EditDraft() => Navigation.NavigateTo($"/planning/stock-adjustments/{Id}/edit");

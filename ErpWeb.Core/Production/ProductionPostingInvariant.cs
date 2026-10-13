@@ -73,7 +73,9 @@ public static class ProductionPostingInvariant
         CancellationToken ct)
     {
         var allFacts = await context.Db.ProductionConversionCostFacts
-            .Where(x => x.ProductionOutputId == outputId && x.ReversesFactId == null)
+            .Where(x => x.ProductionOutputId == outputId
+                && x.StockPostingId == context.Posting.Id
+                && x.ReversesFactId == null)
             .OrderBy(x => x.Id)
             .ToListAsync(ct);
         if (allFacts.Count == 0)

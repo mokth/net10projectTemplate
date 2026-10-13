@@ -1579,7 +1579,8 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 OutputLotNo = "",
                 SnapshotRevision = order.SnapshotRevision,
                 SnapshotHash = order.SnapshotHash,
-                PostingRequestId = "POST-DELETE-TEST",
+                CreateRequestId = Guid.NewGuid().ToString("N"),
+                CreateRequestFingerprint = new string('A', 64),
                 CreatedDate = DateTime.UtcNow,
                 CreatedBy = "tester",
                 RowVersion = [1]

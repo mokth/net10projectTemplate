@@ -52,8 +52,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         if (!await CanAccessAsync(PermissionCodes.Add, cancellationToken))
             return Fail("Access denied.", IvMasterErrorCode.AccessDenied);
 
-        if (!Guid.TryParseExact(request.PostingRequestId, "N", out _))
-            return Fail("PostingRequestId must be a GUID in N format.");
+        if (!Guid.TryParseExact(request.CreateRequestId, "N", out _))
+            return Fail("CreateRequestId must be a GUID in N format.");
+        var createFingerprint = CreateRequestFingerprint(request);
 
         var scope = WriteScope();
         if (scope is null) return Fail("A company, branch and user scope is required.", IvMasterErrorCode.InvalidScope);
@@ -77,16 +78,14 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         {
             await ProductionWorkOrderExecutionLock.AcquireAsync(
                 db, scope.CompanyCode, scope.BranchCode!, executionWorkOrderId.Value, cancellationToken);
-            var replay = await db.ProductionOutputs
-                .Include(x => x.Materials)
-                .SingleOrDefaultAsync(x =>
+            var replay = await db.ProductionOutputs.SingleOrDefaultAsync(x =>
                 x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
-                && x.PostingRequestId == request.PostingRequestId, cancellationToken);
+                && x.CreateRequestId == request.CreateRequestId, cancellationToken);
             if (replay is not null)
             {
-                if (!ReplayPayloadMatches(replay, request))
-                    return Fail("PostingRequestId was already used with a different Daily Production payload.", IvMasterErrorCode.Concurrency);
+                if (!string.Equals(replay.CreateRequestFingerprint, createFingerprint, StringComparison.Ordinal))
+                    return Fail("CreateRequestId was already used with a different Daily Production payload.", IvMasterErrorCode.Concurrency);
 
                 await tx.CommitAsync(cancellationToken);
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
@@ -161,7 +160,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             OutputLotNo = outputLotNo,
             SnapshotRevision = order.SnapshotRevision,
             SnapshotHash = order.SnapshotHash ?? string.Empty,
-            PostingRequestId = request.PostingRequestId,
+            CreateRequestId = request.CreateRequestId,
+            CreateRequestFingerprint = createFingerprint,
             CreatedDate = now,
             CreatedBy = user,
         };
@@ -178,7 +178,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             CompanyCode = scope.CompanyCode,
             BranchCode = scope.BranchCode!,
             CommandType = ProductionPostingCommandTypes.OutputPost,
-            PostingRequestId = request.PostingRequestId,
+            PostingRequestId = Guid.NewGuid().ToString("N"),
+            DocumentRevision = output.DocumentRevision,
             WorkOrderId = order.Uid,
             ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
             ProductionDocumentNo = documentNo,
@@ -198,16 +199,14 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         {
             await tx.RollbackAsync(cancellationToken);
             db.ChangeTracker.Clear();
-            var replay = await db.ProductionOutputs.AsNoTracking()
-                .Include(x => x.Materials)
-                .SingleOrDefaultAsync(x =>
+            var replay = await db.ProductionOutputs.AsNoTracking().SingleOrDefaultAsync(x =>
                 x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
-                && x.PostingRequestId == request.PostingRequestId, cancellationToken);
-            if (replay is not null && ReplayPayloadMatches(replay, request))
+                && x.CreateRequestId == request.CreateRequestId, cancellationToken);
+            if (replay is not null && string.Equals(replay.CreateRequestFingerprint, createFingerprint, StringComparison.Ordinal))
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
 
-            return Fail("Daily Production creation conflicted with another request; retry with the same PostingRequestId.",
+            return Fail("Daily Production creation conflicted with another request; retry with the same CreateRequestId.",
                 IvMasterErrorCode.Concurrency);
         }
         catch (ProductionWorkOrderExecutionLockException ex)
@@ -313,7 +312,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             x.CompanyCode == scope.CompanyCode
             && x.BranchCode == scope.BranchCode
             && x.CommandType == ProductionPostingCommandTypes.OutputPost
-            && x.PostingRequestId == output.PostingRequestId, cancellationToken);
+            && x.ProductionDocumentLineId == output.Uid
+            && x.DocumentRevision == output.DocumentRevision
+            && x.Status == ProductionPostingLinkStatuses.Draft, cancellationToken);
         if (link is not null
             && !string.Equals(link.Status, ProductionPostingLinkStatuses.Draft, StringComparison.OrdinalIgnoreCase)
             && !string.Equals(link.Status, ProductionPostingLinkStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
@@ -377,6 +378,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 Uid = x.Uid,
                 DocumentNo = x.DocumentNo,
                 Status = x.Status,
+                DocumentRevision = x.DocumentRevision,
                 WipConsumptionPolicy = x.WipConsumptionPolicy,
                 WorkOrderNo = db.ProductionWorkOrders.Where(w => w.Uid == x.WorkOrderId).Select(w => w.WorkOrderNo).FirstOrDefault() ?? "",
                 OperationCode = db.ProductionWorkOrderOperations.Where(o => o.Uid == x.WorkOrderOperationId).Select(o => o.OperationCode).FirstOrDefault() ?? "",
@@ -604,7 +606,10 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 OutputItemCode = x.OutputItemCode,
                 OutputType = x.OutputType,
                 OutputLotNo = x.OutputLotNo,
-                PostingRequestId = x.PostingRequestId,
+                CreateRequestId = x.CreateRequestId,
+                PostingId = x.PostingId,
+                ReversalPostingId = x.ReversalPostingId,
+                ReversalReason = x.ReversalReason,
                 PostedDate = x.PostedDate,
                 PostedBy = x.PostedBy,
                 ReversedDate = x.ReversedDate,
@@ -617,7 +622,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         var lines = await db.ProductionOutputMaterials.AsNoTracking()
             .Where(x => x.ProductionOutputId == uid
                 && x.CompanyCode == scope.CompanyCode
-                && x.BranchCode == scope.BranchCode)
+                && x.BranchCode == scope.BranchCode
+                && x.DocumentRevision == detail.DocumentRevision)
             .OrderBy(x => x.IsHandoff)
             .ThenBy(x => x.WorkOrderMaterialId)
             .ToListAsync(ct);

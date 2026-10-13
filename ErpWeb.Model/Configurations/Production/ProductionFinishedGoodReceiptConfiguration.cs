@@ -52,7 +52,8 @@ public sealed class ProductionFinishedGoodReceiptConfiguration :
         b.HasOne(x => x.Receipt).WithMany(x => x.Sources).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.Detail).WithOne().HasForeignKey<ProductionFinishedGoodSource>(x => x.DetailId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<ProductionBalLot>().WithMany().HasForeignKey(x => x.ProductionBalLotId).OnDelete(DeleteBehavior.Restrict);
-        b.HasIndex(x => new { x.BatchId, x.ProductionBalLotId }); ConfigureProperties(b);
+        b.Property(x => x.DocumentRevision).HasDefaultValue(1);
+        b.HasIndex(x => new { x.BatchId, x.DocumentRevision, x.ProductionBalLotId }); ConfigureProperties(b);
         b.Property(x => x.SourceUom).HasMaxLength(10); b.Property(x => x.DestinationUom).HasMaxLength(10); b.Property(x => x.BaseUom).HasMaxLength(10);
     }
     public void Configure(EntityTypeBuilder<ProductionFinishedGoodFact> b)

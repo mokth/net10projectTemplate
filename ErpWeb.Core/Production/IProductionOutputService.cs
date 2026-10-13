@@ -47,7 +47,7 @@ public interface IProductionOutputService
 public class ProductionOutputCreateRequest
 {
     public long WorkOrderOperationId { get; set; }
-    public string PostingRequestId { get; set; } = string.Empty;
+    public string CreateRequestId { get; set; } = string.Empty;
     public DateTime ProductionDate { get; set; }
     public string? ShiftCode { get; set; }
     public string? ActualMachineCode { get; set; }
@@ -109,6 +109,7 @@ public sealed record ProductionOutputDetail
     public long Uid { get; init; }
     public string DocumentNo { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
+    public int DocumentRevision { get; init; }
     public long WorkOrderId { get; init; }
     public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
     public string WorkOrderNo { get; init; } = string.Empty;
@@ -134,7 +135,10 @@ public sealed record ProductionOutputDetail
     public string OutputItemCode { get; init; } = string.Empty;
     public string? OutputType { get; init; }
     public string OutputLotNo { get; init; } = string.Empty;
-    public string PostingRequestId { get; init; } = string.Empty;
+    public string CreateRequestId { get; init; } = string.Empty;
+    public long? PostingId { get; init; }
+    public long? ReversalPostingId { get; init; }
+    public string? ReversalReason { get; init; }
     public DateTime? PostedDate { get; init; }
     public string? PostedBy { get; init; }
     public DateTime? ReversedDate { get; init; }
@@ -154,6 +158,7 @@ public sealed class ProductionOutputListRow
     public long Uid { get; init; }
     public string DocumentNo { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
+    public int DocumentRevision { get; init; }
     public string WipConsumptionPolicy { get; init; } = ProductionWipConsumptionPolicies.Strict;
     public string WorkOrderNo { get; init; } = string.Empty;
     public string OperationCode { get; init; } = string.Empty;

@@ -1568,6 +1568,122 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.Equal(2, Assert.Single(result.ListPage!.Rows).LineCount);
     }
 
+    [Theory]
+    [InlineData("CN")]
+    [InlineData("DN")]
+    public async Task Future_Credit_or_Debit_Note_POST_is_rejected(string type)
+    {
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(CdnRequest(type, date: FixedToday.AddDays(1)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var post = await sut.PostAsync(
+            [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = save.Document!.RowVersion }]);
+
+        Assert.False(post.Succeeded);
+        Assert.Contains("Transaction date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("business date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(CdnStatuses.New, (await db.SaCdns.SingleAsync(x => x.DocNo == save.DocNo)).Status);
+        Assert.Equal(0, await db.IvTrxBatches.CountAsync());
+        Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Future_CN_ReturnStock_post_does_not_create_return_batch_or_change_stock()
+    {
+        var sut = CreateSut();
+        var request = new SaCdnSaveRequest
+        {
+            Type = CdnTypes.CreditNote,
+            DocDate = FixedToday.AddDays(1),
+            CustCode = "CUST01",
+            Currency = "MYR",
+            SalesmanCode = "SM1",
+            ReturnStock = true,
+            Lines =
+            [
+                new SaCdnLineRequest
+                {
+                    ICode = "A100",
+                    Qty = 5m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN",
+                    LocCode = "BIN1",
+                    IStatus = "ACTIVE"
+                }
+            ]
+        };
+        await AttachPostedStockSourceAsync(request);
+        var save = await sut.SaveNewAsync(request);
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var post = await sut.PostAsync(
+            [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = save.Document!.RowVersion }]);
+
+        Assert.False(post.Succeeded);
+        Assert.Contains("Transaction date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(CdnStatuses.New, (await db.SaCdns.SingleAsync(x => x.DocNo == save.DocNo)).Status);
+        var refNo = SaCdnSpRefs.ToRefNo(save.DocNo!);
+        Assert.Equal(0, await db.IvTrxBatches.CountAsync(x =>
+            x.RefNo == refNo && x.TrxType == IvTrxTypes.CustomerReturn));
+        Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+        var stockQty = await db.IvBalLocs.SumAsync(x => (decimal?)x.StdQty);
+        Assert.Equal(0m, stockQty ?? 0m);
+    }
+
+    [Fact]
+    public async Task Future_CN_edit_remains_allowed_and_stale_rowversion_fails_before_date_guard()
+    {
+        var sut = CreateSut();
+        var futureDate = FixedToday.AddDays(1);
+        var save = await sut.SaveNewAsync(CdnRequest("CN", date: futureDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var staleRowVersion = save.Document!.RowVersion;
+
+        var editRequest = CdnRequest("CN", qty: 3m, date: futureDate);
+        editRequest.RowVersion = staleRowVersion;
+        var edit = await sut.UpdateAsync(save.DocNo!, editRequest);
+        Assert.True(edit.Succeeded, edit.ErrorMessage);
+
+        var post = await sut.PostAsync(
+            [new SaCdnKeyedRequest { DocNo = save.DocNo!, RowVersion = staleRowVersion }]);
+
+        Assert.False(post.Succeeded);
+        Assert.Equal(SaCdnReasonCodes.Concurrency, post.Posting.Single().ReasonCode);
+        Assert.Contains("changed by another user", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CdnStatuses.New, (await sut.GetAsync(save.DocNo!)).Document!.Status);
+    }
+
+    [Fact]
+    public async Task Future_CDN_bulk_post_preserves_stop_on_first_failure()
+    {
+        var sut = CreateSut();
+        var validFirst = await sut.SaveNewAsync(CdnRequest("CN"));
+        var future = await sut.SaveNewAsync(CdnRequest("CN", date: FixedToday.AddDays(1)));
+        var validLast = await sut.SaveNewAsync(CdnRequest("CN"));
+        Assert.True(validFirst.Succeeded, validFirst.ErrorMessage);
+        Assert.True(future.Succeeded, future.ErrorMessage);
+        Assert.True(validLast.Succeeded, validLast.ErrorMessage);
+
+        var post = await sut.PostAsync(
+        [
+            new SaCdnKeyedRequest { DocNo = validFirst.DocNo!, RowVersion = validFirst.Document!.RowVersion },
+            new SaCdnKeyedRequest { DocNo = future.DocNo!, RowVersion = future.Document!.RowVersion },
+            new SaCdnKeyedRequest { DocNo = validLast.DocNo!, RowVersion = validLast.Document!.RowVersion }
+        ]);
+
+        Assert.False(post.Succeeded);
+        Assert.Equal("Posted", post.Posting[0].Outcome);
+        Assert.StartsWith("Failed:", post.Posting[1].Outcome, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Not attempted", post.Posting[2].Outcome);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(CdnStatuses.Posted, (await db.SaCdns.SingleAsync(x => x.DocNo == validFirst.DocNo)).Status);
+        Assert.Equal(CdnStatuses.New, (await db.SaCdns.SingleAsync(x => x.DocNo == future.DocNo)).Status);
+        Assert.Equal(CdnStatuses.New, (await db.SaCdns.SingleAsync(x => x.DocNo == validLast.DocNo)).Status);
+    }
+
     private static SaCdn NewNote(
         string docNo,
         string status,
@@ -1642,7 +1758,7 @@ public class SaCdnServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
     }
 
     private static Mock<IAccessRightService> AlwaysAllowed()
@@ -1771,7 +1887,8 @@ public class SaCdnServiceTests : IAsyncLifetime
                 postingRepo,
                 new IvStockCommonRepository(_factory),
                 new PoOrderRepository(),
-                NullLogger<IvInventoryPostingService>.Instance),
+                NullLogger<IvInventoryPostingService>.Instance,
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
             new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
             salesOrders,
             docApplication,
@@ -1784,11 +1901,12 @@ public class SaCdnServiceTests : IAsyncLifetime
         string? invNo = null,
         decimal qty = 2m,
         decimal price = 10m,
-        string cust = "CUST01") =>
+        string cust = "CUST01",
+        DateTime? date = null) =>
         new()
         {
             Type = type,
-            DocDate = FixedToday,
+            DocDate = date ?? FixedToday,
             CustCode = cust,
             Currency = "MYR",
             InvNo = invNo,

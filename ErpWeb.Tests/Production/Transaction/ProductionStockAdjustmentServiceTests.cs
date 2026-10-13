@@ -110,7 +110,10 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
 
         var rollback = await service.RollbackAsync(rollbackRequest);
         Assert.True(rollback.Succeeded, rollback.Message);
-        Assert.Equal("REVERSED", rollback.Data!.Status);
+        Assert.Equal("NEW", rollback.Data!.Status);
+        Assert.Equal(2, rollback.Data.Revision);
+        Assert.NotNull(rollback.Data.PostingId);
+        Assert.NotNull(rollback.Data.ReversalPostingId);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {

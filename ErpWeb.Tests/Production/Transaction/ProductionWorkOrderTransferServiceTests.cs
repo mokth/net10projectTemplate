@@ -272,7 +272,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
     private static ProductionOutputCreateRequest DailyRequest(long operationId) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = Guid.NewGuid().ToString("N"),
+        CreateRequestId = Guid.NewGuid().ToString("N"),
         ProductionDate = EffectiveAt,
         GoodQty = 1m,
         OutputLotNo = "LOT-DAILY-TRANSFER",

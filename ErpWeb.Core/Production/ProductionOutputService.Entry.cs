@@ -263,7 +263,6 @@ public sealed partial class ProductionOutputService
                 IvMasterErrorCode.NotFound, "Saved Work Order operation was not found.");
 
         var output = await db.ProductionOutputs.AsNoTracking()
-            .Include(x => x.Materials)
             .SingleOrDefaultAsync(x => x.Uid == outputId
                 && x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode, cancellationToken);
@@ -271,13 +270,16 @@ public sealed partial class ProductionOutputService
             return IvMasterOperationResult<ProductionOutputWorkspace>.Fail(
                 IvMasterErrorCode.NotFound, "Production output was not found.");
 
-        var historical = output.Status is ProductionOutputStatuses.Posted or ProductionOutputStatuses.Reversed;
+        var savedFacts = await db.ProductionOutputMaterials.AsNoTracking()
+            .Where(x => x.ProductionOutputId == output.Uid && x.DocumentRevision == output.DocumentRevision)
+            .OrderBy(x => x.IsHandoff).ThenBy(x => x.WorkOrderMaterialId).ToListAsync(cancellationToken);
+        var historical = output.Status == ProductionOutputStatuses.Posted;
         return IvMasterOperationResult<ProductionOutputWorkspace>.Ok(
             await BuildWorkspaceAsync(
                 db, scope, operation, output.ProductionDate,
                 processedOverride: ProductionMaterialExecutionCalc.ProcessedThisPost(
                     output.GoodQty, output.ScrapQty, output.RejectQty, output.HoldQty),
-                savedFacts: output.Materials.ToList(),
+                savedFacts: savedFacts,
                 historical: historical,
                 wipConsumptionPolicy: ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy),
                 cancellationToken: cancellationToken));

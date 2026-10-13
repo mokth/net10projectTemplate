@@ -11,7 +11,8 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.ToTable("PrProductionOutput", table =>
         {
             table.HasCheckConstraint("CK_PrProductionOutput_Status",
-                "[Status] IN ('NEW', 'POSTED', 'REVERSED')");
+                "[Status] IN ('NEW', 'POSTED')");
+            table.HasCheckConstraint("CK_PrProductionOutput_DocumentRevision", "[DocumentRevision] > 0");
             table.HasCheckConstraint("CK_PrProductionOutput_Qty",
                 "[GoodQty] >= 0 AND [ScrapQty] >= 0 AND [RejectQty] >= 0 AND [HoldQty] >= 0");
             table.HasCheckConstraint("CK_PrProductionOutput_WipConsumptionPolicy",
@@ -23,6 +24,7 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
         builder.Property(x => x.DocumentNo).HasMaxLength(30).IsRequired();
+        builder.Property(x => x.DocumentRevision).HasDefaultValue(1);
         builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
         builder.Property(x => x.WipConsumptionPolicy).HasMaxLength(30).IsRequired()
             .HasDefaultValue(ProductionWipConsumptionPolicies.Strict);
@@ -43,9 +45,11 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.OutputType).HasMaxLength(20);
         builder.Property(x => x.OutputLotNo).HasMaxLength(50).IsRequired();
         builder.Property(x => x.SnapshotHash).HasMaxLength(64).IsRequired();
-        builder.Property(x => x.PostingRequestId).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.CreateRequestId).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.CreateRequestFingerprint).HasMaxLength(64).IsUnicode(false).IsRequired();
         builder.Property(x => x.PostedBy).HasMaxLength(10);
         builder.Property(x => x.ReversedBy).HasMaxLength(10);
+        builder.Property(x => x.ReversalReason).HasMaxLength(500);
         builder.Property(x => x.DeletedAtUtc).HasColumnType("datetime2");
         builder.Property(x => x.DeletedBy).HasMaxLength(10);
         builder.Property(x => x.DeleteReason).HasMaxLength(250);
@@ -57,13 +61,17 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.HasOne(x => x.RouteStep).WithMany().HasForeignKey(x => x.RouteStepId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.WorkOrderOperation).WithMany().HasForeignKey(x => x.WorkOrderOperationId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ErpWeb.Model.Entities.StockLedger.StockPosting>().WithMany().HasForeignKey(x => x.PostingId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<ErpWeb.Model.Entities.StockLedger.StockPosting>().WithMany().HasForeignKey(x => x.ReversalPostingId).OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.DocumentNo })
             .IsUnique()
             .HasDatabaseName("UQ_PrProductionOutput_DocumentNo");
-        builder.HasIndex(x => x.PostingRequestId)
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CreateRequestId })
             .IsUnique()
-            .HasDatabaseName("UQ_PrProductionOutput_PostingRequest");
+            .HasDatabaseName("UQ_PrProductionOutput_CreateRequest");
+        builder.HasIndex(x => x.PostingId).IsUnique().HasFilter("[PostingId] IS NOT NULL");
+        builder.HasIndex(x => x.ReversalPostingId).IsUnique().HasFilter("[ReversalPostingId] IS NOT NULL");
         builder.HasIndex(x => new { x.WorkOrderId, x.ProductionDate })
             .HasDatabaseName("IX_PrProductionOutput_WorkOrder_Date");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ProductionDate, x.Status })

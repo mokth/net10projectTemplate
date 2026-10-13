@@ -46,7 +46,6 @@ public sealed partial class ProductionStockReturnService
                 if (replay.SealedAtUtc is null) throw new ReturnException("The existing posting is not sealed; reconciliation is required.");
                 var recorded = await LoadAsync(db, scope, request.Id, false, ct);
                 var replayResult = await MapAsync(db, recorded, scope, ct);
-                if (reversal) replayResult.ReversalPostingId = replay.Id; else replayResult.PostingId = replay.Id;
                 return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(replayResult);
             }
 
@@ -58,8 +57,37 @@ public sealed partial class ProductionStockReturnService
                 || r.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
                 throw new ReturnException(reversal ? "Only a POSTED Production Stock Return can be reversed."
                     : "Only a NEW Production Stock Return can be posted.");
-            if (reversal && r.PostingId is not long originalPostingId)
+            if (reversal && r.PostingId is not long)
                 throw new ReturnException("The original PRTN posting is missing.");
+            var originalPostingId = r.PostingId;
+            if (reversal && await ProductionPostingGenerationGuard.ValidateRollbackTargetAsync(
+                    db, originalPostingId!.Value, scope.CompanyCode, scope.BranchCode!, "PRODUCTION",
+                    ProductionDocumentTypes.ProductionStockReturn,
+                    r.BatchId.ToString(System.Globalization.CultureInfo.InvariantCulture), r.DocumentRevision, ct)
+                is string generationError)
+                throw new ReturnException(generationError);
+            var postLink = await db.ProductionPostingLinks.SingleOrDefaultAsync(x =>
+                x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                && x.CommandType == ProductionPostingCommandTypes.ProductionStockReturnPost
+                && x.InventoryBatchNo == r.Batch.BatchNo && x.DocumentRevision == r.DocumentRevision
+                && x.Status == (reversal ? ProductionPostingLinkStatuses.Succeeded : ProductionPostingLinkStatuses.Draft), ct);
+            if (postLink is null && !reversal)
+            {
+                postLink = new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.ProductionStockReturnPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockReturn,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = clock.Now, CreatedBy = User(scope)
+                };
+                db.ProductionPostingLinks.Add(postLink);
+                await db.SaveChangesAsync(ct);
+            }
+            if (postLink is null)
+                throw new ReturnException("The current Production Stock Return posting generation link is missing.");
             var date = reversal ? clock.Now : r.Batch.TrxDtTime;
             if (date > clock.Now) throw new ReturnException("Future Production Stock Return dates are not allowed.");
             if (r.Lines.Count == 0) throw new ReturnException("The return has no lines.");
@@ -110,7 +138,7 @@ public sealed partial class ProductionStockReturnService
                 SourceDocumentType = ProductionDocumentTypes.ProductionStockReturn,
                 SourceDocumentId = r.BatchId.ToString(), SourceDocumentNo = r.Batch.BatchNo.ToString(),
                 DocumentRevision = r.DocumentRevision, PostingRole = reversal ? "REVERSAL" : "PRIMARY",
-                EffectiveAt = date, Evidence = snapshot, ReversesPostingId = reversal ? r.PostingId : null,
+                EffectiveAt = date, Evidence = snapshot, ReversesPostingId = reversal ? originalPostingId : null,
                 ReasonText = reversal ? request.Reason!.Trim() : null
             };
             var begin = await coordinator.BeginInTransactionAsync(db, postingCommand, ct);
@@ -118,21 +146,28 @@ public sealed partial class ProductionStockReturnService
             if (!begin.LedgerEnabled || begin.Context is null)
                 throw new ReturnException("An active V2 stock ledger is required. No legacy Production Stock Return is permitted.");
             var context = begin.Context;
-            var originalLink = reversal
-                ? await db.ProductionPostingLinks.SingleAsync(x => x.InventoryBatchNo == r.Batch.BatchNo
-                    && x.CommandType == ProductionPostingCommandTypes.ProductionStockReturnPost, ct)
-                : null;
-            var link = new ProductionPostingLink
+            ProductionPostingLink link;
+            if (reversal)
             {
-                CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
-                CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"),
-                ProductionDocumentType = ProductionDocumentTypes.ProductionStockReturn,
-                ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
-                SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
-                OriginalPostingLinkId = originalLink?.Uid, CreatedDate = date, CreatedBy = User(scope),
-                Status = ProductionPostingLinkStatuses.Pending
-            };
-            db.ProductionPostingLinks.Add(link); await db.SaveChangesAsync(ct);
+                link = new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = commandType, PostingRequestId = request.RequestId.ToString("N"),
+                    DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockReturn,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
+                    OriginalPostingLinkId = postLink.Uid, CreatedDate = date, CreatedBy = User(scope),
+                    Status = ProductionPostingLinkStatuses.Pending
+                };
+                db.ProductionPostingLinks.Add(link);
+                await db.SaveChangesAsync(ct);
+            }
+            else
+            {
+                link = postLink;
+                link.Status = ProductionPostingLinkStatuses.Pending;
+            }
             context.Posting.ProductionPostingLinkId = link.Uid;
             await stock.LockStockMastersAsync(db, scope.CompanyCode, pools.Values.Select(x => x.ItemCode).Distinct().Order(StringComparer.Ordinal), ct);
             if (reversal) await ReverseLegsAsync(context, r, pools, authorities, link, scope, request.Reason!.Trim(), ct);
@@ -142,12 +177,47 @@ public sealed partial class ProductionStockReturnService
             if (reversal)
             {
                 r.ReversalPostingId = context.Posting.Id; r.ReversalReason = request.Reason!.Trim();
-                r.Batch.BatchStatus = "REVERSED"; r.Batch.RollbackDate = date; r.Batch.RollbackBy = User(scope);
+                r.DocumentRevision = checked(r.DocumentRevision + 1);
+                r.Batch.BatchStatus = IvBatchStatuses.New; r.Batch.RollbackDate = date; r.Batch.RollbackBy = User(scope);
                 r.Batch.RollbackCount++; r.Batch.RollbackOperationId = request.RequestId;
+                short lineNo = 0;
+                foreach (var source in r.Lines.OrderBy(x => x.Id).ToArray())
+                {
+                    var sourceDetail = source.Detail;
+                    var detail = new IvTrxBatchDetail
+                    {
+                        Batch = r.Batch, BatchId = r.BatchId, CompanyCode = r.CompanyCode, BranchCode = r.BranchCode,
+                        BatchNo = r.Batch.BatchNo, DocumentRevision = r.DocumentRevision, TrxLineNo = ++lineNo,
+                        TrxType = IvTrxTypes.ProductionStockReturn, ProdCode = sourceDetail.ProdCode, ProdDesc = sourceDetail.ProdDesc,
+                        ICode = sourceDetail.ICode, IDesc = sourceDetail.IDesc, ToWarehouse = sourceDetail.ToWarehouse,
+                        ToLocation = sourceDetail.ToLocation, ToLotNo = sourceDetail.ToLotNo, ToStdQty = source.BaseQty,
+                        ToStdUom = source.BaseUom, ToPurQty = source.RequestedQty, ToPurUom = source.SourceUom,
+                        IStatus = sourceDetail.IStatus, IClassCode = sourceDetail.IClassCode, ExpiryDate = sourceDetail.ExpiryDate,
+                        Reason = sourceDetail.Reason, Remarks = sourceDetail.Remarks, LocationCode = sourceDetail.LocationCode
+                    };
+                    r.Lines.Add(new ProductionStockReturnLine
+                    {
+                        Return = r, BatchId = r.BatchId, Detail = detail, DocumentRevision = r.DocumentRevision,
+                        ProductionBalLotId = source.ProductionBalLotId, SourceIssueMovementId = source.SourceIssueMovementId,
+                        RequestedQty = source.RequestedQty, SourceUom = source.SourceUom, BaseUom = source.BaseUom,
+                        SourceFactor = source.SourceFactor, BaseQty = source.BaseQty
+                    });
+                }
+                db.ProductionPostingLinks.Add(new ProductionPostingLink
+                {
+                    CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!, WorkOrderId = r.WorkOrderId,
+                    CommandType = ProductionPostingCommandTypes.ProductionStockReturnPost,
+                    PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = r.DocumentRevision,
+                    ProductionDocumentType = ProductionDocumentTypes.ProductionStockReturn,
+                    ProductionDocumentNo = r.Batch.BatchNo.ToString(), InventoryBatchNo = r.Batch.BatchNo,
+                    SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
+                    Status = ProductionPostingLinkStatuses.Draft, CreatedDate = date, CreatedBy = User(scope)
+                });
             }
             else
             {
                 r.PostingId = context.Posting.Id; r.Batch.BatchStatus = IvBatchStatuses.Posted;
+                r.ReversalPostingId = null; r.ReversalReason = null;
                 r.Batch.PostedDate = date; r.Batch.PostedBy = User(scope); r.Batch.PostedCount++;
                 r.Batch.PostingOperationId = request.RequestId;
             }

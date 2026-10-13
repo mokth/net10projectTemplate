@@ -301,7 +301,10 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         {
             var output = await db.ProductionOutputs.SingleAsync(x => x.Uid == created.Data.Uid);
             output.Status = ProductionOutputStatuses.New;
-            var link = await db.ProductionPostingLinks.SingleAsync(x => x.PostingRequestId == output.PostingRequestId);
+            var link = await db.ProductionPostingLinks.SingleAsync(x =>
+                x.ProductionDocumentLineId == output.Uid
+                && x.DocumentRevision == output.DocumentRevision
+                && x.CommandType == ProductionPostingCommandTypes.OutputPost);
             link.Status = ProductionPostingLinkStatuses.Draft;
             await db.SaveChangesAsync();
         }
@@ -597,7 +600,7 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
     private static ProductionOutputCreateRequest DailyRequest(long operationId) => new()
     {
         WorkOrderOperationId = operationId,
-        PostingRequestId = Guid.NewGuid().ToString("N"),
+        CreateRequestId = Guid.NewGuid().ToString("N"),
         ProductionDate = new DateTime(2026, 10, 1, 8, 0, 0),
         GoodQty = 2m,
         OutputLotNo = "LOT-1"

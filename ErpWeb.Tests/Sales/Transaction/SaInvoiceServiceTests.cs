@@ -1012,7 +1012,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     public async Task Post_requires_add_shipment_after_date_change()
     {
         await SeedBalLocAsync(100m);
-        var sut = CreateSut();
+        var sut = CreateSut(currentDate: new FixedCurrentDateService(FixedToday.AddDays(1)));
         var save = await sut.SaveNewAsync(Request(qty: 10m, price: 10m));
         Assert.True((await ShipAsync(sut, save.InvNo!)).Succeeded);
         Assert.True((await UpdateDocAsync(sut, save.InvNo!, Request(qty: 10m, price: 10m, date: FixedToday.AddDays(1)))).Succeeded);
@@ -1020,6 +1020,155 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         var post = await sut.PostAsync([save.InvNo!]);
         Assert.False(post.Succeeded);
         Assert.Contains("add shipment", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Future_stock_invoice_can_prepare_shipment_but_post_has_no_stock_side_effects()
+    {
+        var balId = await SeedBalLocAsync(10m, transDate: FixedToday.AddDays(1));
+        var sut = CreateSut();
+        var futureDate = FixedToday.AddDays(2);
+        var save = await sut.SaveNewAsync(Request(qty: 5m, price: 10m, date: futureDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var ship = await ShipAsync(sut, save.InvNo!);
+        Assert.True(ship.Succeeded, ship.ErrorMessage);
+        Assert.True(ship.Document!.ShipmentComplete);
+
+        var post = await sut.PostAsync([save.InvNo!]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("Transaction date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("business date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(SaInvoiceStatuses.New, (await db.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo)).Status);
+        Assert.Equal(10m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
+        var batch = await db.IvTrxBatches.SingleAsync(x => x.RefNo == save.InvNo && x.TrxType == IvTrxTypes.SalesOut);
+        Assert.Equal(IvBatchStatuses.New, batch.BatchStatus);
+        Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Future_non_stock_invoice_can_be_saved_edited_and_posted_after_business_date_catches_up()
+    {
+        var futureDate = FixedToday.AddDays(1);
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1", date: futureDate));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var edit = await UpdateDocAsync(sut, save.InvNo!, Request(
+            qty: 2m, price: 10m, iCode: "SVC1", date: futureDate));
+        Assert.True(edit.Succeeded, edit.ErrorMessage);
+
+        var blocked = await sut.PostAsync([save.InvNo!]);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("Transaction date", blocked.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SaInvoiceStatuses.New, (await sut.GetAsync(save.InvNo!)).Document!.Status);
+
+        var caughtUp = CreateSut(currentDate: new FixedCurrentDateService(futureDate));
+        var posted = await caughtUp.PostAsync([save.InvNo!]);
+        Assert.True(posted.Succeeded, posted.Posting.Single().ErrorMessage);
+        Assert.Equal(SaInvoiceStatuses.Posted, (await caughtUp.GetAsync(save.InvNo!)).Document!.Status);
+    }
+
+    [Fact]
+    public async Task Future_invoice_linked_to_posted_DO_is_rejected_before_allocation()
+    {
+        const string doNo = "DO-LINK-0001";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var deliveryOrder = new SaDo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DoNo = doNo,
+                DoDate = FixedToday,
+                Status = SaDoStatuses.Posted,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaDoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        DoNo = doNo,
+                        Line = 1,
+                        SoNo = string.Empty,
+                        ICode = "SVC1",
+                        IDesc = "Consulting",
+                        Qty = 1m,
+                        StdQty = 1m,
+                        StdUom = "EA",
+                        UnitPrice = 10m,
+                        Amount = 10m,
+                        NetAmount = 10m,
+                        StockControl = false
+                    }
+                ]
+            };
+            db.SaDos.Add(deliveryOrder);
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday.AddDays(1),
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = 1m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN",
+                    LinkDo = true,
+                    DoNo = doNo,
+                    DoLine = 1
+                }
+            ]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var post = await sut.PostAsync([save.InvNo!]);
+
+        Assert.False(post.Succeeded);
+        Assert.Contains("Transaction date", post.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(SaInvoiceStatuses.New, (await verify.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo)).Status);
+        Assert.Equal(0, await verify.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Future_invoice_bulk_post_preserves_stop_on_first_failure()
+    {
+        var sut = CreateSut();
+        var validFirst = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        var future = await sut.SaveNewAsync(Request(
+            qty: 1m, price: 10m, iCode: "SVC1", date: FixedToday.AddDays(1)));
+        var validLast = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(validFirst.Succeeded, validFirst.ErrorMessage);
+        Assert.True(future.Succeeded, future.ErrorMessage);
+        Assert.True(validLast.Succeeded, validLast.ErrorMessage);
+
+        var result = await sut.PostAsync([validFirst.InvNo!, future.InvNo!, validLast.InvNo!]);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Posted", result.Posting[0].Outcome);
+        Assert.StartsWith("Failed:", result.Posting[1].Outcome, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Not attempted", result.Posting[2].Outcome);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(SaInvoiceStatuses.Posted, (await db.SaInvoices.SingleAsync(x => x.InvNo == validFirst.InvNo)).Status);
+        Assert.Equal(SaInvoiceStatuses.New, (await db.SaInvoices.SingleAsync(x => x.InvNo == future.InvNo)).Status);
+        Assert.Equal(SaInvoiceStatuses.New, (await db.SaInvoices.SingleAsync(x => x.InvNo == validLast.InvNo)).Status);
     }
 
     [Fact]
@@ -2500,7 +2649,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         IvInventoryPostingService? posting = null,
         string location = "SITE",
         IDocumentNumberingService? numbering = null,
-        IInventoryTenantContext? tenant = null)
+        IInventoryTenantContext? tenant = null,
+        ICurrentDateService? currentDate = null)
     {
         tenant ??= InventoryTenantTestHelper.CreateTenantContext(location: location);
         var postingRepo = new IvStockPostingRepository();
@@ -2512,7 +2662,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             Access().Object,
             new RunningNumberService(),
             numbering ?? new FakeDocumentNumberingService(),
-            new FixedCurrentDateService(FixedToday),
+            currentDate ?? new FixedCurrentDateService(FixedToday),
             new SaInvoiceRepository(),
             new SaCustRepository(_factory),
             new IvStockMasterRepository(_factory),
@@ -2535,7 +2685,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance);
+            NullLogger<IvInventoryPostingService>.Instance,
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
 
     private static Mock<IAccessRightService> Access()
     {
