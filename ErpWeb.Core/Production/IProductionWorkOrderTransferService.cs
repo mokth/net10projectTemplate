@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Lookups;
 
 namespace ErpWeb.Core.Production;
 
@@ -14,6 +15,10 @@ public interface IProductionWorkOrderTransferService
     Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> RollbackAsync(ProductionWorkOrderTransferCommand request, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>> SearchEligibleSourcesAsync(ProductionWorkOrderTransferSourceQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>> SearchEligibleTargetsAsync(long sourceProductionBalLotId, ProductionWorkOrderTransferTargetQuery query, CancellationToken ct = default);
+    Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchSourceWorkOrdersAsync(LargeLookupSearchRequest request, CancellationToken ct = default);
+    Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveSourceWorkOrderAsync(string workOrderNo, CancellationToken ct = default);
+    Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>> SearchTargetWorkOrdersAsync(long sourceProductionBalLotId, LargeLookupSearchRequest request, CancellationToken ct = default);
+    Task<LargeLookupResolveResult<ProductionStockWorkOrderLookupRow>> ResolveTargetWorkOrderAsync(long sourceProductionBalLotId, string workOrderNo, CancellationToken ct = default);
 }
 
 public sealed class ProductionWorkOrderTransferQuery

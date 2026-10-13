@@ -26,10 +26,16 @@ public partial class PrProductionStockWorkOrderSearchPopup : IAsyncDisposable
     [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
     [Parameter] public EventCallback<ProductionStockWorkOrderLookupRow> Selected { get; set; }
     [Parameter] public string? InitialSearchText { get; set; }
+    [Parameter] public string PopupHeaderText { get; set; } = "SELECT WORK ORDER";
+    [Parameter] public string SearchPlaceholder { get; set; } = "WO / product / description";
+    [Parameter] public string CandidateCountCaption { get; set; } = "SOURCE POOLS";
+    [Parameter] public string EmptyListMessage { get; set; } = "No eligible Work Orders with candidate Production stock were found.";
+    [Parameter] public string NoSearchMatchMessage { get; set; } = "No eligible Work Orders match this search.";
     [Parameter, EditorRequired] public Func<LargeLookupSearchRequest, CancellationToken, Task<LargeLookupPage<ProductionStockWorkOrderLookupRow>>> SearchAsync { get; set; } = default!;
 
     private int CurrentPage => _skip / _pageSize + 1;
     private int TotalPages => Math.Max(1, (int)Math.Ceiling(_totalCount / (double)_pageSize));
+    private string CandidateCountColumnWidth => CandidateCountCaption.Length > 15 ? "160px" : "115px";
 
     protected override async Task OnParametersSetAsync()
     {

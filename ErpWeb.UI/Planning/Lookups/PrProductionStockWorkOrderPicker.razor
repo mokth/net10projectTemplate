@@ -9,9 +9,9 @@
                   SecondaryText="@EffectiveSecondaryText"
                   Enabled="@Enabled"
                   InputCssClass="@InputCssClass"
-                  NullText="Select Work Order"
-                  SearchButtonAriaLabel="Search Work Orders"
-                  NotFoundMessage="Work Order not found or not eligible"
+                  NullText="@NullText"
+                  SearchButtonAriaLabel="@SearchButtonAriaLabel"
+                  NotFoundMessage="@NotFoundMessage"
                   ResolveAsync="@ResolveAsync"
                   GetCode="@(static row => row.WorkOrderNo)"
                   GetDisplayText="@(static row => row.WorkOrderNo)"
@@ -22,5 +22,10 @@
 
 <PrProductionStockWorkOrderSearchPopup @bind-Visible="_popupVisible"
                                        InitialSearchText="@_popupSearchText"
+                                       PopupHeaderText="@PopupHeaderText"
+                                       SearchPlaceholder="@SearchPlaceholder"
+                                       CandidateCountCaption="@CandidateCountCaption"
+                                       EmptyListMessage="@EmptyListMessage"
+                                       NoSearchMatchMessage="@NoSearchMatchMessage"
                                        SearchAsync="@SearchAsync"
                                        Selected="@OnPopupSelectedAsync" />

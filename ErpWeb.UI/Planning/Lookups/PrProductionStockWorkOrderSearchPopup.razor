@@ -3,7 +3,7 @@
 @using Microsoft.AspNetCore.Components.Web
 
 <DxPopup HeaderCssClass="code-style"
-         HeaderText="SELECT WORK ORDER"
+         HeaderText="@PopupHeaderText"
          CloseOnOutsideClick="false"
          Width="90vw"
          CssClass="common-popup pr-popup-grid-dialog"
@@ -19,7 +19,7 @@
             <div class="flex-grow-1">
                 <label class="form-label mb-0">Search</label>
                 <DxTextBox @bind-Text="_searchText"
-                           NullText="WO / product / description"
+                           NullText="@SearchPlaceholder"
                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                            @onkeydown="OnSearchKeyDownAsync" />
             </div>
@@ -48,12 +48,12 @@
                     <DxGridDataColumn FieldName="@nameof(ProductionStockWorkOrderLookupRow.PlannedQty)" Caption="PLANNED" DisplayFormat="n4" Width="120px" />
                     <DxGridDataColumn FieldName="@nameof(ProductionStockWorkOrderLookupRow.RemainingQty)" Caption="REMAINING" DisplayFormat="n4" Width="125px" />
                     <DxGridDataColumn FieldName="@nameof(ProductionStockWorkOrderLookupRow.OutputUom)" Caption="UOM" Width="80px" />
-                    <DxGridDataColumn FieldName="@nameof(ProductionStockWorkOrderLookupRow.CandidateSourceCount)" Caption="SOURCE POOLS" DisplayFormat="n0" Width="115px" />
+                    <DxGridDataColumn FieldName="@nameof(ProductionStockWorkOrderLookupRow.CandidateSourceCount)" Caption="@CandidateCountCaption" DisplayFormat="n0" Width="@CandidateCountColumnWidth" />
                 </Columns>
             </DxGrid>
             @if (!_loading && _items.Count == 0)
             {
-                <p class="text-muted p-3 mb-0">@(_searchText is null || _searchText.Length == 0 ? "No eligible Work Orders with candidate Production stock were found." : "No eligible Work Orders match this search.")</p>
+                <p class="text-muted p-3 mb-0">@(_searchText is null || _searchText.Length == 0 ? EmptyListMessage : NoSearchMatchMessage)</p>
             }
         </div>
 

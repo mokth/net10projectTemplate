@@ -594,22 +594,30 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 && x.Qty > 0m && x.BaseQty > 0m && x.ConversionFactorToBase > 0m
                 && x.StockStatusCode == "AVAILABLE" && x.OriginType == "PRODUCED"
                 && x.WorkOrderMaterialId == null && x.OriginalIssueMovementId == null
-                && x.ProductionLocationId != null && x.LotNo != ""
-                && (x.PhysicalLotNo == null || x.PhysicalLotNo == "" || x.PhysicalLotNo == x.LotNo)
-                && x.Uom != "" && x.BaseUom != null && x.BaseUom != ""
+                && x.ProductionLocationId != null && x.LotNo.Trim() != ""
+                && (x.PhysicalLotNo == null || x.PhysicalLotNo.Trim() == "" || x.PhysicalLotNo == x.LotNo)
+                && x.Uom.Trim() != "" && x.BaseUom != null && x.BaseUom.Trim() != ""
+                && !db.ProductionWorkOrderTransfers.Any(transfer => transfer.CompanyCode == scope.CompanyCode
+                    && transfer.BranchCode == scope.BranchCode && transfer.SourceProductionBalLotId == x.Uid
+                    && transfer.Status == ProductionWorkOrderTransferStatuses.New && transfer.DeletedAtUtc == null)
                 && db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId && w.CompanyCode == scope.CompanyCode
                     && w.BranchCode == scope.BranchCode && (w.Status == ProductionWorkOrderStatuses.Released
                         || w.Status == ProductionWorkOrderStatuses.InProgress || w.Status == ProductionWorkOrderStatuses.Completed)));
             if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
             {
                 var workOrderNo = query.WorkOrderNo.Trim();
-                q = q.Where(x => x.WorkOrderNo == workOrderNo);
+                q = q.Where(x => db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId
+                    && w.CompanyCode == scope.CompanyCode && w.BranchCode == scope.BranchCode
+                    && w.WorkOrderNo == workOrderNo));
             }
             if (!string.IsNullOrWhiteSpace(query.SearchText))
             {
                 var term = query.SearchText.Trim();
                 q = q.Where(x => x.ItemCode.Contains(term) || x.LotNo.Contains(term)
-                    || (x.Description != null && x.Description.Contains(term)) || x.WorkOrderNo.Contains(term));
+                    || (x.Description != null && x.Description.Contains(term))
+                    || db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId
+                        && w.CompanyCode == scope.CompanyCode && w.BranchCode == scope.BranchCode
+                        && w.WorkOrderNo.Contains(term)));
             }
             var skip = Math.Max(0, query.Skip);
             var take = Math.Clamp(query.Take, 1, 100);
@@ -660,13 +668,18 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var source = await ValidateSourceAsync(db, scope, lot, ct);
             var targets = db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => x.ComponentCode == lot.ItemCode
                 && x.BaseUom == lot.BaseUom && x.RequiredQty >= 0m && x.RequiredBaseQty >= 0m
-                && x.ConversionFactorToBase > 0m && x.RequiredUom != ""
+                && x.ConversionFactorToBase > 0m && x.RequiredUom != null && x.RequiredUom.Trim() != ""
                 && x.SupplySource == PrMaterialSupplySources.InternalRouteWip
                 && x.ProducingRouteStepId != null && x.WorkOrderOperationId != null
                 && x.WorkOrderId != source.Order.Uid
                 && db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId && w.CompanyCode == scope.CompanyCode
                     && w.BranchCode == scope.BranchCode && (w.Status == ProductionWorkOrderStatuses.Released
                         || w.Status == ProductionWorkOrderStatuses.InProgress)));
+            if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
+            {
+                var workOrderNo = query.WorkOrderNo.Trim();
+                targets = targets.Where(x => x.WorkOrder!.WorkOrderNo == workOrderNo);
+            }
             if (!string.IsNullOrWhiteSpace(query.SearchText))
             {
                 var term = query.SearchText.Trim();

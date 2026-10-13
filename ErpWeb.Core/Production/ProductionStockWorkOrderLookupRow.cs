@@ -1,6 +1,6 @@
 namespace ErpWeb.Core.Production;
 
-/// <summary>Work Order context available to PRTN and PADJ operators through their own transaction permissions.</summary>
+/// <summary>Work Order context available to Production stock and transfer operators through their own transaction permissions.</summary>
 public sealed class ProductionStockWorkOrderLookupRow
 {
     public long WorkOrderId { get; init; }
@@ -13,5 +13,6 @@ public sealed class ProductionStockWorkOrderLookupRow
     public string? OutputUom { get; init; }
     public int SnapshotRevision { get; init; }
     public string SnapshotHash { get; init; } = "";
+    /// <summary>Structural candidate count for the calling lookup; deep transaction readiness is checked after Work Order selection.</summary>
     public int CandidateSourceCount { get; init; }
 }

@@ -24,6 +24,14 @@ public partial class PrProductionStockWorkOrderPicker
     [Parameter] public string? WorkOrderStatus { get; set; }
     [Parameter] public bool Enabled { get; set; } = true;
     [Parameter] public string? InputCssClass { get; set; }
+    [Parameter] public string NullText { get; set; } = "Select Work Order";
+    [Parameter] public string NotFoundMessage { get; set; } = "Work Order not found or not eligible";
+    [Parameter] public string SearchButtonAriaLabel { get; set; } = "Search Work Orders";
+    [Parameter] public string PopupHeaderText { get; set; } = "SELECT WORK ORDER";
+    [Parameter] public string SearchPlaceholder { get; set; } = "WO / product / description";
+    [Parameter] public string CandidateCountCaption { get; set; } = "SOURCE POOLS";
+    [Parameter] public string EmptyListMessage { get; set; } = "No eligible Work Orders with candidate Production stock were found.";
+    [Parameter] public string NoSearchMatchMessage { get; set; } = "No eligible Work Orders match this search.";
 
     private string? EffectiveSecondaryText => _secondaryText ?? FormatContext(ProductCode, ProductDescription, WorkOrderStatus);
 

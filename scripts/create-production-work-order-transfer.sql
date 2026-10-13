@@ -3,41 +3,18 @@
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 
--- Validate the Production V2 foundation before changing the schema. Show every
--- missing prerequisite in one result set so deployment does not fail one table at a time.
-DECLARE @RequiredInfrastructure TABLE
-(
-    TableName sysname NOT NULL PRIMARY KEY,
-    ApplyScript nvarchar(128) NOT NULL
-);
-INSERT INTO @RequiredInfrastructure(TableName, ApplyScript) VALUES
-    (N'PrProductionBalLot', N'scripts/create-production-daily-output.sql'),
-    (N'PrWorkOrder', N'scripts/create-production-workorder.sql'),
-    (N'PrProductionPostingLink', N'scripts/create-production-workorder.sql'),
-    (N'PrProductionBalLotMovement', N'scripts/create-production-daily-output.sql'),
-    (N'PrProductionMovementAllocation', N'scripts/alter-production-stock-ledger.sql'),
-    (N'PrValuationEvidence', N'scripts/create-finished-good-receipt.sql'),
-    (N'PrPoolDependency', N'scripts/create-finished-good-receipt.sql'),
-    (N'PrPoolValuation', N'scripts/create-finished-good-receipt.sql'),
-    (N'StockPosting', N'scripts/create-stock-posting-ledger.sql');
-
-IF EXISTS
-(
-    SELECT 1
-    FROM @RequiredInfrastructure r
-    LEFT JOIN sys.tables t
-      ON t.name = r.TableName AND t.schema_id = SCHEMA_ID(N'dbo')
-    WHERE t.object_id IS NULL
-)
-BEGIN
-    SELECT N'dbo.' + r.TableName AS MissingTable, r.ApplyScript
-    FROM @RequiredInfrastructure r
-    LEFT JOIN sys.tables t
-      ON t.name = r.TableName AND t.schema_id = SCHEMA_ID(N'dbo')
-    WHERE t.object_id IS NULL
-    ORDER BY r.TableName;
-    ;THROW 51011, 'Missing Production V2 prerequisites; see the result set for required scripts.', 1;
-END;
+-- Validate the Production V2 ledger on which this additive feature depends before
+-- changing the schema. Deployment scripts for these prerequisites remain separate.
+IF OBJECT_ID(N'dbo.PrProductionBalLot', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrWorkOrder', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrProductionPostingLink', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrProductionBalLotMovement', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrProductionMovementAllocation', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrValuationEvidence', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrPoolDependency', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrPoolValuation', N'U') IS NULL
+   OR OBJECT_ID(N'dbo.StockPosting', N'U') IS NULL
+    THROW 51011, 'Work Order Transfer requires the current Production V2 ledger and valuation infrastructure.', 1;
 
 DECLARE @RequiredIndexes TABLE (TableName sysname NOT NULL, IndexName sysname NOT NULL, PRIMARY KEY (TableName, IndexName));
 INSERT INTO @RequiredIndexes(TableName, IndexName) VALUES
@@ -329,7 +306,6 @@ DEALLOCATE transfer_column_cursor;
 
 IF COL_LENGTH(N'dbo.PrWorkOrderTransfer', N'RowVersion') IS NULL
     ALTER TABLE dbo.PrWorkOrderTransfer ADD RowVersion rowversion NOT NULL;
-GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer') AND type=N'PK')
     ALTER TABLE dbo.PrWorkOrderTransfer ADD CONSTRAINT PK_PrWorkOrderTransfer PRIMARY KEY (UID);
@@ -345,6 +321,10 @@ IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT
 IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer') AND name=N'CK_PrWorkOrderTransfer_Contexts')
     ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT CK_PrWorkOrderTransfer_Contexts CHECK
         (SourceWorkOrderID <> TargetWorkOrderID AND SourceProducingRouteStepID > 0 AND TargetProducingRouteStepID > 0);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer') AND name=N'CK_PrWorkOrderTransfer_Lifecycle')
+    ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT CK_PrWorkOrderTransfer_Lifecycle CHECK
+        (DocumentRevision > 0 AND RollbackCount >= 0 AND (ReversalPostingID IS NULL OR (StockPostingID IS NOT NULL AND ReversalPostingID <> StockPostingID)));
+
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer') AND name=N'FK_PrWorkOrderTransfer_SourceBalance')
     ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT FK_PrWorkOrderTransfer_SourceBalance FOREIGN KEY (SourceProductionBalLotID) REFERENCES dbo.PrProductionBalLot(UID);
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer') AND name=N'FK_PrWorkOrderTransfer_DestinationBalance')
@@ -363,7 +343,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N
     ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT FK_PrWorkOrderTransfer_InMovement FOREIGN KEY (TransferInMovementID) REFERENCES dbo.PrProductionBalLotMovement(UID);
 
 ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK CHECK CONSTRAINT
-    CK_PrWorkOrderTransfer_Status, CK_PrWorkOrderTransfer_Quantities, CK_PrWorkOrderTransfer_Contexts,
+    CK_PrWorkOrderTransfer_Status, CK_PrWorkOrderTransfer_Quantities, CK_PrWorkOrderTransfer_Contexts, CK_PrWorkOrderTransfer_Lifecycle,
     FK_PrWorkOrderTransfer_SourceBalance, FK_PrWorkOrderTransfer_DestinationBalance,
     FK_PrWorkOrderTransfer_SourceWorkOrder, FK_PrWorkOrderTransfer_TargetWorkOrder,
     FK_PrWorkOrderTransfer_PostingLink, FK_PrWorkOrderTransfer_StockPosting,
@@ -403,7 +383,6 @@ IF COL_LENGTH(N'dbo.PrWorkOrderTransfer', N'RollbackCount') IS NULL
     ALTER TABLE dbo.PrWorkOrderTransfer ADD RollbackCount int NULL;
 IF COL_LENGTH(N'dbo.PrWorkOrderTransfer', N'RollbackOperationID') IS NULL
     ALTER TABLE dbo.PrWorkOrderTransfer ADD RollbackOperationID uniqueidentifier NULL;
-GO
 
 IF EXISTS
 (
@@ -443,11 +422,6 @@ IF NOT EXISTS (SELECT 1 FROM sys.default_constraints WHERE parent_object_id=OBJE
 IF NOT EXISTS (SELECT 1 FROM sys.default_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer')
     AND parent_column_id=COLUMNPROPERTY(OBJECT_ID(N'dbo.PrWorkOrderTransfer'), N'RollbackCount', 'ColumnId'))
     ALTER TABLE dbo.PrWorkOrderTransfer ADD CONSTRAINT DF_PrWorkOrderTransfer_RollbackCount DEFAULT 0 FOR RollbackCount;
-IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer')
-    AND name=N'CK_PrWorkOrderTransfer_Lifecycle')
-    ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT CK_PrWorkOrderTransfer_Lifecycle CHECK
-        (DocumentRevision > 0 AND RollbackCount >= 0 AND (ReversalPostingID IS NULL OR (StockPostingID IS NOT NULL AND ReversalPostingID <> StockPostingID)));
-ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK CHECK CONSTRAINT CK_PrWorkOrderTransfer_Lifecycle;
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.PrWorkOrderTransfer')
     AND name=N'FK_PrWorkOrderTransfer_ReversalPosting')
     ALTER TABLE dbo.PrWorkOrderTransfer WITH CHECK ADD CONSTRAINT FK_PrWorkOrderTransfer_ReversalPosting
@@ -544,6 +518,13 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrProdu
     CREATE UNIQUE INDEX UQ_PrProductionPostingLink_WorkOrderTransferGeneration
         ON dbo.PrProductionPostingLink(CompanyCode,BranchCode,CommandType,ProductionDocumentLineID,DocumentRevision)
         WHERE ProductionDocumentLineID IS NOT NULL AND CommandType = 'WO_TRANSFER_POST';
+
+IF OBJECT_ID(N'dbo.PrProductionMovementAllocation',N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrValuationEvidence',N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrPoolDependency',N'U') IS NULL
+   OR OBJECT_ID(N'dbo.PrPoolValuation',N'U') IS NULL
+   OR OBJECT_ID(N'dbo.StockPosting',N'U') IS NULL
+    THROW 51011, 'Work Order Transfer requires the current Production valuation and StockPosting infrastructure.', 1;
 
 ALTER TABLE dbo.PrProductionWorkOrderTransferFact WITH CHECK CHECK CONSTRAINT ALL;
 IF EXISTS
