@@ -15,103 +15,183 @@
         else
         {
             <section class="iv-card">
-                <div class="d-flex justify-content-between align-items-start"><div><p class="iv-eyebrow">FULL BALANCE TRANSFER</p><h2>Reassign verified Production WIP</h2></div>
+                <div class="wot-intro">
+                    <div>
+                        <p class="iv-eyebrow">MOVE PRODUCTION BETWEEN WORK ORDERS</p>
+                        <h2>Transfer a production balance</h2>
+                        <p>Move an available production lot from one work order to another work order that needs the same item. The whole available balance, its lot number, quantity and production value move together.</p>
+                    </div>
+                    <div class="wot-transfer-rule"><strong>Whole balance only</strong><span>This transfer does not split a lot or change its quantity or value.</span></div>
                     @if (Document.Id > 0 && CanEditFields) { <DxButton Text="REFRESH SOURCE" RenderStyle="ButtonRenderStyle.Secondary" Click="RefreshSourceAsync" Enabled="@(!Busy)" /> }
                 </div>
                 <div class="row g-3 mt-1 wot-panels">
-                    <div class="col-lg-6"><h3>FROM — Source WIP</h3>
+                    <div class="col-lg-6">
+                        <section class="wot-step-card" aria-labelledby="wot-source-title">
+                        <header class="wot-step-head"><span class="wot-step-number">1</span><div><p class="iv-eyebrow">FROM</p><h3 id="wot-source-title">Choose the balance to move</h3><p>Choose an available lot already produced by a work order. You will move its full remaining quantity.</p></div></header>
                         @if (SelectedSource is not null)
                         {
-                            <div class="p-3 border rounded"><strong>@SelectedSource.WorkOrderNo · @SelectedSource.ItemCode</strong><div>Lot @SelectedSource.LotNo</div>
-                                <div>@SelectedSource.Qty.ToString("N4") @SelectedSource.Uom (@SelectedSource.BaseQty.ToString("N4") @SelectedSource.BaseUom)</div>
+                            <div class="wot-selection-card"><strong>@SelectedSource.ItemCode · @SelectedSource.Description</strong><div>From work order @SelectedSource.WorkOrderNo</div><div>Lot @SelectedSource.LotNo</div>
+                                <div>Available to move: @SelectedSource.Qty.ToString("N4") @SelectedSource.Uom (@SelectedSource.BaseQty.ToString("N4") @SelectedSource.BaseUom)</div>
                                 <div>Produced at @SelectedSource.WorkCentreCode / @SelectedSource.ProcessCode</div>
-                                @if (SelectedSource.LastMovementDate is DateTime last) { <small>Last movement @last.ToString("dd MMM yyyy HH:mm")</small> }
-                                @if ((Document.CanViewCost || CanViewCostAccess) && SelectedSource.TotalCost is decimal sourceValue) { <div>Current WIP value @sourceValue.ToString("N6")</div> }
+                                @if (SelectedSource.LastMovementDate is DateTime last) { <small>Last production movement @last.ToString("dd MMM yyyy HH:mm")</small> }
+                                @if ((Document.CanViewCost || CanViewCostAccess) && SelectedSource.TotalCost is decimal sourceValue) { <div>Current production value @sourceValue.ToString("N6")</div> }
                             </div>
+                            @if (Id == 0 && CanEditFields) { <DxButton Text="CHOOSE A DIFFERENT BALANCE" RenderStyle="ButtonRenderStyle.Secondary" Click="ChangeSource" Enabled="@(!Busy)" /> }
                         }
                         else if (Document.Id > 0)
                         {
-                            <div class="p-3 border rounded"><strong>@Document.SourceWorkOrderNo · @Document.ItemCode</strong><div>Lot @Document.LotNo</div>
-                                <div>@Document.Qty.ToString("N4") @Document.Uom (@Document.BaseQty.ToString("N4") @Document.BaseUom)</div>
+                            <div class="wot-selection-card"><strong>@Document.ItemCode</strong><div>From work order @Document.SourceWorkOrderNo</div><div>Lot @Document.LotNo</div>
+                                <div>Transferred: @Document.Qty.ToString("N4") @Document.Uom (@Document.BaseQty.ToString("N4") @Document.BaseUom)</div>
                                 <div>Produced at @Document.SourceWorkCentreCode / @Document.SourceProcessCode</div>
-                                @if (Document.SourceLastMovementDate is DateTime last) { <small>Last movement @last.ToString("dd MMM yyyy HH:mm")</small> }
-                                @if ((Document.CanViewCost || CanViewCostAccess) && Document.SourceCurrentWipValue is decimal sourceValue) { <div>Current source WIP value @sourceValue.ToString("N6")</div> }
+                                @if (Document.SourceLastMovementDate is DateTime last) { <small>Last production movement @last.ToString("dd MMM yyyy HH:mm")</small> }
+                                @if ((Document.CanViewCost || CanViewCostAccess) && Document.SourceCurrentWipValue is decimal sourceValue) { <div>Source production value @sourceValue.ToString("N6")</div> }
                             </div>
                         }
                         else
                         {
-                            <DxTextBox Text="@SourceSearch" TextChanged="SourceSearchChanged" NullText="Search eligible item, lot or Work Order" CssClass="w-100" />
-                            @if (SourceLoading)
+                            <label class="form-label">Source Work Order</label>
+                            <DxComboBox Data="@SourceWorkOrders"
+                                        TextFieldName="@nameof(ProductionWorkOrderTransferWorkOrderChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionWorkOrderTransferWorkOrderChoice.WorkOrderNo)"
+                                        Value="@SourceWorkOrderNo"
+                                        ValueChanged="@((string? value) => SourceWorkOrderChanged(value))"
+                                        NullText="Search and select a source Work Order"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                        Enabled="@(!SourceLoading && CanEditFields)"
+                                        CssClass="w-100" />
+                            @if (string.IsNullOrWhiteSpace(SourceWorkOrderNo))
                             {
-                                <div class="iv-skeleton mt-2" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>
-                            }
-                            else if (Sources.Count == 0)
-                            {
-                                <p class="text-muted mt-2">No eligible verified source WIP matches this search.</p>
+                                @if (SourceLoading)
+                                {
+                                    <div class="iv-skeleton mt-2" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>
+                                }
+                                else if (SourceWorkOrders.Count == 0)
+                                {
+                                    <div class="wot-empty-state mt-3" role="status"><strong>No source Work Orders are available</strong><p>A source Work Order appears here when it has a posted production lot with remaining quantity and verified production value. Check Production Balance for the lot's quantity and valuation status.</p></div>
+                                }
+                                else
+                                {
+                                    <p class="wot-field-hint">Choose a Work Order to see its available production lots. The list shows the Work Order number and product so you can find it without memorizing the number.</p>
+                                }
                             }
                             else
                             {
-                                <div class="table-responsive mt-2"><table class="table align-middle wot-source-table"><thead><tr><th>Work Order / Item</th><th>Lot</th><th>Current balance</th><th>Producer</th><th>Cost readiness</th><th></th></tr></thead><tbody>
-                                @foreach (var row in Sources)
-                                { <tr><td><strong>@row.WorkOrderNo</strong><div>@row.ItemCode · @row.Description</div></td><td>@row.LotNo</td><td>@row.Qty.ToString("N4") @row.Uom<div class="small text-muted">@row.BaseQty.ToString("N4") @row.BaseUom</div></td><td>@row.WorkCentreCode / @row.ProcessCode</td><td><span class="iv-chip">VERIFIED</span>@if ((Document.CanViewCost || CanViewCostAccess) && row.TotalCost is decimal c) { <div class="small">@c.ToString("N6")</div> }</td><td><DxButton Text="SELECT" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SelectSourceAsync(row))" /></td></tr> }
-                                </tbody></table></div>
-                                <div class="lookup-pager"><span>@SourceTotal eligible source pool(s)</span><div><DxButton Text="PREVIOUS" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourceSkip > 0)" Click="PreviousSourcesAsync" /><DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourceSkip + LookupPageSize < SourceTotal)" Click="NextSourcesAsync" /></div></div>
+                                <label class="form-label mt-3" for="wot-source-search">Filter this Work Order by item or lot (optional)</label>
+                                <DxTextBox Id="wot-source-search" Text="@SourceSearch" TextChanged="SourceSearchChanged" BindValueMode="BindValueMode.OnInput" NullText="Item code, description or lot number" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
+                                @if (SourceLoading)
+                                {
+                                    <div class="iv-skeleton mt-2" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>
+                                }
+                                else if (Sources.Count == 0)
+                                {
+                                    <div class="wot-empty-state mt-3" role="status">
+                                        <strong>@(string.IsNullOrWhiteSpace(SourceSearch) ? "No available production balance in this Work Order" : "No balances match this item or lot")</strong>
+                                        <p>@(string.IsNullOrWhiteSpace(SourceSearch) ? "The balance may have been used or its value status may have changed. Choose another Work Order or check this lot in Production Balance." : "Clear the filter to show every available lot for this Work Order, or choose a different Work Order.")</p>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="table-responsive mt-3"><table class="table align-middle wot-source-table"><thead><tr><th>Work order / item</th><th>Production lot</th><th>Available to move</th><th>Produced at</th><th>Value check</th><th></th></tr></thead><tbody>
+                                    @foreach (var row in Sources)
+                                    { <tr><td><strong>@row.WorkOrderNo</strong><div>@row.ItemCode · @row.Description</div></td><td>@row.LotNo</td><td>@row.Qty.ToString("N4") @row.Uom<div class="small text-muted">@row.BaseQty.ToString("N4") @row.BaseUom</div></td><td>@row.WorkCentreCode / @row.ProcessCode</td><td><span class="iv-chip">READY</span>@if ((Document.CanViewCost || CanViewCostAccess) && row.TotalCost is decimal c) { <div class="small">@c.ToString("N6")</div> }</td><td><DxButton Text="USE THIS BALANCE" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SelectSourceAsync(row))" /></td></tr> }
+                                    </tbody></table></div>
+                                    <div class="lookup-pager"><span>@SourceTotal available balance(s) in @SourceWorkOrderNo</span><div><DxButton Text="PREVIOUS" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourceSkip > 0)" Click="PreviousSourcesAsync" /><DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(SourceSkip + LookupPageSize < SourceTotal)" Click="NextSourcesAsync" /></div></div>
+                                }
                             }
                         }
+                        </section>
                     </div>
-                    <div class="col-lg-6"><h3>TO — Target Requirement</h3>
+                    <div class="col-lg-6">
+                        <section class="wot-step-card" aria-labelledby="wot-target-title">
+                        <header class="wot-step-head"><span class="wot-step-number">2</span><div><p class="iv-eyebrow">TO</p><h3 id="wot-target-title">Choose the receiving work order</h3><p>Choose the active work order and production step that needs this same item.</p></div></header>
                         @if (TargetPickerVisible || (Document.Id == 0 && SelectedSource is not null && SelectedTarget is null))
                         {
-                            <DxTextBox Text="@TargetSearch" TextChanged="TargetSearchChanged" NullText="Search target Work Order, product or requirement" CssClass="w-100" />
+                            <label class="form-label">Receiving Work Order</label>
+                            <DxComboBox Data="@TargetWorkOrders"
+                                        TextFieldName="@nameof(ProductionWorkOrderTransferWorkOrderChoice.Label)"
+                                        ValueFieldName="@nameof(ProductionWorkOrderTransferWorkOrderChoice.WorkOrderNo)"
+                                        Value="@TargetWorkOrderNo"
+                                        ValueChanged="@((string? value) => TargetWorkOrderChanged(value))"
+                                        NullText="Search and select a receiving Work Order"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        SearchMode="ListSearchMode.AutoSearch"
+                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                        Enabled="@(!TargetLoading && CanEditFields)"
+                                        CssClass="w-100" />
                             @if (TargetLoading)
                             {
                                 <div class="iv-skeleton mt-2" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>
                             }
+                            else if (TargetWorkOrders.Count == 0)
+                            {
+                                <div class="wot-empty-state mt-3" role="status">
+                                    <strong>No receiving Work Orders are available for this item</strong>
+                                    <p>Only released or in-progress work orders that need <strong>@SelectedSource?.ItemCode</strong> to be made by an earlier production step are shown. Check the destination work order's route and material requirement.</p>
+                                </div>
+                            }
+                            else if (string.IsNullOrWhiteSpace(TargetWorkOrderNo))
+                            {
+                                <p class="wot-field-hint">Search by Work Order number or product, then choose where this lot should go.</p>
+                            }
                             else if (Targets.Count == 0)
                             {
-                                <p class="text-muted mt-2">No compatible target requirements match this search. A sequence-waiting requirement can still be selected.</p>
+                                <div class="wot-empty-state mt-3" role="status">
+                                    <strong>No matching production step in this Work Order</strong>
+                                    <p>This Work Order no longer has a matching requirement for @SelectedSource?.ItemCode. Choose another Work Order or check its route and material requirement.</p>
+                                </div>
                             }
                             else
                             {
-                                <div class="table-responsive mt-2"><table class="table align-middle wot-target-table"><thead><tr><th>Work Order / Product</th><th>Requirement</th><th>Consumer</th><th>Producer</th><th>Sequence</th><th></th></tr></thead><tbody>
+                                <div class="table-responsive mt-3"><table class="table align-middle wot-target-table"><thead><tr><th>Work order / product</th><th>Item needed</th><th>Needed at</th><th>Balance held at</th><th>Production status</th><th></th></tr></thead><tbody>
                                 @foreach (var row in Targets)
-                                { <tr><td><strong>@row.WorkOrderNo</strong><div>@row.ProductCode</div></td><td>@row.ComponentCode<div class="small text-muted">@row.RequiredQty.ToString("N4") @row.RequiredUom (@row.RequiredBaseQty.ToString("N4") @row.BaseUom)</div></td><td>@row.ConsumingWorkCentreCode / @row.ConsumingProcessCode</td><td>@row.ProducerWorkCentreCode / @row.ProducerProcessCode</td><td><span class="iv-chip">@(row.SequenceReady ? "READY" : "WAITING")</span>@if (!row.SequenceReady && !string.IsNullOrWhiteSpace(row.BlockingReason)) { <div class="small text-muted">@row.BlockingReason</div> }</td><td><DxButton Text="SELECT" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SelectTarget(row))" /></td></tr> }
+                                { <tr><td><strong>@row.WorkOrderNo</strong><div>@row.ProductCode</div></td><td>@row.ComponentCode<div class="small text-muted">Needed: @row.RequiredQty.ToString("N4") @row.RequiredUom</div></td><td>@row.ConsumingWorkCentreCode / @row.ConsumingProcessCode</td><td>@row.ProducerWorkCentreCode / @row.ProducerProcessCode</td><td><span class="iv-chip">@(row.SequenceReady ? "READY TO USE" : "WAITING FOR EARLIER STEP")</span>@if (!row.SequenceReady && !string.IsNullOrWhiteSpace(row.BlockingReason)) { <div class="small text-muted">@row.BlockingReason</div> }</td><td><DxButton Text="CHOOSE THIS STEP" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => SelectTarget(row))" /></td></tr> }
                                 </tbody></table></div>
-                                <div class="lookup-pager"><span>@TargetTotal compatible requirement(s)</span><div><DxButton Text="PREVIOUS" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(TargetSkip > 0)" Click="PreviousTargetsAsync" /><DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(TargetSkip + LookupPageSize < TargetTotal)" Click="NextTargetsAsync" /></div></div>
+                                <div class="lookup-pager"><span>@TargetTotal matching production step(s) in @TargetWorkOrderNo</span><div><DxButton Text="PREVIOUS" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(TargetSkip > 0)" Click="PreviousTargetsAsync" /><DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(TargetSkip + LookupPageSize < TargetTotal)" Click="NextTargetsAsync" /></div></div>
                             }
                             @if (Document.Id > 0) { <DxButton Text="CANCEL TARGET CHANGE" RenderStyle="ButtonRenderStyle.Secondary" Click="CancelTargetPicker" /> }
                         }
                         else if (SelectedTarget is not null || Document.Id > 0)
                         {
-                            <div class="p-3 border rounded"><strong>@(SelectedTarget?.WorkOrderNo ?? Document.TargetWorkOrderNo) · @(SelectedTarget?.ProductCode ?? Document.TargetProductCode)</strong>
-                                <div>Requirement: @(SelectedTarget?.ComponentCode ?? Document.ItemCode)</div>
-                                <div>Consumes at @(SelectedTarget?.ConsumingWorkCentreCode ?? Document.TargetConsumingWorkCentreCode) / @(SelectedTarget?.ConsumingProcessCode ?? Document.TargetConsumingProcessCode)</div>
-                                <small>Target WIP producer pool: @(SelectedTarget?.ProducerWorkCentreCode ?? Document.TargetProducerWorkCentreCode) / @(SelectedTarget?.ProducerProcessCode ?? Document.TargetProducerProcessCode)</small>
+                            <div class="wot-selection-card"><strong>To work order @(SelectedTarget?.WorkOrderNo ?? Document.TargetWorkOrderNo) · @(SelectedTarget?.ProductCode ?? Document.TargetProductCode)</strong>
+                                <div>Item needed: @(SelectedTarget?.ComponentCode ?? Document.ItemCode)</div>
+                                <div>Needed at: @(SelectedTarget?.ConsumingWorkCentreCode ?? Document.TargetConsumingWorkCentreCode) / @(SelectedTarget?.ConsumingProcessCode ?? Document.TargetConsumingProcessCode)</div>
+                                <small>The lot will be available at: @(SelectedTarget?.ProducerWorkCentreCode ?? Document.TargetProducerWorkCentreCode) / @(SelectedTarget?.ProducerProcessCode ?? Document.TargetProducerProcessCode)</small>
                                 @if (SelectedTarget is { SequenceReady: false } || !Document.TargetSequenceReady)
                                 {
                                     var blocker = SelectedTarget?.BlockingReason ?? Document.TargetSequenceBlockingReason;
-                                    <div class="iv-toast iv-toast--warn mt-2"><strong>SEQUENCE WAITING.</strong> WIP can be transferred now but cannot be consumed by Daily Production until predecessor operations are complete. @blocker</div>
+                                    <div class="iv-toast iv-toast--warn mt-2"><strong>Earlier production steps are not complete.</strong> You can move the lot now. The receiving work order can use it after those steps are complete. @blocker</div>
                                 }
                                 @if (SelectedSource is not null && SelectedTarget is not null && SelectedTarget.RequiredBaseQty > 0m && SelectedSource.BaseQty > SelectedTarget.RequiredBaseQty)
-                                { <div class="iv-toast iv-toast--warn mt-2">The full source balance exceeds the target material's informational remaining requirement. The transfer quantity will remain unchanged.</div> }
+                                { <div class="iv-toast iv-toast--warn mt-2">This lot is larger than the amount listed for this item. The whole lot will move; its quantity will not be reduced.</div> }
                                 @if (Document.CanViewCost || CanViewCostAccess)
                                 {
                                     <div>Transferred value: @((Document.TransferTotalCost ?? SelectedSource?.TotalCost ?? 0m).ToString("N6"))</div>
-                                    <div>Target current value: @((SelectedTarget?.TargetCurrentWipValue ?? Document.TargetCurrentWipValue ?? 0m).ToString("N6")) · projected: @((SelectedTarget?.ProjectedTargetWipValue ?? Document.ProjectedTargetWipValue ?? 0m).ToString("N6"))</div>
+                                    <div>Receiving balance value: @((SelectedTarget?.TargetCurrentWipValue ?? Document.TargetCurrentWipValue ?? 0m).ToString("N6")) · after transfer: @((SelectedTarget?.ProjectedTargetWipValue ?? Document.ProjectedTargetWipValue ?? 0m).ToString("N6"))</div>
                                 }
                             </div>
-                            @if (CanEditFields) { <DxButton Text="CHANGE TARGET" RenderStyle="ButtonRenderStyle.Secondary" Click="OpenTargetPickerAsync" Enabled="@(!Busy)" /> }
+                            @if (CanEditFields) { <DxButton Text="CHOOSE A DIFFERENT WORK ORDER" RenderStyle="ButtonRenderStyle.Secondary" Click="OpenTargetPickerAsync" Enabled="@(!Busy)" /> }
                         }
-                        else { <p class="text-muted">Select eligible stockable WIP to find compatible INTERNAL_ROUTE_WIP requirements.</p> }
+                        else { <div class="wot-empty-state"><strong>Choose a balance first</strong><p>After you choose a source lot, matching active work orders that need the same item will appear here.</p></div> }
+                        </section>
                     </div>
                 </div>
-                <div class="row g-3 mt-2"><div class="col-md-4"><label class="form-label">Transfer date and time</label><DxDateEdit @bind-Date="Document.TransferDateTime" Enabled="@CanEditFields" CssClass="wot-field-date" /></div>
-                    <div class="col-md-8"><label class="form-label">Remark</label><DxTextBox @bind-Text="Document.Remark" Enabled="@CanEditFields" maxlength="250" CssClass="wot-field-remark" /></div></div>
-                <div class="mt-3 p-3 bg-light rounded">The full current balance will be reassigned. Item, lot, quantity and accumulated production value remain unchanged.</div>
+                <section class="wot-review-card mt-3" aria-labelledby="wot-review-title">
+                    <header class="wot-step-head"><span class="wot-step-number">3</span><div><p class="iv-eyebrow">REVIEW AND SAVE</p><h3 id="wot-review-title">Confirm the transfer details</h3><p>Saving creates a draft. The production balance only moves when the draft is posted.</p></div></header>
+                    @if (SelectedSource is null && Document.Id == 0 || SelectedTarget is null && Document.Id == 0)
+                    {
+                        <p class="wot-review-hint">To continue, choose both a source balance and a receiving work order above.</p>
+                    }
+                    <div class="row g-3">
+                        <div class="col-md-4"><label class="form-label">Transfer date and time</label><DxDateEdit @bind-Date="Document.TransferDateTime" Enabled="@CanEditFields" CssClass="wot-field-date" /></div>
+                        <div class="col-md-8"><label class="form-label">Remark (optional)</label><DxTextBox @bind-Text="Document.Remark" Enabled="@CanEditFields" maxlength="250" CssClass="wot-field-remark" /></div>
+                    </div>
+                </section>
                 <div class="d-flex flex-wrap gap-2 mt-3 wot-command-bar">
                     @if (CanEditFields)
                     {
-                        <DxButton Text="SAVE" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy && CanSave)" />
+                        <DxButton Text="SAVE DRAFT" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy && CanSave)" />
                         @if (Document.Id > 0 && CanDeleteAccess) { <DxButton Text="DELETE" RenderStyle="ButtonRenderStyle.Danger" Click="RequestDelete" Enabled="@(!Busy)" /> }
                     }
                     @if (Document.Id > 0 && Document.Status == "NEW" && CanPostAccess)

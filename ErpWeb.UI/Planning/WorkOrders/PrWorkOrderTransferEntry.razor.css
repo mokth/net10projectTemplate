@@ -2,8 +2,144 @@
     align-items: center;
 }
 
+.wot-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) auto;
+    align-items: center;
+    gap: 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.wot-intro h2 {
+    margin: 0 0 .45rem;
+    font-size: clamp(1.35rem, 2vw, 1.8rem);
+}
+
+.wot-intro > div:first-child > p:last-child {
+    max-width: 780px;
+    margin: 0;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.wot-transfer-rule {
+    display: grid;
+    gap: .2rem;
+    padding: .8rem 1rem;
+    border-left: 3px solid var(--bs-primary, #0d6efd);
+    border-radius: .35rem;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.wot-transfer-rule span {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: .88rem;
+}
+
 .wot-panels > [class*="col-"] {
     min-width: 0;
+}
+
+.wot-step-card,
+.wot-review-card {
+    height: 100%;
+    padding: 1.1rem;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: .75rem;
+    background: var(--bs-body-bg, #fff);
+}
+
+.wot-step-head {
+    display: flex;
+    align-items: flex-start;
+    gap: .85rem;
+    margin-bottom: 1.1rem;
+}
+
+.wot-step-head .iv-eyebrow {
+    margin: 0 0 .2rem;
+}
+
+.wot-step-head h3 {
+    margin: 0 0 .35rem;
+    font-size: 1.15rem;
+}
+
+.wot-step-head p:last-child {
+    margin: 0;
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: .92rem;
+}
+
+.wot-step-number {
+    display: grid;
+    flex: 0 0 2rem;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--bs-primary, #0d6efd);
+    color: #fff;
+    font-weight: 700;
+}
+
+.wot-selection-card {
+    display: grid;
+    gap: .3rem;
+    padding: 1rem;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: .6rem;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.wot-selection-card strong {
+    font-size: 1.05rem;
+}
+
+.wot-selection-card small {
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.wot-selection-card + .dxbl-btn,
+.wot-selection-card + button {
+    margin-top: .75rem;
+}
+
+.wot-empty-state {
+    padding: 1rem;
+    border: 1px dashed var(--bs-border-color, #dee2e6);
+    border-radius: .6rem;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.wot-empty-state strong {
+    display: block;
+    margin-bottom: .25rem;
+}
+
+.wot-empty-state p {
+    margin: 0;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.wot-field-hint {
+    margin: .65rem 0 0;
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: .9rem;
+}
+
+.wot-review-card {
+    height: auto;
+    border-left: 3px solid var(--bs-primary, #0d6efd);
+}
+
+.wot-review-card .wot-step-head {
+    margin-bottom: .8rem;
+}
+
+.wot-review-hint {
+    margin: 0 0 1rem;
+    color: var(--bs-secondary-color, #6c757d);
 }
 
 .wot-lookup-card {
@@ -31,7 +167,21 @@
 
 .wot-source-table,
 .wot-target-table {
-    min-width: 780px;
+    min-width: 850px;
+}
+
+.wot-source-table th,
+.wot-target-table th {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: .74rem;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.wot-source-table td,
+.wot-target-table td {
+    vertical-align: middle;
 }
 
 .lookup-pager {
@@ -63,9 +213,19 @@
 }
 
 @media (max-width: 767.98px) {
+    .wot-intro {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+    }
+
     .wot-source-table,
     .wot-target-table {
-        min-width: 700px;
+        min-width: 780px;
+    }
+
+    .wot-step-card,
+    .wot-review-card {
+        padding: .9rem;
     }
 
     .wot-command-bar > div {

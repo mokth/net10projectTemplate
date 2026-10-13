@@ -26,6 +26,7 @@ public sealed class ProductionWorkOrderTransferQuery
 
 public sealed class ProductionWorkOrderTransferSourceQuery
 {
+    public string? WorkOrderNo { get; set; }
     public string? SearchText { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 30;
@@ -33,6 +34,7 @@ public sealed class ProductionWorkOrderTransferSourceQuery
 
 public sealed class ProductionWorkOrderTransferTargetQuery
 {
+    public string? WorkOrderNo { get; set; }
     public string? SearchText { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 30;
@@ -49,12 +51,23 @@ public sealed record ProductionWorkOrderTransferSummary(long Id, string Transfer
     public string TargetConsumingWorkCentreProcess => $"{TargetConsumingWorkCentreCode} / {TargetConsumingProcessCode}";
 }
 
-public sealed record ProductionWorkOrderTransferSourcePage(IReadOnlyList<ProductionWorkOrderTransferSource> Rows, int TotalCount);
+public sealed record ProductionWorkOrderTransferSourcePage(IReadOnlyList<ProductionWorkOrderTransferSource> Rows, int TotalCount)
+{
+    public IReadOnlyList<ProductionWorkOrderTransferWorkOrderChoice> WorkOrders { get; init; } = [];
+}
 public sealed record ProductionWorkOrderTransferSource(long ProductionBalLotId, string WorkOrderNo, string ItemCode,
     string Description, string LotNo, decimal Qty, string Uom, decimal BaseQty, string BaseUom,
     string WorkCentreCode, string ProcessCode, DateTime? LastMovementDate, decimal? TotalCost, byte[] RowVersion);
 
-public sealed record ProductionWorkOrderTransferTargetPage(IReadOnlyList<ProductionWorkOrderTransferTarget> Rows, int TotalCount);
+public sealed record ProductionWorkOrderTransferTargetPage(IReadOnlyList<ProductionWorkOrderTransferTarget> Rows, int TotalCount)
+{
+    public IReadOnlyList<ProductionWorkOrderTransferWorkOrderChoice> WorkOrders { get; init; } = [];
+}
+public sealed record ProductionWorkOrderTransferWorkOrderChoice(long WorkOrderId, string WorkOrderNo,
+    string ProductCode, string? ProductDescription, string Status)
+{
+    public string Label => $"{WorkOrderNo} — {ProductCode}{(string.IsNullOrWhiteSpace(ProductDescription) ? string.Empty : $" · {ProductDescription}")}";
+}
 public sealed record ProductionWorkOrderTransferTarget(long WorkOrderId, string WorkOrderNo, string ProductCode,
     string? ProductDescription, string Status, long WorkOrderMaterialId, string ComponentCode,
     decimal RequiredQty, string? RequiredUom, string ConsumingWorkCentreCode, string ConsumingProcessCode,

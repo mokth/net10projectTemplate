@@ -600,6 +600,11 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 && db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId && w.CompanyCode == scope.CompanyCode
                     && w.BranchCode == scope.BranchCode && (w.Status == ProductionWorkOrderStatuses.Released
                         || w.Status == ProductionWorkOrderStatuses.InProgress || w.Status == ProductionWorkOrderStatuses.Completed)));
+            if (!string.IsNullOrWhiteSpace(query.WorkOrderNo))
+            {
+                var workOrderNo = query.WorkOrderNo.Trim();
+                q = q.Where(x => x.WorkOrderNo == workOrderNo);
+            }
             if (!string.IsNullOrWhiteSpace(query.SearchText))
             {
                 var term = query.SearchText.Trim();
@@ -611,6 +616,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var eligibleCount = 0;
             var candidateSkip = 0;
             var rows = new List<ProductionWorkOrderTransferSource>(take);
+            var workOrders = new Dictionary<long, (SourceFacts Facts, int BalanceCount)>();
             while (true)
             {
                 var candidates = await q.OrderBy(x => x.ItemCode).ThenBy(x => x.LotNo).ThenBy(x => x.Uid)
@@ -621,6 +627,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 foreach (var id in candidates)
                 {
                     if (!factsById.TryGetValue(id, out var facts)) continue;
+                    if (workOrders.TryGetValue(facts.Order.Uid, out var workOrder))
+                        workOrders[facts.Order.Uid] = (workOrder.Facts, workOrder.BalanceCount + 1);
+                    else
+                        workOrders[facts.Order.Uid] = (facts, 1);
                     var lot = facts.Lot;
                     if (eligibleCount >= skip && eligibleCount < skip + take)
                         rows.Add(new(lot.Uid, facts.Order.WorkOrderNo, lot.ItemCode, lot.Description ?? string.Empty,
@@ -629,7 +639,12 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                     eligibleCount++;
                 }
             }
-            return IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>.Ok(new(rows, eligibleCount));
+            var workOrderChoices = workOrders.Values.Select(x => new ProductionWorkOrderTransferWorkOrderChoice(
+                    x.Facts.Order.Uid, x.Facts.Order.WorkOrderNo, x.Facts.Order.ProductCode,
+                    x.Facts.Order.ProductDescription, x.Facts.Order.Status))
+                .OrderBy(x => x.WorkOrderNo, StringComparer.OrdinalIgnoreCase).ToArray();
+            return IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>.Ok(
+                new ProductionWorkOrderTransferSourcePage(rows, eligibleCount) { WorkOrders = workOrderChoices });
         }
         catch (TransferException ex) { return Fail<ProductionWorkOrderTransferSourcePage>(ex.Message, ex.Code); }
     }
@@ -664,6 +679,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var eligibleCount = 0;
             var candidateSkip = 0;
             var rows = new List<ProductionWorkOrderTransferTarget>(take);
+            var workOrders = new Dictionary<long, (TargetFacts Facts, int RequirementCount)>();
             while (true)
             {
                 var materialIds = await targets.OrderBy(x => x.WorkOrderId).ThenBy(x => x.Uid)
@@ -676,6 +692,13 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                     if (!factsByMaterialId.TryGetValue(materialId, out var result)) continue;
                     var facts = result.Facts;
                     var targetValue = result.TargetCurrentWipValue;
+                    if (workOrders.TryGetValue(facts.Order.Uid, out var workOrder))
+                        workOrders[facts.Order.Uid] = (workOrder.Facts, workOrder.RequirementCount + 1);
+                    else
+                        workOrders[facts.Order.Uid] = (facts, 1);
+                    if (!string.IsNullOrWhiteSpace(query.WorkOrderNo)
+                        && !string.Equals(facts.Order.WorkOrderNo, query.WorkOrderNo.Trim(), StringComparison.OrdinalIgnoreCase))
+                        continue;
                     if (eligibleCount >= skip && eligibleCount < skip + take)
                         rows.Add(new(facts.Order.Uid, facts.Order.WorkOrderNo, facts.Order.ProductCode,
                             facts.Order.ProductDescription, facts.Order.Status, facts.Material.Uid,
@@ -688,7 +711,12 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                     eligibleCount++;
                 }
             }
-            return IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>.Ok(new(rows, eligibleCount));
+            var workOrderChoices = workOrders.Values.Select(x => new ProductionWorkOrderTransferWorkOrderChoice(
+                    x.Facts.Order.Uid, x.Facts.Order.WorkOrderNo, x.Facts.Order.ProductCode,
+                    x.Facts.Order.ProductDescription, x.Facts.Order.Status))
+                .OrderBy(x => x.WorkOrderNo, StringComparer.OrdinalIgnoreCase).ToArray();
+            return IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>.Ok(
+                new ProductionWorkOrderTransferTargetPage(rows, eligibleCount) { WorkOrders = workOrderChoices });
         }
         catch (TransferException ex) { return Fail<ProductionWorkOrderTransferTargetPage>(ex.Message, ex.Code); }
     }

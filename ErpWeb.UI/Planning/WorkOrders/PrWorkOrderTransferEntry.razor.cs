@@ -17,15 +17,18 @@ public partial class PrWorkOrderTransferEntry
     protected ProductionWorkOrderTransferDocument Document { get; set; } = new() { Status = "NEW" };
     protected List<ProductionWorkOrderTransferSource> Sources { get; set; } = [];
     protected List<ProductionWorkOrderTransferTarget> Targets { get; set; } = [];
+    protected List<ProductionWorkOrderTransferWorkOrderChoice> SourceWorkOrders { get; set; } = [];
+    protected List<ProductionWorkOrderTransferWorkOrderChoice> TargetWorkOrders { get; set; } = [];
     protected ProductionWorkOrderTransferSource? SelectedSource { get; set; }
     protected ProductionWorkOrderTransferTarget? SelectedTarget { get; set; }
-    protected string SourceSearch = "", TargetSearch = "", Error = "", Message = "";
+    protected string? SourceWorkOrderNo, TargetWorkOrderNo;
+    protected string SourceSearch = "", Error = "", Message = "";
     protected bool Loading = true, Busy, SourceLoading, TargetLoading, CanAdd, CanEdit, CanDeleteAccess, CanPostAccess, CanRollbackAccess, CanViewCostAccess;
     protected bool TargetPickerVisible, PostConfirmVisible, RollbackConfirmVisible, DeleteConfirmVisible;
     protected string RollbackReason = "";
     protected int SourceSkip, TargetSkip, SourceTotal, TargetTotal;
     protected const int LookupPageSize = 10;
-    private CancellationTokenSource? _sourceSearchCts, _targetSearchCts;
+    private CancellationTokenSource? _sourceSearchCts;
     private ProductionWorkOrderTransferCommand? _pendingPost, _pendingRollback;
     protected bool CanEditFields => Document.Status == "NEW" && (Id == 0 ? CanAdd : CanEdit) && Mode != "view";
     protected bool CanSave => CanEditFields && (Id > 0
@@ -59,7 +62,6 @@ public partial class PrWorkOrderTransferEntry
     }
 
     protected Task SourceSearchChanged(string value) { SourceSearch = value ?? ""; SourceSkip = 0; return DebounceSourceSearchAsync(); }
-    protected Task TargetSearchChanged(string value) { TargetSearch = value ?? ""; TargetSkip = 0; return DebounceTargetSearchAsync(); }
     protected void BackToList() => Nav.NavigateTo("/planning/work-order-transfer");
 
     private async Task LoadSourcesAsync()
@@ -68,9 +70,14 @@ public partial class PrWorkOrderTransferEntry
         try
         {
             var result = await Transfers.SearchEligibleSourcesAsync(new ProductionWorkOrderTransferSourceQuery
-            { SearchText = SourceSearch, Skip = SourceSkip, Take = LookupPageSize });
+            { WorkOrderNo = SourceWorkOrderNo, SearchText = SourceSearch, Skip = SourceSkip, Take = LookupPageSize });
             if (!result.Succeeded || result.Data is null) { Error = result.Message ?? "Unable to load eligible WIP."; Sources = []; SourceTotal = 0; }
-            else { Sources = result.Data.Rows.ToList(); SourceTotal = result.Data.TotalCount; }
+            else
+            {
+                Sources = result.Data.Rows.ToList(); SourceTotal = result.Data.TotalCount;
+                if (SourceWorkOrderNo is null || SourceWorkOrders.Count == 0)
+                    SourceWorkOrders = result.Data.WorkOrders.ToList();
+            }
         }
         finally { SourceLoading = false; }
         await InvokeAsync(StateHasChanged);
@@ -84,9 +91,13 @@ public partial class PrWorkOrderTransferEntry
         try
         {
             var result = await Transfers.SearchEligibleTargetsAsync(sourceId,
-                new ProductionWorkOrderTransferTargetQuery { SearchText = TargetSearch, Skip = TargetSkip, Take = LookupPageSize });
+                new ProductionWorkOrderTransferTargetQuery { WorkOrderNo = TargetWorkOrderNo, Skip = TargetSkip, Take = LookupPageSize });
             if (!result.Succeeded || result.Data is null) { Error = result.Message ?? "Unable to load compatible target requirements."; Targets = []; TargetTotal = 0; }
-            else { Targets = result.Data.Rows.ToList(); TargetTotal = result.Data.TotalCount; }
+            else
+            {
+                Targets = result.Data.Rows.ToList(); TargetTotal = result.Data.TotalCount;
+                TargetWorkOrders = result.Data.WorkOrders.ToList();
+            }
         }
         finally { TargetLoading = false; }
         await InvokeAsync(StateHasChanged);
@@ -100,14 +111,6 @@ public partial class PrWorkOrderTransferEntry
         catch (OperationCanceledException) { }
     }
 
-    private async Task DebounceTargetSearchAsync()
-    {
-        _targetSearchCts?.Cancel(); _targetSearchCts?.Dispose();
-        var tokenSource = _targetSearchCts = new CancellationTokenSource();
-        try { await Task.Delay(350, tokenSource.Token); await LoadTargetsAsync(); }
-        catch (OperationCanceledException) { }
-    }
-
     protected Task PreviousSourcesAsync() { SourceSkip = Math.Max(0, SourceSkip - LookupPageSize); return LoadSourcesAsync(); }
     protected Task NextSourcesAsync() { SourceSkip += LookupPageSize; return LoadSourcesAsync(); }
     protected Task PreviousTargetsAsync() { TargetSkip = Math.Max(0, TargetSkip - LookupPageSize); return LoadTargetsAsync(); }
@@ -116,26 +119,64 @@ public partial class PrWorkOrderTransferEntry
     protected async Task SelectSourceAsync(ProductionWorkOrderTransferSource source)
     {
         if (!CanEditFields || Id != 0) return;
-        SelectedSource = source; SelectedTarget = null; Targets = []; TargetSearch = "";
+        SelectedSource = source; SelectedTarget = null; Targets = []; TargetWorkOrders = []; TargetWorkOrderNo = null;
         TargetSkip = 0; TargetTotal = 0;
         Document.CanViewCost = CanViewCostAccess;
         Document.TransferTotalCost = source.TotalCost;
         await LoadTargetsAsync();
     }
 
-    protected async Task OpenTargetPickerAsync()
+    protected async Task SourceWorkOrderChanged(string? value)
     {
-        if (!CanEditFields) return;
-        TargetPickerVisible = true; SelectedTarget = null; Targets = [];
+        if (!CanEditFields || Id != 0 || Busy) return;
+        SourceWorkOrderNo = value;
+        SourceSearch = ""; SourceSkip = 0; SourceTotal = 0;
+        SelectedSource = null; SelectedTarget = null; Targets = []; TargetWorkOrders = [];
+        TargetWorkOrderNo = null; TargetSkip = 0; TargetTotal = 0;
+        Document.TransferTotalCost = null;
+        await LoadSourcesAsync();
+    }
+
+    protected async Task TargetWorkOrderChanged(string? value)
+    {
+        if (!CanEditFields || Busy) return;
+        TargetWorkOrderNo = value;
+        SelectedTarget = null; Targets = []; TargetSkip = 0; TargetTotal = 0;
         await LoadTargetsAsync();
     }
 
-    protected void CancelTargetPicker() { TargetPickerVisible = false; SelectedTarget = null; }
+    protected void ChangeSource()
+    {
+        if (!CanEditFields || Id != 0 || Busy) return;
+        SelectedSource = null;
+        SelectedTarget = null;
+        Targets = [];
+        TargetWorkOrders = [];
+        TargetWorkOrderNo = null;
+        TargetSkip = 0;
+        TargetTotal = 0;
+        Document.TransferTotalCost = null;
+    }
+
+    protected async Task OpenTargetPickerAsync()
+    {
+        if (!CanEditFields) return;
+        TargetPickerVisible = true; SelectedTarget = null; Targets = []; TargetWorkOrders = [];
+        TargetWorkOrderNo = Document.TargetWorkOrderNo;
+        await LoadTargetsAsync();
+    }
+
+    protected void CancelTargetPicker()
+    {
+        TargetPickerVisible = false; SelectedTarget = null;
+        TargetWorkOrderNo = Document.TargetWorkOrderNo;
+    }
 
     protected void SelectTarget(ProductionWorkOrderTransferTarget target)
     {
         if (!CanEditFields) return;
         SelectedTarget = target;
+        TargetWorkOrderNo = target.WorkOrderNo;
         Document.TargetWorkOrderId = target.WorkOrderId;
         Document.TargetWorkOrderNo = target.WorkOrderNo;
         Document.TargetWorkOrderMaterialId = target.WorkOrderMaterialId;
