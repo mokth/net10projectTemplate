@@ -10,7 +10,8 @@ public interface IProductionWorkOrderTransferService
     Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> UpdateAsync(ProductionWorkOrderTransferUpdateRequest request, CancellationToken ct = default);
     Task<IvMasterOperationResult<bool>> DeleteAsync(long id, byte[] expectedVersion, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> RefreshSourceSnapshotAsync(long id, byte[] expectedVersion, CancellationToken ct = default);
-    Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> PostAsync(long id, byte[] expectedVersion, CancellationToken ct = default);
+    Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> PostAsync(ProductionWorkOrderTransferCommand request, CancellationToken ct = default);
+    Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> RollbackAsync(ProductionWorkOrderTransferCommand request, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>> SearchEligibleSourcesAsync(ProductionWorkOrderTransferSourceQuery query, CancellationToken ct = default);
     Task<IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>> SearchEligibleTargetsAsync(long sourceProductionBalLotId, ProductionWorkOrderTransferTargetQuery query, CancellationToken ct = default);
 }
@@ -42,7 +43,11 @@ public sealed record ProductionWorkOrderTransferSummary(long Id, string Transfer
     string ItemCode, string LotNo, decimal Qty, string Uom, string SourceWorkOrderNo, string SourceWorkCentreCode,
     string SourceProcessCode, string TargetWorkOrderNo, string TargetConsumingWorkCentreCode,
     string TargetConsumingProcessCode, string Status, string CreatedBy, string? PostedBy,
-    decimal? TransferTotalCost, byte[] RowVersion);
+    decimal? TransferTotalCost, byte[] RowVersion)
+{
+    public string SourceWorkCentreProcess => $"{SourceWorkCentreCode} / {SourceProcessCode}";
+    public string TargetConsumingWorkCentreProcess => $"{TargetConsumingWorkCentreCode} / {TargetConsumingProcessCode}";
+}
 
 public sealed record ProductionWorkOrderTransferSourcePage(IReadOnlyList<ProductionWorkOrderTransferSource> Rows, int TotalCount);
 public sealed record ProductionWorkOrderTransferSource(long ProductionBalLotId, string WorkOrderNo, string ItemCode,
@@ -54,7 +59,8 @@ public sealed record ProductionWorkOrderTransferTarget(long WorkOrderId, string 
     string? ProductDescription, string Status, long WorkOrderMaterialId, string ComponentCode,
     decimal RequiredQty, string? RequiredUom, string ConsumingWorkCentreCode, string ConsumingProcessCode,
     string ProducerWorkCentreCode, string ProducerProcessCode, long ProducerRouteStepId, long ProducerOperationId,
-    decimal? TargetCurrentWipValue, decimal? ProjectedTargetWipValue);
+    decimal? TargetCurrentWipValue, decimal? ProjectedTargetWipValue,
+    decimal RequiredBaseQty, string? BaseUom, bool SequenceReady, string? BlockingReason);
 
 public sealed class ProductionWorkOrderTransferCreateRequest
 {
@@ -72,6 +78,8 @@ public sealed class ProductionWorkOrderTransferUpdateRequest
     public DateTime TransferDateTime { get; set; }
     public string? Remark { get; set; }
 }
+
+public sealed record ProductionWorkOrderTransferCommand(long Id, byte[] ExpectedVersion, Guid RequestId, string? Reason = null);
 
 public sealed class ProductionWorkOrderTransferDocument
 {
@@ -93,6 +101,7 @@ public sealed class ProductionWorkOrderTransferDocument
     public string SourceWorkCentreCode { get; set; } = string.Empty;
     public string SourceProcessCode { get; set; } = string.Empty;
     public DateTime? SourceLastMovementDate { get; set; }
+    public decimal? SourceCurrentWipValue { get; set; }
     public decimal? TransferTotalCost { get; set; }
     public long TargetWorkOrderId { get; set; }
     public string TargetWorkOrderNo { get; set; } = string.Empty;
@@ -109,6 +118,14 @@ public sealed class ProductionWorkOrderTransferDocument
     public bool CanViewCost { get; set; }
     public int TargetSnapshotRevision { get; set; }
     public string TargetSnapshotHash { get; set; } = string.Empty;
+    public int DocumentRevision { get; set; }
+    public long? ReversalPostingId { get; set; }
+    public string? ReversalReason { get; set; }
+    public DateTime? RollbackDate { get; set; }
+    public string? RollbackBy { get; set; }
+    public int RollbackCount { get; set; }
+    public bool TargetSequenceReady { get; set; } = true;
+    public string? TargetSequenceBlockingReason { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public long? StockPostingId { get; set; }
     public DateTime? PostedDate { get; set; }

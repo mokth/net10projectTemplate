@@ -81,6 +81,7 @@ public static class ProductionMaterialMovementTypes
 public static class ProductionPostingCommandTypes
 {
     public const string WorkOrderTransferPost = "WO_TRANSFER_POST";
+    public const string WorkOrderTransferRollback = "WO_TRANSFER_ROLLBACK";
     public const string ProductionStockReturnPost = "PRODUCTION_STOCK_RETURN_POST";
     public const string ProductionStockReturnRollback = "PRODUCTION_STOCK_RETURN_ROLLBACK";
     public const string ProductionStockAdjustmentPost = "PRODUCTION_STOCK_ADJUSTMENT_POST";

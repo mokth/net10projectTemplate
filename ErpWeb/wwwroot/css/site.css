@@ -12,8 +12,8 @@
     --accent: #2f6fed;
     --danger: #b42318;
     --font: "Public Sans", "Segoe UI", sans-serif;
-    /* 280px keeps the longest depth-3 captions (e.g. "Self-billed Credit Note") on one line. */
-    --nav-w: 280px;
+    /* Give long menu captions more room; any remaining long text wraps in the tree. */
+    --nav-w: 340px;
     --top-h: 52px;
 
     --nav-bg: #ffffff;

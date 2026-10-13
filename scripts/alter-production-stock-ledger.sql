@@ -43,6 +43,28 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrPro
     CREATE UNIQUE INDEX UQ_PrProductionBalLot_V2_Material
         ON dbo.PrProductionBalLot(CompanyCode, BranchCode, ContributionKey, ProductionLocationID, StockStatusCode)
         WHERE BalanceStage = N'MATERIAL' AND ContributionKey IS NOT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrProductionBalLot') AND name = N'UQ_PrProductionBalLot_V2_Wip')
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM dbo.PrProductionBalLot
+        WHERE BalanceStage IN (N'PROCESS_WIP',N'ROUTE_WIP',N'FG_STAGING')
+        GROUP BY CompanyCode, BranchCode, WorkOrderID, ProducingRouteStepID, BalanceStage,
+                 ItemCode, PoolCode, PhysicalLotNo, ProductionLocationID, StockStatusCode
+        HAVING COUNT_BIG(*) > 1
+    )
+    BEGIN
+        ;THROW 51020, 'Duplicate V2 WIP identities prevent creation of UQ_PrProductionBalLot_V2_Wip; reconcile the balances before continuing.', 1;
+    END;
+
+    CREATE UNIQUE INDEX UQ_PrProductionBalLot_V2_Wip
+        ON dbo.PrProductionBalLot
+           (CompanyCode, BranchCode, WorkOrderID, ProducingRouteStepID, BalanceStage,
+            ItemCode, PoolCode, PhysicalLotNo, ProductionLocationID, StockStatusCode)
+        WHERE BalanceStage IN (N'PROCESS_WIP',N'ROUTE_WIP',N'FG_STAGING');
+END;
 GO
 
 IF COL_LENGTH(N'dbo.PrProductionBalLotMovement', N'LedgerVersion') IS NULL ALTER TABLE dbo.PrProductionBalLotMovement ADD LedgerVersion tinyint NULL;

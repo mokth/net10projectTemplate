@@ -60,7 +60,8 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         await SetSqliteRowVersionAsync(created.Data!.Id);
         var draft = await service.GetAsync(created.Data.Id);
         Assert.True(draft.Succeeded, draft.Message);
-        var posted = await service.PostAsync(draft.Data!.Id, draft.Data.RowVersion);
+        var postCommand = new ProductionWorkOrderTransferCommand(draft.Data!.Id, draft.Data.RowVersion.ToArray(), Guid.NewGuid());
+        var posted = await service.PostAsync(postCommand);
 
         Assert.True(posted.Succeeded, posted.Message);
         Assert.Equal(ProductionWorkOrderTransferStatuses.Posted, posted.Data!.Status);
@@ -84,8 +85,8 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         Assert.Equal(transfer.TargetProducingRouteStepId, targetPool.ProducingRouteStepId);
         Assert.Equal(transfer.TargetProducerOperationId, targetPool.WorkOrderOperationId);
         Assert.Equal(transfer.TargetProducerProductionLocationId, targetPool.ProductionLocationId);
-        Assert.Equal("PHY-TRANSFER-1", targetPool.PhysicalLotNo);
-        Assert.Equal("POOL-TRANSFER-1", targetPool.PoolCode);
+        Assert.Equal("LOT-TRANSFER-1", targetPool.PhysicalLotNo);
+        Assert.Null(targetPool.PoolCode);
 
         var outbound = await db.ProductionBalLotMovements.SingleAsync(x => x.Uid == transfer.TransferOutMovementId);
         var inbound = await db.ProductionBalLotMovements.SingleAsync(x => x.Uid == transfer.TransferInMovementId);
@@ -122,7 +123,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         Assert.Equal(ProductionWorkOrderStatuses.Released, orders.Single(x => x.Uid == graph.TargetWorkOrderId).Status);
         Assert.All(orders, x => Assert.Equal(0m, x.GoodQty));
 
-        var replay = await service.PostAsync(posted.Data.Id, posted.Data.RowVersion);
+        var replay = await service.PostAsync(postCommand);
         Assert.True(replay.Succeeded, replay.Message);
         Assert.Equal(posted.Data.StockPostingId, replay.Data!.StockPostingId);
         Assert.Single(await db.StockPostings.ToListAsync());
@@ -143,7 +144,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         await SetSqliteRowVersionAsync(created.Id);
         var refreshed = await service.GetAsync(created.Id);
 
-        var result = await service.PostAsync(created.Id, refreshed.Data!.RowVersion);
+        var result = await service.PostAsync(new(created.Id, refreshed.Data!.RowVersion, Guid.NewGuid()));
 
         Assert.False(result.Succeeded);
         Assert.Contains("source WIP changed", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -180,7 +181,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         var graph = await SeedGraphAsync(consumerAtProducerLocation: true, completedTargetProducer: true);
         var transfers = CreateService();
         var draft = await CreateDraftAsync(transfers, graph);
-        var posted = await transfers.PostAsync(draft.Id, draft.RowVersion);
+        var posted = await transfers.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
         Assert.True(posted.Succeeded, posted.Message);
 
         await using (var db = await _factory.CreateDbContextAsync())
@@ -218,7 +219,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         var graph = await SeedGraphAsync(completedTargetProducer: true);
         var transfers = CreateService();
         var draft = await CreateDraftAsync(transfers, graph);
-        var posted = await transfers.PostAsync(draft.Id, draft.RowVersion);
+        var posted = await transfers.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
         Assert.True(posted.Succeeded, posted.Message);
 
         var output = await CreateSharedWipOutputService().GetWorkspaceAsync(graph.TargetConsumerOperationId, EffectiveAt);
@@ -233,7 +234,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         var graph = await SeedGraphAsync(consumerAtProducerLocation: true, completedTargetProducer: true);
         var transfers = CreateService();
         var draft = await CreateDraftAsync(transfers, graph);
-        var posted = await transfers.PostAsync(draft.Id, draft.RowVersion);
+        var posted = await transfers.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
         Assert.True(posted.Succeeded, posted.Message);
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -351,7 +352,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
             WorkOrderId = sourceOrder.Uid, WorkOrderNo = sourceOrder.WorkOrderNo,
             WarehouseCode = "", LocationCode = "", LotNo = "LOT-TRANSFER-1",
             BalanceStage = "PROCESS_WIP", ProductionLocationId = sourceLocation.Id,
-            StockStatusCode = "AVAILABLE", PhysicalLotNo = "PHY-TRANSFER-1", PoolCode = "POOL-TRANSFER-1",
+            StockStatusCode = "AVAILABLE", PhysicalLotNo = "LOT-TRANSFER-1", PoolCode = "POOL-TRANSFER-1",
             LotIdentityKind = "PRODUCTION", OriginType = "PRODUCED",
             ProducingRouteStepId = sourceRoute.Uid, WorkOrderOperationId = sourceOperation.Uid,
             OutputType = PrRouteOutputTypes.WipStocked, WorkCentreCode = sourceRoute.WorkCentreCode,

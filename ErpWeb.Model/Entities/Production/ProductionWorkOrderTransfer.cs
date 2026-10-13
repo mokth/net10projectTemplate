@@ -33,6 +33,8 @@ public sealed class ProductionWorkOrderTransfer
     public DateTime? SourceLastMovementDate { get; set; }
     public DateTime? SourceLastStockEventEffectiveAt { get; set; }
     public byte[] SourceBalanceRowVersion { get; set; } = [];
+    public int? SourceSnapshotRevision { get; set; }
+    public string? SourceSnapshotHash { get; set; }
 
     // Live destination identity follows the target Work Order's producing route.
     public long TargetWorkOrderId { get; set; }
@@ -54,6 +56,8 @@ public sealed class ProductionWorkOrderTransfer
     public int TargetSnapshotRevision { get; set; }
     public string TargetSnapshotHash { get; set; } = string.Empty;
 
+    public int DocumentRevision { get; set; } = 1;
+
     public string PostingRequestId { get; set; } = string.Empty;
     public long ProductionPostingLinkId { get; set; }
     public long? StockPostingId { get; set; }
@@ -61,6 +65,12 @@ public sealed class ProductionWorkOrderTransfer
     public long? TransferOutMovementId { get; set; }
     public long? TransferInMovementId { get; set; }
     public Guid? MovementGroupId { get; set; }
+    public long? ReversalPostingId { get; set; }
+    public string? ReversalReason { get; set; }
+    public DateTime? RollbackDate { get; set; }
+    public string? RollbackBy { get; set; }
+    public int RollbackCount { get; set; }
+    public Guid? RollbackOperationId { get; set; }
 
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
@@ -72,4 +82,39 @@ public sealed class ProductionWorkOrderTransfer
     public string? DeletedBy { get; set; }
     public string? DeleteReason { get; set; }
     public byte[] RowVersion { get; set; } = [];
+}
+
+/// <summary>Append-only evidence for one forward or reversal WOT posting generation.</summary>
+public sealed class ProductionWorkOrderTransferFact
+{
+    public long Id { get; set; }
+    public long TransferId { get; set; }
+    public int DocumentRevision { get; set; }
+    public long StockPostingId { get; set; }
+    public long ProductionPostingLinkId { get; set; }
+    public long SourceProductionBalLotId { get; set; }
+    public long DestinationProductionBalLotId { get; set; }
+    public long SourceLegMovementId { get; set; }
+    public long TargetLegMovementId { get; set; }
+    public Guid MovementGroupId { get; set; }
+    public decimal Qty { get; set; }
+    public decimal BaseQty { get; set; }
+    public string BaseUom { get; set; } = string.Empty;
+    public decimal TotalValue { get; set; }
+    public decimal UnitCost { get; set; }
+    public decimal SourceBaseBefore { get; set; }
+    public decimal SourceValueBefore { get; set; }
+    public decimal SourceBaseAfter { get; set; }
+    public decimal SourceValueAfter { get; set; }
+    public decimal TargetBaseBefore { get; set; }
+    public decimal TargetValueBefore { get; set; }
+    public decimal TargetBaseAfter { get; set; }
+    public decimal TargetValueAfter { get; set; }
+    public int? SourceGenerationBefore { get; set; }
+    public int? SourceGenerationAfter { get; set; }
+    public int? TargetGenerationBefore { get; set; }
+    public int? TargetGenerationAfter { get; set; }
+    public long? ReversesFactId { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public ProductionWorkOrderTransferFact? ReversesFact { get; set; }
 }

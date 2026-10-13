@@ -49,14 +49,15 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
     {
         var f = await SqlFixture.CreateAsync();
         var draft = await f.CreateDraftAsync(f.SourcePoolId);
+        var request = new ProductionWorkOrderTransferCommand(draft.Id, draft.RowVersion.ToArray(), Guid.NewGuid());
         var results = await Task.WhenAll(
-            f.CreateTransferService().PostAsync(draft.Id, draft.RowVersion),
-            f.CreateTransferService().PostAsync(draft.Id, draft.RowVersion));
+            f.CreateTransferService().PostAsync(request),
+            f.CreateTransferService().PostAsync(request));
 
-        Assert.Single(results, x => x.Succeeded);
+        Assert.All(results, x => Assert.True(x.Succeeded, x.Message));
         var current = await f.CreateTransferService().GetAsync(draft.Id);
         Assert.True(current.Succeeded, current.Message);
-        var replay = await f.CreateTransferService().PostAsync(draft.Id, current.Data!.RowVersion);
+        var replay = await f.CreateTransferService().PostAsync(request);
         Assert.True(replay.Succeeded, replay.Message);
 
         await using var db = await f.Factory.CreateDbContextAsync();
@@ -79,8 +80,8 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         var second = await f.CreateDraftAsync(secondSourceId);
 
         var posted = await Task.WhenAll(
-            f.CreateTransferService().PostAsync(first.Id, first.RowVersion),
-            f.CreateTransferService().PostAsync(second.Id, second.RowVersion));
+            f.CreateTransferService().PostAsync(new(first.Id, first.RowVersion, Guid.NewGuid())),
+            f.CreateTransferService().PostAsync(new(second.Id, second.RowVersion, Guid.NewGuid())));
 
         Assert.All(posted, x => Assert.True(x.Succeeded, x.Message));
         await using var db = await f.Factory.CreateDbContextAsync();
@@ -114,7 +115,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         var daily = await f.CreateOutputService().CreateAsync(f.DailyRequest(f.TargetConsumerOperationId));
         Assert.True(daily.Succeeded, daily.Message);
 
-        var transferPost = f.CreateTransferService().PostAsync(draft.Id, draft.RowVersion);
+        var transferPost = f.CreateTransferService().PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
         var outputPost = f.CreateOutputService().PostAsync(daily.Data!.Uid);
         await Task.WhenAll(transferPost, outputPost);
 
@@ -144,7 +145,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
             outputLotNo: "LOT-TRANSFER-1", goodQty: 1m));
         Assert.True(production.Succeeded, production.Message);
 
-        var transferPost = f.CreateTransferService().PostAsync(draft.Id, draft.RowVersion);
+        var transferPost = f.CreateTransferService().PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
         var outputPost = f.CreateOutputService().PostAsync(production.Data!.Uid);
         await Task.WhenAll(transferPost, outputPost);
 
@@ -357,7 +358,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
             WorkOrderId = order.Uid, WorkOrderNo = order.WorkOrderNo,
             WarehouseCode = "", LocationCode = "", LotNo = lotNo,
             BalanceStage = "PROCESS_WIP", ProductionLocationId = location.Id,
-            StockStatusCode = "AVAILABLE", PhysicalLotNo = "PHY-TRANSFER-1", PoolCode = "POOL-TRANSFER-1",
+            StockStatusCode = "AVAILABLE", PhysicalLotNo = "LOT-TRANSFER-1", PoolCode = "POOL-TRANSFER-1",
             LotIdentityKind = "PRODUCTION", OriginType = "PRODUCED",
             ProducingRouteStepId = route.Uid, WorkOrderOperationId = operation.Uid,
             OutputType = PrRouteOutputTypes.WipStocked, WorkCentreCode = route.WorkCentreCode,

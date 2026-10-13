@@ -38,7 +38,9 @@ public static class ProductionPoolValuationService
         context.EnsureUnsealed();
         var db = context.Db;
         var registry = new StockMovementRegistry();
-        var transferPairs = ValidateWorkOrderTransferPairs(movements, context.Posting.Id);
+        IReadOnlyList<WorkOrderTransferPair> transferPairs = context.Posting.CommandType == ProductionPostingCommandTypes.WorkOrderTransferRollback
+            ? Array.Empty<WorkOrderTransferPair>()
+            : ValidateWorkOrderTransferPairs(movements, context.Posting.Id);
         var transferInPairByMovement = transferPairs.ToDictionary(x => x.Inbound.Uid, x => x);
         var inputIds = movements.Where(x => x.MovementType == ProductionBalLotMovementTypes.Consume).Select(x => x.Uid).ToArray();
         var inputStatuses = new List<string>();

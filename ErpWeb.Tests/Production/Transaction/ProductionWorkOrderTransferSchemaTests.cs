@@ -48,13 +48,18 @@ public sealed class ProductionWorkOrderTransferSchemaTests
         Assert.Contains("CK_PrWorkOrderTransfer_Contexts", schema, StringComparison.Ordinal);
         Assert.Contains("FK_PrWorkOrderTransfer_SourceBalance", schema, StringComparison.Ordinal);
         Assert.Contains("UQ_PrWorkOrderTransfer_NewSource", schema, StringComparison.Ordinal);
+        Assert.Contains("DocumentRevision", schema, StringComparison.Ordinal);
+        Assert.Contains("SourceSnapshotRevision", schema, StringComparison.Ordinal);
+        Assert.Contains("PrProductionWorkOrderTransferFact", schema, StringComparison.Ordinal);
+        Assert.Contains("UQ_PrProductionWorkOrderTransferFact_ReversesFact", schema, StringComparison.Ordinal);
+        Assert.Contains("UQ_PrProductionPostingLink_WorkOrderTransferGeneration", schema, StringComparison.Ordinal);
         Assert.Contains("WHERE Status=N'NEW' AND DeletedAtUtc IS NULL", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP INDEX UQ_PrProductionBalLot_Wip", schema, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DROP INDEX UQ_PrProductionBalLot_V2_Wip", schema, StringComparison.OrdinalIgnoreCase);
 
         var menu = File.ReadAllText(FindScript("init-planning-work-order-transfer-menu.sql"));
         Assert.Contains("N'VIEW_COST'", menu, StringComparison.Ordinal);
-        Assert.DoesNotContain("N'ROLLBACK'", menu, StringComparison.Ordinal);
+        Assert.Contains("N'ROLLBACK'", menu, StringComparison.Ordinal);
         Assert.Contains("/planning/work-order-transfer", menu, StringComparison.Ordinal);
     }
 

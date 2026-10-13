@@ -5,77 +5,119 @@
 <MenuAuthorize MenuCode="@MenuCodes.PlanningWorkOrderTransfer">
     <div class="iv-page">
         <header class="iv-hero">
-            <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Work Order Transfer</h1>
-                <div class="iv-chips"><span class="iv-chip">@TotalCount documents</span></div></div>
+            <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-right-left"></i></div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Planning · Production</p>
+                <h1 class="iv-title">Work Order Transfer</h1>
+                <div class="iv-chips"><span class="iv-chip">@TotalCount documents</span>@if (HasActiveFilters) { <span class="iv-chip">Filtered</span> }</div>
+            </div>
             <div class="iv-hero__kpi"><span>Documents</span><strong>@TotalCount.ToString("N0")</strong></div>
-            @if (CanAdd) { <DxButton Text="NEW TRANSFER" IconCssClass="fa-solid fa-plus" RenderStyle="ButtonRenderStyle.Primary" Click="NewAsync" /> }
         </header>
         @if (!string.IsNullOrWhiteSpace(Message)) { <div class="iv-toast iv-toast--ok" role="status">@Message</div> }
         @if (!string.IsNullOrWhiteSpace(Error)) { <div class="iv-toast iv-toast--err" role="alert">@Error</div> }
         <section class="iv-card">
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search"><DxTextBox Text="@SearchText" TextChanged="SearchChanged" NullText="Search transfer, item, lot or Work Order" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" /></div>
-                <DxComboBox Data="@Statuses" TData="string" TValue="string" @bind-Value="StatusFilter" NullText="All statuses" />
-                <DxButton Text="SEARCH" RenderStyle="ButtonRenderStyle.Secondary" Click="ReloadAsync" />
+                <div class="iv-toolbar-row__search">
+                    <DxTextBox Text="@SearchText" TextChanged="SearchChanged" NullText="Search transfer, item, lot or Work Order"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" />
             </div>
             @if (Loading)
             {
                 <div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>
             }
-            else if (Rows.Count == 0)
-            {
-                <p class="text-muted mb-0">No Work Order Transfers match the search.</p>
-            }
             else
             {
-                <div class="table-responsive">
-                    <table class="table align-middle">
-                        <thead><tr><th>Transfer No</th><th>Date</th><th>Item</th><th>Lot</th><th>Qty/UOM</th><th>From WO</th><th>From WC</th><th>From Process</th><th>To WO</th><th>Consumes At WC</th><th>Consumes At Process</th><th>Status</th><th>Created By</th><th>Posted By</th><th></th></tr></thead>
-                        <tbody>
-                        @foreach (var row in Rows)
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="ProductionWorkOrderTransferSummary" Columns="@Columns" Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons" KeyName="@nameof(ProductionWorkOrderTransferSummary.Id)"
+                                      GridKey="pln-work-order-transfers" Title="Work Order Transfers" CustomDataSource="@DataSource"
+                                      ShowToolbarText="true" ShowResetLayoutButton="true" UseBuiltInExport="false"
+                                      ShowSearchBox="false" ShowFilterRow="false" ShowGroupPanel="false" allowSelect="true"
+                                      OnGridInstance="@OnGridInstance" OnSelectionsEventHandle="@OnSelections"
+                                      OnButtonEventHandle="@OnButton" OnActionEventHandle="@OnAction" />
+                </div>
+                <div class="iv-list-compact">
+                    @if (CompactRows.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No Work Order Transfers match the search.</p>
+                    }
+                    else
+                    {
+                        @foreach (var row in CompactRows)
                         {
-                            <tr>
-                                <td class="code-style">@row.TransferNo</td><td>@row.TransferDateTime.ToString("dd MMM yyyy HH:mm")</td>
-                                <td>@row.ItemCode</td><td>@row.LotNo</td>
-                                <td>@row.Qty.ToString("N4") @row.Uom</td>
-                                <td>@row.SourceWorkOrderNo</td><td>@row.SourceWorkCentreCode</td><td>@row.SourceProcessCode</td>
-                                <td>@row.TargetWorkOrderNo</td><td>@row.TargetConsumingWorkCentreCode</td><td>@row.TargetConsumingProcessCode</td>
-                                <td><span class="iv-chip">@row.Status</span></td>
-                                <td>@row.CreatedBy</td><td>@(row.PostedBy ?? "—")</td>
-                                <td class="text-end">
+                            <article class="iv-list-compact__item">
+                                <button type="button" class="wot-compact-open" @onclick="() => Open(row.Id, false)">
+                                    <span class="iv-list-compact__code">@row.TransferNo</span>
+                                    <span class="iv-list-compact__desc">@row.ItemCode · lot @row.LotNo</span>
+                                    <div class="iv-list-compact__meta">
+                                        <span>@row.Qty.ToString("N4") @row.Uom</span>
+                                        <span>@row.SourceWorkOrderNo → @row.TargetWorkOrderNo</span>
+                                        <span>@row.Status · @row.TransferDateTime.ToString("dd MMM yyyy")</span>
+                                    </div>
+                                </button>
+                                <div class="wot-compact-actions">
                                     <DxButton Text="VIEW" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => Open(row.Id, false))" />
                                     @if (row.Status == "NEW" && CanEdit) { <DxButton Text="EDIT" RenderStyle="ButtonRenderStyle.Primary" Click="@(() => Open(row.Id, true))" /> }
                                     @if (row.Status == "NEW" && CanPost) { <DxButton Text="POST" RenderStyle="ButtonRenderStyle.Success" Click="@(() => BeginPost(row))" /> }
+                                    @if (row.Status == "POSTED" && CanRollback) { <DxButton Text="ROLLBACK" RenderStyle="ButtonRenderStyle.Warning" Click="@(() => BeginRollback(row))" /> }
                                     @if (row.Status == "NEW" && CanDelete) { <DxButton Text="DELETE" RenderStyle="ButtonRenderStyle.Danger" Click="@(() => BeginDelete(row))" /> }
-                                </td>
-                            </tr>
+                                </div>
+                            </article>
                         }
-                        </tbody>
-                    </table>
+                    }
                 </div>
-                <div class="d-flex justify-content-between align-items-center"><span>@TotalCount rows</span><div class="d-flex gap-2">
-                    <DxButton Text="PREVIOUS" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(Skip > 0)" Click="PreviousAsync" />
-                    <DxButton Text="NEXT" RenderStyle="ButtonRenderStyle.Secondary" Enabled="@(Skip + PageSize < TotalCount)" Click="NextAsync" />
-                </div></div>
             }
         </section>
 
+        <DxPopup HeaderText="Filter Work Order Transfers" CloseOnOutsideClick="false" Width="min(480px,95vw)"
+                 CssClass="common-popup" @bind-Visible="FilterPopupVisible">
+            <Content>
+                <div class="iv-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                            <Template>
+                                <DxComboBox Data="@Statuses" TData="StatusChoice" TValue="string" TextFieldName="Text"
+                                            ValueFieldName="Value" @bind-Value="DraftStatus" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="iv-popup-footer"><div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="ApplyFiltersAsync" />
+                </div></div>
+            </Content>
+        </DxPopup>
+
         @if (ConfirmRow is not null)
         {
-            <DxPopup Visible="true" HeaderText="@(ConfirmPost ? "Post Work Order Transfer?" : "Delete NEW Work Order Transfer?")" ShowFooter="true" Width="min(540px,95vw)" CloseOnOutsideClick="false">
+            <DxPopup Visible="true" HeaderText="@(ConfirmPost ? "Post Work Order Transfer?" : ConfirmRollback ? "Rollback Work Order Transfer?" : "Delete NEW Work Order Transfer?")"
+                     ShowFooter="true" Width="min(540px,95vw)" CloseOnOutsideClick="false">
                 <BodyContentTemplate>
                     <div class="common-popup__body">
                         @if (ConfirmPost)
                         {
                             <p>Post @ConfirmRow.TransferNo? The full @ConfirmRow.Qty.ToString("N4") @ConfirmRow.Uom balance of @ConfirmRow.ItemCode / @ConfirmRow.LotNo will move from @ConfirmRow.SourceWorkOrderNo to @ConfirmRow.TargetWorkOrderNo. The item, lot, quantity and production value stay unchanged.</p>
                         }
+                        else if (ConfirmRollback)
+                        {
+                            <p>Return the exact original WIP quantity and value to the source pool. Any later Production movement or downstream use blocks rollback.</p>
+                            <label class="form-label" for="wot-list-rollback-reason">Reason (required)</label>
+                            <DxTextBox Id="wot-list-rollback-reason" Text="@RollbackReason" TextChanged="RollbackReasonChanged" maxlength="500" CssClass="w-100" />
+                        }
                         else { <p>Delete @ConfirmRow.TransferNo? No stock movement has been posted.</p> }
                     </div>
                 </BodyContentTemplate>
-                <FooterContentTemplate><div class="common-popup__footer">
-                    <DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="CancelConfirm" />
-                    <DxButton Text="@(ConfirmPost ? "POST" : "DELETE")" RenderStyle="@(ConfirmPost ? ButtonRenderStyle.Success : ButtonRenderStyle.Danger)" Click="ConfirmAsync" Enabled="@(!Busy)" />
-                </div></FooterContentTemplate>
+                <FooterContentTemplate>
+                    <div class="common-popup__footer">
+                        <DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="CancelConfirm" />
+                        <DxButton Text="@(ConfirmPost ? "POST" : ConfirmRollback ? "ROLLBACK" : "DELETE")"
+                                  RenderStyle="@(ConfirmPost ? ButtonRenderStyle.Success : ButtonRenderStyle.Danger)"
+                                  Click="ConfirmAsync" Enabled="@(!Busy && (!ConfirmRollback || !string.IsNullOrWhiteSpace(RollbackReason)))" />
+                    </div>
+                </FooterContentTemplate>
             </DxPopup>
         }
     </div>

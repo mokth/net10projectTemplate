@@ -43,16 +43,26 @@
     padding: 2px 14px 2px 0;
 }
 
-::deep .nav-tree .dxbl-treeview-item-content,
-::deep .nav-tree .dxbl-treeview-item-text {
+::deep .nav-tree .dxbl-treeview-item-content {
     color: var(--nav-text, #374151);
     text-transform: none;
     letter-spacing: 0;
-    /* One line per caption; ellipsize rather than wrap into 2-3 rows. */
     min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+}
+
+/* DevExpress clips the inner text element with a more specific selector by default.
+   Override it so longer captions wrap and remain fully readable. */
+::deep .nav-tree .dxbl-treeview-item > .dxbl-treeview-item-content > .dxbl-treeview-item-container .dxbl-treeview-item-text-container {
+    min-width: 0;
+}
+
+::deep .nav-tree .dxbl-treeview-item > .dxbl-treeview-item-content > .dxbl-treeview-item-container .dxbl-treeview-item-text-container > .dxbl-treeview-item-text {
+    color: var(--nav-text, #374151);
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
 }
 
 /* ── Icons ──────────────────────────────────────────────────── */

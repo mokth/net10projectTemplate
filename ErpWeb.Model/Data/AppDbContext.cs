@@ -16,17 +16,20 @@ public class AppDbContext : DbContext
     public bool FinishedGoodReceiptWrite { get; set; }
     public bool ProductionStockReturnWrite { get; set; }
     public bool ProductionStockAdjustmentWrite { get; set; }
+    public bool ProductionWorkOrderTransferWrite { get; set; }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateFinishedGoodWrites();
         ValidateProductionStockTransactionWrites();
+        ValidateProductionWorkOrderTransferWrites();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         ValidateFinishedGoodWrites();
         ValidateProductionStockTransactionWrites();
+        ValidateProductionWorkOrderTransferWrites();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
     private void ValidateFinishedGoodWrites()
@@ -75,6 +78,18 @@ public class AppDbContext : DbContext
         }
     }
 
+    private void ValidateProductionWorkOrderTransferWrites()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            if (entry.Entity is ProductionWorkOrderTransferFact && entry.State is EntityState.Modified or EntityState.Deleted)
+                throw new InvalidOperationException("Work Order Transfer posting evidence is immutable; append a linked reversal.");
+            if (!ProductionWorkOrderTransferWrite && entry.Entity is ProductionWorkOrderTransfer or ProductionWorkOrderTransferFact)
+                throw new InvalidOperationException("Work Order Transfer documents must be changed through their owning service.");
+        }
+    }
+
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
@@ -89,6 +104,7 @@ public class AppDbContext : DbContext
     public DbSet<ProductionStockAdjustmentLine> ProductionStockAdjustmentLines => Set<ProductionStockAdjustmentLine>();
     public DbSet<ProductionStockAdjustmentFact> ProductionStockAdjustmentFacts => Set<ProductionStockAdjustmentFact>();
     public DbSet<ProductionWorkOrderTransfer> ProductionWorkOrderTransfers => Set<ProductionWorkOrderTransfer>();
+    public DbSet<ProductionWorkOrderTransferFact> ProductionWorkOrderTransferFacts => Set<ProductionWorkOrderTransferFact>();
     public DbSet<ProductionFinishedGoodSource> ProductionFinishedGoodSourceRows => Set<ProductionFinishedGoodSource>();
     public DbSet<ProductionFinishedGoodFact> ProductionFinishedGoodFactRows => Set<ProductionFinishedGoodFact>();
     public DbSet<ProductionFinishedGoodPriceSnapshot> ProductionFinishedGoodPriceSnapshotRows => Set<ProductionFinishedGoodPriceSnapshot>();

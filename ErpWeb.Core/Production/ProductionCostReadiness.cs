@@ -30,6 +30,15 @@ public static class ProductionCostReadiness
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(lot);
 
+        var pool = await db.ProductionPoolValuationRows
+            .SingleOrDefaultAsync(x => x.ProductionBalLotId == lot.Uid, ct);
+        return PoolValuationError(lot, pool);
+    }
+
+    public static string? PoolValuationError(ProductionBalLot lot, ProductionPoolValuation? pool)
+    {
+        ArgumentNullException.ThrowIfNull(lot);
+
         if (string.IsNullOrWhiteSpace(lot.BaseUom) || lot.ConversionFactorToBase <= 0m)
             return $"Production pool {lot.Uid} ({lot.ItemCode} / lot {lot.LotNo}) is missing base UOM evidence.";
         if (lot.Qty < 0m || lot.BaseQty < 0m || lot.TotalCost < 0m || lot.AverageUnitCost < 0m)
@@ -37,8 +46,6 @@ public static class ProductionCostReadiness
         if (lot.BaseQty == 0m && lot.TotalCost != 0m)
             return $"Production pool {lot.Uid} quantity/value reconciliation failed: tracked quantity/value does not match the production balance.";
 
-        var pool = await db.ProductionPoolValuationRows
-            .SingleOrDefaultAsync(x => x.ProductionBalLotId == lot.Uid, ct);
         if (pool is null)
             return $"Production pool {lot.Uid} ({lot.ItemCode} / lot {lot.LotNo}) is UNVALUED. Reverse and repost its upstream transaction after cost evidence is repaired.";
         if (!string.Equals(pool.Status, ProductionPoolValuationService.Verified, StringComparison.Ordinal))

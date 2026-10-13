@@ -18,7 +18,7 @@ ELSE
 INSERT dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
-JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS',N'ADD',N'EDIT',N'DELETE',N'POST',N'VIEW_COST')
+JOIN dbo.Permission p ON p.PermissionCode IN (N'ACCESS',N'ADD',N'EDIT',N'DELETE',N'POST',N'ROLLBACK',N'VIEW_COST')
 WHERE m.MenuCode=N'PLN_WO_TRANSFER'
   AND NOT EXISTS (SELECT 1 FROM dbo.MenuPermission mp WHERE mp.MenuId=m.MenuId AND mp.PermissionId=p.PermissionId);
 

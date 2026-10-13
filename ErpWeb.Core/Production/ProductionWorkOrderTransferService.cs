@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.Production;
 
 /// <summary>Creates and posts full-balance ownership transfers between compatible Work Orders.</summary>
-public sealed class ProductionWorkOrderTransferService(
+public sealed partial class ProductionWorkOrderTransferService(
     IDbContextFactory<AppDbContext> dbFactory,
     IInventoryTenantContext tenant,
     IAccessRightService access,
@@ -20,8 +20,10 @@ public sealed class ProductionWorkOrderTransferService(
     IRunningNumberService numbers,
     IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator,
-    IProductionStockWriter productionStock) : IProductionWorkOrderTransferService
+    IProductionStockWriter productionStock,
+    IProductionOperationEligibilityService? operationEligibility = null) : IProductionWorkOrderTransferService
 {
+    private readonly IProductionOperationEligibilityService _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
     private const string Menu = MenuCodes.PlanningWorkOrderTransfer;
     private const string DuplicateDraftError = "A NEW Work Order Transfer already exists for this WIP lot.";
     private const string SourceChangedError = "Source WIP changed after this transfer was prepared. Refresh the source before posting.";
@@ -42,7 +44,7 @@ public sealed class ProductionWorkOrderTransferService(
     private sealed record TargetFacts(ProductionWorkOrder Order, ProductionWorkOrderMaterial Material,
         ProductionWorkOrderRouteStep ProducerRoute, ProductionWorkOrderOperation ProducerOperation,
         ProductionWorkOrderRouteStep ConsumerRoute, ProductionWorkOrderOperation ConsumerOperation,
-        ProductionLocation? ProducerLocation, ProductionLocation? ConsumerLocation);
+        ProductionLocation? ProducerLocation, ProductionLocation? ConsumerLocation, bool SequenceReady, string? BlockingReason);
 
     private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) =>
         IvMasterOperationResult<T>.Fail(code, message);
@@ -90,7 +92,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
 SELECT * FROM dbo.PrProductionBalLot WITH (UPDLOCK,HOLDLOCK)
 WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}");
         else
-            q = db.ProductionBalLots.Where(x => x.Uid == id
+            q = db.ProductionBalLots.AsNoTracking().Where(x => x.Uid == id
                 && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
         var lot = await q.Include(x => x.WorkOrder).Include(x => x.ProducingRouteStep)
             .Include(x => x.ProductionLocation)
@@ -126,6 +128,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
 
         if (IvQty.Round(lot.BaseQty / lot.ConversionFactorToBase) != IvQty.Round(lot.Qty))
             throw new TransferException(SourceUomError);
+        if (!string.IsNullOrWhiteSpace(lot.PhysicalLotNo) && lot.PhysicalLotNo != lot.LotNo)
+            throw new TransferException("This WIP uses an alternate/migrated physical-lot identity that Work Order Transfer cannot safely merge into the current natural target WIP model.");
 
         var order = lot.WorkOrder ?? await db.ProductionWorkOrders.SingleOrDefaultAsync(x =>
             x.Uid == lot.WorkOrderId && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode, ct)
@@ -133,6 +137,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         if (order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress
             or ProductionWorkOrderStatuses.Completed))
             throw new TransferException("Source Work Order must be RELEASED, IN_PROGRESS or COMPLETED.");
+        ValidateWorkOrderSnapshot(order, "Source");
 
         var route = lot.ProducingRouteStep ?? await db.ProductionWorkOrderRouteSteps
             .SingleOrDefaultAsync(x => x.Uid == routeId, ct)
@@ -143,13 +148,15 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         if (route.WorkOrderId != lot.WorkOrderId || operation.RouteStepId != routeId
             || operation.Uid != operationId || !operation.IsFinalOperation
             || route.OutputType != PrRouteOutputTypes.WipStocked || route.OutputItemCode != lot.ItemCode
-            || route.OutputBaseUom != lot.BaseUom || route.OutputConversionFactorToBase != lot.ConversionFactorToBase)
+            || route.OutputUom != lot.Uom || route.OutputBaseUom != lot.BaseUom
+            || route.OutputConversionFactorToBase != lot.ConversionFactorToBase)
             throw new TransferException("Source WIP producer route and operation do not match the live balance.");
 
         if (await ProductionCostReadiness.PoolValuationError(db, lot, ct) is { } costError)
             throw new TransferException(costError);
         if (StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) != lot.AverageUnitCost)
             throw new TransferException($"Production pool {lot.Uid} quantity/value reconciliation failed: average unit cost does not match the verified pool value.");
+        await ValidateCompletePoolContributionsAsync(db, lot, ct);
         return new(lot, order, route, operation);
     }
 
@@ -164,12 +171,18 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         if (order.Uid == source.Order.Uid
             || order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress)
             || order.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(order.SnapshotHash) || order.SnapshotHash.Length != 64
-            || !ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot)
+            || !ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot
+            || !ProductionSnapshotHashVersions.SupportsDailyProduction(order.SnapshotHashVersion))
             throw new TransferException(TargetInvalidError);
         if (material.WorkOrderId != order.Uid || material.ComponentCode != source.Lot.ItemCode
             || !string.Equals(material.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase)
             || material.ProducingRouteStepId is not long producerRouteId
-            || material.WorkOrderOperationId is not long consumerOperationId)
+            || material.WorkOrderOperationId is not long consumerOperationId
+            || string.IsNullOrWhiteSpace(material.RequiredUom) || material.RequiredBaseQty < 0m
+            || material.RequiredQty < 0m || string.IsNullOrWhiteSpace(material.BaseUom)
+            || material.BaseUom != source.Lot.BaseUom || material.ConversionFactorToBase <= 0m
+            || IvQty.Round(material.RequiredQty * material.ConversionFactorToBase) != IvQty.Round(material.RequiredBaseQty)
+            || IvQty.Round(material.RequiredBaseQty / material.ConversionFactorToBase) != IvQty.Round(material.RequiredQty))
             throw new TransferException(TargetInvalidError);
 
         var producerRoute = await db.ProductionWorkOrderRouteSteps.SingleOrDefaultAsync(x =>
@@ -195,14 +208,284 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             ?? throw new TransferException(TargetInvalidError);
         if (consumerOperation.WorkOrderId is long consumerOrderId && consumerOrderId != order.Uid)
             throw new TransferException(TargetInvalidError);
-        if (IvQty.Round(consumerOperation.PlannedOutputQty - consumerOperation.GoodQty) <= 0m)
-            throw new TransferException("The target consuming operation has no remaining planned output.");
+        var routeSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking()
+            .Where(x => x.WorkOrderId == order.Uid).ToListAsync(ct);
+        var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .Where(x => x.WorkOrderId == order.Uid || routeSteps.Select(r => r.Uid).Contains(x.RouteStepId ?? 0))
+            .ToListAsync(ct);
+        var readiness = _operationEligibility.Evaluate(consumerOperation, routeSteps, operations);
 
         var producerLocation = await ResolveProductionLocationAsync(db, scope, producerRoute.WorkCentreCode,
             createProducerLocation, ct);
         var consumerLocation = await FindProductionLocationAsync(db, scope, consumerRoute.WorkCentreCode, ct);
         return new(order, material, producerRoute, producerOperation, consumerRoute, consumerOperation,
-            producerLocation, consumerLocation);
+            producerLocation, consumerLocation, readiness.IsEligible, readiness.BlockingReason);
+    }
+
+    private static void ValidateWorkOrderSnapshot(ProductionWorkOrder order, string role)
+    {
+        if (order.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(order.SnapshotHash) || order.SnapshotHash.Length != 64
+            || !ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot
+            || !ProductionSnapshotHashVersions.SupportsDailyProduction(order.SnapshotHashVersion))
+            throw new TransferException($"{role} Work Order requires a current full-hierarchy Production snapshot before Work Order Transfer.");
+    }
+
+    private sealed record LookupEvidenceMovement(ProductionValuationEvidence Evidence, ProductionBalLotMovement Movement);
+
+    private static async Task<Dictionary<long, SourceFacts>> ValidateSourceLookupBatchAsync(AppDbContext db,
+        InventoryTenantScope scope, IReadOnlyCollection<long> candidateIds, CancellationToken ct)
+    {
+        var lots = await db.ProductionBalLots.AsNoTracking().Where(x => candidateIds.Contains(x.Uid)
+                && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode)
+            .Include(x => x.WorkOrder).Include(x => x.ProducingRouteStep).Include(x => x.WorkOrderOperation)
+            .ToListAsync(ct);
+        var lotIds = lots.Select(x => x.Uid).ToArray();
+        if (lotIds.Length == 0) return [];
+
+        var valuations = await db.ProductionPoolValuationRows.AsNoTracking()
+            .Where(x => lotIds.Contains(x.ProductionBalLotId)).ToDictionaryAsync(x => x.ProductionBalLotId, ct);
+        var currentEvidence = await (from valuation in db.ProductionPoolValuationRows.AsNoTracking()
+            join evidence in db.ProductionValuationEvidenceRows.AsNoTracking()
+                on new { valuation.ProductionBalLotId, valuation.Generation }
+                equals new { evidence.ProductionBalLotId, evidence.Generation }
+            join movement in db.ProductionBalLotMovements.AsNoTracking() on evidence.MovementId equals movement.Uid
+            where lotIds.Contains(valuation.ProductionBalLotId)
+            select new LookupEvidenceMovement(evidence, movement)).ToListAsync(ct);
+        var registry = new StockMovementRegistry();
+        var receiptIds = new HashSet<long>();
+        foreach (var row in currentEvidence)
+        {
+            if (row.Movement.OriginalMovementId is not null) continue;
+            try
+            {
+                if (registry.GetRequired(row.Movement.MovementType).Direction > 0)
+                    receiptIds.Add(row.Movement.Uid);
+            }
+            catch (InvalidOperationException) { }
+        }
+        var receiptIdArray = receiptIds.ToArray();
+        List<ProductionMovementAllocation> allocations = receiptIdArray.Length == 0 ? [] : await db.ProductionMovementAllocations.AsNoTracking()
+            .Where(x => receiptIdArray.Contains(x.ReceiptMovementId)).ToListAsync(ct);
+        var allocationsByReceipt = allocations.GroupBy(x => x.ReceiptMovementId)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<ProductionMovementAllocation>)x.ToArray());
+
+        var result = new Dictionary<long, SourceFacts>();
+        foreach (var lot in lots)
+        {
+            try
+            {
+                if (lot.Kind != ProductionBalLotKinds.Wip || lot.BalanceStage != "PROCESS_WIP"
+                    || lot.OutputType != PrRouteOutputTypes.WipStocked
+                    || lot.ProducingRouteStepId is not long routeId || lot.WorkOrderOperationId is not long operationId
+                    || lot.Qty <= 0m || lot.BaseQty <= 0m || string.IsNullOrWhiteSpace(lot.BaseUom)
+                    || string.IsNullOrWhiteSpace(lot.Uom) || lot.ConversionFactorToBase <= 0m
+                    || lot.StockStatusCode != "AVAILABLE" || lot.OriginType != "PRODUCED"
+                    || lot.WorkOrderMaterialId is not null || lot.OriginalIssueMovementId is not null
+                    || lot.ProductionLocationId is null || string.IsNullOrWhiteSpace(lot.LotNo)
+                    || !string.IsNullOrWhiteSpace(lot.PhysicalLotNo) && lot.PhysicalLotNo != lot.LotNo
+                    || IvQty.Round(lot.BaseQty / lot.ConversionFactorToBase) != IvQty.Round(lot.Qty))
+                    throw new TransferException("The selected balance is not eligible stockable PROCESS_WIP.");
+
+                var order = lot.WorkOrder ?? throw new TransferException("Source Work Order was not found.");
+                if (order.CompanyCode != scope.CompanyCode || order.BranchCode != scope.BranchCode
+                    || order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress
+                        or ProductionWorkOrderStatuses.Completed))
+                    throw new TransferException("Source Work Order must be RELEASED, IN_PROGRESS or COMPLETED.");
+                ValidateWorkOrderSnapshot(order, "Source");
+                var route = lot.ProducingRouteStep ?? throw new TransferException("Source WIP producer route is missing.");
+                var operation = lot.WorkOrderOperation ?? throw new TransferException("Source WIP producer operation is missing.");
+                if (route.Uid != routeId || route.WorkOrderId != lot.WorkOrderId || operation.Uid != operationId
+                    || operation.RouteStepId != routeId || !operation.IsFinalOperation
+                    || route.OutputType != PrRouteOutputTypes.WipStocked || route.OutputItemCode != lot.ItemCode
+                    || route.OutputUom != lot.Uom || route.OutputBaseUom != lot.BaseUom
+                    || route.OutputConversionFactorToBase != lot.ConversionFactorToBase)
+                    throw new TransferException("Source WIP producer route and operation do not match the live balance.");
+
+                valuations.TryGetValue(lot.Uid, out var valuation);
+                if (ProductionCostReadiness.PoolValuationError(lot, valuation) is { } costError)
+                    throw new TransferException(costError);
+                if (StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) != lot.AverageUnitCost)
+                    throw new TransferException($"Production pool {lot.Uid} quantity/value reconciliation failed: average unit cost does not match the verified pool value.");
+
+                var poolRows = currentEvidence.Where(x => x.Evidence.ProductionBalLotId == lot.Uid).ToArray();
+                var poolMovements = poolRows.Select(x => x.Movement).ToArray();
+                var receipts = poolRows.Where(x => receiptIds.Contains(x.Movement.Uid)).ToArray();
+                if (receipts.Length == 0)
+                    throw new TransferException($"Production pool {lot.Uid} has incomplete current-generation quantity contribution evidence.");
+                var available = new List<decimal>(receipts.Length);
+                foreach (var receipt in receipts)
+                {
+                    var receiptAllocations = allocationsByReceipt.GetValueOrDefault(receipt.Movement.Uid) ?? [];
+                    var availableBase = ProductionContributionAvailabilityService.CalculateAvailableBaseQty(
+                        receipt.Movement.Uid, receipt.Movement.BaseQty, poolMovements, receiptAllocations);
+                    if (receipt.Evidence.Status != ProductionPoolValuationService.Verified || availableBase < 0m)
+                        throw new TransferException($"Production pool {lot.Uid} has incomplete current-generation quantity contribution evidence.");
+                    available.Add(availableBase);
+                }
+                if (!available.Any(x => x > 0m) || IvQty.Round(available.Sum()) != IvQty.Round(lot.BaseQty))
+                    throw new TransferException($"Production pool {lot.Uid} has incomplete current-generation quantity contribution evidence.");
+                result[lot.Uid] = new(lot, order, route, operation);
+            }
+            catch (TransferException) { }
+        }
+        return result;
+    }
+
+    private sealed record TargetLookupResult(TargetFacts Facts, decimal? TargetCurrentWipValue);
+
+    private async Task<Dictionary<long, TargetLookupResult>> ValidateTargetLookupBatchAsync(AppDbContext db,
+        InventoryTenantScope scope, SourceFacts source, IReadOnlyCollection<long> candidateMaterialIds,
+        bool canViewCost, CancellationToken ct)
+    {
+        var materials = await db.ProductionWorkOrderMaterials.AsNoTracking()
+            .Where(x => candidateMaterialIds.Contains(x.Uid)).ToListAsync(ct);
+        var orderIds = materials.Select(x => x.WorkOrderId).Distinct().ToArray();
+        if (orderIds.Length == 0) return [];
+        var orders = await db.ProductionWorkOrders.AsNoTracking().Where(x => orderIds.Contains(x.Uid)
+                && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode)
+            .ToDictionaryAsync(x => x.Uid, ct);
+        var routeSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking()
+            .Where(x => orderIds.Contains(x.WorkOrderId)).ToListAsync(ct);
+        var routeIds = routeSteps.Select(x => x.Uid).ToArray();
+        var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .Where(x => x.WorkOrderId != null && orderIds.Contains(x.WorkOrderId.Value)
+                || x.RouteStepId != null && routeIds.Contains(x.RouteStepId.Value))
+            .ToListAsync(ct);
+        var routesById = routeSteps.ToDictionary(x => x.Uid);
+        var operationsById = operations.ToDictionary(x => x.Uid);
+        var operationsByRoute = operations.Where(x => x.RouteStepId is not null)
+            .GroupBy(x => x.RouteStepId!.Value).ToDictionary(x => x.Key, x => x.ToArray());
+
+        var locationCodes = routeSteps.Select(x => x.WorkCentreCode)
+            .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Length > 20 ? x[..20] : x)
+            .Distinct().ToArray();
+        var locations = await db.ProductionLocations.AsNoTracking().Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode && locationCodes.Contains(x.Code))
+            .ToListAsync(ct);
+        var locationByCode = locations.ToDictionary(x => x.Code);
+
+        List<ProductionBalLot> targetBalances = canViewCost
+            ? await db.ProductionBalLots.AsNoTracking().Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode && x.Kind == ProductionBalLotKinds.Wip
+                    && orderIds.Contains(x.WorkOrderId) && x.ItemCode == source.Lot.ItemCode && x.LotNo == source.Lot.LotNo)
+                .ToListAsync(ct)
+            : [];
+        var balancesByIdentity = targetBalances.GroupBy(x => (x.WorkOrderId, x.ProducingRouteStepId))
+            .ToDictionary(x => x.Key, x => x.ToArray());
+
+        var result = new Dictionary<long, TargetLookupResult>();
+        foreach (var material in materials)
+        {
+            try
+            {
+                if (!orders.TryGetValue(material.WorkOrderId, out var order)
+                    || order.Uid == source.Order.Uid
+                    || order.Status is not (ProductionWorkOrderStatuses.Released or ProductionWorkOrderStatuses.InProgress)
+                    || order.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(order.SnapshotHash) || order.SnapshotHash.Length != 64
+                    || !ProductionSnapshotFormatVersions.IsFullHierarchy(order.SnapshotFormatVersion) || order.IsLegacySnapshot
+                    || !ProductionSnapshotHashVersions.SupportsDailyProduction(order.SnapshotHashVersion))
+                    throw new TransferException(TargetInvalidError);
+                if (material.WorkOrderId != order.Uid || material.ComponentCode != source.Lot.ItemCode
+                    || !string.Equals(material.SupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.OrdinalIgnoreCase)
+                    || material.ProducingRouteStepId is not long producerRouteId
+                    || material.WorkOrderOperationId is not long consumerOperationId
+                    || string.IsNullOrWhiteSpace(material.RequiredUom) || material.RequiredBaseQty < 0m
+                    || material.RequiredQty < 0m || string.IsNullOrWhiteSpace(material.BaseUom)
+                    || material.BaseUom != source.Lot.BaseUom || material.ConversionFactorToBase <= 0m
+                    || IvQty.Round(material.RequiredQty * material.ConversionFactorToBase) != IvQty.Round(material.RequiredBaseQty)
+                    || IvQty.Round(material.RequiredBaseQty / material.ConversionFactorToBase) != IvQty.Round(material.RequiredQty)
+                    || !routesById.TryGetValue(producerRouteId, out var producerRoute)
+                    || producerRoute.WorkOrderId != order.Uid || producerRoute.OutputType != PrRouteOutputTypes.WipStocked
+                    || producerRoute.OutputItemCode != source.Lot.ItemCode || producerRoute.OutputBaseUom != source.Lot.BaseUom
+                    || producerRoute.OutputConversionFactorToBase != source.Lot.ConversionFactorToBase
+                    || producerRoute.OutputUom != source.Lot.Uom
+                    || !operationsByRoute.TryGetValue(producerRouteId, out var finalOperations))
+                    throw new TransferException(TargetInvalidError);
+                var producerFinalOperations = finalOperations.Where(x => x.IsFinalOperation).OrderBy(x => x.Uid).ToArray();
+                if (producerFinalOperations.Length != 1) throw new TransferException(TargetInvalidError);
+                var producerOperation = producerFinalOperations[0];
+                if (!operationsById.TryGetValue(consumerOperationId, out var consumerOperation)
+                    || consumerOperation.RouteStepId is not long consumerRouteId
+                    || consumerOperation.WorkOrderId is long consumerOrderId && consumerOrderId != order.Uid
+                    || !routesById.TryGetValue(consumerRouteId, out var consumerRoute)
+                    || consumerRoute.WorkOrderId != order.Uid)
+                    throw new TransferException(TargetInvalidError);
+
+                var orderRoutes = routeSteps.Where(x => x.WorkOrderId == order.Uid).ToArray();
+                var orderRouteIds = orderRoutes.Select(x => x.Uid).ToHashSet();
+                var orderOperations = operations.Where(x => x.WorkOrderId == order.Uid
+                    || x.RouteStepId is long routeId && orderRouteIds.Contains(routeId)).ToArray();
+                var readiness = _operationEligibility.Evaluate(consumerOperation, orderRoutes, orderOperations);
+                var producerCode = string.IsNullOrWhiteSpace(producerRoute.WorkCentreCode)
+                    ? throw new TransferException("A target producer Work Centre is required.")
+                    : producerRoute.WorkCentreCode.Length > 20 ? producerRoute.WorkCentreCode[..20] : producerRoute.WorkCentreCode;
+                locationByCode.TryGetValue(producerCode, out var producerLocation);
+                if (producerLocation is { IsActive: false })
+                    throw new TransferException("The target producer production location is inactive.");
+                ProductionLocation? consumerLocation = null;
+                if (!string.IsNullOrWhiteSpace(consumerRoute.WorkCentreCode))
+                {
+                    var consumerCode = consumerRoute.WorkCentreCode.Length > 20
+                        ? consumerRoute.WorkCentreCode[..20] : consumerRoute.WorkCentreCode;
+                    if (locationByCode.TryGetValue(consumerCode, out var found) && found.IsActive)
+                        consumerLocation = found;
+                }
+
+                decimal? targetValue = null;
+                if (canViewCost)
+                {
+                    var identity = (order.Uid, (long?)producerRoute.Uid);
+                    if (balancesByIdentity.TryGetValue(identity, out var identityBalances))
+                    {
+                        if (identityBalances.Length != 1) throw new TransferException(TargetCollisionError);
+                        targetValue = identityBalances[0].TotalCost;
+                    }
+                    else targetValue = 0m;
+                }
+                var facts = new TargetFacts(order, material, producerRoute, producerOperation, consumerRoute,
+                    consumerOperation, producerLocation, consumerLocation, readiness.IsEligible, readiness.BlockingReason);
+                result[material.Uid] = new(facts, targetValue);
+            }
+            catch (TransferException) { }
+        }
+        return result;
+    }
+
+    private static async Task ValidateCompletePoolContributionsAsync(AppDbContext db, ProductionBalLot lot, CancellationToken ct,
+        bool requireActivePositiveReceipt = true)
+    {
+        var valuation = await db.ProductionPoolValuationRows.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.ProductionBalLotId == lot.Uid, ct)
+            ?? throw new TransferException($"Production pool {lot.Uid} has no verified valuation generation.");
+        if (valuation.Status != ProductionPoolValuationService.Verified
+            || valuation.TrackedBaseQty != lot.BaseQty || valuation.TrackedValue != lot.TotalCost)
+            throw new TransferException($"Production pool {lot.Uid} valuation does not match the live WIP balance.");
+        var contributions = await ProductionContributionAvailabilityService.ReadAsync(db, lot.Uid, valuation.Generation, ct);
+        if (contributions.Count == 0 || requireActivePositiveReceipt && !contributions.Any(x => x.Contribution.AvailableBaseQty > 0m)
+            || contributions.Any(x => x.Evidence.Status != ProductionPoolValuationService.Verified
+                || x.Contribution.AvailableBaseQty < 0m)
+            || IvQty.Round(contributions.Sum(x => x.Contribution.AvailableBaseQty)) != IvQty.Round(lot.BaseQty))
+            throw new TransferException($"Production pool {lot.Uid} has incomplete current-generation quantity contribution evidence.");
+    }
+
+    private static async Task<string> CaptureExecutionProjectionAsync(AppDbContext db, long[] workOrderIds, CancellationToken ct)
+    {
+        var orders = await db.ProductionWorkOrders.AsNoTracking().Where(x => workOrderIds.Contains(x.Uid))
+            .OrderBy(x => x.Uid).Select(x => new { x.Uid, x.Status, x.GoodQty, x.ScrapQty, x.RejectQty, x.HoldQty, x.RemainingQty })
+            .ToListAsync(ct);
+        var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .Where(x => x.WorkOrderId != null && workOrderIds.Contains(x.WorkOrderId.Value))
+            .OrderBy(x => x.Uid).Select(x => new
+            {
+                x.Uid, x.InputQty, x.ProcessedQty, x.GoodQty, x.ScrapQty, x.RejectQty, x.HoldQty,
+                x.ReworkQty, x.TransferredQty, x.RemainingQty
+            }).ToListAsync(ct);
+        var materials = await db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => workOrderIds.Contains(x.WorkOrderId))
+            .OrderBy(x => x.Uid).Select(x => new
+            {
+                x.Uid, x.ReservedQty, x.PickedQty, x.IssuedQty, x.ReturnedQty, x.ConsumedQty, x.VarianceQty
+            }).ToListAsync(ct);
+        return StockPostingFingerprint.Create(new { orders, operations, materials }, new { }).RequestFingerprint;
     }
 
     private static async Task<ProductionLocation?> ResolveProductionLocationAsync(AppDbContext db,
@@ -310,7 +593,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 && x.ProducingRouteStepId != null && x.WorkOrderOperationId != null
                 && x.Qty > 0m && x.BaseQty > 0m && x.ConversionFactorToBase > 0m
                 && x.StockStatusCode == "AVAILABLE" && x.OriginType == "PRODUCED"
+                && x.WorkOrderMaterialId == null && x.OriginalIssueMovementId == null
                 && x.ProductionLocationId != null && x.LotNo != ""
+                && (x.PhysicalLotNo == null || x.PhysicalLotNo == "" || x.PhysicalLotNo == x.LotNo)
+                && x.Uom != "" && x.BaseUom != null && x.BaseUom != ""
                 && db.ProductionWorkOrders.Any(w => w.Uid == x.WorkOrderId && w.CompanyCode == scope.CompanyCode
                     && w.BranchCode == scope.BranchCode && (w.Status == ProductionWorkOrderStatuses.Released
                         || w.Status == ProductionWorkOrderStatuses.InProgress || w.Status == ProductionWorkOrderStatuses.Completed)));
@@ -320,24 +606,30 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 q = q.Where(x => x.ItemCode.Contains(term) || x.LotNo.Contains(term)
                     || (x.Description != null && x.Description.Contains(term)) || x.WorkOrderNo.Contains(term));
             }
-            var candidates = await q.OrderBy(x => x.ItemCode).ThenBy(x => x.LotNo).ThenBy(x => x.Uid)
-                .Take(2000).Select(x => x.Uid).ToListAsync(ct);
-            var eligible = new List<ProductionWorkOrderTransferSource>();
-            foreach (var id in candidates)
+            var skip = Math.Max(0, query.Skip);
+            var take = Math.Clamp(query.Take, 1, 100);
+            var eligibleCount = 0;
+            var candidateSkip = 0;
+            var rows = new List<ProductionWorkOrderTransferSource>(take);
+            while (true)
             {
-                try
+                var candidates = await q.OrderBy(x => x.ItemCode).ThenBy(x => x.LotNo).ThenBy(x => x.Uid)
+                    .Skip(candidateSkip).Take(250).Select(x => x.Uid).ToListAsync(ct);
+                if (candidates.Count == 0) break;
+                candidateSkip += candidates.Count;
+                var factsById = await ValidateSourceLookupBatchAsync(db, scope, candidates, ct);
+                foreach (var id in candidates)
                 {
-                    var lot = await LoadSourceLotAsync(db, scope, id, false, ct);
-                    var facts = await ValidateSourceAsync(db, scope, lot, ct);
-                    eligible.Add(new(lot.Uid, facts.Order.WorkOrderNo, lot.ItemCode, lot.Description ?? string.Empty,
-                        lot.LotNo, lot.Qty, lot.Uom, lot.BaseQty, lot.BaseUom, facts.Route.WorkCentreCode,
-                        facts.Operation.OperationCode, lot.LastMovementDate, canViewCost ? lot.TotalCost : null, lot.RowVersion));
+                    if (!factsById.TryGetValue(id, out var facts)) continue;
+                    var lot = facts.Lot;
+                    if (eligibleCount >= skip && eligibleCount < skip + take)
+                        rows.Add(new(lot.Uid, facts.Order.WorkOrderNo, lot.ItemCode, lot.Description ?? string.Empty,
+                            lot.LotNo, lot.Qty, lot.Uom, lot.BaseQty, lot.BaseUom, facts.Route.WorkCentreCode,
+                            facts.Operation.OperationCode, lot.LastMovementDate, canViewCost ? lot.TotalCost : null, lot.RowVersion));
+                    eligibleCount++;
                 }
-                catch (TransferException) { }
             }
-            var total = eligible.Count;
-            var rows = eligible.Skip(Math.Max(0, query.Skip)).Take(Math.Clamp(query.Take, 1, 100)).ToArray();
-            return IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>.Ok(new(rows, total));
+            return IvMasterOperationResult<ProductionWorkOrderTransferSourcePage>.Ok(new(rows, eligibleCount));
         }
         catch (TransferException ex) { return Fail<ProductionWorkOrderTransferSourcePage>(ex.Message, ex.Code); }
     }
@@ -352,6 +644,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var lot = await LoadSourceLotAsync(db, scope, sourceProductionBalLotId, false, ct);
             var source = await ValidateSourceAsync(db, scope, lot, ct);
             var targets = db.ProductionWorkOrderMaterials.AsNoTracking().Where(x => x.ComponentCode == lot.ItemCode
+                && x.BaseUom == lot.BaseUom && x.RequiredQty >= 0m && x.RequiredBaseQty >= 0m
+                && x.ConversionFactorToBase > 0m && x.RequiredUom != ""
                 && x.SupplySource == PrMaterialSupplySources.InternalRouteWip
                 && x.ProducingRouteStepId != null && x.WorkOrderOperationId != null
                 && x.WorkOrderId != source.Order.Uid
@@ -364,33 +658,37 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 targets = targets.Where(x => x.WorkOrder!.WorkOrderNo.Contains(term)
                     || x.WorkOrder.ProductCode.Contains(term) || x.ComponentCode.Contains(term));
             }
-            var materialIds = await targets.OrderBy(x => x.WorkOrderId).ThenBy(x => x.Uid)
-                .Take(3000).Select(x => x.Uid).ToListAsync(ct);
             var canViewCost = await access.CanAsync(Menu, PermissionCodes.ViewCost, ct);
-            var eligible = new List<ProductionWorkOrderTransferTarget>();
-            foreach (var materialId in materialIds)
+            var skip = Math.Max(0, query.Skip);
+            var take = Math.Clamp(query.Take, 1, 100);
+            var eligibleCount = 0;
+            var candidateSkip = 0;
+            var rows = new List<ProductionWorkOrderTransferTarget>(take);
+            while (true)
             {
-                try
+                var materialIds = await targets.OrderBy(x => x.WorkOrderId).ThenBy(x => x.Uid)
+                    .Skip(candidateSkip).Take(250).Select(x => x.Uid).ToListAsync(ct);
+                if (materialIds.Count == 0) break;
+                candidateSkip += materialIds.Count;
+                var factsByMaterialId = await ValidateTargetLookupBatchAsync(db, scope, source, materialIds, canViewCost, ct);
+                foreach (var materialId in materialIds)
                 {
-                    var facts = await ValidateTargetAsync(db, scope, source, materialId, false, ct);
-                    var targetValue = canViewCost ? await db.ProductionBalLots.AsNoTracking()
-                        .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
-                            && x.Kind == ProductionBalLotKinds.Wip && x.WorkOrderId == facts.Order.Uid
-                            && x.ProducingRouteStepId == facts.ProducerRoute.Uid
-                            && x.ItemCode == source.Lot.ItemCode && x.LotNo == source.Lot.LotNo)
-                        .Select(x => (decimal?)x.TotalCost).SingleOrDefaultAsync(ct) ?? 0m : (decimal?)null;
-                    eligible.Add(new(facts.Order.Uid, facts.Order.WorkOrderNo, facts.Order.ProductCode,
-                        facts.Order.ProductDescription, facts.Order.Status, facts.Material.Uid,
-                        facts.Material.ComponentCode, facts.Material.RequiredQty, facts.Material.RequiredUom,
-                        facts.ConsumerRoute.WorkCentreCode, facts.ConsumerOperation.OperationCode,
-                        facts.ProducerRoute.WorkCentreCode, facts.ProducerOperation.OperationCode,
-                        facts.ProducerRoute.Uid, facts.ProducerOperation.Uid, targetValue,
-                        canViewCost ? targetValue + source.Lot.TotalCost : null));
+                    if (!factsByMaterialId.TryGetValue(materialId, out var result)) continue;
+                    var facts = result.Facts;
+                    var targetValue = result.TargetCurrentWipValue;
+                    if (eligibleCount >= skip && eligibleCount < skip + take)
+                        rows.Add(new(facts.Order.Uid, facts.Order.WorkOrderNo, facts.Order.ProductCode,
+                            facts.Order.ProductDescription, facts.Order.Status, facts.Material.Uid,
+                            facts.Material.ComponentCode, facts.Material.RequiredQty, facts.Material.RequiredUom,
+                            facts.ConsumerRoute.WorkCentreCode, facts.ConsumerOperation.OperationCode,
+                            facts.ProducerRoute.WorkCentreCode, facts.ProducerOperation.OperationCode,
+                            facts.ProducerRoute.Uid, facts.ProducerOperation.Uid, targetValue,
+                            canViewCost ? targetValue + source.Lot.TotalCost : null,
+                            facts.Material.RequiredBaseQty, facts.Material.BaseUom, facts.SequenceReady, facts.BlockingReason));
+                    eligibleCount++;
                 }
-                catch (TransferException) { }
             }
-            var rows = eligible.Skip(Math.Max(0, query.Skip)).Take(Math.Clamp(query.Take, 1, 100)).ToArray();
-            return IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>.Ok(new(rows, eligible.Count));
+            return IvMasterOperationResult<ProductionWorkOrderTransferTargetPage>.Ok(new(rows, eligibleCount));
         }
         catch (TransferException ex) { return Fail<ProductionWorkOrderTransferTargetPage>(ex.Message, ex.Code); }
     }
@@ -404,8 +702,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             if (request.SourceProductionBalLotId <= 0 || request.TargetWorkOrderMaterialId <= 0)
                 throw new TransferException("Select a source WIP lot and a target INTERNAL_ROUTE_WIP requirement.");
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+            db.ProductionWorkOrderTransferWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var lot = await LoadSourceLotAsync(db, scope, request.SourceProductionBalLotId, false, ct);
+            await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
+            var lot = await LoadSourceLotAsync(db, scope, request.SourceProductionBalLotId, true, ct);
             var source = await ValidateSourceAsync(db, scope, lot, ct);
             var target = await ValidateTargetAsync(db, scope, source, request.TargetWorkOrderMaterialId, true, ct);
             if (await db.ProductionWorkOrderTransfers.AnyAsync(x => x.CompanyCode == scope.CompanyCode
@@ -419,6 +719,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
                 CommandType = ProductionPostingCommandTypes.WorkOrderTransferPost,
                 PostingRequestId = requestId, WorkOrderId = target.Order.Uid,
+                DocumentRevision = 1,
                 ProductionDocumentType = ProductionDocumentTypes.WorkOrderTransfer,
                 ProductionDocumentNo = await AllocateTransferNoAsync(db, scope.CompanyCode, numbers, ct),
                 SnapshotRevision = target.Order.SnapshotRevision, SnapshotHash = target.Order.SnapshotHash,
@@ -436,13 +737,15 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 SourceWorkOrderNo = source.Order.WorkOrderNo, SourceProducingRouteStepId = source.Route.Uid,
                 SourceProducerOperationId = source.Operation.Uid, SourceWorkCentreCode = source.Route.WorkCentreCode,
                 SourceProcessCode = source.Operation.OperationCode, SourceProductionLocationId = lot.ProductionLocationId!.Value,
-                ItemCode = lot.ItemCode, LotNo = lot.LotNo, PhysicalLotNo = lot.PhysicalLotNo ?? lot.LotNo,
+                ItemCode = lot.ItemCode, LotNo = lot.LotNo, PhysicalLotNo = lot.PhysicalLotNo,
                 PoolCode = lot.PoolCode, LotIdentityKind = lot.LotIdentityKind,
                 Qty = lot.Qty, Uom = lot.Uom, BaseQty = lot.BaseQty, BaseUom = lot.BaseUom,
                 ConversionFactorToBase = lot.ConversionFactorToBase, TransferTotalCost = lot.TotalCost,
                 SourceLastMovementDate = lot.LastMovementDate,
                 SourceLastStockEventEffectiveAt = lot.LastStockEventEffectiveAt,
                 SourceBalanceRowVersion = lot.RowVersion.ToArray(),
+                SourceSnapshotRevision = source.Order.SnapshotRevision,
+                SourceSnapshotHash = source.Order.SnapshotHash,
                 TargetWorkOrderId = target.Order.Uid, TargetWorkOrderNo = target.Order.WorkOrderNo,
                 TargetProducingRouteStepId = target.ProducerRoute.Uid, TargetProducerOperationId = target.ProducerOperation.Uid,
                 TargetProducerWorkCentreCode = target.ProducerRoute.WorkCentreCode,
@@ -454,6 +757,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 TargetConsumingProcessCode = target.ConsumerOperation.OperationCode,
                 TargetConsumerProductionLocationId = target.ConsumerLocation?.Id,
                 TargetSnapshotRevision = target.Order.SnapshotRevision, TargetSnapshotHash = target.Order.SnapshotHash,
+                DocumentRevision = 1,
                 PostingRequestId = requestId, ProductionPostingLinkId = link.Uid,
                 CreatedDate = clock.Now, CreatedBy = User(scope)
             };
@@ -476,7 +780,9 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         {
             var scope = await ScopeAsync(PermissionCodes.Edit, true, ct);
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+            db.ProductionWorkOrderTransferWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
             var transfer = await LoadTransferAsync(db, scope, request.Id, true, ct);
             CheckVersion(transfer, request.ExpectedVersion);
             RequireNew(transfer);
@@ -490,6 +796,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             transfer.ModifiedBy = User(scope);
             var link = await LoadPostingLinkAsync(db, scope, transfer, true, ct);
             link.WorkOrderId = target.Order.Uid;
+            link.DocumentRevision = transfer.DocumentRevision;
+            link.ProductionDocumentLineId = transfer.Uid;
             link.SnapshotRevision = target.Order.SnapshotRevision;
             link.SnapshotHash = target.Order.SnapshotHash;
             await db.SaveChangesAsync(ct);
@@ -508,7 +816,9 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         {
             var scope = await ScopeAsync(PermissionCodes.Edit, true, ct);
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+            db.ProductionWorkOrderTransferWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
             var transfer = await LoadTransferAsync(db, scope, id, true, ct);
             CheckVersion(transfer, expectedVersion);
             RequireNew(transfer);
@@ -524,6 +834,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             transfer.SourceLastMovementDate = facts.Lot.LastMovementDate;
             transfer.SourceLastStockEventEffectiveAt = facts.Lot.LastStockEventEffectiveAt;
             transfer.SourceBalanceRowVersion = facts.Lot.RowVersion.ToArray();
+            transfer.SourceSnapshotRevision = facts.Order.SnapshotRevision;
+            transfer.SourceSnapshotHash = facts.Order.SnapshotHash;
             transfer.ModifiedDate = clock.Now;
             transfer.ModifiedBy = User(scope);
             await db.SaveChangesAsync(ct);
@@ -541,7 +853,9 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         {
             var scope = await ScopeAsync(PermissionCodes.Delete, true, ct);
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+            db.ProductionWorkOrderTransferWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
             var transfer = await LoadTransferAsync(db, scope, id, true, ct);
             CheckVersion(transfer, expectedVersion);
             RequireNew(transfer);
@@ -562,28 +876,48 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
     }
 
     public async Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> PostAsync(
-        long id, byte[] expectedVersion, CancellationToken ct = default)
+        ProductionWorkOrderTransferCommand request, CancellationToken ct = default)
     {
         try
         {
             var scope = await ScopeAsync(PermissionCodes.Post, true, ct);
+            if (request.RequestId == Guid.Empty || request.ExpectedVersion is null || request.ExpectedVersion.Length == 0)
+                throw new TransferException("A stable request ID and document version are required.");
+            const string commandType = ProductionPostingCommandTypes.WorkOrderTransferPost;
+            var commandFingerprint = StockPostingFingerprint.Create(new
+            {
+                request.Id, Version = Convert.ToBase64String(request.ExpectedVersion), Command = commandType, Reason = (string?)null
+            }, new { });
             await using var db = await dbFactory.CreateDbContextAsync(ct);
+            db.ProductionWorkOrderTransferWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
-            var transfer = await LoadTransferAsync(db, scope, id, true, ct);
-            CheckVersion(transfer, expectedVersion);
-            if (transfer.Status == ProductionWorkOrderTransferStatuses.Posted)
+            var replay = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                && x.CommandType == commandType && x.RequestId == request.RequestId, ct);
+            if (replay is not null)
             {
-                await EnsurePostedEvidenceAsync(db, scope, transfer, ct);
-                var posted = await MapAsync(db, transfer, scope, ct);
+                if (replay.RequestFingerprint != commandFingerprint.RequestFingerprint)
+                    throw new TransferException("The request ID was reused with different input.");
+                if (replay.SealedAtUtc is null)
+                    throw new TransferException("The existing posting is not sealed; reconciliation is required.");
+                var recorded = await LoadTransferAsync(db, scope, request.Id, false, ct);
+                var replayDocument = await MapAsync(db, recorded, scope, ct);
                 await tx.CommitAsync(ct);
-                return IvMasterOperationResult<ProductionWorkOrderTransferDocument>.Ok(posted);
+                return IvMasterOperationResult<ProductionWorkOrderTransferDocument>.Ok(replayDocument);
             }
-            RequireNew(transfer);
 
-            var workOrderIds = new[] { transfer.SourceWorkOrderId, transfer.TargetWorkOrderId }.Order().ToArray();
+            var observed = await db.ProductionWorkOrderTransfers.AsNoTracking().SingleOrDefaultAsync(x => x.Uid == request.Id
+                && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.DeletedAtUtc == null, ct)
+                ?? throw new TransferException("Work Order Transfer was not found.", IvMasterErrorCode.NotFound);
+            var workOrderIds = new[] { observed.SourceWorkOrderId, observed.TargetWorkOrderId }.Distinct().Order().ToArray();
             foreach (var workOrderId in workOrderIds)
                 await ProductionWorkOrderExecutionLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, workOrderId, ct);
+            var transfer = await LoadTransferAsync(db, scope, request.Id, true, ct);
+            CheckVersion(transfer, request.ExpectedVersion);
+            RequireNew(transfer);
+            if (transfer.SourceWorkOrderId != observed.SourceWorkOrderId || transfer.TargetWorkOrderId != observed.TargetWorkOrderId)
+                throw new TransferException("Work Order Transfer ownership changed while locks were being acquired. Reload and retry.", IvMasterErrorCode.Concurrency);
             var lockedOrders = new Dictionary<long, ProductionWorkOrder>();
             foreach (var workOrderId in workOrderIds)
                 lockedOrders[workOrderId] = await LockWorkOrderAsync(db, scope, workOrderId, ct);
@@ -596,9 +930,12 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 throw new TransferException(SourceChangedError, IvMasterErrorCode.Concurrency);
             var target = await ValidateTargetAsync(db, scope, source, transfer.TargetWorkOrderMaterialId, false, ct);
             ValidateTargetSnapshot(transfer, target);
+            if (transfer.TransferDateTime > clock.Now)
+                throw new TransferException("Work Order Transfer cannot be posted before its effective date and time.");
             var link = await LoadPostingLinkAsync(db, scope, transfer, true, ct);
             if (link.Status != ProductionPostingLinkStatuses.Draft || link.WorkOrderId != transfer.TargetWorkOrderId
-                || link.SnapshotRevision != transfer.TargetSnapshotRevision || link.SnapshotHash != transfer.TargetSnapshotHash)
+                || link.SnapshotRevision != transfer.TargetSnapshotRevision || link.SnapshotHash != transfer.TargetSnapshotHash
+                || link.DocumentRevision != transfer.DocumentRevision || link.ProductionDocumentLineId != transfer.Uid)
                 throw new TransferException("The Work Order Transfer posting link is inconsistent. Reconcile the document before posting.");
 
             ValidateChronology(transfer.TransferDateTime, source.Lot.LastMovementDate, source.Lot.LastStockEventEffectiveAt);
@@ -606,7 +943,16 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             if (destination is not null)
                 await ValidateDestinationAsync(db, transfer, source, target, destination, ct);
 
-            var command = BuildPostingCommand(transfer);
+            var sourceValueBefore = StockLedgerPrecision.Money(source.Lot.TotalCost);
+            var sourceBaseBefore = IvQty.Round(source.Lot.BaseQty);
+            var targetValueBefore = StockLedgerPrecision.Money(destination?.TotalCost ?? 0m);
+            var targetBaseBefore = IvQty.Round(destination?.BaseQty ?? 0m);
+            var sourceGenerationBefore = await db.ProductionPoolValuationRows.AsNoTracking()
+                .Where(x => x.ProductionBalLotId == source.Lot.Uid).Select(x => (int?)x.Generation).SingleOrDefaultAsync(ct);
+            var targetGenerationBefore = destination is null ? null : await db.ProductionPoolValuationRows.AsNoTracking()
+                .Where(x => x.ProductionBalLotId == destination.Uid).Select(x => (int?)x.Generation).SingleOrDefaultAsync(ct);
+            var executionBefore = await CaptureExecutionProjectionAsync(db, workOrderIds, ct);
+            var command = BuildPostingCommand(transfer, request, commandFingerprint.RequestFingerprint);
             var begin = await coordinator.BeginInTransactionAsync(db, command, ct);
             if (begin.Error is not null) throw new TransferException(begin.Error.Message);
             if (!begin.LedgerEnabled) throw new TransferException("Stock ledger V2 is not active for this branch.");
@@ -614,7 +960,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 throw new TransferException("A prior Work Order Transfer posting exists without matching POSTED document evidence. Reconcile before retrying.");
             var context = begin.Context;
             link.Status = ProductionPostingLinkStatuses.Pending;
-            link.PostingOperationId = transfer.PostingRequestId;
+            link.PostingOperationId = request.RequestId.ToString("N");
 
             if (destination is null)
             {
@@ -626,8 +972,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                     ConversionFactorToBase = source.Lot.ConversionFactorToBase, TotalCost = 0m, AverageUnitCost = 0m,
                     WorkOrderId = target.Order.Uid, WorkOrderNo = target.Order.WorkOrderNo,
                     WarehouseCode = string.Empty, LocationCode = string.Empty,
-                    LotNo = source.Lot.LotNo, PhysicalLotNo = source.Lot.PhysicalLotNo ?? source.Lot.LotNo,
-                    PoolCode = source.Lot.PoolCode, LotIdentityKind = source.Lot.LotIdentityKind,
+                     LotNo = source.Lot.LotNo, PhysicalLotNo = source.Lot.LotNo,
+                     PoolCode = null, LotIdentityKind = null,
                     BalanceStage = "PROCESS_WIP", OutputType = PrRouteOutputTypes.WipStocked,
                     StockStatusCode = "AVAILABLE", OriginType = "PRODUCED",
                     ProductionLocationId = target.ProducerLocation?.Id ?? transfer.TargetProducerProductionLocationId,
@@ -662,7 +1008,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             StampTransferMovement(inbound, target.ProducerRoute.WorkCentreCode, target.ProducerOperation.OperationCode,
                 target.ProducerLocation?.Code, groupId);
             AssertMovementPair(outbound, inbound, source.Lot);
-            if (source.Lot.Qty != 0m || source.Lot.BaseQty != 0m || source.Lot.TotalCost != 0m)
+            if (source.Lot.Qty != 0m || source.Lot.BaseQty != 0m || source.Lot.TotalCost != 0m
+                || source.Lot.AverageUnitCost != 0m)
                 throw new TransferException("The source WIP balance did not clear exactly after the full-balance transfer.");
             await db.SaveChangesAsync(ct);
             await ProductionPoolValuationService.RecordAsync(context, movements, ct);
@@ -670,12 +1017,77 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 || inbound.ValuationStatus != ProductionPoolValuationService.Verified)
                 throw new TransferException("Work Order Transfer value evidence did not remain VERIFIED.");
 
+            AssertMovementPair(outbound, inbound, source.Lot);
+            var sourceAfterValue = StockLedgerPrecision.Money(source.Lot.TotalCost);
+            var sourceAfterBase = IvQty.Round(source.Lot.BaseQty);
+            var targetAfterValue = StockLedgerPrecision.Money(destination.TotalCost);
+            var targetAfterBase = IvQty.Round(destination.BaseQty);
+            if (sourceAfterBase != 0m || sourceAfterValue != 0m
+                || IvQty.Round(sourceBaseBefore + targetBaseBefore) != IvQty.Round(sourceAfterBase + targetAfterBase)
+                || StockLedgerPrecision.Money(sourceValueBefore + targetValueBefore) != StockLedgerPrecision.Money(sourceAfterValue + targetAfterValue)
+                || IvQty.Round(source.Lot.BaseQty / source.Lot.ConversionFactorToBase) != IvQty.Round(source.Lot.Qty)
+                || IvQty.Round(destination.BaseQty / destination.ConversionFactorToBase) != IvQty.Round(destination.Qty))
+                throw new TransferException("Work Order Transfer quantity/value conservation failed.");
+
+            var sourceValuationAfter = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == source.Lot.Uid, ct);
+            var targetValuationAfter = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == destination.Uid, ct);
+            if (sourceValuationAfter.Status != ProductionPoolValuationService.Verified
+                || sourceValuationAfter.TrackedBaseQty != source.Lot.BaseQty || sourceValuationAfter.TrackedValue != source.Lot.TotalCost
+                || targetValuationAfter.Status != ProductionPoolValuationService.Verified
+                || targetValuationAfter.TrackedBaseQty != destination.BaseQty || targetValuationAfter.TrackedValue != destination.TotalCost)
+                throw new TransferException("Work Order Transfer pool valuation does not match the live balances.");
+            var sourceAvailability = await ProductionContributionAvailabilityService.ReadAsync(db, source.Lot.Uid,
+                sourceValuationAfter.Generation, ct);
+            if (sourceAvailability.Any(x => x.Evidence.Status != ProductionPoolValuationService.Verified
+                    || x.Contribution.AvailableBaseQty < 0m)
+                || IvQty.Round(sourceAvailability.Sum(x => x.Contribution.AvailableBaseQty)) != 0m)
+                throw new TransferException("Source WIP contribution availability did not clear with the full-balance transfer.");
+            var sourceAllocations = await db.ProductionMovementAllocations.AsNoTracking()
+                .Where(x => x.OutboundMovementId == outbound.Uid && x.ReversesAllocationId == null)
+                .SumAsync(x => (decimal?)x.BaseQty, ct) ?? 0m;
+            if (IvQty.Round(sourceAllocations) != IvQty.Round(outbound.BaseQty))
+                throw new TransferException("Work Order Transfer source contribution allocations do not cover the full outbound quantity.");
+            await ValidateCompletePoolContributionsAsync(db, destination, ct);
+
+            if (executionBefore != await CaptureExecutionProjectionAsync(db, workOrderIds, ct))
+                throw new TransferException("Work Order Transfer changed Work Order execution quantities unexpectedly.");
+            if (await db.IvTrxHistories.AnyAsync(x => x.StockPostingId == context.Posting.Id, ct)
+                || await db.StockValuationFacts.AnyAsync(x => x.StockPostingId == context.Posting.Id, ct)
+                || await db.ProductionMaterialMovements.AnyAsync(x => x.StockPostingId == context.Posting.Id, ct))
+                throw new TransferException("Work Order Transfer created an unrelated Inventory or material execution fact.");
+
+            db.ProductionWorkOrderTransferFacts.Add(new ProductionWorkOrderTransferFact
+            {
+                TransferId = transfer.Uid, DocumentRevision = transfer.DocumentRevision,
+                StockPostingId = context.Posting.Id, ProductionPostingLinkId = link.Uid,
+                SourceProductionBalLotId = source.Lot.Uid, DestinationProductionBalLotId = destination.Uid,
+                SourceLegMovementId = outbound.Uid, TargetLegMovementId = inbound.Uid, MovementGroupId = groupId,
+                Qty = outbound.Qty, BaseQty = outbound.BaseQty, BaseUom = outbound.BaseUom,
+                TotalValue = outbound.TotalCost, UnitCost = outbound.UnitCost,
+                SourceBaseBefore = sourceBaseBefore, SourceValueBefore = sourceValueBefore,
+                SourceBaseAfter = sourceAfterBase, SourceValueAfter = sourceAfterValue,
+                TargetBaseBefore = targetBaseBefore, TargetValueBefore = targetValueBefore,
+                TargetBaseAfter = targetAfterBase, TargetValueAfter = targetAfterValue,
+                SourceGenerationBefore = sourceGenerationBefore, SourceGenerationAfter = sourceValuationAfter.Generation,
+                TargetGenerationBefore = targetGenerationBefore, TargetGenerationAfter = targetValuationAfter.Generation,
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync(ct);
+            if (await db.ProductionWorkOrderTransferFacts.CountAsync(x => x.TransferId == transfer.Uid
+                    && x.DocumentRevision == transfer.DocumentRevision && x.StockPostingId == context.Posting.Id
+                    && x.ReversesFactId == null, ct) != 1)
+                throw new TransferException("Work Order Transfer immutable posting fact is missing or duplicated.");
+
             transfer.Status = ProductionWorkOrderTransferStatuses.Posted;
             transfer.StockPostingId = context.Posting.Id;
             transfer.DestinationProductionBalLotId = destination.Uid;
             transfer.TransferOutMovementId = outbound.Uid;
             transfer.TransferInMovementId = inbound.Uid;
             transfer.MovementGroupId = groupId;
+            transfer.ReversalPostingId = null;
+            transfer.ReversalReason = null;
+            transfer.RollbackDate = null;
+            transfer.RollbackBy = null;
             transfer.PostedDate = clock.Now;
             transfer.PostedBy = User(scope);
             link.Status = ProductionPostingLinkStatuses.Succeeded;
@@ -698,33 +1110,32 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
         catch (InvalidOperationException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message); }
     }
 
-    private static StockPostingCommand BuildPostingCommand(ProductionWorkOrderTransfer transfer)
+    private static StockPostingCommand BuildPostingCommand(ProductionWorkOrderTransfer transfer,
+        ProductionWorkOrderTransferCommand request, string requestFingerprint)
     {
-        var requestId = Guid.ParseExact(transfer.PostingRequestId, "N");
         var effectiveAt = transfer.TransferDateTime;
-        var evidence = StockPostingFingerprint.Create(new
+        var sourceSnapshot = new
         {
-            transfer.Uid, transfer.TransferNo, transfer.SourceProductionBalLotId, transfer.SourceWorkOrderId,
-            transfer.SourceProducingRouteStepId, transfer.SourceProducerOperationId, transfer.TargetWorkOrderId,
-            transfer.TargetWorkOrderMaterialId, transfer.TargetProducingRouteStepId, transfer.TargetProducerOperationId,
-            transfer.TargetConsumingRouteStepId, transfer.TargetConsumingOperationId, transfer.ItemCode, transfer.LotNo,
-            transfer.Qty, transfer.BaseQty, transfer.TransferTotalCost,
-            SourceBalanceRowVersion = Convert.ToBase64String(transfer.SourceBalanceRowVersion),
-            transfer.TargetSnapshotRevision, transfer.TargetSnapshotHash, effectiveAt
-        }, new
-        {
-            transfer.SourceWorkOrderNo, transfer.SourceWorkCentreCode, transfer.SourceProcessCode,
-            transfer.TargetWorkOrderNo, transfer.TargetProducerWorkCentreCode, transfer.TargetProducerProcessCode,
-            transfer.TargetConsumingWorkCentreCode, transfer.TargetConsumingProcessCode,
-            transfer.Uom, transfer.BaseUom, transfer.ConversionFactorToBase,
-            transfer.PhysicalLotNo, transfer.PoolCode, transfer.LotIdentityKind
-        });
+            transfer.Uid, transfer.TransferNo, transfer.DocumentRevision,
+            Source = new { transfer.SourceProductionBalLotId, transfer.SourceWorkOrderId, transfer.SourceProducingRouteStepId,
+                transfer.SourceProducerOperationId, transfer.SourceSnapshotRevision, transfer.SourceSnapshotHash,
+                transfer.Qty, transfer.BaseQty, transfer.TransferTotalCost, transfer.Uom, transfer.BaseUom,
+                transfer.ConversionFactorToBase, transfer.PhysicalLotNo, transfer.SourceLastMovementDate,
+                transfer.SourceLastStockEventEffectiveAt, SourceBalanceRowVersion = Convert.ToBase64String(transfer.SourceBalanceRowVersion) },
+            Target = new { transfer.TargetWorkOrderId, transfer.TargetWorkOrderMaterialId, transfer.TargetProducingRouteStepId,
+                transfer.TargetProducerOperationId, transfer.TargetConsumingRouteStepId, transfer.TargetConsumingOperationId,
+                transfer.TargetSnapshotRevision, transfer.TargetSnapshotHash },
+            EffectiveAt = effectiveAt
+        };
+        var snapshotJson = StockPostingFingerprint.Canonicalize(System.Text.Json.JsonSerializer.Serialize(sourceSnapshot,
+            new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+        var evidence = new StockPostingEvidence(requestFingerprint, snapshotJson, StockPostingFingerprint.Hash(snapshotJson));
         return new StockPostingCommand
         {
-            RequestId = requestId, CommandType = ProductionPostingCommandTypes.WorkOrderTransferPost,
+            RequestId = request.RequestId, CommandType = ProductionPostingCommandTypes.WorkOrderTransferPost,
             SourceModule = "PRODUCTION", SourceDocumentType = ProductionDocumentTypes.WorkOrderTransfer,
             SourceDocumentId = transfer.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            SourceDocumentNo = transfer.TransferNo, DocumentRevision = transfer.TargetSnapshotRevision,
+            SourceDocumentNo = transfer.TransferNo, DocumentRevision = transfer.DocumentRevision,
             PostingRole = "PRIMARY", EffectiveAt = effectiveAt, Evidence = evidence,
             ProductionPostingLinkId = transfer.ProductionPostingLinkId
         };
@@ -744,6 +1155,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             || lot.LastMovementDate != transfer.SourceLastMovementDate
             || lot.LastStockEventEffectiveAt != transfer.SourceLastStockEventEffectiveAt
             || source.Order.Uid != transfer.SourceWorkOrderId || source.Route.Uid != transfer.SourceProducingRouteStepId
+            || transfer.SourceSnapshotRevision is not int snapshotRevision || snapshotRevision != source.Order.SnapshotRevision
+            || !string.Equals(transfer.SourceSnapshotHash, source.Order.SnapshotHash, StringComparison.Ordinal)
             || source.Order.WorkOrderNo != transfer.SourceWorkOrderNo
             || source.Route.WorkCentreCode != transfer.SourceWorkCentreCode
             || source.Operation.Uid != transfer.SourceProducerOperationId
@@ -755,6 +1168,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
     {
         if (target.Order.SnapshotRevision != transfer.TargetSnapshotRevision
             || !string.Equals(target.Order.SnapshotHash, transfer.TargetSnapshotHash, StringComparison.Ordinal)
+            || !ProductionSnapshotHashVersions.SupportsDailyProduction(target.Order.SnapshotHashVersion)
             || target.Order.Uid != transfer.TargetWorkOrderId
             || target.Order.WorkOrderNo != transfer.TargetWorkOrderNo
             || target.Material.Uid != transfer.TargetWorkOrderMaterialId
@@ -798,14 +1212,13 @@ WHERE CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}
     private async Task ValidateDestinationAsync(AppDbContext db, ProductionWorkOrderTransfer transfer,
         SourceFacts source, TargetFacts target, ProductionBalLot destination, CancellationToken ct)
     {
-        var expectedPhysicalLot = source.Lot.PhysicalLotNo ?? source.Lot.LotNo;
+        var physicalLotCompatible = string.IsNullOrWhiteSpace(destination.PhysicalLotNo)
+            || destination.PhysicalLotNo == source.Lot.LotNo;
         if (destination.Kind != ProductionBalLotKinds.Wip || destination.WorkOrderId != target.Order.Uid
             || destination.ProducingRouteStepId != target.ProducerRoute.Uid
             || destination.WorkOrderOperationId != target.ProducerOperation.Uid
             || destination.WorkOrderMaterialId is not null || destination.ItemCode != source.Lot.ItemCode
-            || destination.LotNo != source.Lot.LotNo || destination.PhysicalLotNo != expectedPhysicalLot
-            || destination.PoolCode != source.Lot.PoolCode
-            || destination.LotIdentityKind != source.Lot.LotIdentityKind
+            || destination.LotNo != source.Lot.LotNo || !physicalLotCompatible
             || destination.Uom != source.Lot.Uom || destination.BaseUom != source.Lot.BaseUom
             || destination.ConversionFactorToBase != source.Lot.ConversionFactorToBase
             || destination.BalanceStage != "PROCESS_WIP" || destination.OutputType != PrRouteOutputTypes.WipStocked
@@ -833,6 +1246,8 @@ WHERE CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}
         {
             throw new TransferException(TargetCollisionError);
         }
+        if (destination.BaseQty > 0m)
+            await ValidateCompletePoolContributionsAsync(db, destination, ct);
         ValidateChronology(transfer.TransferDateTime, destination.LastMovementDate, destination.LastStockEventEffectiveAt);
     }
 
@@ -952,6 +1367,21 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
         var target = await db.ProductionWorkOrders.AsNoTracking().SingleOrDefaultAsync(x =>
             x.Uid == transfer.TargetWorkOrderId && x.CompanyCode == scope.CompanyCode
             && x.BranchCode == scope.BranchCode, ct);
+        var consumerOperation = await db.ProductionWorkOrderOperations.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Uid == transfer.TargetConsumingOperationId, ct);
+        var targetSequenceReady = true;
+        string? targetSequenceBlockingReason = null;
+        if (target is not null && consumerOperation is not null)
+        {
+            var routeSteps = await db.ProductionWorkOrderRouteSteps.AsNoTracking().Where(x => x.WorkOrderId == target.Uid).ToListAsync(ct);
+            var routeStepIds = routeSteps.Select(x => x.Uid).ToArray();
+            var operations = await db.ProductionWorkOrderOperations.AsNoTracking()
+                .Where(x => x.WorkOrderId == target.Uid || x.RouteStepId != null && routeStepIds.Contains(x.RouteStepId.Value))
+                .ToListAsync(ct);
+            var readiness = _operationEligibility.Evaluate(consumerOperation, routeSteps, operations);
+            targetSequenceReady = readiness.IsEligible;
+            targetSequenceBlockingReason = readiness.BlockingReason;
+        }
         var targetBalance = await db.ProductionBalLots.AsNoTracking().SingleOrDefaultAsync(x =>
             x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
             && x.Kind == ProductionBalLotKinds.Wip && x.WorkOrderId == transfer.TargetWorkOrderId
@@ -971,6 +1401,7 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
             SourceWorkCentreCode = transfer.SourceWorkCentreCode,
             SourceProcessCode = transfer.SourceProcessCode,
             SourceLastMovementDate = transfer.SourceLastMovementDate,
+            SourceCurrentWipValue = canViewCost ? source?.TotalCost : null,
             TransferTotalCost = canViewCost ? transfer.TransferTotalCost : null,
             TargetWorkOrderId = transfer.TargetWorkOrderId, TargetWorkOrderNo = transfer.TargetWorkOrderNo,
             TargetProductCode = target?.ProductCode ?? string.Empty,
@@ -985,6 +1416,10 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
             ProjectedTargetWipValue = canViewCost ? (targetBalance?.TotalCost ?? 0m) + transfer.TransferTotalCost : null,
             CanViewCost = canViewCost, TargetSnapshotRevision = transfer.TargetSnapshotRevision,
             TargetSnapshotHash = transfer.TargetSnapshotHash, RowVersion = transfer.RowVersion,
+            DocumentRevision = transfer.DocumentRevision, ReversalPostingId = transfer.ReversalPostingId,
+            ReversalReason = transfer.ReversalReason, RollbackDate = transfer.RollbackDate,
+            RollbackBy = transfer.RollbackBy, RollbackCount = transfer.RollbackCount,
+            TargetSequenceReady = targetSequenceReady, TargetSequenceBlockingReason = targetSequenceBlockingReason,
             StockPostingId = transfer.StockPostingId, PostedDate = transfer.PostedDate, PostedBy = transfer.PostedBy
         };
     }

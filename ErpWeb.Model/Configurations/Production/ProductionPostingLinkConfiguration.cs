@@ -41,6 +41,10 @@ public sealed class ProductionPostingLinkConfiguration : IEntityTypeConfiguratio
             .IsUnique()
             .HasFilter("[ProductionDocumentLineID] IS NOT NULL AND [CommandType] = 'OUTPUT_POST'")
             .HasDatabaseName("UQ_PrProductionPostingLink_OutputGeneration");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.ProductionDocumentLineId, x.DocumentRevision })
+            .IsUnique()
+            .HasFilter("[ProductionDocumentLineID] IS NOT NULL AND [CommandType] = 'WO_TRANSFER_POST'")
+            .HasDatabaseName("UQ_PrProductionPostingLink_WorkOrderTransferGeneration");
         builder.HasOne(x => x.OriginalPostingLink)
             .WithMany()
             .HasForeignKey(x => x.OriginalPostingLinkId)

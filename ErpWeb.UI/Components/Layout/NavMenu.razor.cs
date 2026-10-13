@@ -15,7 +15,7 @@ public partial class NavMenu : IDisposable
     [Inject]
     private AppNavigation Navigation { get; set; } = default!;
 
-    private IReadOnlyList<MenuNavItem>? _items;
+    private IReadOnlyList<NavTreeItem>? _items;
     private NavigationUrlMatchMode _urlMatchMode = NavigationUrlMatchMode.Prefix;
 
     /// <summary>Relative on purpose: it resolves against <c>&lt;base href&gt;</c>, so it stays inside
@@ -24,7 +24,7 @@ public partial class NavMenu : IDisposable
 
     protected override async Task OnInitializedAsync()
     {
-        _items = PrefixRoutes(await NavigationService.GetSidebarAsync());
+        _items = MapItems(await NavigationService.GetSidebarAsync());
         RefreshUrlMatchMode();
         Navigation.LocationChanged += OnLocationChanged;
     }
@@ -53,12 +53,26 @@ public partial class NavMenu : IDisposable
     /// sub-application on every click. They are prefixed rather than made relative so DxTreeView's
     /// UrlMatchMode still matches them against the full NavigationManager.Uri.
     /// </summary>
-    private IReadOnlyList<MenuNavItem> PrefixRoutes(IReadOnlyList<MenuNavItem> items) =>
-        items.Select(PrefixRoutes).ToArray();
+    private IReadOnlyList<NavTreeItem> MapItems(IReadOnlyList<MenuNavItem> items) =>
+        items.Select(MapItem).ToArray();
 
-    private MenuNavItem PrefixRoutes(MenuNavItem item) => item with
+    private NavTreeItem MapItem(MenuNavItem item) => new()
     {
+        Code = item.Code,
+        Name = item.Name,
         Route = string.IsNullOrWhiteSpace(item.Route) ? item.Route : Navigation.Resolve(item.Route),
-        Children = item.Children.Count == 0 ? item.Children : PrefixRoutes(item.Children),
+        Icon = item.Icon,
+        Attributes = new Dictionary<string, object> { ["title"] = item.Name },
+        Children = item.Children.Count == 0 ? Array.Empty<NavTreeItem>() : MapItems(item.Children),
     };
+
+    private sealed record NavTreeItem
+    {
+        public required string Code { get; init; }
+        public required string Name { get; init; }
+        public string? Route { get; init; }
+        public string? Icon { get; init; }
+        public Dictionary<string, object> Attributes { get; init; } = new();
+        public IReadOnlyList<NavTreeItem> Children { get; init; } = Array.Empty<NavTreeItem>();
+    }
 }
