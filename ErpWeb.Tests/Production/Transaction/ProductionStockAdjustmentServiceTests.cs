@@ -10,7 +10,7 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
+using Moq;
 
 namespace ErpWeb.Tests.Production.Transaction;
 
@@ -63,6 +63,13 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         Assert.True(draft.Succeeded, draft.Message);
 
         var postRequest = new ProductionStockAdjustmentCommand(saved.Data.Id, draft.Data!.RowVersion, Guid.NewGuid());
+        var deniedPost = await CreateService(access: Access(canPost: false)).PostAsync(postRequest);
+        Assert.False(deniedPost.Succeeded);
+        Assert.Contains("Access denied", deniedPost.Message, StringComparison.OrdinalIgnoreCase);
+        var newRollback = await service.RollbackAsync(postRequest with { Reason = "Cannot reverse a draft" });
+        Assert.False(newRollback.Succeeded);
+        Assert.Contains("Only POSTED PADJ documents", newRollback.Message, StringComparison.OrdinalIgnoreCase);
+
         var posted = await service.PostAsync(postRequest);
         Assert.True(posted.Succeeded, posted.Message);
         Assert.Equal("POSTED", posted.Data!.Status);
@@ -70,6 +77,10 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         var replay = await service.PostAsync(postRequest);
         Assert.True(replay.Succeeded, replay.Message);
         Assert.Equal(posted.Data.PostingId, replay.Data!.PostingId);
+
+        var postedAgain = await service.PostAsync(new(saved.Data.Id, posted.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(postedAgain.Succeeded);
+        Assert.Contains("Only NEW PADJ documents", postedAgain.Message, StringComparison.OrdinalIgnoreCase);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -91,8 +102,13 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
             Assert.Empty(await db.IvBalLocs.ToListAsync());
         }
 
-        var rollback = await service.RollbackAsync(new ProductionStockAdjustmentCommand(
-            saved.Data.Id, posted.Data.RowVersion, Guid.NewGuid(), "Reverse the full depletion"));
+        var rollbackRequest = new ProductionStockAdjustmentCommand(
+            saved.Data.Id, posted.Data.RowVersion, Guid.NewGuid(), "Reverse the full depletion");
+        var deniedRollback = await CreateService(access: Access(canRollback: false)).RollbackAsync(rollbackRequest);
+        Assert.False(deniedRollback.Succeeded);
+        Assert.Contains("Access denied", deniedRollback.Message, StringComparison.OrdinalIgnoreCase);
+
+        var rollback = await service.RollbackAsync(rollbackRequest);
         Assert.True(rollback.Succeeded, rollback.Message);
         Assert.Equal("REVERSED", rollback.Data!.Status);
 
@@ -248,17 +264,28 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         return (workOrder.Uid, pool.Uid);
     }
 
-    private ProductionStockAdjustmentService CreateService(IProductionStockWriter? productionWriter = null) => new(
+    private ProductionStockAdjustmentService CreateService(
+        IProductionStockWriter? productionWriter = null,
+        IAccessRightService? access = null) => new(
         _factory,
         InventoryTenantTestHelper.CreateTenantContext(),
-        ProductionLedgerTestFixture.Allow(MenuCodes.PlanningStockAdjustment),
+        access ?? ProductionLedgerTestFixture.Allow(MenuCodes.PlanningStockAdjustment),
         new FixedCurrentDateService(EffectiveAt.AddDays(1)),
         new TestRunningNumberService(),
         new BranchStockTransactionLock(),
         _coordinator,
         productionWriter ?? new ProductionStockWriter(new StockMovementRegistry()),
-        new ItemStandardCostResolver(),
-        Options.Create(new ProductionStockTransactionOptions { AdjustmentPostingEnabled = true }));
+        new ItemStandardCostResolver());
+
+    private static IAccessRightService Access(bool canPost = true, bool canRollback = true)
+    {
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string permission, CancellationToken _) => Task.FromResult(
+                (permission != PermissionCodes.Post || canPost)
+                && (permission != PermissionCodes.Rollback || canRollback)));
+        return access.Object;
+    }
 
     private async Task SetSqliteRowVersionAsync(int id)
     {

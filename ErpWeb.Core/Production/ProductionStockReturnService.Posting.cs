@@ -50,9 +50,6 @@ public sealed partial class ProductionStockReturnService
                 return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(replayResult);
             }
 
-            if (!reversal && !options.Value.ReturnPostingEnabled)
-                throw new ReturnException("Production Stock Return posting is disabled pending release acceptance.");
-
             var r = await LoadAsync(db, scope, request.Id, true, ct);
             Version(r, request.ExpectedVersion);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
@@ -423,6 +420,7 @@ public sealed partial class ProductionStockReturnService
         }).ToArray();
         var movements = await production.ApplyAsync(context, legs, ct); await db.SaveChangesAsync(ct);
         await ProductionPoolValuationService.RecordAsync(context, movements, ct);
+        var reversedMaterials = new List<(ProductionStockReturnFact OriginalFact, ProductionMaterialMovement Reversal, long ProductionMovementId)>();
         foreach (var fact in facts)
         {
             var originalMaterial = await db.ProductionMaterialMovements.SingleAsync(x => x.Uid == fact.ProductionMaterialMovementId, ct);
@@ -448,11 +446,21 @@ public sealed partial class ProductionStockReturnService
                 Remarks = reason, CreatedDate = context.Posting.PostedAtUtc, CreatedBy = User(scope)
             };
             db.ProductionMaterialMovements.Add(reversal);
+            reversedMaterials.Add((fact, reversal,
+                movements.Single(x => x.OriginalMovementId == fact.ProductionMovementId).Uid));
+        }
+
+        // ProductionMaterialMovement.Uid is database-generated. Persist reversal movements first so
+        // each append-only return fact can reference the assigned identity in the same transaction.
+        await db.SaveChangesAsync(ct);
+        foreach (var reversed in reversedMaterials)
+        {
+            var fact = reversed.OriginalFact;
             db.ProductionStockReturnFacts.Add(new ProductionStockReturnFact
             {
                 BatchId = r.BatchId, ReturnLineId = fact.ReturnLineId, StockPostingId = context.Posting.Id,
-                ProductionMovementId = movements.Single(x => x.OriginalMovementId == fact.ProductionMovementId).Uid,
-                ProductionMaterialMovementId = reversal.Uid,
+                ProductionMovementId = reversed.ProductionMovementId,
+                ProductionMaterialMovementId = reversed.Reversal.Uid,
                 InventoryHistoryId = reversedHistories.Single(x => x.ReversesHistoryId == fact.InventoryHistoryId).Id,
                 DestinationBalanceId = fact.DestinationBalanceId, SourceIssueMovementId = fact.SourceIssueMovementId,
                 BaseQty = fact.BaseQty, TotalValue = fact.TotalValue, ReversesFactId = fact.Id

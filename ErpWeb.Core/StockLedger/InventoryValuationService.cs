@@ -1007,6 +1007,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
                         && itemCodes.Contains(x.ItemCode)
                         && x.EffectiveAt > context.Posting.EffectiveAt
                         && x.StockPosting!.SealedAtUtc != null
+                        && x.StockPosting.PostingRole == "PRIMARY"
+                        && !context.Db.StockPostings.Any(reversal =>
+                            reversal.CompanyCode == context.CompanyCode
+                            && reversal.BranchCode == context.BranchCode
+                            && reversal.SealedAtUtc != null
+                            && reversal.ReversesPostingId == x.StockPostingId)
                         // Re-posting the same physical document must ignore its own prior sealed facts
                         // (post → rollback → post again, including orphan wall-clock EffectiveAt rows).
                         && (sourceDocumentId.Length == 0 || x.SourceDocumentId != sourceDocumentId))

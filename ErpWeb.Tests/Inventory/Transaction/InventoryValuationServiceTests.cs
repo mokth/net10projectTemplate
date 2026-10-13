@@ -458,6 +458,59 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Backdated_movement_ignores_a_later_posting_that_was_rolled_back()
+    {
+        await PostReceiptAsync(10m, 2m, new DateTime(2026, 10, 1, 8, 0, 0));
+        var balanceId = (await BalanceIdsAsync())[0];
+        var returnPostingId = await ExecuteAsync(
+            new DateTime(2026, 10, 13, 8, 30, 0), "PRODUCTION_STOCK_RETURN", (context, writer) =>
+            {
+                var history = History(IvTrxTypes.ProductionStockReturn);
+                history.ToBalLocId = balanceId;
+                history.ToWarehouse = "MAIN";
+                history.ToLocation = "A";
+                history.ToStdQty = 5m;
+                history.ToStdUom = "EA";
+                history.UnitPrice = 2m;
+                history.PriceEvidence = InventoryCostEvidenceTypes.ManualApproved;
+                context.Db.IvTrxHistories.Add(history);
+                writer.StampGeneration(context, [history], 1);
+                return Task.CompletedTask;
+            });
+
+        IvTrxHistory originalHistory;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            originalHistory = await db.IvTrxHistories.AsNoTracking()
+                .SingleAsync(x => x.StockPostingId == returnPostingId);
+        }
+
+        var rollback = await ExecuteResultAsync(
+            new DateTime(2026, 10, 13, 9, 0, 0), "PRODUCTION_STOCK_RETURN", (context, writer) =>
+            {
+                writer.AppendReversal(context, [originalHistory], 1);
+                return Task.CompletedTask;
+            }, returnPostingId);
+        Assert.True(rollback.Succeeded, rollback.Error?.Message);
+
+        var backdatedIssue = await ExecuteResultAsync(
+            new DateTime(2026, 10, 12, 8, 0, 0), "MI", (context, writer) =>
+            {
+                var history = History(IvTrxTypes.MiscellaneousIssue);
+                history.FromBalLocId = balanceId;
+                history.FrWarehouse = "MAIN";
+                history.FrLocation = "A";
+                history.FrStdQty = 1m;
+                history.FrStdUom = "EA";
+                context.Db.IvTrxHistories.Add(history);
+                writer.StampGeneration(context, [history], 1);
+                return Task.CompletedTask;
+            });
+
+        Assert.True(backdatedIssue.Succeeded, backdatedIssue.Error?.Message);
+    }
+
+    [Fact]
     public void Backdated_message_names_blocking_document_for_users()
     {
         var message = InventoryValuationService.FormatBackdatedPostingMessage(

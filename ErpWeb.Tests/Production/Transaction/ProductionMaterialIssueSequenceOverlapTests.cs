@@ -9,6 +9,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
@@ -197,6 +198,83 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     }
 
     [Fact]
+    public async Task Production_stock_return_rolls_back_after_later_return_is_reversed()
+    {
+        var graph = await SeedTwoProcessWithMaterialAsync("WO-PRTN-POST");
+        await SeedBalanceAsync(56, 20m);
+
+        var outputs = CreateOutputService();
+        var firstOutput = await outputs.CreateAsync(OutputRequest(graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(firstOutput.Succeeded, firstOutput.Message);
+        Assert.True((await outputs.PostAsync(firstOutput.Data!.Uid)).Succeeded);
+
+        var issues = CreateIssueService();
+        var issueRequest = await CreateIssueSaveAsync(graph, 56, 2m);
+        issueRequest.ProductionQtyThisIssue = 2m;
+        var issueDraft = await issues.CreateAsync(issueRequest);
+        Assert.True(issueDraft.Succeeded, issueDraft.Message);
+        var issuePost = await issues.PostAsync([issueDraft.Data!.BatchNo]);
+        Assert.True(issuePost.Succeeded && issuePost.Data!.SucceededCount == 1,
+            issuePost.Data?.Batches.FirstOrDefault()?.Message ?? issuePost.Message);
+
+        var returns = CreateReturnService();
+        var sources = await returns.SearchSourcesAsync(new() { WorkOrderId = graph.OrderId, Take = 20 });
+        Assert.True(sources.Succeeded, sources.Message);
+        var source = Assert.Single(sources.Data!.Rows, x => x.ItemCode == "RM001");
+
+        var first = await SaveReturnAsync(returns, graph.OrderId, source.ProductionBalLotId);
+        var second = await SaveReturnAsync(returns, graph.OrderId, source.ProductionBalLotId);
+        var firstDraft = await LoadReturnDraftAsync(returns, first.Id);
+        var secondDraft = await LoadReturnDraftAsync(returns, second.Id);
+
+        var newRollback = await returns.RollbackAsync(new(first.Id, firstDraft.RowVersion, Guid.NewGuid(), "Must still be NEW"));
+        Assert.False(newRollback.Succeeded);
+        Assert.Contains("Only a POSTED Production Stock Return", newRollback.Message, StringComparison.OrdinalIgnoreCase);
+
+        var deniedPost = await CreateReturnService(canPost: false).PostAsync(
+            new(first.Id, firstDraft.RowVersion, Guid.NewGuid()));
+        Assert.False(deniedPost.Succeeded);
+        Assert.Contains("Access denied", deniedPost.Message, StringComparison.OrdinalIgnoreCase);
+
+        var firstPost = await returns.PostAsync(new(first.Id, firstDraft.RowVersion, Guid.NewGuid()));
+        Assert.True(firstPost.Succeeded, firstPost.Message);
+        Assert.Equal("POSTED", firstPost.Data!.Status);
+        var secondPost = await returns.PostAsync(new(second.Id, secondDraft.RowVersion, Guid.NewGuid()));
+        Assert.True(secondPost.Succeeded, secondPost.Message);
+
+        var postedAgain = await returns.PostAsync(new(first.Id, firstPost.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(postedAgain.Succeeded);
+        Assert.Contains("Only a NEW Production Stock Return", postedAgain.Message, StringComparison.OrdinalIgnoreCase);
+
+        var deniedRollback = await CreateReturnService(canRollback: false).RollbackAsync(
+            new(first.Id, firstPost.Data.RowVersion, Guid.NewGuid(), "Permission must be rechecked"));
+        Assert.False(deniedRollback.Succeeded);
+        Assert.Contains("Access denied", deniedRollback.Message, StringComparison.OrdinalIgnoreCase);
+
+        var laterMovementBlocked = await returns.RollbackAsync(
+            new(first.Id, firstPost.Data.RowVersion, Guid.NewGuid(), "Later return is still active"));
+        Assert.False(laterMovementBlocked.Succeeded);
+        Assert.Contains("later active", laterMovementBlocked.Message, StringComparison.OrdinalIgnoreCase);
+
+        var secondRollback = await returns.RollbackAsync(
+            new(second.Id, secondPost.Data!.RowVersion, Guid.NewGuid(), "Reverse later return first"));
+        Assert.True(secondRollback.Succeeded, secondRollback.Message);
+        Assert.Equal("REVERSED", secondRollback.Data!.Status);
+
+        var firstRollback = await returns.RollbackAsync(
+            new(first.Id, firstPost.Data.RowVersion, Guid.NewGuid(), "Reverse earlier return second"));
+        Assert.True(firstRollback.Succeeded, firstRollback.Message);
+        Assert.Equal("REVERSED", firstRollback.Data!.Status);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var reversalFact = await db.ProductionStockReturnFacts.AsNoTracking()
+            .SingleAsync(x => x.BatchId == second.Id && x.ReversesFactId != null);
+        Assert.NotEqual(0, reversalFact.ProductionMaterialMovementId);
+        Assert.True(await db.ProductionMaterialMovements.AsNoTracking()
+            .AnyAsync(x => x.Uid == reversalFact.ProductionMaterialMovementId));
+    }
+
+    [Fact]
     public async Task Later_stage_material_issue_stays_blocked_on_partial_previous_stage()
     {
         var graph = await SeedTwoStageWithLaterMaterialAsync("WO-IP-STAGE");
@@ -251,19 +329,65 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         var access = Access();
         var tenant = InventoryTenantTestHelper.CreateTenantContext();
         var allocation = new ProductionMaterialAllocationService(
-            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)));
+            _factory, tenant, access, new FixedCurrentDateService(new DateTime(2026, 10, 1)));
         return new ProductionMaterialIssueService(
-            _factory, tenant, access.Object, new FixedCurrentDateService(new DateTime(2026, 10, 1)),
+            _factory, tenant, access, new FixedCurrentDateService(new DateTime(2026, 10, 1)),
             allocation, new RunningNumberService(), new IvStockPostingRepository(),
             ProductionLedgerTestFixture.CreateInventoryPosting(_factory));
     }
 
-    private static Mock<IAccessRightService> Access()
+    private ProductionStockReturnService CreateReturnService(bool canPost = true, bool canRollback = true)
+    {
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        return new ProductionStockReturnService(
+            _factory,
+            tenant,
+            Access(canPost, canRollback),
+            new FixedCurrentDateService(new DateTime(2026, 10, 3, 12, 0, 0)),
+            new TestRunningNumberService(),
+            new BranchStockTransactionLock(),
+            ProductionLedgerTestFixture.CreateCoordinator(_factory),
+            new IvStockPostingRepository(),
+            new ProductionStockWriter(new StockMovementRegistry()),
+            new IvInventoryHistoryWriter(),
+            ProductionLedgerTestFixture.CreateInventoryPosting(_factory));
+    }
+
+    private async Task<ProductionStockReturnDocument> SaveReturnAsync(
+        ProductionStockReturnService service, long workOrderId, long poolId)
+    {
+        var saved = await service.SaveAsync(new ProductionStockReturnSaveRequest
+        {
+            WorkOrderId = workOrderId,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('A', 64),
+            EffectiveDate = new DateTime(2026, 10, 2, 8, 0, 0),
+            Lines = [new() { ProductionBalLotId = poolId, Quantity = 1m, Reason = ProductionStockReturnReasons.Excess }],
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE PrProductionStockReturn SET RowVersion = X'01' WHERE BatchId = {saved.Data!.Id};");
+        var loaded = await service.GetAsync(saved.Data.Id);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        return loaded.Data!;
+    }
+
+    private async Task<ProductionStockReturnDocument> LoadReturnDraftAsync(ProductionStockReturnService service, int id)
+    {
+        var loaded = await service.GetAsync(id);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        return loaded.Data!;
+    }
+
+    private static IAccessRightService Access(bool canPost = true, bool canRollback = true)
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        return access;
+            .Returns((string _, string permission, CancellationToken _) => Task.FromResult(
+                (permission != PermissionCodes.Post || canPost)
+                && (permission != PermissionCodes.Rollback || canRollback)));
+        return access.Object;
     }
 
     private static ProductionOutputCreateRequest OutputRequest(long operationId, decimal good, DateTime date) => new()
@@ -328,6 +452,34 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             TransDate = new DateTime(2026, 9, 1),
             UnitPrice = 2m,
             PriceEvidence = ProductionLedgerTestFixture.TestPriceEvidence,
+            RowVersion = [1],
+        });
+        db.StockCostStates.Add(new StockCostState
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            ItemCode = "RM001",
+            CostMethod = StockCostMethods.MovingAverage,
+            OnHandBaseQty = qty,
+            InventoryValue = qty * 2m,
+            AverageUnitCost = 2m,
+            CurrentUnitCost = 2m,
+            RowVersion = [1],
+        });
+        db.IvLocations.Add(new IvLocation
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WarehouseCode = "WH01",
+            LocCode = "BIN-A",
+            IsActive = true,
+            RowVersion = [1],
+        });
+        db.IvStatuses.Add(new IvStatus
+        {
+            CompanyCode = "DEMO",
+            IStatus = IvItemStatuses.Active,
+            IsActive = true,
             RowVersion = [1],
         });
         await db.SaveChangesAsync();
@@ -538,7 +690,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
 
     private sealed class TestRunningNumberService : IRunningNumberService
     {
-        private int _next;
+        private int _next = 900_000;
         public Task<int> PeekNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) =>
             Task.FromResult(_next + 1);
         public Task<int> GetNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) =>

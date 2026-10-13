@@ -18,11 +18,6 @@ public interface IProductionFinishedGoodReceiptService
     Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> CreateCorrectionAsync(int id, CancellationToken ct = default);
 }
 
-public sealed class FinishedGoodReceiptOptions
-{
-    public bool PostingEnabled { get; set; }
-}
-
 public sealed class FinishedGoodReceiptQuery
 {
     public string? SearchText { get; set; }
@@ -53,7 +48,7 @@ public sealed class FinishedGoodSourceFilterOptions
     public IReadOnlyList<ProductionOutputChoice> Items { get; init; } = [];
 }
 
-public sealed record FinishedGoodReceiptPage(IReadOnlyList<FinishedGoodReceiptSummary> Rows, int TotalCount, bool PostingEnabled);
+public sealed record FinishedGoodReceiptPage(IReadOnlyList<FinishedGoodReceiptSummary> Rows, int TotalCount);
 public sealed record FinishedGoodSourcePage(IReadOnlyList<FinishedGoodSourceRow> Rows, int TotalCount);
 public sealed record FinishedGoodReceiptSummary(
     int Id,
@@ -96,7 +91,6 @@ public sealed class FinishedGoodReceiptDocument
     public long? ReversalPostingId { get; set; }
     public int? CorrectedBatchId { get; set; }
     public bool CanViewCost { get; set; }
-    public bool PostingEnabled { get; set; }
     public List<string> ReadinessErrors { get; set; } = [];
     public List<string> Warnings { get; set; } = [];
     public List<FinishedGoodReceiptLine> Lines { get; set; } = [];

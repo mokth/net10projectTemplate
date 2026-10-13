@@ -34,7 +34,7 @@ public sealed class ProductionStockAdjustmentSourceQuery
     public int Take { get; set; } = 30;
 }
 
-public sealed record ProductionStockAdjustmentPage(IReadOnlyList<ProductionStockAdjustmentSummary> Rows, int TotalCount, bool PostingEnabled);
+public sealed record ProductionStockAdjustmentPage(IReadOnlyList<ProductionStockAdjustmentSummary> Rows, int TotalCount);
 public sealed record ProductionStockAdjustmentSummary(int Id, int BatchNo, long WorkOrderId, string WorkOrderNo,
     string ItemSummary, string QtySummary, string Status, DateTime EffectiveDate, byte[] RowVersion);
 public sealed record ProductionStockAdjustmentSourcePage(IReadOnlyList<ProductionStockAdjustmentSource> Rows, int TotalCount);
@@ -63,7 +63,6 @@ public sealed class ProductionStockAdjustmentDocument
     public long? ReversalPostingId { get; set; }
     public int? CorrectedBatchId { get; set; }
     public bool CanViewCost { get; set; }
-    public bool PostingEnabled { get; set; }
     public List<string> ReadinessErrors { get; set; } = [];
     public List<ProductionStockAdjustmentLineDto> Lines { get; set; } = [];
 }

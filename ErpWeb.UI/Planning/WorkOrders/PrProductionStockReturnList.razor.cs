@@ -17,7 +17,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     private DxGrid? _grid; private Timer? _debounce; private int _version;
     private readonly List<ProductionStockReturnSummary> _selected = [];
     private readonly Dictionary<(int, string), ProductionStockReturnCommand> _requests = [];
-    protected bool Loading = true, Busy, CanAdd, CanEdit, CanPost, CanRollback, PostingEnabled, ConfirmVisible, FilterPopupVisible;
+    protected bool Loading = true, Busy, CanAdd, CanEdit, CanPost, CanRollback, ConfirmVisible, FilterPopupVisible;
     protected int TotalCount; protected string SearchText = "", StatusFilter = ""; protected string ConfirmAction = "";
     protected string RollbackReason = "", DraftStatus = ""; protected string? StatusMessage; protected List<ProductionStockReturnSummary> CompactRows = [];
     protected ProductionStockReturnGridDataSource DataSource = default!;
@@ -45,7 +45,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
         await ReloadAsync(); Loading = false;
     }
     protected void OnGridInstance(DxGrid grid) => _grid = grid;
-    protected void OnSelections(List<ProductionStockReturnSummary> rows) { _selected.Clear(); _selected.AddRange(rows); RebuildButtons(); }
+    protected void OnSelections(List<ProductionStockReturnSummary> rows) { _selected.Clear(); _selected.AddRange(rows); }
     protected async Task OnSearchChanged(string value) { SearchText = value ?? ""; _debounce?.Stop(); _debounce?.Dispose(); _debounce = new Timer(400) { AutoReset=false }; var n=++_version; _debounce.Elapsed += async (_,_) => { if(n==_version) await InvokeAsync(ReloadAsync); }; _debounce.Start(); }
     protected Task OnStatusChanged(string value) { StatusFilter = value ?? ""; return ReloadAsync(); }
     protected Task NewAsync() { if (CanAdd) Navigation.NavigateTo("/planning/stock-returns/new"); return Task.CompletedTask; }
@@ -69,13 +69,13 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
                 return Task.CompletedTask;
             case "POST":
                 if (_selected.Count == 0) { StatusMessage = "Select at least one return."; return Task.CompletedTask; }
-                if (!PostingEnabled || !CanPost || _selected.Any(x => x.Status != "NEW"))
-                { StatusMessage = PostingEnabled ? "Select only NEW returns with POST permission." : "Return posting is disabled pending release acceptance."; return Task.CompletedTask; }
+                if (!CanPost) { StatusMessage = "Access denied."; return Task.CompletedTask; }
+                if (_selected.Any(x => x.Status != "NEW")) { StatusMessage = "Only NEW Production Stock Returns can be posted."; return Task.CompletedTask; }
                 break;
             case "ROLLBACK":
                 if (_selected.Count == 0) { StatusMessage = "Select at least one return."; return Task.CompletedTask; }
-                if (!CanRollback || _selected.Any(x => x.Status != "POSTED"))
-                { StatusMessage = "Select only POSTED returns with ROLLBACK permission."; return Task.CompletedTask; }
+                if (!CanRollback) { StatusMessage = "Access denied."; return Task.CompletedTask; }
+                if (_selected.Any(x => x.Status != "POSTED")) { StatusMessage = "Only POSTED Production Stock Returns can be rolled back."; return Task.CompletedTask; }
                 break;
             default:
                 ErrorMessage = $"Unsupported action '{action}'.";
@@ -92,14 +92,14 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
             ConfirmVisible=false; StatusMessage=$"{ConfirmAction} completed for {_selected.Count} return(s)."; _selected.Clear(); await ReloadAsync(); }
         catch(Exception ex) { ErrorMessage=ex.Message; } finally { Busy=false; }
     }
-    private void RebuildButtons() { Buttons=[new(){Text="NEW",IConClass="fas fa-plus",Style="primary",Enabled=CanAdd},new(){Text="POST",IConClass="fas fa-check",Style="success",Enabled=CanPost&&PostingEnabled&&_selected.Count>0&&_selected.All(x=>x.Status=="NEW")},new(){Text="ROLLBACK",IConClass="fa-solid fa-rotate-left",Style="warning",Enabled=CanRollback&&_selected.Count>0&&_selected.All(x=>x.Status=="POSTED")}]; }
+    private void RebuildButtons() { Buttons=[new(){Text="NEW",IConClass="fas fa-plus",Style="primary",Enabled=CanAdd},new(){Text="POST",IConClass="fas fa-check",Style="success",Enabled=CanPost},new(){Text="ROLLBACK",IConClass="fa-solid fa-rotate-left",Style="warning",Enabled=CanRollback}]; }
     protected void OpenFilterPopup() { DraftStatus = StatusFilter; FilterPopupVisible = true; }
     protected async Task ApplyFiltersAsync() { StatusFilter = DraftStatus; FilterPopupVisible = false; await ReloadAsync(); }
     protected async Task ClearFiltersAsync() { DraftStatus = ""; await ApplyFiltersAsync(); }
     private async Task ReloadAsync() { DataSource?.Update(SearchText,StatusFilter); await RefreshCompactAsync(); RebuildButtons(); _grid?.Reload(); await InvokeAsync(StateHasChanged); }
     private async Task<(IReadOnlyList<ProductionStockReturnSummary>,int)> LoadAsync(ProductionStockReturnQuery query,CancellationToken ct)
-    { var r=await Returns.SearchAsync(query,ct); if(!r.Succeeded||r.Data is null) { await InvokeAsync(()=>ErrorMessage=r.Message); return([],0); } TotalCount=r.Data.TotalCount; PostingEnabled=r.Data.PostingEnabled; return(r.Data.Rows,r.Data.TotalCount); }
-    private async Task RefreshCompactAsync() { var q=DataSource.Current; q.Skip=0; q.Take=50; var r=await Returns.SearchAsync(q); CompactRows=r.Data?.Rows.ToList()??[]; TotalCount=r.Data?.TotalCount??0; PostingEnabled=r.Data?.PostingEnabled??false; }
+    { var r=await Returns.SearchAsync(query,ct); if(!r.Succeeded||r.Data is null) { await InvokeAsync(()=>ErrorMessage=r.Message); return([],0); } TotalCount=r.Data.TotalCount; return(r.Data.Rows,r.Data.TotalCount); }
+    private async Task RefreshCompactAsync() { var q=DataSource.Current; q.Skip=0; q.Take=50; var r=await Returns.SearchAsync(q); CompactRows=r.Data?.Rows.ToList()??[]; TotalCount=r.Data?.TotalCount??0; }
     public void Dispose(){_debounce?.Stop();_debounce?.Dispose();}
     protected sealed record StatusChoice(string Value,string Text);
 }

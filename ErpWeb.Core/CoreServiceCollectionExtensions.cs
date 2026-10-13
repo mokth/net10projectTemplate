@@ -238,8 +238,6 @@ public static class CoreServiceCollectionExtensions
         services.AddSingleton<IProductionContributionAllocator, ProductionContributionAllocator>();
         services.AddScoped<IProductionStockWriter, ProductionStockWriter>();
         services.AddScoped<IProductionMaterialIssueService, ProductionMaterialIssueService>();
-        services.AddOptions<FinishedGoodReceiptOptions>().BindConfiguration("Production:FinishedGoodReceipt");
-        services.AddOptions<ProductionStockTransactionOptions>().BindConfiguration(ProductionStockTransactionOptions.SectionName);
         services.AddScoped<IProductionFinishedGoodReceiptService, ProductionFinishedGoodReceiptService>();
         services.AddScoped<IProductionStockReturnService, ProductionStockReturnService>();
         services.AddScoped<IProductionStockAdjustmentService, ProductionStockAdjustmentService>();

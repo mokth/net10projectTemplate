@@ -76,14 +76,6 @@ public sealed class ProductionStockTransactionSchemaTests
         Assert.True(indexes["UQ_PrProductionPostingLink_StockTransactionBatch"].IsUnique);
     }
 
-    [Fact]
-    public void New_posting_is_disabled_by_default()
-    {
-        var options = new ProductionStockTransactionOptions();
-        Assert.False(options.ReturnPostingEnabled);
-        Assert.False(options.AdjustmentPostingEnabled);
-    }
-
     [Theory]
     [InlineData("PRTN")]
     [InlineData("PADJ")]

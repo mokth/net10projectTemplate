@@ -1,5 +1,5 @@
 -- Idempotent menu/permission seed for Production Stock Return and Adjustment.
--- No role grants and no posting feature switches are changed by this script.
+-- Role grants remain explicit deployment choices. This seed does not grant POST/ROLLBACK to any role.
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 

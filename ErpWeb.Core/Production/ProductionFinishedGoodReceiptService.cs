@@ -13,7 +13,6 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 using System.Globalization;
 
@@ -23,7 +22,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
-    IIvInventoryHistoryWriter historyWriter, IOptions<FinishedGoodReceiptOptions> options,
+    IIvInventoryHistoryWriter historyWriter,
     ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
     ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
 {
@@ -150,7 +149,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                     SummarizeWarehouse(lines.Select(l => l.ToWarehouse)),
                     x.BatchStatus, x.TrxDtTime, x.RowVersion);
             }).ToList();
-            return IvMasterOperationResult<FinishedGoodReceiptPage>.Ok(new(result, count, options.Value.PostingEnabled));
+            return IvMasterOperationResult<FinishedGoodReceiptPage>.Ok(new(result, count));
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptPage>(e.Message, e.Code); }
     }
@@ -316,8 +315,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
         var result = new FinishedGoodReceiptDocument { Id = r.BatchId, BatchNo = r.Batch.BatchNo, WorkOrderId = r.WorkOrderId,
             WorkOrderNo = order.WorkOrderNo, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
             Remarks = r.Batch.Remarks, Revision = r.DocumentRevision, RowVersion = r.RowVersion, PostingId = r.PostingId,
-            ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs, PostingEnabled = options.Value.PostingEnabled };
-        if (!options.Value.PostingEnabled && r.Batch.BatchStatus == "NEW") result.ReadinessErrors.Add("FG posting is disabled pending release acceptance.");
+            ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs };
         foreach (var s in r.Sources.OrderBy(x => x.Id))
         {
             var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == s.ProductionBalLotId, ct);

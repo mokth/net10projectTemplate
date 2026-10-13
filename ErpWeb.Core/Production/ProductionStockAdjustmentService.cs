@@ -12,7 +12,6 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Core.Production;
 
@@ -21,7 +20,7 @@ public sealed class ProductionStockAdjustmentService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IProductionStockWriter production,
-    IItemStandardCostResolver standardCosts, IOptions<ProductionStockTransactionOptions> options)
+    IItemStandardCostResolver standardCosts)
     : IProductionStockAdjustmentService
 {
     private const string Menu = MenuCodes.PlanningStockAdjustment;
@@ -231,9 +230,7 @@ public sealed class ProductionStockAdjustmentService(
             Revision = doc.DocumentRevision, RowVersion = doc.RowVersion, PostingId = doc.PostingId,
             SnapshotRevision = doc.SnapshotRevision, SnapshotHash = doc.SnapshotHash,
             ReversalPostingId = doc.ReversalPostingId, CorrectedBatchId = doc.CorrectedBatchId,
-            CanViewCost = canViewCost, PostingEnabled = options.Value.AdjustmentPostingEnabled };
-        if (result.Status == IvBatchStatuses.New && !result.PostingEnabled)
-            result.ReadinessErrors.Add("Production Stock Adjustment posting is disabled pending release acceptance.");
+            CanViewCost = canViewCost };
         foreach (var line in doc.Lines.OrderBy(x => x.Id))
         {
             var pool = await db.ProductionBalLots.AsNoTracking().SingleAsync(x => x.Uid == line.ProductionBalLotId, ct);
@@ -290,7 +287,7 @@ public sealed class ProductionStockAdjustmentService(
                 string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => d.ICode).Distinct()),
                 string.Join(", ", details.Where(d => d.BatchId == x.BatchId).Select(d => $"{d.AdjustmentQty.ToString("+0.0000;-0.0000;0.0000", CultureInfo.InvariantCulture)} {d.SourceUom}")),
                 x.BatchStatus, x.TrxDtTime, x.RowVersion)).ToArray();
-            return IvMasterOperationResult<ProductionStockAdjustmentPage>.Ok(new(summaries, total, options.Value.AdjustmentPostingEnabled));
+            return IvMasterOperationResult<ProductionStockAdjustmentPage>.Ok(new(summaries, total));
         }
         catch (AdjustmentException e) { return Fail<ProductionStockAdjustmentPage>(e.Message, e.Code); }
     }
@@ -461,7 +458,6 @@ public sealed class ProductionStockAdjustmentService(
                 if (replay.SealedAtUtc is null) throw new AdjustmentException("The existing posting is not sealed; reconciliation is required.");
                 return IvMasterOperationResult<ProductionStockAdjustmentDocument>.Ok(await MapAsync(db, await LoadAsync(db, scope, request.Id, false, ct), ct));
             }
-            if (!reversal && !options.Value.AdjustmentPostingEnabled) throw new AdjustmentException("Production Stock Adjustment posting is disabled pending release acceptance.");
             var doc = await LoadAsync(db, scope, request.Id, true, ct); Version(doc, request.ExpectedVersion);
             if (doc.DeletedAtUtc is not null || doc.Batch.DeletedAtUtc is not null) throw new AdjustmentException(TransactionLifecycleGuard.ArchivedError(doc.DeletedAtUtc ?? doc.Batch.DeletedAtUtc, "This adjustment")!);
             if (doc.Batch.TrxType != IvTrxTypes.ProductionStockAdjustment || doc.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))

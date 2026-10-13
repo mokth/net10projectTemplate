@@ -712,14 +712,10 @@
              Closed="@(() => PostConfirmationVisible = false)">
         <BodyContentTemplate>
             <p>Post finished good receipt <strong>FG @Document.BatchNo</strong>?</p>
-            @if (!Document.PostingEnabled)
-            {
-                <p>FG posting is disabled pending release acceptance.</p>
-            }
         </BodyContentTemplate>
         <FooterContentTemplate>
             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PostConfirmationVisible = false)" Enabled="@(!IsSubmitting)" />
-            <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting && Document.PostingEnabled)" />
+            <DxButton Text="Post" RenderStyle="ButtonRenderStyle.Success" Click="@PostAsync" Enabled="@(!IsSubmitting)" />
         </FooterContentTemplate>
     </DxPopup>
 
@@ -1101,10 +1097,6 @@
             @if (Document.Id == 0)
             {
                 <p class="pr-dp-readiness__copy">Save the draft before posting checks are available.</p>
-            }
-            else if (!Document.PostingEnabled)
-            {
-                <p class="pr-dp-readiness__copy">FG posting is disabled pending release acceptance.</p>
             }
             else if (Document.ReadinessErrors.Count > 0)
             {

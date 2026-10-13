@@ -122,11 +122,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         Id > 0
         && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
         && CanPostAccess;
-    protected bool CanPost =>
-        ShowPost
-        && Document.PostingEnabled
-        && !Dirty
-        && !IsSubmitting;
+    protected bool CanPost => ShowPost && !IsSubmitting;
     protected bool CanRollback =>
         Id > 0
         && string.Equals(Document.Status, "POSTED", StringComparison.OrdinalIgnoreCase)
@@ -223,7 +219,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         }
         else
         {
-            Document = new() { EffectiveDate = Clock.Now, Status = "NEW", PostingEnabled = false };
+            Document = new() { EffectiveDate = Clock.Now, Status = "NEW" };
         }
 
         if (CanEditFields)
@@ -384,12 +380,6 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         if (!ShowPost)
         {
             StatusMessage = "Access Denied!!";
-            return;
-        }
-
-        if (!Document.PostingEnabled)
-        {
-            StatusMessage = "FG posting is disabled pending release acceptance.";
             return;
         }
 

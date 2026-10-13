@@ -25,7 +25,6 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
     protected bool FilterPopupVisible;
     protected bool ConfirmVisible;
     protected bool IsApplyingAction;
-    protected bool PostingEnabled;
     protected string ConfirmAction = string.Empty;
     protected string ConfirmMessage = string.Empty;
     protected string ConfirmReason = string.Empty;
@@ -110,7 +109,7 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
         Buttons =
         [
             new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
-            new() { Text = "POST", IConClass = "fas fa-check", Style = "success", Enabled = CanPost && PostingEnabled },
+            new() { Text = "POST", IConClass = "fas fa-check", Style = "success", Enabled = CanPost },
             new() { Text = "ROLLBACK", IConClass = "fas fa-rotate-left", Style = "warning", Enabled = CanRollback }
         ];
     }
@@ -308,15 +307,15 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
 
     private Task BeginPostAsync()
     {
-        if (!CanPost || !PostingEnabled)
+        if (!CanPost)
         {
-            StatusMessage = PostingEnabled ? "Access Denied!!" : "FG posting is disabled pending release acceptance.";
+            StatusMessage = "Access Denied!!";
             return Task.CompletedTask;
         }
 
         if (_selectedRows.Count == 0)
         {
-            StatusMessage = "No Record Selected!";
+            StatusMessage = "Select at least one finished good receipt.";
             return Task.CompletedTask;
         }
 
@@ -396,7 +395,6 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
         await InvokeAsync(() =>
         {
             TotalCount = result.Data.TotalCount;
-            PostingEnabled = result.Data.PostingEnabled;
         });
         return (result.Data.Rows, result.Data.TotalCount);
     }
@@ -409,7 +407,6 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
         var result = await Receipts.SearchAsync(query);
         CompactRows = result.Data?.Rows.ToList() ?? [];
         TotalCount = result.Data?.TotalCount ?? 0;
-        PostingEnabled = result.Data?.PostingEnabled ?? false;
         RebuildButtons();
         if (!result.Succeeded)
             ErrorMessage = result.Message ?? "Unable to load finished good receipts.";

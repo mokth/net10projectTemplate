@@ -34,7 +34,7 @@ public sealed class ProductionStockReturnSourceQuery
     public int Take { get; set; } = 30;
 }
 
-public sealed record ProductionStockReturnPage(IReadOnlyList<ProductionStockReturnSummary> Rows, int TotalCount, bool PostingEnabled);
+public sealed record ProductionStockReturnPage(IReadOnlyList<ProductionStockReturnSummary> Rows, int TotalCount);
 public sealed record ProductionStockReturnSummary(int Id, int BatchNo, long WorkOrderId, string WorkOrderNo,
     string ItemSummary, string LotSummary, string QtySummary, string Status, DateTime EffectiveDate, byte[] RowVersion);
 public sealed record ProductionStockReturnSourcePage(IReadOnlyList<ProductionStockReturnSource> Rows, int TotalCount);
@@ -64,7 +64,6 @@ public sealed class ProductionStockReturnDocument
     public long? ReversalPostingId { get; set; }
     public int? CorrectedBatchId { get; set; }
     public bool CanViewCost { get; set; }
-    public bool PostingEnabled { get; set; }
     public List<string> ReadinessErrors { get; set; } = [];
     public List<ProductionStockReturnLineDto> Lines { get; set; } = [];
 }

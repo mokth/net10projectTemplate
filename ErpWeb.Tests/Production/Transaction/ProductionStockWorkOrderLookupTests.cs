@@ -12,7 +12,6 @@ using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace ErpWeb.Tests.Production.Transaction;
@@ -276,8 +275,7 @@ public sealed class ProductionStockWorkOrderLookupTests : IAsyncDisposable
         new Mock<IIvStockPostingRepository>().Object,
         new ProductionStockWriter(new StockMovementRegistry()),
         new Mock<IIvInventoryHistoryWriter>().Object,
-        new Mock<IIvInventoryPostingService>().Object,
-        Options.Create(new ProductionStockTransactionOptions { ReturnPostingEnabled = true }));
+        new Mock<IIvInventoryPostingService>().Object);
 
     private ProductionStockAdjustmentService CreateAdjustmentService() => new(
         _factory,
@@ -288,8 +286,7 @@ public sealed class ProductionStockWorkOrderLookupTests : IAsyncDisposable
         new BranchStockTransactionLock(),
         _coordinator,
         new ProductionStockWriter(new StockMovementRegistry()),
-        new ItemStandardCostResolver(),
-        Options.Create(new ProductionStockTransactionOptions { AdjustmentPostingEnabled = true }));
+        new ItemStandardCostResolver());
 
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
 

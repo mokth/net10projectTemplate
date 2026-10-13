@@ -81,7 +81,7 @@
                               Click="SaveAsync"
                               Enabled="@(CanSave && !Busy)" />
                 }
-                @if (CanPost)
+                @if (ShowPost)
                 {
                     <DxButton Text="POST"
                               IconCssClass="fa-solid fa-check"

@@ -43,7 +43,7 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
     protected bool CanEditFields => !IsView && Document.Status == "NEW" && (Id == 0 ? CanAdd : CanEdit);
     protected bool Dirty => CanEditFields && _saved.Length > 0 && _saved != JsonSerializer.Serialize(ToRequest());
     protected bool CanSave => CanEditFields && GetUiIssues().Count == 0;
-    protected bool CanPost => Id > 0 && Document.Status == "NEW" && CanPostAccess && Document.PostingEnabled && Document.ReadinessErrors.Count == 0 && !Dirty;
+    protected bool ShowPost => Id > 0 && Document.Status == "NEW" && CanPostAccess;
     protected bool CanRollback => Id > 0 && Document.Status == "POSTED" && CanRollbackAccess;
     protected bool CanDelete => Id > 0 && Document.Status == "NEW" && CanDeleteAccess;
     protected bool CanCorrection => Id > 0 && Document.Status == "REVERSED" && CanAdd;
@@ -309,12 +309,18 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         finally { Busy = false; }
     }
 
-    protected void BeginPost() { if (CanPost) PostConfirmVisible = true; }
+    protected void BeginPost()
+    {
+        if (!ShowPost) { StatusMessage = "Access denied."; return; }
+        if (Dirty) { ErrorMessage = "Save the draft before posting."; return; }
+        PostConfirmVisible = true;
+    }
     protected async Task ConfirmPostAsync() { PostConfirmVisible = false; await PostAsync(); }
 
     private async Task PostAsync()
     {
-        if (!CanPost || Busy) return;
+        if (!ShowPost || Busy) return;
+        if (Dirty) { ErrorMessage = "Save the draft before posting."; return; }
         Busy = true;
         ErrorMessage = null;
         try

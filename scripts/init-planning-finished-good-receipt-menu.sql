@@ -10,4 +10,4 @@ INSERT dbo.MenuPermission(MenuId,PermissionId,SortOrder,IsActive)
 SELECT @menu,p.PermissionId,p.SortOrder,1 FROM dbo.Permission p WHERE p.PermissionCode IN(N'ACCESS',N'ADD',N'EDIT',N'DELETE',N'POST',N'ROLLBACK',N'VIEW_COST')
 AND NOT EXISTS(SELECT 1 FROM dbo.MenuPermission mp WHERE mp.MenuId=@menu AND mp.PermissionId=p.PermissionId);
 COMMIT;
--- Role grants remain explicit deployment choices. This seed never enables FG posting.
+-- Role grants remain explicit deployment choices. This seed does not grant POST/ROLLBACK to any role.

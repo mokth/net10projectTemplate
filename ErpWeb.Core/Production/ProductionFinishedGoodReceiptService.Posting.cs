@@ -47,7 +47,6 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
             if (r.Batch.TrxType != "FG" || r.Batch.BatchStatus != (reversal ? "POSTED" : "NEW"))
                 throw new FgException(reversal ? "Only POSTED FG receipts can be reversed." : "Only NEW FG receipts can be posted.");
-            if (!reversal && !options.Value.PostingEnabled) throw new FgException("FG posting is disabled pending release acceptance.");
             if (reversal && (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)) throw new FgException("Enter a rollback reason of at most 500 characters.");
             var date = reversal ? clock.Now : r.Batch.TrxDtTime;
             if (date > clock.Now) throw new FgException("Future receipt dates are not allowed.");

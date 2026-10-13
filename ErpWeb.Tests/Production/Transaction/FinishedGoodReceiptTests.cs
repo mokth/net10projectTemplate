@@ -13,7 +13,6 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace ErpWeb.Tests.Production.Transaction;
@@ -103,6 +102,17 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var f = await CreateAsync(); if (f is null) return;
         var saved = await f.Service.SaveAsync(f.Draft(6)); Assert.True(saved.Succeeded, saved.Message);
         var request = new FinishedGoodReceiptCommand(saved.Data!.Id, saved.Data.RowVersion, Guid.NewGuid());
+
+        f.CanPostAccess = false;
+        var deniedPost = await f.Service.PostAsync(request);
+        Assert.False(deniedPost.Succeeded);
+        Assert.Contains("Access denied", deniedPost.Message, StringComparison.OrdinalIgnoreCase);
+        f.CanPostAccess = true;
+
+        var newRollback = await f.Service.RollbackAsync(request with { Reason = "Cannot reverse a draft" });
+        Assert.False(newRollback.Succeeded);
+        Assert.Contains("Only POSTED FG receipts", newRollback.Message, StringComparison.OrdinalIgnoreCase);
+
         var posted = await f.Service.PostAsync(request); Assert.True(posted.Succeeded, posted.Message);
         Assert.Equal(72, posted.Data!.Lines.Single().TotalValue);
         var replay = await f.Service.PostAsync(request); Assert.True(replay.Succeeded, replay.Message); Assert.Equal(posted.Data.PostingId, replay.Data!.PostingId);
@@ -110,7 +120,9 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var restrictedReplay = await f.Service.PostAsync(request);
         Assert.True(restrictedReplay.Succeeded, restrictedReplay.Message); Assert.Null(restrictedReplay.Data!.Lines[0].TotalValue);
         f.CanViewCost = true;
-        Assert.False((await f.Service.PostAsync(request with { ExpectedVersion = posted.Data.RowVersion })).Succeeded);
+        var postedAgain = await f.Service.PostAsync(request with { ExpectedVersion = posted.Data.RowVersion, RequestId = Guid.NewGuid() });
+        Assert.False(postedAgain.Succeeded);
+        Assert.Contains("Only NEW FG receipts", postedAgain.Message, StringComparison.OrdinalIgnoreCase);
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
             var pool = await db.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId);
@@ -120,6 +132,11 @@ public sealed class FinishedGoodReceiptSqlServerTests
             Assert.Equal(3, await db.ProductionPoolDependencyRows.CountAsync(x => x.ConsumerMovementId == db.ProductionFinishedGoodFactRows.Where(y => y.BatchId == saved.Data.Id).Select(y => y.ProductionMovementId).Single()));
         }
         var reverseRequest = new FinishedGoodReceiptCommand(posted.Data.Id, posted.Data.RowVersion, Guid.NewGuid(), "Correction");
+        f.CanRollbackAccess = false;
+        var deniedRollback = await f.Service.RollbackAsync(reverseRequest);
+        Assert.False(deniedRollback.Succeeded);
+        Assert.Contains("Access denied", deniedRollback.Message, StringComparison.OrdinalIgnoreCase);
+        f.CanRollbackAccess = true;
         var reversed = await f.Service.RollbackAsync(reverseRequest); Assert.True(reversed.Succeeded, reversed.Message); Assert.Equal("REVERSED", reversed.Data!.Status);
         Assert.True((await f.Service.RollbackAsync(reverseRequest)).Succeeded);
         Assert.Equal(posted.Data.PostingId, (await f.Service.PostAsync(request)).Data!.PostingId);
@@ -571,7 +588,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
-    public async Task List_search_summary_and_posting_flag_are_document_owned()
+    public async Task List_search_summary_is_document_owned()
     {
         var f = await CreateAsync(); if (f is null) return;
         var first = f.Draft(4);
@@ -598,7 +615,6 @@ public sealed class FinishedGoodReceiptSqlServerTests
         Assert.Equal("—", row.LotSummary);
         Assert.Equal("4.0000 EA", row.QtySummary);
         Assert.Equal("Multiple", row.WarehouseSummary);
-        Assert.True(byWo.Data.PostingEnabled);
 
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
@@ -609,11 +625,6 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var after = await f.Service.SearchAsync(new() { SearchText = "REF-A" });
         Assert.Equal("4.0000 EA", after.Data!.Rows.Single(x => x.Id == saved.Data.Id).QtySummary);
 
-        var disabled = f.WithPostingEnabled(false);
-        var loaded = await disabled.GetAsync(saved.Data.Id);
-        Assert.False(loaded.Data!.PostingEnabled);
-        Assert.Contains(loaded.Data.ReadinessErrors, x => x.Contains("disabled", StringComparison.OrdinalIgnoreCase));
-        Assert.False((await disabled.PostAsync(new(saved.Data.Id, saved.Data.RowVersion, Guid.NewGuid()))).Succeeded);
     }
 
     [Fact]
@@ -700,7 +711,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
         private readonly long _route, _operation;
         private readonly string _branch;
         public bool FailAfterProduction;
-        public bool CanViewCost = true, AllowAccess = true;
+        public bool CanViewCost = true, AllowAccess = true, CanPostAccess = true, CanRollbackAccess = true;
         public ProductionFinishedGoodReceiptService Service { get; }
         private readonly StockPostingCoordinator _coordinator;
         public Fixture(TestDbContextFactory factory, string company, long order, long pool, long route, long operation, string branch = "HQ")
@@ -709,27 +720,16 @@ public sealed class FinishedGoodReceiptSqlServerTests
             Factory = factory; Company = company; OrderId = order; PoolId = pool; _route = route; _operation = operation;
             var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
             var access = new Mock<IAccessRightService>(); access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns((string _, string permission, CancellationToken _) => Task.FromResult(AllowAccess && (permission != PermissionCodes.ViewCost || CanViewCost)));
+                .Returns((string _, string permission, CancellationToken _) => Task.FromResult(AllowAccess
+                    && (permission != PermissionCodes.ViewCost || CanViewCost)
+                    && (permission != PermissionCodes.Post || CanPostAccess)
+                    && (permission != PermissionCodes.Rollback || CanRollbackAccess)));
             var numbers = new Mock<IRunningNumberService>(); var next = 0;
             numbers.Setup(x => x.GetNextAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(() => Interlocked.Increment(ref next));
             var clock = new Mock<ICurrentDateService>(); clock.SetupGet(x => x.Now).Returns(BusinessDate);
             _coordinator = new(factory, tenant, new BranchStockTransactionLock(), new StockPeriodGuard(), new NoActiveStockFreezeGuard());
             Service = new(factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
-                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(), Options.Create(new FinishedGoodReceiptOptions { PostingEnabled = true }));
-        }
-        public ProductionFinishedGoodReceiptService WithPostingEnabled(bool enabled)
-        {
-            var tenant = InventoryTenantTestHelper.CreateTenantContext(company: Company, branch: _branch);
-            var access = new Mock<IAccessRightService>();
-            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns((string _, string permission, CancellationToken _) => Task.FromResult(AllowAccess && (permission != PermissionCodes.ViewCost || CanViewCost)));
-            var numbers = new Mock<IRunningNumberService>(); var next = 100;
-            numbers.Setup(x => x.GetNextAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => Interlocked.Increment(ref next));
-            var clock = new Mock<ICurrentDateService>(); clock.SetupGet(x => x.Now).Returns(BusinessDate);
-            return new(Factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
-                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(),
-                Options.Create(new FinishedGoodReceiptOptions { PostingEnabled = enabled }));
+                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter());
         }
         public FinishedGoodReceiptSaveRequest Draft(decimal qty) => new() { WorkOrderId = OrderId, EffectiveDate = BusinessDate,
             Lines = [new() { ProductionBalLotId = PoolId, Quantity = qty, Warehouse = "WH" }] };

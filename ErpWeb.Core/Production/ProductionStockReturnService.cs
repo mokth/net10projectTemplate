@@ -13,7 +13,6 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Core.Production;
 
@@ -21,8 +20,7 @@ public sealed partial class ProductionStockReturnService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
-    IIvInventoryHistoryWriter historyWriter, IIvInventoryPostingService inventoryPosting,
-    IOptions<ProductionStockTransactionOptions> options) : IProductionStockReturnService
+    IIvInventoryHistoryWriter historyWriter, IIvInventoryPostingService inventoryPosting) : IProductionStockReturnService
 {
     private const string Menu = MenuCodes.PlanningStockReturn;
     private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) => IvMasterOperationResult<T>.Fail(code, message);
@@ -345,7 +343,7 @@ public sealed partial class ProductionStockReturnService(
             var result = page.Select(x => new ProductionStockReturnSummary(x.BatchId, x.BatchNo, x.WorkOrderId, x.WorkOrderNo,
                 Summarize(lookup[x.BatchId].Select(y => y.ICode)), Summarize(lookup[x.BatchId].Select(y => y.ToLotNo)),
                 SummarizeQty(lookup[x.BatchId].Select(y => (Qty: (decimal?)y.RequestedQty, Uom: (string?)y.SourceUom))), x.BatchStatus, x.TrxDtTime, x.RowVersion)).ToArray();
-            return IvMasterOperationResult<ProductionStockReturnPage>.Ok(new(result, count, options.Value.ReturnPostingEnabled));
+            return IvMasterOperationResult<ProductionStockReturnPage>.Ok(new(result, count));
         }
         catch (ReturnException e) { return Fail<ProductionStockReturnPage>(e.Message, e.Code); }
     }
@@ -373,12 +371,9 @@ public sealed partial class ProductionStockReturnService(
             WorkOrderStatus = order.Status, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
             Remarks = r.Batch.Remarks, Revision = r.DocumentRevision, RowVersion = r.RowVersion, PostingId = r.PostingId,
             SnapshotRevision = r.SnapshotRevision, SnapshotHash = r.SnapshotHash,
-            ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs,
-            PostingEnabled = options.Value.ReturnPostingEnabled };
+            ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs };
         if (result.Status == IvBatchStatuses.New)
         {
-            if (!result.PostingEnabled)
-                result.ReadinessErrors.Add("Production Stock Return posting is disabled pending release acceptance.");
             if (WorkOrderError(order, r.SnapshotRevision, r.SnapshotHash) is { } orderError)
                 result.ReadinessErrors.Add(orderError);
         }
