@@ -1,0 +1,26 @@
+@if (Visible)
+{
+    <section class="sdoc-next-action" aria-label="Next action">
+        <div class="sdoc-next-action__copy">
+            <strong>Next action</strong>
+            @if (!string.IsNullOrWhiteSpace(Hint))
+            {
+                <span>@Hint</span>
+            }
+        </div>
+        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                  Text="@ActionText"
+                  IconCssClass="@IconCssClass"
+                  Click="@OnClick"
+                  Enabled="@Enabled" />
+    </section>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public string ActionText { get; set; } = string.Empty;
+    [Parameter] public string? IconCssClass { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public bool Enabled { get; set; } = true;
+    [Parameter] public EventCallback OnClick { get; set; }
+}

@@ -3,9 +3,11 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
+using ErpWeb.UI.Inventory.Lookups;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 
 namespace ErpWeb.UI.Sales.Transactions;
 
@@ -30,6 +32,7 @@ public partial class SaSo : PageBase, IDisposable
     protected bool ConcurrencyVisible;
     protected string? PopupError;
     protected bool CanEditPermission;
+    protected bool CanCreateDoPermission;
     protected string SoNoDisplay = "AUTO";
     protected short CustRelDisplay = 1;
     protected short LastCustRelDisplay = 1;
@@ -81,6 +84,10 @@ public partial class SaSo : PageBase, IDisposable
     protected Dictionary<string, string> ValidationErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     private SaSoLineVm? _editingLine;
+    private IvStockMasterPicker? _quickAddItemPicker;
+    private DxSpinEdit<decimal>? _quickAddQtyEditor;
+    private bool _quickAddActive;
+    private bool _popupAdvancedExpanded;
     private string? _loadedKey;
     private bool _isDirty;
     private bool _disposed;
@@ -127,6 +134,17 @@ public partial class SaSo : PageBase, IDisposable
     protected int? ShipToLine => _shipToLine;
     protected SaSoLineVm Popup { get; set; } = new();
     protected bool PopupDiscountIsAmount { get; set; }
+    protected bool ShowPopupAdvanced => _popupAdvancedExpanded || PopupAdvancedRequired;
+    protected bool PopupAdvancedRequired =>
+        !string.IsNullOrWhiteSpace(PopupError)
+        || !string.IsNullOrWhiteSpace(_priceBlockMessage)
+        || ValidationErrors.Keys.Any(key => key.StartsWith("Lines[", StringComparison.OrdinalIgnoreCase))
+        || IsPriceOverridden()
+        || IsPopupDrControlled
+        || QuickAddNeedsFullEditor;
+    protected string PopupAdvancedToggleText => PopupAdvancedRequired
+        ? "Details expanded for review"
+        : ShowPopupAdvanced ? "Fewer details" : "More details";
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -156,11 +174,49 @@ public partial class SaSo : PageBase, IDisposable
         && !IsClosedStatus
         && !IsHistoricalRevision
         && !string.IsNullOrWhiteSpace(SoNo);
+    protected bool CanShowCreateDoAction =>
+        !string.IsNullOrWhiteSpace(SoNo)
+        && IsCurrentDocument
+        && !IsHistoricalRevision
+        && (string.Equals(StatusDisplay, SaSoStatuses.New, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(StatusDisplay, SaSoStatuses.Shipped, StringComparison.OrdinalIgnoreCase))
+        && CanCreateDoPermission;
+    protected bool CreateDoActionEnabled => CanShowCreateDoAction && !_isDirty && !IsSubmitting;
+    protected string CreateDoActionHint => _isDirty
+        ? "Save changes before creating the Delivery Order."
+        : "Start a delivery order with the current remaining SO quantities.";
     protected string PageHeading => IsNewMode ? "New sales order" : IsEditMode ? "Edit sales order" : IsReviseMode ? "Revise sales order" : "View sales order";
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : IsReviseMode ? "Revise" : "View";
     protected string LineCountLabel => Lines.Count == 1 ? "1 line" : $"{Lines.Count} lines";
     protected bool HasCustomer => !string.IsNullOrWhiteSpace(CustCode);
     protected bool CanMutateLines => CanEditDocument && HasCustomer && CurrRateValid && !IsSubmitting;
+    protected bool CanQuickAdd =>
+        CanMutateLines
+        && !PopupVisible
+        && _editingLine is null
+        && !string.IsNullOrWhiteSpace(Popup.ICode)
+        && Popup.OrderQty > 0m
+        && Popup.DeliveryDate is not null
+        && !QuickAddNeedsFullEditor;
+    protected bool QuickAddNeedsFullEditor =>
+        !string.IsNullOrWhiteSpace(_priceBlockMessage)
+        || IsPriceOverridden()
+        || (Popup.StockControl && string.IsNullOrWhiteSpace(Popup.Warehouse))
+        || string.Equals(Popup.MfgType, "MAKE", StringComparison.OrdinalIgnoreCase)
+        || (TaxGroupRequired && string.IsNullOrWhiteSpace(Popup.TaxGrCode))
+        || (Lines.Count > 0 && Popup.IsInclusive != Lines[0].IsInclusive);
+    protected string QuickAddReviewMessage => !string.IsNullOrWhiteSpace(_priceBlockMessage)
+        ? _priceBlockMessage
+        : Popup.StockControl && string.IsNullOrWhiteSpace(Popup.Warehouse)
+            ? "Choose a warehouse in the full line editor before adding this stock item."
+            : string.Equals(Popup.MfgType, "MAKE", StringComparison.OrdinalIgnoreCase)
+                ? "Review the production and delivery details in the full line editor."
+                : TaxGroupRequired && string.IsNullOrWhiteSpace(Popup.TaxGrCode)
+                    ? "Review the line tax group in the full line editor."
+                    : "Review this line in the full editor before adding it.";
+    protected string QuickAddSummary => string.IsNullOrWhiteSpace(Popup.ICode)
+        ? "Select an item to resolve price and defaults."
+        : $"Unit price {Currency} {Popup.UnitPrice:n4} · {Popup.Warehouse ?? "No warehouse"} · {Popup.TaxGrCode ?? "No tax group"}";
     protected bool TaxGroupRequired => _taxable == true;
     protected bool CanSave =>
         CanEditDocument
@@ -174,6 +230,14 @@ public partial class SaSo : PageBase, IDisposable
     protected bool IsEditingLine => _editingLine is not null;
     protected bool IsPopupDrControlled => IsDeliveryRequestControlled(_editingLine);
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
+
+    protected void TogglePopupAdvanced()
+    {
+        if (!PopupAdvancedRequired)
+        {
+            _popupAdvancedExpanded = !_popupAdvancedExpanded;
+        }
+    }
     protected string PopupPrimaryText => IsEditingLine ? "Update line" : "Add line";
     protected decimal PopupAllocatedFloor =>
         _editingLine is null
@@ -228,6 +292,7 @@ public partial class SaSo : PageBase, IDisposable
         PopupVisible = false;
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.SalesOrder, PermissionCodes.Edit);
+        CanCreateDoPermission = await AccessRights.CanAsync(MenuCodes.SalesDeliveryOrder, PermissionCodes.Add);
         // Phase 4: without this the price control is read-only. The SERVER enforces the same rule, so
         // this only governs what the operator can attempt, not what is accepted.
         CanOverridePrice = await AccessRights.CanAsync(MenuCodes.SalesOrder, PermissionCodes.PriceOverride);
@@ -289,6 +354,7 @@ public partial class SaSo : PageBase, IDisposable
         ApplyDocument(result.Document);
         await ApplyCustomerDefaultsAsync(result.Document.CustCode, addressApply: false, seq: _customerApplySeq);
         RecalcDocument();
+        ResetQuickAddDraft();
         IsLoading = false;
     }
 
@@ -329,6 +395,7 @@ public partial class SaSo : PageBase, IDisposable
         _discountMethod = null;
         _decPoint = false;
         _taxable = null;
+        ResetQuickAddDraft();
     }
 
     private void ClearAddresses()
@@ -720,19 +787,95 @@ public partial class SaSo : PageBase, IDisposable
             return;
         }
 
+        ResetQuickAddDraft();
+        _quickAddActive = false;
+        PopupVisible = true;
+    }
+
+    private void ResetQuickAddDraft()
+    {
         _editingLine = null;
+        _popupAdvancedExpanded = false;
         Popup = new SaSoLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
             // first active warehouse as the fallback (applied in OnPopupItemSelectedAsync).
             Warehouse = null,
+            OrderQty = 1m,
+            DeliveryDate = SoDate.Date,
             IsInclusive = Lines.FirstOrDefault()?.IsInclusive ?? false
         };
         PopupDiscountIsAmount = false;
         PopupError = null;
         _priceBlockMessage = null;
         _autoDiscountSlots = null;
-        PopupVisible = true;
+        _quickAddActive = true;
+    }
+
+    protected async Task OnQuickAddItemSelectedAsync(IvStockMasterLookupRow item)
+    {
+        _quickAddActive = true;
+        await OnPopupItemSelectedAsync(item);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (QuickAddNeedsFullEditor)
+        {
+            _popupAdvancedExpanded = true;
+            PopupError = QuickAddReviewMessage;
+            PopupVisible = true;
+            return;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+        if (_quickAddQtyEditor is not null)
+        {
+            await _quickAddQtyEditor.FocusAsync();
+        }
+    }
+
+    protected Task OnQuickAddDeliveryDateChanged(DateTime? date)
+    {
+        Popup.DeliveryDate = date?.Date;
+        return Task.CompletedTask;
+    }
+
+    protected async Task OnQuickAddQuantityKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await OnQuickAddAsync();
+        }
+    }
+
+    protected async Task OnQuickAddAsync()
+    {
+        if (!CanMutateLines || _editingLine is not null)
+        {
+            return;
+        }
+
+        if (!CanQuickAdd)
+        {
+            if (string.IsNullOrWhiteSpace(Popup.ICode))
+            {
+                return;
+            }
+
+            PopupError = QuickAddNeedsFullEditor
+                ? QuickAddReviewMessage
+                : Popup.OrderQty <= 0m
+                    ? "Order quantity must be greater than zero."
+                    : "Select a delivery date before adding this line.";
+            PopupVisible = true;
+            return;
+        }
+
+        _quickAddActive = true;
+        await OnPopupSave();
     }
 
     protected void EditLine(SaSoLineVm line)
@@ -743,6 +886,7 @@ public partial class SaSo : PageBase, IDisposable
         }
 
         _editingLine = line;
+        _popupAdvancedExpanded = true;
         Popup = line.Clone();
 
         // Phase 4: an EXISTING line has no stored engine baseline unless it was ALREADY overridden, so
@@ -1111,18 +1255,47 @@ public partial class SaSo : PageBase, IDisposable
         }
     }
 
-    protected void OnPopupSave()
+    protected async Task OnPopupSave()
+    {
+        var quickAdd = _quickAddActive;
+        if (!TrySavePopupLine())
+        {
+            if (quickAdd)
+            {
+                PopupVisible = true;
+            }
+
+            return;
+        }
+
+        PopupVisible = false;
+        ResetQuickAddDraft();
+        if (!quickAdd)
+        {
+            _quickAddActive = false;
+            return;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+        if (_quickAddItemPicker is not null)
+        {
+            await _quickAddItemPicker.FocusAsync();
+        }
+    }
+
+    private bool TrySavePopupLine()
     {
         if (string.IsNullOrWhiteSpace(Popup.ICode))
         {
             PopupError = "Item is required.";
-            return;
+            return false;
         }
 
         if (Popup.OrderQty <= 0m)
         {
             PopupError = "Order quantity must be greater than zero.";
-            return;
+            return false;
         }
 
         // The engine refused to price this line. Saving it would persist a price the pricing rules
@@ -1139,7 +1312,7 @@ public partial class SaSo : PageBase, IDisposable
             else
             {
                 PopupError = _priceBlockMessage;
-                return;
+                return false;
             }
         }
 
@@ -1148,25 +1321,25 @@ public partial class SaSo : PageBase, IDisposable
         if (IsPriceOverridden() && string.IsNullOrWhiteSpace(Popup.OverrideReason))
         {
             PopupError = SaPriceOverridePolicy.ReasonRequiredMessage;
-            return;
+            return false;
         }
 
         if (_editingLine is not null && Popup.OrderQty < PopupAllocatedFloor)
         {
             PopupError = $"Order quantity cannot be lower than allocated quantity {PopupAllocatedFloor:n4}.";
-            return;
+            return false;
         }
 
         if (Popup.Etd is { } etd && Popup.Eta is { } eta && etd.Date > eta.Date)
         {
             PopupError = "ETD cannot be after ETA.";
-            return;
+            return false;
         }
 
         if (Popup.Eta is { } etaDate && Popup.DeliveryDate is { } deliveryDate && etaDate.Date > deliveryDate.Date)
         {
             PopupError = "ETA cannot be after delivery date.";
-            return;
+            return false;
         }
 
         Popup.DeliveryDate = Popup.DeliveryDate?.Date;
@@ -1179,7 +1352,7 @@ public partial class SaSo : PageBase, IDisposable
             if (Popup.IsInclusive != expected)
             {
                 PopupError = "ST000032: All lines must use the same tax type (inclusive or exclusive).";
-                return;
+                return false;
             }
         }
 
@@ -1198,7 +1371,7 @@ public partial class SaSo : PageBase, IDisposable
 
         RecalcDocument();
         MarkDirty();
-        PopupVisible = false;
+        return true;
     }
 
     protected async Task OnSaveAsync()
@@ -1231,12 +1404,55 @@ public partial class SaSo : PageBase, IDisposable
             }
 
             _isDirty = false;
-            Navigation.NavigateTo("/sales/sales-orders");
+            var savedSoNo = result.Document?.SoNo ?? result.SoNo ?? SoNo;
+            if (string.IsNullOrWhiteSpace(savedSoNo))
+            {
+                ErrorMessage = "Sales order saved, but its document number was not returned. Reload the list to continue.";
+                return;
+            }
+
+            if (IsNewMode || IsReviseMode)
+            {
+                Navigation.NavigateTo($"/sales/sales-orders/edit/{Uri.EscapeDataString(savedSoNo)}");
+                return;
+            }
+
+            if (result.Document is not null)
+            {
+                ApplyDocument(result.Document);
+                RecalcDocument();
+            }
+
+            StatusMessage = "Sales order saved.";
         }
         finally
         {
             IsSubmitting = false;
         }
+    }
+
+    protected void OnCreateDeliveryOrder()
+    {
+        if (!CanCreateDoPermission || string.IsNullOrWhiteSpace(SoNo))
+        {
+            return;
+        }
+
+        if (_isDirty)
+        {
+            StatusMessage = "Save changes before creating the Delivery Order.";
+            return;
+        }
+
+        if (!IsCurrentDocument
+            || IsHistoricalRevision
+            || (!string.Equals(StatusDisplay, SaSoStatuses.New, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(StatusDisplay, SaSoStatuses.Shipped, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"/sales/delivery-orders/new?sourceSo={Uri.EscapeDataString(SoNo)}");
     }
 
     protected Task OnCancelAsync()

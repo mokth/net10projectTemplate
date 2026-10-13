@@ -31,7 +31,7 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
     protected ProductionStockReturnDocument Document = new() { EffectiveDate = DateTime.Today, Status = "NEW" };
     protected List<ProductionStockReturnSource> Sources = [];
     protected List<ReturnEditor> Editors = [];
-    protected string SourceSearch = "";
+    protected string SourceSearch = string.Empty;
     protected string RollbackReason = "";
     protected bool BusyLoading = true, Busy, CanAdd, CanEdit, CanDeleteAccess, CanPostAccess, CanRollbackAccess;
     protected bool RollbackVisible, SourcePickerVisible, SourceLoading, ChangeWorkOrderConfirmVisible, PostConfirmVisible, DeleteConfirmVisible;
@@ -52,6 +52,8 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
     protected bool CanAddMoreSources => Editors.Count < 100;
     protected int SourceTotalPages => Math.Max(1, (int)Math.Ceiling(SourceTotalCount / (double)SourcePageSize));
     protected string SourcePageLabel => $"{SourceTotalCount:N0} source pools · page {Math.Min(SourcePage + 1, SourceTotalPages)} / {SourceTotalPages}";
+    protected int LineCount => IsView ? Document.Lines.Count : Editors.Count;
+    protected List<string> UiIssues => GetUiIssues();
     protected string Heading => Id == 0 ? "New Production Stock Return" : CanEditFields ? "Edit Production Stock Return" : "View Production Stock Return";
 
     protected override async Task OnParametersSetAsync()
@@ -193,6 +195,17 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         SourceSearch = value ?? "";
         SourcePage = 0;
         return LoadSourcesAsync(debounce: true);
+    }
+
+    protected async Task OpenSourcePickerAsync()
+    {
+        if (!CanEditFields || Busy || !CanAddMoreSources || Document.WorkOrderId <= 0) return;
+
+        // Start with an unfiltered list each time the picker opens, then refresh its availability.
+        SourceSearch = string.Empty;
+        SourcePage = 0;
+        SourcePickerVisible = true;
+        await LoadSourcesAsync(debounce: false);
     }
 
     protected Task PreviousSourcePageAsync()
@@ -428,6 +441,7 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
     protected sealed class ReturnEditor(ProductionStockReturnSource source, decimal quantity, string reason, string? remarks)
     {
         public ProductionStockReturnSource Source { get; } = source;
+        public long ProductionBalLotId => Source.ProductionBalLotId;
         public decimal Quantity { get; set; } = quantity;
         public string Reason { get; set; } = reason;
         public string? Remarks { get; set; } = remarks;

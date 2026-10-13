@@ -124,6 +124,55 @@ public sealed class MachineScheduleRescheduleServiceTests
     }
 
     [Fact]
+    public async Task Rescheduling_can_move_an_operation_earlier_than_the_current_work_order_start()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync(
+            start: new DateTime(2026, 10, 1, 10, 30, 0));
+        var request = WithRequestedStart(seeded.Request, new DateTime(2026, 10, 1, 8, 0, 0));
+
+        var preview = await fixture.Service.PreviewRescheduleAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), preview.Data.ProposedStart);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), preview.Data.ProposedCompletion);
+        Assert.Contains(preview.Data.Changes, change =>
+            change.BeforeStart == new DateTime(2026, 10, 1, 10, 30, 0)
+            && change.AfterStart == new DateTime(2026, 10, 1, 8, 0, 0));
+
+        var committed = await fixture.Service.CommitRescheduleAsync(
+            WithToken(request, preview.Data.PreviewToken));
+
+        Assert.True(committed.Succeeded, committed.Message);
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == request.WorkOrderId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+        var allocation = Assert.Single(await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderMachineId == machine.Uid).ToListAsync());
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), order.PlannedStartDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), machine.PlannedStartDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), allocation.StartDateTime);
+        Assert.Equal(1, order.ScheduleRevision);
+        Assert.Equal(1, machine.ScheduleRevision);
+    }
+
+    [Fact]
+    public async Task Preview_blocks_when_the_requested_start_produces_no_schedule_change()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        var request = WithRequestedStart(seeded.Request, new DateTime(2026, 10, 1, 8, 0, 0));
+
+        var preview = await fixture.Service.PreviewRescheduleAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.False(preview.Data!.CanCommit);
+        Assert.Contains(preview.Data.Blockers,
+            blocker => blocker.Contains("no schedule change", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Backward_scheduled_work_order_remains_locked_for_reschedule()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -1177,5 +1226,21 @@ public sealed class MachineScheduleRescheduleServiceTests
         ExpectedMachineRowVersion = request.ExpectedMachineRowVersion,
         Reason = request.Reason,
         PreviewToken = previewToken
+    };
+
+    private static MachineScheduleRescheduleRequest WithRequestedStart(
+        MachineScheduleRescheduleRequest request,
+        DateTime requestedStart) => new()
+    {
+        WorkOrderId = request.WorkOrderId,
+        OperationId = request.OperationId,
+        WorkOrderMachineId = request.WorkOrderMachineId,
+        MachineCode = request.MachineCode,
+        RequestedStart = requestedStart,
+        ExpectedWorkOrderScheduleRevision = request.ExpectedWorkOrderScheduleRevision,
+        ExpectedWorkOrderRowVersion = request.ExpectedWorkOrderRowVersion,
+        ExpectedMachineScheduleRevision = request.ExpectedMachineScheduleRevision,
+        ExpectedMachineRowVersion = request.ExpectedMachineRowVersion,
+        Reason = request.Reason
     };
 }

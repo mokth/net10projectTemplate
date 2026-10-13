@@ -21,6 +21,6 @@
                   OpenSearch="@OpenSearchAsync" />
 
 <PrProductionStockWorkOrderSearchPopup @bind-Visible="_popupVisible"
-                                       InitialSearchText="_popupSearchText"
+                                       InitialSearchText="@_popupSearchText"
                                        SearchAsync="@SearchAsync"
                                        Selected="@OnPopupSelectedAsync" />

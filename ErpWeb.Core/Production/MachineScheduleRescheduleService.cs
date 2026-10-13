@@ -431,7 +431,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             .Select(StepCompletion)
             .Where(x => x.HasValue)
             .Select(x => x!.Value)
-            .DefaultIfEmpty(order.PlannedStartDateTime)
+            .DefaultIfEmpty(requestedStart)
             .Max();
 
         var stages = order.RouteSteps.GroupBy(x => x.StageSequence).OrderBy(x => x.Key).ToList();
@@ -533,10 +533,16 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                 groupAnchor = stageCompletions.Max();
         }
 
-        if (blockers.Count > 0 || placements.Count == 0)
+        var hasScheduleChanges = placements.Any(x =>
+        {
+            var previous = before[x.Operation.Uid];
+            return previous.Start != x.Operation.PlannedStartDateTime
+                || previous.Completion != x.Operation.PlannedCompletionDateTime;
+        });
+        if (blockers.Count > 0 || !hasScheduleChanges)
         {
             if (blockers.Count == 0)
-                blockers.Add("The requested start produced no schedule change.");
+                blockers.Add("The requested start produces no schedule change.");
             return ScheduleProposal.Blocked(EmptyPreview(order, request, blockers, warnings));
         }
 

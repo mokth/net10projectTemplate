@@ -41,7 +41,7 @@
         </DxPopup>
         @if (ConfirmVisible)
         {
-            <DxPopup Visible="true" VisibleChanged="@(v => ConfirmVisible = v)" HeaderText="@(ConfirmAction + " Production Stock Return")" Width="min(520px, 95vw)" CloseOnOutsideClick="false">
+            <DxPopup Visible="true" ShowFooter="true" VisibleChanged="@(v => ConfirmVisible = v)" HeaderText="@(ConfirmAction + " Production Stock Return")" Width="min(520px, 95vw)" CloseOnOutsideClick="false">
                 <BodyContentTemplate><div class="common-popup__body"><p>@ConfirmCopy</p>@if (ConfirmAction == "ROLLBACK") { <DxMemo @bind-Text="RollbackReason" Rows="3" NullText="Rollback reason (required)" CssClass="w-100" /> }</div></BodyContentTemplate>
                 <FooterContentTemplate><div class="common-popup__footer"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => ConfirmVisible = false)" /><DxButton Text="@ConfirmAction" RenderStyle="@(ConfirmAction == "ROLLBACK" ? ButtonRenderStyle.Warning : ButtonRenderStyle.Success)" Click="ConfirmAsync" Enabled="@(!Busy)" /></div></FooterContentTemplate>
             </DxPopup>

@@ -37,6 +37,13 @@
                 </div>
             </header>
 
+            <SaDocNextActionBar Visible="@CanShowCreateDoAction"
+                                ActionText="CREATE DELIVERY ORDER"
+                                IconCssClass="fa-solid fa-truck"
+                                Hint="@CreateDoActionHint"
+                                Enabled="@CreateDoActionEnabled"
+                                OnClick="@OnCreateDeliveryOrder" />
+
             @if (Revisions.Count > 0)
             {
                 <section class="sdoc-master saso-revisions">
@@ -427,6 +434,52 @@
                     }
                 </div>
 
+                @if (CanEditDocument && HasCustomer && CurrRateValid)
+                {
+                    <section class="saso-quick-add" aria-label="Quick add sales order line">
+                        <h3 class="saso-quick-add__title">Quick Add</h3>
+                        <div class="saso-quick-add__grid">
+                            <div class="saso-quick-add__item">
+                                <label>Item</label>
+                                <IvStockMasterPicker @ref="_quickAddItemPicker"
+                                                     ICode="@Popup.ICode"
+                                                     Selected="@OnQuickAddItemSelectedAsync"
+                                                     Cleared="@OnPopupItemClearedAsync"
+                                                     Enabled="@CanMutateLines"
+                                                     NullText="Search item"
+                                                     InputCssClass="required-field" />
+                            </div>
+                            <div class="saso-quick-add__quantity" @onkeydown="OnQuickAddQuantityKeyDown">
+                                <label>Qty</label>
+                                <DxSpinEdit @ref="_quickAddQtyEditor"
+                                            Value="@Popup.OrderQty"
+                                            ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
+                                            ValueExpression="@(() => Popup.OrderQty)"
+                                            Increment="0.0001m"
+                                            ShowSpinButtons="false"
+                                            Enabled="@CanMutateLines" />
+                            </div>
+                            <div class="saso-quick-add__date">
+                                <label>Delivery date</label>
+                                <DxDateEdit T="DateTime?"
+                                            Date="@Popup.DeliveryDate"
+                                            DateChanged="@((DateTime? date) => OnQuickAddDeliveryDateChanged(date))"
+                                            DateExpression="@(() => Popup.DeliveryDate)"
+                                            DisplayFormat="dd/MM/yyyy"
+                                            Enabled="@CanMutateLines" />
+                            </div>
+                            <div class="saso-quick-add__summary" role="status" aria-live="polite">
+                                @QuickAddSummary
+                            </div>
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="ADD"
+                                      IconCssClass="fa-solid fa-plus"
+                                      Click="@OnQuickAddAsync"
+                                      Enabled="@CanQuickAdd" />
+                        </div>
+                    </section>
+                }
+
                 @FieldError("Lines")
 
                 <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@Lines"
@@ -605,20 +658,31 @@
                                 }
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="" ColSpanMd="12">
                             <Template>
-                                <DxComboBox Data="@Warehouses"
-                                            TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
-                                            ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
-                                            @bind-Value="@Popup.Warehouse"
-                                            Enabled="@(CanEditDocument && !IsPopupDrControlled)" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                          Text="@PopupAdvancedToggleText"
+                                          Click="@TogglePopupAdvanced"
+                                          Enabled="@(!PopupAdvancedRequired)" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Customer item" ColSpanMd="6">
-                            <Template>
-                                <DxTextBox @bind-Text="@Popup.CustICode" Enabled="@CanEditDocument" />
-                            </Template>
-                        </DxFormLayoutItem>
+                        @if (ShowPopupAdvanced)
+                        {
+                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                                <Template>
+                                    <DxComboBox Data="@Warehouses"
+                                                TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                                ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                                @bind-Value="@Popup.Warehouse"
+                                                Enabled="@(CanEditDocument && !IsPopupDrControlled)" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Customer item" ColSpanMd="6">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.CustICode" Enabled="@CanEditDocument" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
                         <DxFormLayoutItem Caption="Order qty" ColSpanMd="3">
                             <Template>
                                 <DxSpinEdit Value="@Popup.OrderQty"
@@ -659,24 +723,6 @@
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="ETD" ColSpanMd="4">
-                            <Template>
-                                <DxDateEdit T="DateTime?"
-                                            @bind-Date="@Popup.Etd"
-                                            DisplayFormat="dd/MM/yyyy"
-                                            Enabled="@CanEditDocument"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="ETA" ColSpanMd="4">
-                            <Template>
-                                <DxDateEdit T="DateTime?"
-                                            @bind-Date="@Popup.Eta"
-                                            DisplayFormat="dd/MM/yyyy"
-                                            Enabled="@CanEditDocument"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                            </Template>
-                        </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
                             <Template>
                                 @* Phase 4: an operator without PRICE_OVERRIDE sees the resolved price read-only. *@
@@ -689,116 +735,137 @@
                                 </SaPriceInfoTrigger>
                             </Template>
                         </DxFormLayoutItem>
-                        @if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && CanOverridePrice)
+                        @if (ShowPopupAdvanced)
                         {
-                            <DxFormLayoutItem Caption="" ColSpanMd="8">
+                            <DxFormLayoutItem Caption="ETD" ColSpanMd="4">
                                 <Template>
-                                    <p class="sdoc-field-hint">Enter a positive unit price and an override reason to continue.</p>
+                                    <DxDateEdit T="DateTime?"
+                                                @bind-Date="@Popup.Etd"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@CanEditDocument"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="ETA" ColSpanMd="4">
+                                <Template>
+                                    <DxDateEdit T="DateTime?"
+                                                @bind-Date="@Popup.Eta"
+                                                DisplayFormat="dd/MM/yyyy"
+                                                Enabled="@CanEditDocument"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (!string.IsNullOrWhiteSpace(_priceBlockMessage) && CanOverridePrice)
+                            {
+                                <DxFormLayoutItem Caption="" ColSpanMd="8">
+                                    <Template>
+                                        <p class="sdoc-field-hint">Enter a positive unit price and an override reason to continue.</p>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            @if (IsPriceOverridden())
+                            {
+                                <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
+                                    <Template>
+                                        <DxTextBox @bind-Text="@Popup.OverrideReason"
+                                                   maxlength="100"
+                                                   InputCssClass="required-field" />
+                                        <p class="sdoc-field-hint">
+                                            Price changed from the resolved @Popup.OriginalUnitPrice?.ToString("n4").
+                                            The original is recorded on the line.
+                                        </p>
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
+                                <Template>
+                                    <DxCheckBox Checked="@Popup.IsInclusive"
+                                                CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))"
+                                                CheckedExpression="@(() => Popup.IsInclusive)"
+                                                Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Line tax" ColSpanMd="6">
+                                <Template>
+                                    <DxComboBox Data="@TaxGroups"
+                                                TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
+                                                ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
+                                                Value="@Popup.TaxGrCode"
+                                                ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
+                                                ValueExpression="@(() => Popup.TaxGrCode)"
+                                                SearchMode="ListSearchMode.AutoSearch"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                Enabled="@CanEditDocument"
+                                                NullText="Use header tax"
+                                                CssClass="w-100" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Discount mode" ColSpanMd="12">
+                                <Template>
+                                    <div class="sdoc-discount-mode">
+                                        <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)"
+                                                  Text="Percent"
+                                                  Click="@(() => OnPopupDiscountModeChanged(false))"
+                                                  Enabled="@CanEditDocument" />
+                                        <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
+                                                  Text="Amount"
+                                                  Click="@(() => OnPopupDiscountModeChanged(true))"
+                                                  Enabled="@CanEditDocument" />
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+                            @if (PopupDiscountIsAmount)
+                            {
+                                <DxFormLayoutItem Caption="Disc amt 1" ColSpanMd="6" BeginRow="true">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc amt 2" ColSpanMd="6">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount1" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            else
+                            {
+                                <DxFormLayoutItem Caption="Disc %1" ColSpanMd="4" BeginRow="true">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc %2" ColSpanMd="4">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount2" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc %3" ColSpanMd="4">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount3" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc %4" ColSpanMd="4">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount4" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc %5" ColSpanMd="4">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount5" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Disc %6" ColSpanMd="4">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@Popup.ItemDiscount6" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            }
+                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                <Template>
+                                    <DxTextBox @bind-Text="@Popup.Remarks" Enabled="@CanEditDocument" />
                                 </Template>
                             </DxFormLayoutItem>
                         }
-                        @if (IsPriceOverridden())
-                        {
-                            <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
-                                <Template>
-                                    <DxTextBox @bind-Text="@Popup.OverrideReason"
-                                               maxlength="100"
-                                               InputCssClass="required-field" />
-                                    <p class="sdoc-field-hint">
-                                        Price changed from the resolved @Popup.OriginalUnitPrice?.ToString("n4").
-                                        The original is recorded on the line.
-                                    </p>
-                                </Template>
-                            </DxFormLayoutItem>
-                        }
-                        <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="3">
-                            <Template>
-                                <DxCheckBox Checked="@Popup.IsInclusive"
-                                            CheckedChanged="@((bool v) => OnPopupBasisChangedAsync(v))"
-                                            CheckedExpression="@(() => Popup.IsInclusive)"
-                                            Enabled="@(CanEditDocument && !PopupInclusiveLocked)" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Line tax" ColSpanMd="6">
-                            <Template>
-                                <DxComboBox Data="@TaxGroups"
-                                            TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
-                                            ValueFieldName="@nameof(SaSoTaxGroupLookupRow.TaxGrCode)"
-                                            Value="@Popup.TaxGrCode"
-                                            ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
-                                            ValueExpression="@(() => Popup.TaxGrCode)"
-                                            SearchMode="ListSearchMode.AutoSearch"
-                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            Enabled="@CanEditDocument"
-                                            NullText="Use header tax"
-                                            CssClass="w-100" />
-                            </Template>
-                        </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Discount mode" ColSpanMd="12">
-                            <Template>
-                                <div class="sdoc-discount-mode">
-                                    <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)"
-                                              Text="Percent"
-                                              Click="@(() => OnPopupDiscountModeChanged(false))"
-                                              Enabled="@CanEditDocument" />
-                                    <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
-                                              Text="Amount"
-                                              Click="@(() => OnPopupDiscountModeChanged(true))"
-                                              Enabled="@CanEditDocument" />
-                                </div>
-                            </Template>
-                        </DxFormLayoutItem>
-                        @if (PopupDiscountIsAmount)
-                        {
-                            <DxFormLayoutItem Caption="Disc amt 1" ColSpanMd="6" BeginRow="true">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc amt 2" ColSpanMd="6">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount1" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                        }
-                        else
-                        {
-                            <DxFormLayoutItem Caption="Disc %1" ColSpanMd="4" BeginRow="true">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc %2" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount2" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc %3" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount3" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc %4" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount4" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc %5" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount5" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Disc %6" ColSpanMd="4">
-                                <Template>
-                                    <DxSpinEdit @bind-Value="@Popup.ItemDiscount6" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
-                                </Template>
-                            </DxFormLayoutItem>
-                        }
-                        <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
-                            <Template>
-                                <DxTextBox @bind-Text="@Popup.Remarks" Enabled="@CanEditDocument" />
-                            </Template>
-                        </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Preview" ColSpanMd="12">
                             <Template>
                                 <div class="sdoc-amount-preview">

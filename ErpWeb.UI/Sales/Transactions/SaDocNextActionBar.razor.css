@@ -1,0 +1,31 @@
+.sdoc-next-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.sdoc-next-action__copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.sdoc-next-action__copy span {
+    color: var(--muted);
+    font-size: 0.875rem;
+}
+
+@media (max-width: 575.98px) {
+    .sdoc-next-action {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}

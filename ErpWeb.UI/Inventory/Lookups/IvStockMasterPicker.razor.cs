@@ -24,6 +24,8 @@ public partial class IvStockMasterPicker
     [Parameter] public string? InputCssClass { get; set; }
     [Parameter] public string? NullText { get; set; }
 
+    public ValueTask FocusAsync() => _smartLookup?.FocusInputAsync() ?? ValueTask.CompletedTask;
+
     protected override void OnParametersSet()
     {
         var code = ICode?.Trim();

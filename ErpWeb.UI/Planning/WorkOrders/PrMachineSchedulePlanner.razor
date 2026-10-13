@@ -17,7 +17,7 @@
                 <p>@HeaderInstructions</p>
             </div>
             <div class="pr-machine-schedule-mode" role="status">
-                <i class="fa-solid @(IsReschedulingEnabled ? "fa-calendar-check" : "fa-lock")" aria-hidden="true"></i>
+                <i class="fa-solid @(CanDragAppointments ? "fa-calendar-check" : "fa-lock")" aria-hidden="true"></i>
                 <span>@ScheduleModeText</span>
             </div>
             <div class="iv-hero__kpi">
@@ -35,13 +35,13 @@
             <div class="pr-machine-schedule-feedback pr-machine-schedule-feedback--info" role="status">@StatusMessage</div>
         }
 
-        @if (!IsReschedulingEnabled)
+        @if (!CanDragAppointments)
         {
             <section class="pr-machine-schedule-readonly" role="status">
                 <i class="fa-solid fa-lock" aria-hidden="true"></i>
                 <div>
                     <strong>View only</strong>
-                    <span>Scheduling changes are not enabled for this company.</span>
+                    <span>@ViewOnlyReason</span>
                     @if (CanEditSchedule)
                     {
                         <DxButton Text="Dry-run allocations" RenderStyle="ButtonRenderStyle.Secondary"
@@ -307,7 +307,7 @@
                         {
                             <div class="pr-machine-schedule-details__body">
                                 <div class="pr-machine-schedule-details__head">
-                                    <span class="pr-machine-schedule-details__eyebrow">Selected operation · View only</span>
+                                    <span class="pr-machine-schedule-details__eyebrow">@(CanOpenReschedule ? "Selected operation · Change allowed" : "Selected operation · View only")</span>
                                     <h2>@job.WorkOrderNo</h2>
                                     <span class="pr-machine-schedule-status">@job.WorkOrderStatus · @job.ExecutionStatus</span>
                                 </div>
@@ -348,7 +348,7 @@
                 </section>
             }
 
-            @if (IsRescheduleDialogOpen && SelectedJob is { } rescheduleJob)
+            @if (IsRescheduleDialogOpen && RescheduleDialogJob is { } rescheduleJob)
             {
                 <div class="pr-machine-schedule-dialog-backdrop">
                     <section class="pr-machine-schedule-dialog iv-card" role="dialog" aria-modal="true"
@@ -424,9 +424,9 @@
 
                         <footer class="pr-machine-schedule-dialog__actions">
                             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseRescheduleDialog" Enabled="@(!IsRescheduleBusy)" />
-                            <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanOpenReschedule)" />
+                            <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog)" />
                             <DxButton Text="Commit schedule" RenderStyle="ButtonRenderStyle.Primary" Click="CommitRescheduleAsync"
-                                      Enabled="@(!IsRescheduleBusy && CanOpenReschedule && ReschedulePreview?.CanCommit == true)" />
+                                      Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog && ReschedulePreview?.CanCommit == true)" />
                         </footer>
                     </section>
                 </div>

@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using DevExpress.Blazor;
 using ErpWeb.Core.Lookups;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -7,6 +8,7 @@ namespace ErpWeb.UI.Components.Common.Lookups;
 
 public partial class SmartLookupInput<TItem> : IAsyncDisposable
 {
+    private DxTextBox? _input;
     private readonly SmartLookupState _state = new();
     private CancellationTokenSource? _debounceCts;
     private CancellationTokenSource? _resolveCts;
@@ -45,6 +47,8 @@ public partial class SmartLookupInput<TItem> : IAsyncDisposable
     [Parameter] public EventCallback<string?> OpenSearch { get; set; }
 
     [Parameter] public Expression<Func<string?>>? TextExpression { get; set; }
+
+    public ValueTask FocusInputAsync() => _input?.FocusAsync() ?? ValueTask.CompletedTask;
 
     private string? EffectiveSecondaryText =>
         _state.SecondaryText ?? SecondaryText;

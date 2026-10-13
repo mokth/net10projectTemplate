@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using System.Text.Json;
 using DevExpress.Blazor;
 using DevExtreme.AspNet.Data;
@@ -32,6 +33,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool IsBackfillDialogOpen;
     private bool IsBackfillBusy;
     private MachineScheduleAllocationBackfillReport? BackfillReport;
+    private MachineSchedulePlannerJob? RescheduleDialogJob;
     private string RequestedDateText = string.Empty;
     private string RequestedTimeText = string.Empty;
     private string RescheduleReason = string.Empty;
@@ -76,21 +78,25 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private bool IsReschedulingEnabled => Board?.Readiness.IsWriteReady == true;
 
-    private bool IsSelectedJobEligible => SelectedJob is { } job
-        && !job.IsLocked
-        && !job.IsBackwardScheduled
-        && (string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.InProgress, StringComparison.OrdinalIgnoreCase));
+    private bool CanOpenReschedule => CanReschedule(SelectedJob);
 
-    private bool CanOpenReschedule => IsReschedulingEnabled && CanEditSchedule && IsSelectedJobEligible;
+    private bool CanEditRescheduleDialog => CanReschedule(RescheduleDialogJob);
 
     private bool CanDragAppointments => IsReschedulingEnabled && CanEditSchedule;
 
     private string HeaderInstructions => CanDragAppointments
         ? "Find a Work Order or machine, then select a job. Drag it to move, or use Change Schedule."
-        : IsReschedulingEnabled
-            ? "Find a Work Order or machine, then select a job and use Change Schedule."
+        : CanEditSchedule && !IsReschedulingEnabled
+            ? "Find a Work Order or machine, then select a job. Schedule changes require the company setting and planner readiness."
             : "Find a Work Order or machine, then select a job to inspect its schedule.";
+
+    private string ViewOnlyReason => !CanEditSchedule
+        ? "Your account does not have permission to change this schedule."
+        : Board is null || IsLoading
+            ? "Planner readiness is still loading."
+            : !Board.Readiness.WriteSettingEnabled
+                ? "Schedule changes are disabled by the company setting."
+                : "Schedule changes are disabled until planner readiness passes.";
 
     private string RescheduleUnavailableReason => !CanEditSchedule
         ? "Edit permission is required to change schedules."
@@ -102,7 +108,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
                     ? "Backward-scheduled operations are not eligible for rescheduling."
                     : "This operation is not eligible for rescheduling.";
 
-    private string ScheduleModeText => IsReschedulingEnabled ? "Rescheduling enabled" : "View only";
+    private string ScheduleModeText => CanDragAppointments ? "Rescheduling enabled" : "View only";
 
     private static readonly int[] CellWidths = [48, 64, 80, 100, 125, 150, 180];
 
@@ -323,15 +329,19 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task OnAppointmentSelectedAsync()
     {
+        // A drag can update the selected appointment while the reschedule dialog is opening.
+        // Keep the preview dialog intact instead of letting the bind-after callback close it.
+        if (IsRescheduleDialogOpen)
+            return;
+
         IsDetailsOpen = SelectedJob is not null;
-        IsRescheduleDialogOpen = false;
         ReschedulePreview = null;
         await Task.CompletedTask;
     }
 
     private void OpenRescheduleDialog()
     {
-        if (!CanOpenReschedule || SelectedJob is not { } job)
+        if (SelectedJob is not { } job || !CanReschedule(job))
             return;
 
         OpenRescheduleDialog(job, job.PlannedStart);
@@ -339,9 +349,10 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private void OpenRescheduleDialog(MachineSchedulePlannerJob job, DateTime requestedStart)
     {
-        if (!CanOpenReschedule)
+        if (!CanReschedule(job))
             return;
 
+        RescheduleDialogJob = job;
         RequestedDateText = requestedStart.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         RequestedTimeText = requestedStart.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
         RescheduleReason = string.Empty;
@@ -391,7 +402,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
         SelectedAppointment = args.Appointment;
         IsDetailsOpen = true;
-        if (!CanOpenReschedule)
+        if (!CanReschedule(job))
         {
             StatusMessage = job.LockReason ?? "This operation is not eligible for rescheduling.";
             return Task.CompletedTask;
@@ -412,9 +423,18 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         return Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId);
     }
 
+    private bool CanReschedule(MachineSchedulePlannerJob? job) => IsReschedulingEnabled
+        && CanEditSchedule
+        && job is not null
+        && !job.IsLocked
+        && !job.IsBackwardScheduled
+        && (string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.InProgress, StringComparison.OrdinalIgnoreCase));
+
     private void CloseRescheduleDialog()
     {
         IsRescheduleDialogOpen = false;
+        RescheduleDialogJob = null;
         ReschedulePreview = null;
         IsRescheduleBusy = false;
     }
@@ -512,7 +532,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task PreviewRescheduleAsync()
     {
-        if (!CanOpenReschedule || SelectedJob is not { } job)
+        if (!CanEditRescheduleDialog || RescheduleDialogJob is not { } job)
         {
             ErrorMessage = "Schedule changes are unavailable until edit permission and runtime readiness are enabled.";
             return;
@@ -556,7 +576,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task CommitRescheduleAsync()
     {
-        if (!CanOpenReschedule || SelectedJob is not { } job
+        if (!CanEditRescheduleDialog || RescheduleDialogJob is not { } job
             || ReschedulePreview is not { CanCommit: true, PreviewToken: { Length: > 0 } token }
             || !TryGetRequestedStart(out var requestedStart))
             return;
@@ -570,8 +590,15 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             var result = await Rescheduler.CommitRescheduleAsync(request);
             if (!result.Succeeded || result.Data is null)
             {
-                ErrorMessage = result.Message ?? "The schedule change could not be committed.";
+                var failureMessage = result.Message ?? "The schedule change could not be committed.";
                 ReschedulePreview = null;
+                await ReloadAsync();
+                var refreshedJob = Board?.Jobs.FirstOrDefault(x => x.OperationId == job.OperationId);
+                if (refreshedJob is null)
+                    CloseRescheduleDialog();
+                else
+                    RescheduleDialogJob = refreshedJob;
+                ErrorMessage = failureMessage;
                 return;
             }
 
@@ -591,17 +618,8 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     }
 
     private bool TryGetRequestedStart(out DateTime requestedStart)
-    {
-        requestedStart = default;
-        if (!DateOnly.TryParseExact(RequestedDateText, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var date)
-            || !TimeOnly.TryParseExact(RequestedTimeText, "HH:mm", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var time))
-            return false;
-
-        requestedStart = DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Unspecified);
-        return true;
-    }
+        => MachineSchedulePlannerInputParser.TryParseRequestedStart(
+            RequestedDateText, RequestedTimeText, CultureInfo.CurrentCulture, out requestedStart);
 
     private MachineScheduleRescheduleRequest CreateRescheduleRequest(
         MachineSchedulePlannerJob job,
@@ -809,5 +827,45 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private sealed record PlannerFilterOption(string Key, string Name);
     private sealed record PlannerAppointmentLabel(int Id, string Caption, string BackgroundCssClass, string TextCssClass);
     private enum PlannerView { Day, Week, Month }
+}
+
+internal static class MachineSchedulePlannerInputParser
+{
+    internal static bool TryParseRequestedStart(
+        string? dateText,
+        string? timeText,
+        CultureInfo culture,
+        out DateTime requestedStart)
+    {
+        requestedStart = default;
+        if (string.IsNullOrWhiteSpace(dateText)
+            || string.IsNullOrWhiteSpace(timeText)
+            || !TryParseDate(dateText.Trim(), culture, out var date)
+            || !TryParseTime(timeText.Trim(), culture, out var time))
+            return false;
+
+        requestedStart = DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Unspecified);
+        return true;
+    }
+
+    private static bool TryParseDate(string value, CultureInfo culture, out DateOnly date)
+    {
+        if (DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out date))
+            return true;
+
+        return DateOnly.TryParse(value, culture, DateTimeStyles.AllowWhiteSpaces, out date)
+            || DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out date);
+    }
+
+    private static bool TryParseTime(string value, CultureInfo culture, out TimeOnly time)
+    {
+        if (TimeOnly.TryParseExact(value, "HH:mm", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out time))
+            return true;
+
+        return TimeOnly.TryParse(value, culture, DateTimeStyles.AllowWhiteSpaces, out time)
+            || TimeOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out time);
+    }
 }
 

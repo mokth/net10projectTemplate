@@ -539,3 +539,21 @@
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
+.sdoc-source-search {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+}
+
+.sdoc-source-search > :first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+@media (max-width: 575.98px) {
+    .sdoc-source-search {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}

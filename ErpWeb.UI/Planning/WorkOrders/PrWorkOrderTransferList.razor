@@ -62,7 +62,7 @@
 
         @if (ConfirmRow is not null)
         {
-            <DxPopup Visible="true" HeaderText="@(ConfirmPost ? "Post Work Order Transfer?" : "Delete NEW Work Order Transfer?")" Width="min(540px,95vw)" CloseOnOutsideClick="false">
+            <DxPopup Visible="true" HeaderText="@(ConfirmPost ? "Post Work Order Transfer?" : "Delete NEW Work Order Transfer?")" ShowFooter="true" Width="min(540px,95vw)" CloseOnOutsideClick="false">
                 <BodyContentTemplate>
                     <div class="common-popup__body">
                         @if (ConfirmPost)

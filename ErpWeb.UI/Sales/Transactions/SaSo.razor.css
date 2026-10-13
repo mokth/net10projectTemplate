@@ -45,3 +45,69 @@
         grid-template-columns: 64px 1fr;
     }
 }
+
+.saso-quick-add {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0 0 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--sdoc-radius, 8px);
+    background: var(--sdoc-soft, var(--surface));
+}
+
+.saso-quick-add__title {
+    margin: 0;
+    color: var(--sdoc-muted-text, var(--muted));
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.saso-quick-add__grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 2fr) minmax(105px, 0.65fr) minmax(145px, 0.8fr) minmax(210px, 1.5fr) auto;
+    align-items: end;
+    gap: 0.6rem;
+}
+
+.saso-quick-add__grid > div {
+    min-width: 0;
+}
+
+.saso-quick-add__grid label {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--field-label, var(--muted));
+    font-size: 0.75rem;
+}
+
+.saso-quick-add__summary {
+    min-height: 2.25rem;
+    display: flex;
+    align-items: center;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+@media (max-width: 991.98px) {
+    .saso-quick-add__grid {
+        grid-template-columns: minmax(180px, 2fr) minmax(100px, 0.75fr) minmax(140px, 1fr);
+    }
+
+    .saso-quick-add__summary {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .saso-quick-add__grid {
+        grid-template-columns: minmax(0, 1fr) minmax(100px, 0.5fr);
+    }
+
+    .saso-quick-add__item,
+    .saso-quick-add__summary {
+        grid-column: 1 / -1;
+    }
+}

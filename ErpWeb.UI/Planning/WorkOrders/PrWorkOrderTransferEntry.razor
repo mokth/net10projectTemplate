@@ -89,14 +89,14 @@
         }
         @if (PostConfirmVisible)
         {
-            <DxPopup Visible="true" HeaderText="Post Work Order Transfer?" Width="min(540px,95vw)" CloseOnOutsideClick="false">
+            <DxPopup Visible="true" HeaderText="Post Work Order Transfer?" ShowFooter="true" Width="min(540px,95vw)" CloseOnOutsideClick="false">
                 <BodyContentTemplate><div class="common-popup__body"><p>Post @Document.TransferNo? The full balance of @Document.ItemCode / @Document.LotNo will move from @Document.SourceWorkOrderNo to @Document.TargetWorkOrderNo. Item, lot, quantity and accumulated production value remain unchanged.</p></div></BodyContentTemplate>
                 <FooterContentTemplate><div class="common-popup__footer"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => PostConfirmVisible = false)" /><DxButton Text="POST" RenderStyle="ButtonRenderStyle.Success" Click="PostAsync" Enabled="@(!Busy)" /></div></FooterContentTemplate>
             </DxPopup>
         }
         @if (DeleteConfirmVisible)
         {
-            <DxPopup Visible="true" HeaderText="Delete NEW Work Order Transfer?" Width="min(480px,95vw)" CloseOnOutsideClick="false">
+            <DxPopup Visible="true" HeaderText="Delete NEW Work Order Transfer?" ShowFooter="true" Width="min(480px,95vw)" CloseOnOutsideClick="false">
                 <BodyContentTemplate><div class="common-popup__body"><p>Delete @Document.TransferNo? No stock movement has been posted.</p></div></BodyContentTemplate>
                 <FooterContentTemplate><div class="common-popup__footer"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => DeleteConfirmVisible = false)" /><DxButton Text="DELETE" RenderStyle="ButtonRenderStyle.Danger" Click="DeleteAsync" Enabled="@(!Busy)" /></div></FooterContentTemplate>
             </DxPopup>

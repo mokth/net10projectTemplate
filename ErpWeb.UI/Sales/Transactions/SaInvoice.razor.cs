@@ -14,6 +14,10 @@ public partial class SaInvoice : PageBase, IDisposable
 {
     [Parameter] public string Mode { get; set; } = string.Empty;
     [Parameter] public string? InvNo { get; set; }
+    [SupplyParameterFromQuery(Name = "sourceDo")]
+    public string? SourceDoNo { get; set; }
+    [SupplyParameterFromQuery(Name = "sourceSo")]
+    public string? SourceSoNo { get; set; }
 
     [Inject] private ISaInvoiceService Invoices { get; set; } = default!;
     [Inject] private ISaSoService Sos { get; set; } = default!;
@@ -37,9 +41,19 @@ public partial class SaInvoice : PageBase, IDisposable
     protected bool ConfirmShipOverwriteVisible;
     protected bool ShipEditorVisible;
     protected bool ConcurrencyVisible;
+    protected bool ConfirmPostVisible;
+    protected bool SourceLookupVisible;
+    protected bool SourceLookupForDo;
+    protected bool SourceLookupLoading;
+    protected bool SourceLauncherDismissed;
+    protected bool SourceBootstrapWasDo;
     protected string? PopupError;
     protected string? SoPickerError;
+    protected string? SourceLookupError;
+    protected string SourceLookupSearchText = string.Empty;
+    protected string? SourceBootstrapMessage;
     protected bool CanEditPermission;
+    protected bool CanPostPermission;
     protected string InvNoDisplay = "AUTO";
     protected string DoNoDisplay = string.Empty;
     protected string StatusDisplay = SaInvoiceStatuses.New;
@@ -92,6 +106,7 @@ public partial class SaInvoice : PageBase, IDisposable
     protected Dictionary<string, string> ValidationErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     private SaInvoiceLineVm? _editingLine;
+    private bool _popupAdvancedExpanded;
     private string? _loadedKey;
     private bool _isDirty;
     private bool _disposed;
@@ -141,6 +156,17 @@ public partial class SaInvoice : PageBase, IDisposable
     protected int? ShipToLine => _shipToLine;
     protected SaInvoiceLineVm Popup { get; set; } = new();
     protected bool PopupDiscountIsAmount { get; set; }
+    protected bool ShowPopupAdvanced => _popupAdvancedExpanded || PopupAdvancedRequired;
+    protected bool PopupAdvancedRequired =>
+        !string.IsNullOrWhiteSpace(PopupError)
+        || !string.IsNullOrWhiteSpace(_priceBlockMessage)
+        || ValidationErrors.Keys.Any(key => key.StartsWith("Lines[", StringComparison.OrdinalIgnoreCase))
+        || IsPriceOverridden()
+        || (Popup.StockControl && string.IsNullOrWhiteSpace(Popup.FrWarehouse))
+        || (!string.IsNullOrWhiteSpace(Popup.ICode) && string.IsNullOrWhiteSpace(Popup.Classification));
+    protected string PopupAdvancedToggleText => PopupAdvancedRequired
+        ? "Details expanded for review"
+        : ShowPopupAdvanced ? "Fewer details" : "More details";
     protected List<SaSoPickerOption> SoPickerOptions { get; set; } = [];
     protected List<SaSoLineDto> SoPickerLines { get; set; } = [];
     protected IReadOnlyList<SaSoLineDto> SelectedSoPickerLines { get; set; } = [];
@@ -151,6 +177,11 @@ public partial class SaInvoice : PageBase, IDisposable
     protected string? DoPickerSearchText { get; set; }
     protected int DoPickerTotalCount { get; set; }
     protected bool DoPickerHasMore => DoPickerLines.Count < DoPickerTotalCount;
+    protected List<SaDocSourceHeaderOption> SourceHeaderOptions { get; set; } = [];
+
+    private string? _sourceBootstrapAppliedFor;
+    private int _sourceLookupSearchSequence;
+    private CancellationTokenSource? _sourceLookupSearchCts;
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -168,6 +199,18 @@ public partial class SaInvoice : PageBase, IDisposable
     /// </summary>
     protected bool ShowSourceCard =>
         !IsViewMode || !string.IsNullOrWhiteSpace(DoNoDisplay);
+    protected bool ShowSourceLauncher =>
+        IsNewMode
+        && !SourceLauncherDismissed
+        && Lines.Count == 0
+        && (!HasCustomer || !string.IsNullOrWhiteSpace(SourceBootstrapMessage));
+    protected string SourceLookupHeading => SourceLookupForDo ? "From Delivery Order" : "From Sales Order";
+    protected string SourceLookupSearchHint => SourceLookupForDo
+        ? "Search by DO no., customer code, or customer name."
+        : "Search by SO no., customer code, or customer name.";
+    protected string SourceLookupSearchPlaceholder => SourceLookupForDo
+        ? "DO no., customer code, or customer name"
+        : "SO no., customer code, or customer name";
 
     protected bool CanEditAddresses =>
         CanEditDocument
@@ -217,6 +260,36 @@ public partial class SaInvoice : PageBase, IDisposable
     protected bool CanOpenDoPicker => CanMutateLines && HasCustomer;
     /// <summary>True when at least one line still needs an SP batch (not a LinkDo line already shipped on a DO).</summary>
     protected bool HasShipmentLines => Lines.Any(x => !x.LinkDo && x.StockControl && x.Qty > 0m);
+    protected bool NeedsInvoiceStockAllocation =>
+        !IsNewMode
+        && !string.IsNullOrWhiteSpace(InvNo)
+        && string.Equals(StatusDisplay, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase)
+        && CanEditDocument
+        && HasShipmentLines
+        && !ShipmentComplete
+        && !IsSubmitting;
+    protected bool CanPostInvoice =>
+        !string.IsNullOrWhiteSpace(InvNo)
+        && string.Equals(StatusDisplay, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase)
+        && !_isDirty
+        && !IsSubmitting
+        && CanPostPermission
+        && (!HasShipmentLines || ShipmentComplete);
+    protected bool ShowInvoiceNextAction => NeedsInvoiceStockAllocation
+        || CanPostInvoice
+        || (!string.IsNullOrWhiteSpace(InvNo)
+            && string.Equals(StatusDisplay, SaInvoiceStatuses.New, StringComparison.OrdinalIgnoreCase)
+            && _isDirty
+            && CanPostPermission);
+    protected string InvoiceNextActionText => NeedsInvoiceStockAllocation
+        ? (_hasShipment ? "REVIEW / REBUILD STOCK ALLOCATION" : "ALLOCATE STOCK")
+        : "POST INVOICE";
+    protected string InvoiceNextActionHint => NeedsInvoiceStockAllocation
+        ? "Allocate stock for direct stock lines before posting. Delivery Order lines are already fulfilled."
+        : _isDirty
+            ? "Save changes before posting the Invoice."
+            : "Post the invoice transaction; MyInvois submission remains separate.";
+    protected bool InvoiceNextActionEnabled => NeedsInvoiceStockAllocation || CanPostInvoice;
     protected bool TaxGroupRequired => _taxable == true;
     protected bool HasContact =>
         !string.IsNullOrWhiteSpace(InvTel) || !string.IsNullOrWhiteSpace(InvEmail);
@@ -311,12 +384,20 @@ public partial class SaInvoice : PageBase, IDisposable
         Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
     protected SaInvoiceLineCalcState PopupCalc => BuildPopupCalc();
 
+    protected void TogglePopupAdvanced()
+    {
+        if (!PopupAdvancedRequired)
+        {
+            _popupAdvancedExpanded = !_popupAdvancedExpanded;
+        }
+    }
+
     protected override Task OnPageInitializedAsync() => Task.CompletedTask;
 
     protected override async Task OnParametersSetAsync()
     {
         await base.OnParametersSetAsync();
-        var key = $"{Mode}:{InvNo}";
+        var key = $"{Mode}:{InvNo}:{SourceDoNo}:{SourceSoNo}";
         if (string.Equals(_loadedKey, key, StringComparison.Ordinal))
         {
             return;
@@ -334,12 +415,14 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         _disposed = true;
+        _sourceLookupSearchCts?.Cancel();
         _cts.Cancel();
         _cts.Dispose();
     }
 
     private async Task LoadAsync()
     {
+        _sourceBootstrapAppliedFor = null;
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -357,6 +440,7 @@ public partial class SaInvoice : PageBase, IDisposable
         ResetDoPicker();
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Edit);
+        CanPostPermission = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.Post);
         // Phase 4: governs what the operator can ATTEMPT; the server enforces what is accepted.
         CanOverridePrice = await AccessRights.CanAsync(MenuCodes.SalesInvoice, PermissionCodes.PriceOverride);
         var lookups = await Invoices.GetLookupsAsync(_cts.Token);
@@ -387,6 +471,15 @@ public partial class SaInvoice : PageBase, IDisposable
         if (IsNewMode)
         {
             ResetNewDocument();
+            if (!string.IsNullOrWhiteSpace(SourceDoNo))
+            {
+                await BootstrapSourceDoAsync(SourceDoNo);
+            }
+            else if (!string.IsNullOrWhiteSpace(SourceSoNo))
+            {
+                await BootstrapSourceSoAsync(SourceSoNo);
+            }
+
             IsLoading = false;
             return;
         }
@@ -452,8 +545,346 @@ public partial class SaInvoice : PageBase, IDisposable
         _discountMethod = null;
         _decPoint = false;
         _taxable = null;
+        SourceLauncherDismissed = false;
+        SourceBootstrapWasDo = false;
         ResetSoPicker();
         ResetDoPicker();
+        SourceBootstrapMessage = null;
+        ResetSourceLookup();
+    }
+
+    protected void OpenSourceLookup(bool forDo)
+    {
+        if (!IsNewMode || !CanEditDocument)
+        {
+            return;
+        }
+
+        SourceLookupForDo = forDo;
+        SourceLookupVisible = true;
+        SourceLookupSearchText = string.Empty;
+        SourceLookupError = null;
+        SourceHeaderOptions = [];
+    }
+
+    protected void CloseSourceLookup()
+    {
+        SourceLookupVisible = false;
+        CancelSourceLookupSearch();
+    }
+
+    protected void ContinueWithManualInvoice()
+    {
+        SourceLauncherDismissed = true;
+        SourceBootstrapMessage = null;
+        CloseSourceLookup();
+    }
+
+    protected async Task OnSourceLookupSearchTextChanged(string? value)
+    {
+        SourceLookupSearchText = value ?? string.Empty;
+        await LoadSourceHeadersAsync(debounce: true);
+    }
+
+    protected Task SearchSourceHeadersAsync() => LoadSourceHeadersAsync(debounce: false);
+
+    protected Task ChooseSourceHeaderAsync(string documentNo)
+    {
+        var useDo = SourceLookupForDo;
+        CloseSourceLookup();
+        return useDo ? BootstrapSourceDoAsync(documentNo) : BootstrapSourceSoAsync(documentNo);
+    }
+
+    private async Task BootstrapSourceSoAsync(string? soNo)
+    {
+        var requestedSoNo = (soNo ?? string.Empty).Trim();
+        if (requestedSoNo.Length == 0 || !IsNewMode || _disposed)
+        {
+            return;
+        }
+
+        var sourceKey = $"SO:{requestedSoNo.ToUpperInvariant()}";
+        if (string.Equals(_sourceBootstrapAppliedFor, sourceKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _sourceBootstrapAppliedFor = sourceKey;
+        SourceBootstrapWasDo = false;
+        SourceBootstrapMessage = null;
+        ErrorMessage = null;
+        StatusMessage = null;
+
+        var sourceResult = await Sos.GetAsync(requestedSoNo, _cts.Token);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!sourceResult.Succeeded || sourceResult.Document is null)
+        {
+            SourceBootstrapMessage = sourceResult.ErrorMessage ?? $"Sales order {requestedSoNo} was not found.";
+            return;
+        }
+
+        var source = sourceResult.Document;
+        var usableStatus = string.Equals(source.Status, SaSoStatuses.New, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(source.Status, SaSoStatuses.Shipped, StringComparison.OrdinalIgnoreCase);
+        if (!source.IsCurrent || !usableStatus)
+        {
+            SourceBootstrapMessage = $"Sales order {requestedSoNo} is historical or no longer open. Choose a current NEW or SHIPPED sales order.";
+            return;
+        }
+
+        // Apply the selected customer's current invoice defaults, then use the existing direct-SO
+        // billable-line query and mapper. Do not copy SO header snapshots into the invoice.
+        await ApplyCustomerAsync(source.CustCode);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!CurrRateValid)
+        {
+            SourceBootstrapMessage = "Current customer defaults do not provide a valid currency rate. Review the customer before adding source lines.";
+            return;
+        }
+
+        await OnSelectedSourceSoChangedAsync(requestedSoNo);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (SoPickerLines.Count == 0 || SelectedSoPickerLines.Count == 0)
+        {
+            SourceBootstrapMessage = SoPickerError ?? $"{requestedSoNo} has no remaining billable lines.";
+            return;
+        }
+
+        await AddFromSo();
+        if (Lines.Count == 0)
+        {
+            SourceBootstrapMessage = SoPickerError ?? $"No billable lines from {requestedSoNo} could be added.";
+            return;
+        }
+
+        SourceBootstrapMessage = null;
+    }
+
+    private async Task BootstrapSourceDoAsync(string? doNo)
+    {
+        var requestedDoNo = (doNo ?? string.Empty).Trim();
+        if (requestedDoNo.Length == 0 || !IsNewMode || _disposed)
+        {
+            return;
+        }
+
+        var sourceKey = $"DO:{requestedDoNo.ToUpperInvariant()}";
+        if (string.Equals(_sourceBootstrapAppliedFor, sourceKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _sourceBootstrapAppliedFor = sourceKey;
+        SourceBootstrapWasDo = true;
+        SourceBootstrapMessage = null;
+        ErrorMessage = null;
+        StatusMessage = null;
+
+        var sourceResult = await Dos.GetAsync(requestedDoNo, _cts.Token);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!sourceResult.Succeeded || sourceResult.Document is null)
+        {
+            SourceBootstrapMessage = sourceResult.ErrorMessage ?? $"Delivery order {requestedDoNo} was not found.";
+            return;
+        }
+
+        var source = sourceResult.Document;
+        if (!string.Equals(source.Status, SaDoStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+        {
+            SourceBootstrapMessage = $"Delivery order {requestedDoNo} must be POSTED before it can supply an invoice.";
+            return;
+        }
+
+        // The invoice takes current customer defaults. Currency and address snapshots are never
+        // forced from the delivery order; SearchBillableLinesAsync remains the eligibility authority.
+        await ApplyCustomerAsync(source.CustCode);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!CurrRateValid)
+        {
+            SourceBootstrapMessage = "Current customer defaults do not provide a valid currency rate. Review the customer before adding source lines.";
+            return;
+        }
+
+        DoPickerSearchText = requestedDoNo;
+        await LoadDoPickerPageAsync(append: false);
+        if (_disposed)
+        {
+            return;
+        }
+
+        DoPickerLines = DoPickerLines
+            .Where(x => string.Equals(x.Source.DoNo, requestedDoNo, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        SelectedDoPickerLines = DoPickerLines;
+        if (DoPickerLines.Count == 0)
+        {
+            var sourceCurrency = string.IsNullOrWhiteSpace(source.Currency) ? "MYR" : source.Currency;
+            SourceBootstrapMessage = !string.Equals(sourceCurrency, Currency, StringComparison.OrdinalIgnoreCase)
+                ? $"Delivery Order {requestedDoNo} uses {sourceCurrency}, while current customer defaults set the invoice to {Currency}. Resolve the currency mismatch before invoicing."
+                : $"Delivery Order {requestedDoNo} has no remaining billable lines. It may already be fully billed.";
+            return;
+        }
+
+        await AddFromDo();
+        if (Lines.Count == 0)
+        {
+            SourceBootstrapMessage = DoPickerError ?? $"No billable lines from {requestedDoNo} could be added.";
+            return;
+        }
+
+        SourceBootstrapMessage = null;
+    }
+
+    private async Task LoadSourceHeadersAsync(bool debounce)
+    {
+        var sequence = Interlocked.Increment(ref _sourceLookupSearchSequence);
+        Interlocked.Exchange(ref _sourceLookupSearchCts, null)?.Cancel();
+
+        var searchText = SourceLookupSearchText.Trim();
+        if (searchText.Length == 0)
+        {
+            SourceHeaderOptions = [];
+            SourceLookupError = SourceLookupSearchHint;
+            SourceLookupLoading = false;
+            return;
+        }
+
+        var requestCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        Interlocked.Exchange(ref _sourceLookupSearchCts, requestCts)?.Cancel();
+        SourceLookupLoading = true;
+        SourceLookupError = null;
+        try
+        {
+            if (debounce)
+            {
+                await Task.Delay(450, requestCts.Token);
+            }
+
+            var found = new Dictionary<string, SaDocSourceHeaderOption>(StringComparer.OrdinalIgnoreCase);
+            if (SourceLookupForDo)
+            {
+                var result = await Dos.SearchAsync(new SaDoListQuery
+                {
+                    SearchText = searchText,
+                    Status = SaDoStatuses.Posted,
+                    Skip = 0,
+                    Take = 20,
+                    SortDescending = true
+                }, requestCts.Token);
+
+                if (_disposed || requestCts.IsCancellationRequested || sequence != _sourceLookupSearchSequence)
+                {
+                    return;
+                }
+
+                if (!result.Succeeded || result.ListPage is null)
+                {
+                    SourceLookupError = result.ErrorMessage ?? "Unable to search posted delivery orders.";
+                    SourceHeaderOptions = [];
+                    return;
+                }
+
+                foreach (var row in result.ListPage.Rows)
+                {
+                    found.TryAdd(row.DoNo, new SaDocSourceHeaderOption(
+                        row.DoNo, row.CustCode, row.CustName, row.DoDate, row.Status));
+                }
+            }
+            else
+            {
+                foreach (var status in new[] { SaSoStatuses.New, SaSoStatuses.Shipped })
+                {
+                    var result = await Sos.SearchAsync(new SaSoListQuery
+                    {
+                        SearchText = searchText,
+                        Status = status,
+                        Skip = 0,
+                        Take = 20,
+                        SortDescending = true
+                    }, requestCts.Token);
+
+                    if (_disposed || requestCts.IsCancellationRequested || sequence != _sourceLookupSearchSequence)
+                    {
+                        return;
+                    }
+
+                    if (!result.Succeeded || result.ListPage is null)
+                    {
+                        SourceLookupError = result.ErrorMessage ?? "Unable to search sales orders.";
+                        SourceHeaderOptions = [];
+                        return;
+                    }
+
+                    foreach (var row in result.ListPage.Rows)
+                    {
+                        found.TryAdd(row.SoNo, new SaDocSourceHeaderOption(
+                            row.SoNo, row.CustCode, row.CustName, row.SoDate, row.Status));
+                    }
+                }
+            }
+
+            SourceHeaderOptions = found.Values
+                .OrderByDescending(x => x.DocumentDate)
+                .ThenBy(x => x.DocumentNo, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            SourceLookupError = SourceHeaderOptions.Count == 0
+                ? "No matching source documents were found."
+                : SourceHeaderOptions.Count >= 20
+                    ? SourceLookupForDo
+                        ? "Showing at most 20 posted delivery orders. Refine the search to narrow the results."
+                        : "Showing at most 20 matches per status. Refine the search to narrow the results."
+                    : null;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (sequence == _sourceLookupSearchSequence)
+            {
+                SourceLookupLoading = false;
+            }
+
+            Interlocked.CompareExchange(ref _sourceLookupSearchCts, null, requestCts);
+            requestCts.Dispose();
+        }
+    }
+
+    private void ResetSourceLookup()
+    {
+        SourceLookupVisible = false;
+        SourceLookupLoading = false;
+        SourceLookupSearchText = string.Empty;
+        SourceLookupError = null;
+        SourceHeaderOptions = [];
+        CancelSourceLookupSearch();
+    }
+
+    private void CancelSourceLookupSearch()
+    {
+        Interlocked.Increment(ref _sourceLookupSearchSequence);
+        Interlocked.Exchange(ref _sourceLookupSearchCts, null)?.Cancel();
+        SourceLookupLoading = false;
     }
 
     private void ClearAddresses()
@@ -860,6 +1291,7 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         _editingLine = null;
+        _popupAdvancedExpanded = false;
         Popup = new SaInvoiceLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
@@ -1160,6 +1592,7 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         _editingLine = line;
+        _popupAdvancedExpanded = true;
         Popup = line.Clone();
 
         // Phase 4: as SaSo — adopt the loaded price as the override baseline when no engine price was ever
@@ -1450,26 +1883,79 @@ public partial class SaInvoice : PageBase, IDisposable
             }
 
             _isDirty = false;
-            if (result.PostWarnings.Count > 0)
+            var savedInvNo = result.Document?.InvNo ?? result.InvNo ?? InvNo;
+            if (IsNewMode)
             {
-                StatusMessage = "Invoice saved.";
-                PostWarnings = result.PostWarnings.ToList();
-                if (IsNewMode)
+                if (string.IsNullOrWhiteSpace(savedInvNo))
                 {
-                    Navigation.NavigateTo($"/sales/invoices/edit/{result.InvNo}");
+                    ErrorMessage = "Invoice saved, but its document number was not returned. Reload the list to continue.";
                     return;
                 }
 
-                if (result.Document is not null)
-                {
-                    ApplyDocument(result.Document);
-                    RecalcDocument();
-                }
-
+                Navigation.NavigateTo($"/sales/invoices/edit/{Uri.EscapeDataString(savedInvNo)}");
                 return;
             }
 
-            Navigation.NavigateTo("/sales/invoices");
+            if (result.Document is not null)
+            {
+                ApplyDocument(result.Document);
+                RecalcDocument();
+            }
+
+            PostWarnings = result.PostWarnings.ToList();
+            StatusMessage = "Invoice saved.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task OnInvoiceNextAction()
+    {
+        if (NeedsInvoiceStockAllocation)
+        {
+            await OnAddShipmentAsync();
+            return;
+        }
+
+        if (CanPostInvoice)
+        {
+            ConfirmPostVisible = true;
+        }
+        else if (_isDirty && CanPostPermission)
+        {
+            StatusMessage = "Save changes before posting the Invoice.";
+        }
+    }
+
+    protected void CancelPost() => ConfirmPostVisible = false;
+
+    protected async Task ConfirmPostAsync()
+    {
+        ConfirmPostVisible = false;
+        if (!CanPostInvoice || string.IsNullOrWhiteSpace(InvNo))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        StatusMessage = null;
+        try
+        {
+            var result = await Invoices.PostAsync([InvNo], _cts.Token);
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!HandleOperationResult(result, stayOnPage: true))
+            {
+                return;
+            }
+
+            Navigation.NavigateTo($"/sales/invoices/view/{Uri.EscapeDataString(InvNo)}");
         }
         finally
         {

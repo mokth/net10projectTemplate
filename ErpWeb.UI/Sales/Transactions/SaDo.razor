@@ -24,7 +24,7 @@
         @if (NeedsShipment)
         {
             <div class="sdoc-toast sdoc-toast--warn" role="status">
-                <span>Add shipment before posting.</span>
+                <span>Allocate stock before posting.</span>
             </div>
         }
 
@@ -48,6 +48,38 @@
                     </strong>
                 </div>
             </header>
+
+            @if (ShowSoSourceLauncher)
+            {
+                <section class="sdoc-master" aria-label="Delivery order source">
+                    <div class="sdoc-items__head">
+                        <div>
+                            <h2 class="sdoc-items__title">SOURCE</h2>
+                            <p class="sdoc-field-hint mb-0">Fastest way to create a Delivery Order</p>
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="FIND SALES ORDER"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  Click="@OpenSoSourcePicker" />
+                    </div>
+                    <p class="sdoc-field-hint">Or select a customer below for a manual Delivery Order.</p>
+                    @if (!string.IsNullOrWhiteSpace(SourceBootstrapMessage))
+                    {
+                        <p class="sdoc-popup-error" role="alert">@SourceBootstrapMessage</p>
+                        <div class="sdoc-popup-footer__actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CHOOSE ANOTHER SO" Click="@OpenSoSourcePicker" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="MANUAL DELIVERY ORDER" Click="@ContinueWithManualDo" />
+                        </div>
+                    }
+                </section>
+            }
+
+            <SaDocNextActionBar Visible="@ShowNextAction"
+                                ActionText="@NextActionText"
+                                IconCssClass="@(CanCreateInvoice ? "fa-solid fa-file-invoice" : CanAllocateStock ? "fa-solid fa-boxes-stacked" : "fa-solid fa-check")"
+                                Hint="@NextActionHint"
+                                Enabled="@NextActionEnabled"
+                                OnClick="@OnDoNextAction" />
 
             <section class="sdoc-master">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
@@ -465,14 +497,6 @@
                     else
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@OnCancelAsync" Enabled="@(!IsSubmitting)" />
-                        @if (!IsNewMode)
-                        {
-                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="Add shipment"
-                                      IconCssClass="fa-solid fa-truck"
-                                      Click="@OnAddShipmentAsync"
-                                      Enabled="@(!IsSubmitting && Lines.Count > 0 && HasCustomer)" />
-                        }
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
                                   Text="@(IsSubmitting ? "Saving…" : "Save")"
                                   IconCssClass="fa-solid fa-floppy-disk"
@@ -515,16 +539,27 @@
                             <DxTextBox @bind-Text="@Popup.IDesc" ReadOnly="true" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="" ColSpanMd="12">
                         <Template>
-                            <DxComboBox Data="@Warehouses"
-                                        TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
-                                        ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
-                                        @bind-Value="@Popup.FrWarehouse"
-                                        Enabled="@CanEditDocument"
-                                        CssClass="w-100 required-field" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                      Text="@PopupAdvancedToggleText"
+                                      Click="@TogglePopupAdvanced"
+                                      Enabled="@(!PopupAdvancedRequired)" />
                         </Template>
                     </DxFormLayoutItem>
+                    @if (ShowPopupAdvanced)
+                    {
+                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                            <Template>
+                                <DxComboBox Data="@Warehouses"
+                                            TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                            ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                            @bind-Value="@Popup.FrWarehouse"
+                                            Enabled="@CanEditDocument"
+                                            CssClass="w-100 required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
                     <DxFormLayoutItem Caption="Qty" ColSpanMd="6">
                         <Template>
                             <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" ValueExpression="@(() => Popup.Qty)" />
@@ -535,11 +570,14 @@
                             <DxSpinEdit Value="@(Popup.StdPackSize ?? 1m)" ReadOnly="true" Increment="0.0001m" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
-                        <Template>
-                            <DxTextBox @bind-Text="@Popup.Remarks" Enabled="@CanEditDocument" />
-                        </Template>
-                    </DxFormLayoutItem>
+                    @if (ShowPopupAdvanced)
+                    {
+                        <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@Popup.Remarks" Enabled="@CanEditDocument" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
                 </DxFormLayout>
             </div>
             <div class="sdoc-popup-footer">
@@ -640,6 +678,66 @@
         </Content>
     </DxPopup>
 
+    <DxPopup HeaderText="Find Sales Order"
+             CloseOnOutsideClick="false"
+             Width="900px"
+             CssClass="sdoc-popup common-popup"
+             @bind-Visible="@SoSourcePickerVisible">
+        <Content>
+            <p class="sdoc-field-hint">Search by SO no., customer code, or customer name. Results are limited to the first 20 per open status.</p>
+            <div class="sdoc-source-search">
+                <DxTextBox Text="@SoSourceSearchText"
+                           TextChanged="@OnSoSourceSearchTextChanged"
+                           TextExpression="@(() => SoSourceSearchText)"
+                           NullText="SO no., customer code, or customer name"
+                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                           Enabled="@CanEditDocument" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Search"
+                          Click="@SearchSoSourceHeadersAsync"
+                          Enabled="@(!SoSourceLoading && !string.IsNullOrWhiteSpace(SoSourceSearchText))" />
+            </div>
+            @if (!string.IsNullOrWhiteSpace(SoSourceError))
+            {
+                <p class="@(SoSourceResults.Count == 0 && !SoSourceLoading ? "sdoc-popup-error" : "sdoc-field-hint")" role="status">@SoSourceError</p>
+            }
+            @if (SoSourceLoading)
+            {
+                <p class="sdoc-field-hint" role="status">Searching sales orders…</p>
+            }
+            @if (SoSourceResults.Count > 0)
+            {
+                <DxGrid Data="@SoSourceResults"
+                        KeyFieldName="@nameof(SaDocSourceHeaderOption.DocumentNo)"
+                        ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                        TextWrapEnabled="false"
+                        ShowFilterRow="false"
+                        ShowGroupPanel="false"
+                        ShowSearchBox="false"
+                        PageSize="20">
+                    <Columns>
+                        <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.DocumentNo)" Caption="SO no." Width="155px" MinWidth="135" />
+                        <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.CustomerCode)" Caption="Customer" Width="150px" MinWidth="130" />
+                        <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.CustomerName)" Caption="Customer name" Width="250px" MinWidth="190" />
+                        <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.DocumentDate)" Caption="Date" Width="115px" MinWidth="105" DisplayFormat="dd/MM/yyyy" />
+                        <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.Status)" Caption="Status" Width="105px" MinWidth="90" />
+                        <DxGridCommandColumn Caption=" " Width="115px" MinWidth="105">
+                            <CellDisplayTemplate>
+                                @{
+                                    var source = (SaDocSourceHeaderOption)context.DataItem;
+                                }
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Use SO" Click="@(() => ChooseSourceSoAsync(source.DocumentNo))" Enabled="@(!SoSourceLoading)" />
+                            </CellDisplayTemplate>
+                        </DxGridCommandColumn>
+                    </Columns>
+                </DxGrid>
+            }
+            <div class="sdoc-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@CloseSoSourcePicker" />
+            </div>
+        </Content>
+    </DxPopup>
+
     <DxPopup HeaderText="Change customer?"
              CloseOnOutsideClick="false"
              Width="420px"
@@ -650,6 +748,20 @@
             <div class="sdoc-popup-footer__actions">
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelCustChange" />
                 <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Change customer" Click="@ConfirmCustChangeAsync" />
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Post delivery order?"
+             CloseOnOutsideClick="false"
+             Width="520px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmPostVisible">
+        <Content>
+            <p class="sdoc-confirm__copy">Post @DoNoDisplay? Posting will issue stock from the allocated shipment and apply the Delivery Order to its source Sales Order(s).</p>
+            <div class="sdoc-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelPost" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="POST DELIVERY ORDER" Click="@ConfirmPostAsync" Enabled="@(!IsSubmitting && CanPostDeliveryOrder)" />
             </div>
         </Content>
     </DxPopup>

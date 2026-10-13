@@ -311,7 +311,9 @@
         <Menu Code="PLN_FINISHED_GOOD_RECEIPT" Name="Finished Good Receipt" Route="/planning/finished-good-receipts" SortOrder="4" Icon="fa-solid fa-boxes-stacked" />
         <Menu Code="PLN_STOCK_RETURN" Name="Production Stock Return" Route="/planning/stock-returns" SortOrder="5" Icon="fa-solid fa-arrow-rotate-left" />
         <Menu Code="PLN_STOCK_ADJUSTMENT" Name="Production Stock Adjustment" Route="/planning/stock-adjustments" SortOrder="6" Icon="fa-solid fa-scale-balanced" />
-        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="7"
+        <Menu Code="PLN_WO_TRANSFER" Name="Work Order Transfer" Route="/planning/work-order-transfer" SortOrder="7"
+              Icon="fa-solid fa-right-left" />
+        <Menu Code="PLN_MAC_MAINT" Name="Machine Maintenance" Route="/planning/machine-maintenance" SortOrder="8"
             Icon="fa-solid fa-screwdriver-wrench" />
     </Menu>
     <Menu Code="PLN_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">

@@ -11,6 +11,9 @@
     <PackageReference Include="DevExpress.Blazor" Version="26.1.4" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ErpWeb.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\ErpWeb.Core\ErpWeb.Core.csproj" />
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
