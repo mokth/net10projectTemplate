@@ -353,6 +353,27 @@ public class PoCdnServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Future_purchase_credit_note_stays_draft_until_business_date()
+    {
+        var sut = CreateSut();
+        var request = CNRequest();
+        request.DocDate = FixedToday.AddDays(1);
+
+        var save = await sut.SaveNewAsync(request);
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var saved = await LoadAsync(save.DocNo!);
+        var post = await sut.PostAsync([new PoCdnKeyedRequest
+        {
+            DocNo = saved!.DocNo,
+            RowVersion = saved.RowVersion
+        }]);
+
+        Assert.False(post.Succeeded);
+        Assert.Contains("business date", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("NEW", (await LoadAsync(saved.DocNo))!.Status);
+    }
+
+    [Fact]
     public async Task Credit_note_without_an_invoice_is_rejected()
     {
         var sut = CreateSut();

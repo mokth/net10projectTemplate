@@ -445,6 +445,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
             BackfillCommercialHeader(request, prepared.Customer!);
 
             var invDate = request.InvDate == default ? _dates.Today.Date : request.InvDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, invDate, cancellationToken)
+                is string draftPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(draftPeriodError, SaInvoiceErrorKind.Validation);
+            }
             var now = DateTime.UtcNow;
             var uid = Truncate(context.UserId!, 10);
             var invoice = new SaInvoice
@@ -687,6 +694,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
             }
 
             var invDate = request.InvDate == default ? _dates.Today.Date : request.InvDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, invDate, cancellationToken)
+                is string draftPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoiceOperationResult.Fail(draftPeriodError, SaInvoiceErrorKind.Validation);
+            }
             invoice.InvDate = invDate;
             invoice.CustCode = prepared.Customer!.CustCode;
             invoice.Currency = prepared.Currency;
@@ -1513,6 +1527,13 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 await tx.RollbackAsync(cancellationToken);
                 return SaInvoicePostingItemResult.Failed(invNo, futureDateError);
             }
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, invoice.InvDate, cancellationToken)
+                is string postPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaInvoicePostingItemResult.Failed(invNo, postPeriodError);
+            }
 
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
 
@@ -1648,21 +1669,28 @@ public sealed class SaInvoiceService : ISaInvoiceService
                     batch.TrxDtTime, cancellationToken);
                 if (ledger.Error is not null)
                     return SaInvoicePostingItemResult.Failed(invNo, ledger.Error.Message);
-                var core = await _posting.PostStockOutInTransactionAsync(
-                    ledger.Context,
-                    db,
-                    context.CompanyCode!,
-                    context.BranchCode!,
-                    context.UserId!,
-                    batch.BatchNo,
-                    IvTrxTypes.SalesOut,
-                    cancellationToken);
-                if (!core.Succeeded)
+                var completed = false;
+                try
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    return SaInvoicePostingItemResult.Failed(invNo, core.ErrorMessage ?? "Stock post failed.");
+                    var core = await _posting.PostStockOutInTransactionAsync(
+                        ledger.Context,
+                        db,
+                        context.CompanyCode!,
+                        context.BranchCode!,
+                        context.UserId!,
+                        batch.BatchNo,
+                        IvTrxTypes.SalesOut,
+                        cancellationToken);
+                    if (!core.Succeeded)
+                        return SaInvoicePostingItemResult.Failed(invNo, core.ErrorMessage ?? "Stock post failed.");
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    completed = true;
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                finally
+                {
+                    if (!completed)
+                        await _posting.AbortPostingInTransactionAsync(ledger.Context, CancellationToken.None);
+                }
             }
 
             TestHookAfterStockCore?.Invoke();
@@ -1790,21 +1818,28 @@ public sealed class SaInvoiceService : ISaInvoiceService
                     effectiveAt, cancellationToken);
                 if (ledger.Error is not null)
                     return SaInvoicePostingItemResult.Failed(invNo, ledger.Error.Message);
-                var core = await _posting.RollBackStockOutInTransactionAsync(
-                    ledger.Context,
-                    db,
-                    context.CompanyCode!,
-                    context.BranchCode!,
-                    context.UserId!,
-                    batch.BatchNo,
-                    IvTrxTypes.SalesOut,
-                    cancellationToken);
-                if (!core.Succeeded)
+                var completed = false;
+                try
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    return SaInvoicePostingItemResult.Failed(invNo, core.ErrorMessage ?? "Stock rollback failed.");
+                    var core = await _posting.RollBackStockOutInTransactionAsync(
+                        ledger.Context,
+                        db,
+                        context.CompanyCode!,
+                        context.BranchCode!,
+                        context.UserId!,
+                        batch.BatchNo,
+                        IvTrxTypes.SalesOut,
+                        cancellationToken);
+                    if (!core.Succeeded)
+                        return SaInvoicePostingItemResult.Failed(invNo, core.ErrorMessage ?? "Stock rollback failed.");
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    completed = true;
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                finally
+                {
+                    if (!completed)
+                        await _posting.AbortPostingInTransactionAsync(ledger.Context, CancellationToken.None);
+                }
             }
 
             TestHookAfterStockCore?.Invoke();

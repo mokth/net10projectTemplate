@@ -1072,6 +1072,35 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Closing_the_invoice_period_blocks_new_drafts_and_posting_an_existing_draft()
+    {
+        var sut = CreateSut();
+        var saved = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ",
+                PeriodFrom = new DateTime(2026, 9, 1),
+                PeriodTo = new DateTime(2026, 9, 30),
+                Status = IvPeriodCloseStatuses.Closed
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var blockedPost = await sut.PostAsync([saved.InvNo!]);
+        Assert.False(blockedPost.Succeeded);
+        Assert.Contains("closed", blockedPost.Posting.Single().ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SaInvoiceStatuses.New, (await sut.GetAsync(saved.InvNo!)).Document!.Status);
+
+        var blockedSave = await sut.SaveNewAsync(Request(qty: 1m, price: 10m, iCode: "SVC1"));
+        Assert.False(blockedSave.Succeeded);
+        Assert.Contains("closed", blockedSave.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Future_invoice_linked_to_posted_DO_is_rejected_before_allocation()
     {
         const string doNo = "DO-LINK-0001";

@@ -90,6 +90,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 await tx.CommitAsync(cancellationToken);
                 return Ok(await MapDetailAsync(db, scope, replay.Uid, cancellationToken));
             }
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!,
+                    request.ProductionDate, cancellationToken) is string periodError)
+                return Fail(periodError);
 
         var wipConsumptionPolicy = await ResolveWipConsumptionPolicyAsync(scope.CompanyCode, cancellationToken);
 
@@ -244,6 +247,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
             return Fail("The document was changed by another user.", IvMasterErrorCode.Concurrency);
         if (request.WorkOrderOperationId != output.WorkOrderOperationId)
             return Fail("The Work Order operation cannot be changed after the draft is created.");
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!,
+                request.ProductionDate, cancellationToken) is string periodError)
+            return Fail(periodError);
 
         var operation = await LoadOperationGraphAsync(db, scope, output.WorkOrderOperationId, cancellationToken);
         if (operation is null)

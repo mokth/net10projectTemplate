@@ -36,5 +36,8 @@ public class IvStockCountLineConfiguration : IEntityTypeConfiguration<IvStockCou
         builder.HasIndex(e => new { e.StockCountId, e.LineNumber })
             .IsUnique()
             .HasDatabaseName("UQ_IvStockCountLine_No");
+
+        builder.HasIndex(e => new { e.BalLocId, e.StockCountId })
+            .HasDatabaseName("IX_IvStockCountLine_ReplayPile");
     }
 }

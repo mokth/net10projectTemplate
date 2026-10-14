@@ -140,6 +140,8 @@ public sealed partial class ProductionMaterialIssueService
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        ErpWeb.Core.StockLedger.StockPostingContext? activePosting = null;
+        var postingCompleted = false;
         try
         {
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, company, branch, ct);
@@ -222,6 +224,8 @@ public sealed partial class ProductionMaterialIssueService
                 if (issueQty > remainingWo)
                     return $"Material {material.ComponentCode} exceeds its issue tolerance.";
             }
+            if (TransactionPostingDateGuard.FutureDateError(batch.TrxDtTime, _clock.Today) is string futureDateError)
+                return futureDateError;
             if (await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, batch.TrxDtTime, ct) is string periodError)
                 return periodError;
             var ledger = await _inventoryPosting!.BeginPostingInTransactionAsync(
@@ -233,6 +237,7 @@ public sealed partial class ProductionMaterialIssueService
             if (!ledger.LedgerEnabled || ledger.Context is null)
                 return "Issue to Production requires an active V2 stock ledger for this company/branch.";
             var ledgerContext = ledger.Context;
+            activePosting = ledgerContext;
             // The production link is part of valuation lineage and must be present before
             // the inventory writer creates histories/facts.
             ledgerContext.Posting.ProductionPostingLinkId = link.Uid;
@@ -338,24 +343,27 @@ public sealed partial class ProductionMaterialIssueService
             link.ResultCode = "OK"; link.ResultMessage = $"Posted IP batch {batchNo}."; link.CompletedDate = now;
             await db.SaveChangesAsync(ct);
             await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, ct);
+            postingCompleted = true;
             ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(ct);
             return null;
         }
         catch (ProductionPostingInvariantException ex)
         {
-            await tx.RollbackAsync(CancellationToken.None);
             return ex.Message;
         }
         catch (ErpWeb.Core.StockLedger.StockLedgerException ex)
         {
-            await tx.RollbackAsync(CancellationToken.None);
             return ex.Error.Message;
         }
         catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
-            await tx.RollbackAsync(CancellationToken.None);
             return "Posting conflicted with another change; reload and retry.";
+        }
+        finally
+        {
+            if (!postingCompleted)
+                await _inventoryPosting!.AbortPostingInTransactionAsync(activePosting, CancellationToken.None);
         }
     }
 

@@ -1,0 +1,29 @@
+# productionv2 backdated replay impact manifest
+
+Source verified before edits: HEAD `a5dead323a0e5b19d7b95b457d1a7bd9c0d98cac`, tree `2af1c6025c0ac272a7510bd71e8eacc9e810a283`.
+
+This is the implementation inventory for the open-period replay work. An entry in this table identifies a route to plan and reconcile; it does not mean that route already uses replay. Until the historical writer, valuation, and downstream propagation are complete, the existing chronology blockers remain in force.
+
+| Event family | Public entry and rollback route | Existing V2/physical seam | Required replay owner or reader |
+| --- | --- | --- | --- |
+| Inventory MR, MI, Scrap, Vendor Return, Transfer, Adjustment | `IvMiscReceiptService`, `IvMiscIssueService`, `IvScrapService`, `IvVendorReturnService`, `IvStockTransferService`, `IvStockAdjustmentService` `PostAsync`/`RollbackAsync` | `IvInventoryPostingService`, `InventoryStockPostingCommandFactory`, `IvInventoryHistoryWriter` | `InventoryAsOfStockService`, `IvStockCommonRepository`, `IvSpShipmentService`, `InventoryValuationService` |
+| Inventory GR | `IvGoodsReceiptService.PostAsync`/`RollbackAsync` | Same Inventory posting coordinator; PO receipt state | `PurchaseReceiptCostSettlementService`, PI/CN adjustments |
+| Stock Count | `IvStockCountService.GenerateAsync`, `SaveCountsAsync`, `SetItemCountAsync`, `PreviewPostAsync`, `PostAsync`, `RollbackAsync`, `RecoverAsync` | Current post creates an ADJ batch; zero-variance post creates no V2 posting | Historical count generation, end-of-day anchor, cost basis, active adjustment generation, generic ADJ ownership guard |
+| Procurement PI and purchase CN | `PoInvoiceService.PostAsync`/`RollbackAsync`, `PoCdnService.PostAsync`/`RollbackAsync` | `PurchaseCostAdjustmentPostingService`, `PurchaseCdnCostAdjustmentService` | Receipt settlement, PPV and FIFO consumed/inventory split, active settlement rollback |
+| Production IP | `ProductionMaterialIssueService.Lifecycle.PostAsync`, `ProductionMaterialIssueService.RollbackAsync` | Inventory issue and Production material/pool writer in one root | RM contribution, WIP pool, material movement lineage |
+| Production Daily Output | `ProductionOutputService.Posting.PostAsync`, `ProductionOutputService.Rollback.RollbackAsync` | Production pool movements and posting coordinator | Shared WIP, contributor dependencies, effective cost trace |
+| Production Return, Adjustment, WO Transfer, FG | `ProductionStockReturnService`, `ProductionStockAdjustmentService`, `ProductionWorkOrderTransferService`, `ProductionFinishedGoodReceiptService` post/rollback | Production pool writer; PRTN/FG also own Inventory stock movements | Source issue identity, effective pool cost, transfer OUT/IN, FG receipt valuation |
+| Sales DO, direct or linked Invoice, stock-return or financial-only CDN | `SaDoService`, `SaInvoiceService`, `SaCdnService` post/rollback | Sales inventory route and V2 valuation facts | COGS, `SalesGrossProfitInquiryService`, active return allocations; linked DO retains stock ownership |
+
+## Shared gates and readers
+
+- `StockPostingCoordinator.ExecuteAsync`/`BeginInTransactionAsync` acquire the branch lock before the callback. A read-only impact plan must be built by the caller before that entry; a stale plan must be retried outside the lock.
+- Caller-owned V2 postings now have an abort/SQL-session cleanup seam, including direct Production and Procurement coordinator users and Inventory/Sales wrappers. SQL Server pooled-connection failure tests are still required; SQLite cannot verify the session marker.
+- `IvInventoryPostingService.Chronology` contains `ValidateBalanceStockDate` and `ValidateNoLaterDayMovementsAsync`; `InventoryValuationService` contains `RejectBackdatedPoolsAsync`. They stay on the non-replay path until an under-lock physical and financial proof replaces them.
+- `StockValuationSnapshotBuilder` is the period-close financial reader. Its active FIFO issue check now excludes reversal facts. `IvPeriodCloseService` calls it.
+- `ProductionOutputService.SharedWip`, `ProductionFinishedGoodReceiptService.CostTrace`, `ProductionPoolValuationService`, and `ProductionWorkOrderTransferService` read append-only allocation/dependency edges. They now use a shared active-edge resolver. FG trace and PADJ/WO owner checks still require foreign-writer lineage handling before replay can write their corrections.
+- `StockValuationQueryService` supplies as-of value and invoice COGS. `InventoryAsOfStockService` supplies physical as-of; both need canonical count keys and corrected active generations before replay can be enabled.
+
+## Current implementation boundary
+
+The event key, read-only physical simulator, database-backed active physical-tail reader, and pre-lock physical plan are in place. The reader keeps count adjustments at their canonical end-of-day key, excludes their midnight history legs from ordinary events, and removes reversed ordinary histories. The plan captures an epoch, branch sequence watermark, pile rowversion and deterministic hash; its under-root validator has not yet been wired to a writer. Draft/post date gates, active Production edges, FIFO receipt-reversal close classification, and the IP rollback revision flush have focused tests. EF entities and an additive SQL migration define count anchors' cost basis/generation lineage and replay-run/effect evidence; active count-generation, complete inventory valuation-set, and Production effective-cost readers are present. These are prerequisites, not a posting route: the simulator is not wired to a database writer, and the count service still uses live quantity and retains the legacy seven-day Generate/Post safety limit. New count anchors and generations are not yet written. No replay rollout flag is enabled. SQL Server migration/concurrency tests, financial replay, downstream propagation, and production readiness gates remain outstanding.

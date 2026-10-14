@@ -22,6 +22,10 @@ public interface IStockPostingCoordinator
         StockPostingContext context,
         CancellationToken cancellationToken = default);
 
+    Task AbortInTransactionAsync(
+        StockPostingContext context,
+        CancellationToken cancellationToken = default);
+
     Task ValuePendingInTransactionAsync(
         StockPostingContext context,
         CancellationToken cancellationToken = default);
@@ -73,6 +77,7 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var writeContextInstalled = false;
         try
         {
             await _branchLock.AcquireAsync(
@@ -168,6 +173,7 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
             var posting = BuildPosting(command, scope, epoch.Id, sequence);
             db.StockPostings.Add(posting);
             await db.SaveChangesAsync(cancellationToken);
+            writeContextInstalled = true;
             await SetDatabaseWriteContextAsync(db, posting.Id, cancellationToken);
 
             var context = new StockPostingContext(db, epoch, posting, scope.UserId);
@@ -180,13 +186,35 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
             posting.SealedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
             await ClearDatabaseWriteContextAsync(db, cancellationToken);
+            writeContextInstalled = false;
             await transaction.CommitAsync(cancellationToken);
             return new(true, true, false, posting.Id, posting.PostingSequence, value, null);
         }
         catch (StockLedgerException ex)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            try
+            {
+                if (writeContextInstalled)
+                    await ClearDatabaseWriteContextAsync(db, CancellationToken.None);
+            }
+            finally
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
             return Failure<T>(ex.Error);
+        }
+        catch
+        {
+            try
+            {
+                if (writeContextInstalled)
+                    await ClearDatabaseWriteContextAsync(db, CancellationToken.None);
+            }
+            finally
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            throw;
         }
     }
 
@@ -266,7 +294,18 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         var posting = BuildPosting(command, scope, epoch.Id, sequence);
         db.StockPostings.Add(posting);
         await db.SaveChangesAsync(cancellationToken);
-        await SetDatabaseWriteContextAsync(db, posting.Id, cancellationToken);
+        try
+        {
+            await SetDatabaseWriteContextAsync(db, posting.Id, cancellationToken);
+        }
+        catch
+        {
+            // A failed caller-owned begin has no context to pass to AbortInTransactionAsync.
+            // Clear any marker that was installed before the provider reported failure.
+            try { await ClearDatabaseWriteContextAsync(db, CancellationToken.None); }
+            catch { /* Preserve the begin failure; caller still rolls back its transaction. */ }
+            throw;
+        }
         return new(true, false, new StockPostingContext(db, epoch, posting, scope.UserId), null);
     }
 
@@ -282,6 +321,16 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         context.Posting.SealedAtUtc = DateTime.UtcNow;
         await context.Db.SaveChangesAsync(cancellationToken);
         await ClearDatabaseWriteContextAsync(context.Db, cancellationToken);
+    }
+
+    public Task AbortInTransactionAsync(
+        StockPostingContext context,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        // Caller owns the transaction. Clear the pooled connection's session marker before
+        // its rollback/disposal; clearing twice is harmless after a partial failure.
+        return ClearDatabaseWriteContextAsync(context.Db, cancellationToken);
     }
 
     public async Task ValuePendingInTransactionAsync(

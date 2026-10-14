@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>productionv2_open_period_backdated_stock_cost_replay_AI_AGENT_PLAN_v5.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="productionv2--open-period-backdated-stock-and-cost-replay">productionv2 — Open-Period Backdated Stock and Cost Replay</h1>
+<p><strong>AI coding agent execution plan v5</strong></p>
+<p><strong>Plan status: APPROVED FOR IMPLEMENTATION</strong></p>
+<p><strong>Repository/branch:</strong> <code>mokth/net10projectTemplate</code> / <code>productionv2</code></p>
+<p><strong>Source pin:</strong> HEAD <code>a5dead323a0e5b19d7b95b457d1a7bd9c0d98cac</code>, tree <code>2af1c6025c0ac272a7510bd71e8eacc9e810a283</code></p>
+<p><strong>Supersedes:</strong> <code>productionv2_open_period_backdated_stock_cost_replay_STRICT_FINAL_REVIEW_APPROVED_10of10_AI_AGENT_PLAN_v4.md</code>
+<strong>Approval meaning:</strong> This is an implementation specification, not evidence that the feature is built or safe to enable in Production. Recheck the source pin before coding; re-review any material branch change. Production remains OFF until the readiness gates below pass.</p>
+<h2 id="1-objective-and-scope">1. Objective and scope</h2>
+<p>For every stock-driving transaction in the current OPEN period, permit a future-dated draft, block POST until its Transaction Date reaches the company Business Date, and automatically post a legitimate backdated event while replaying the affected later physical and financial chronology. Preserve CLOSED periods, posted audit evidence, and one atomic transaction. A user must not have to manually roll back later documents merely because an earlier valid document arrived late.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Included events and required result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Inventory</td>
+<td>MR, GR, MI, Scrap, Vendor Return, Transfer, Adjustment, <strong>Stock Count</strong>; exact slice quantity and WAC/FIFO/Standard value</td>
+</tr>
+<tr>
+<td>Procurement</td>
+<td>PI and Purchase CN settlement, PPV, inventory versus consumed variance, rollback</td>
+</tr>
+<tr>
+<td>Production</td>
+<td>IP, Daily Production, WIP/process handoff, Stock Return, Stock Adjustment, WO Transfer, FG; effective RM→WIP→FG value</td>
+</tr>
+<tr>
+<td>Sales</td>
+<td>DO, direct Invoice shipment, linked-DO Invoice, stock-return CDN, COGS and gross profit; no duplicate issue or COGS</td>
+</tr>
+<tr>
+<td>Cross-cutting</td>
+<td>OPEN-period historical rollback, period close, reconciliation, SQL Server concurrency, failure recovery, performance</td>
+</tr>
+</tbody>
+</table>
+<p>Financial-only Sales CDN and linked-DO Invoice keep their existing stock ownership rules. Commercial PI/CN facts remain commercial evidence; replay changes their stock-cost settlement effects, not their invoice amounts. Legacy branches without an ACTIVE compatible V2 epoch retain conservative blockers. Do not change CLOSED-period business chronology or perform a mixed-cost-method online replay.</p>
+<h2 id="2-confirmed-repository-problems-to-correct">2. Confirmed repository problems to correct</h2>
+<ol>
+<li><code>IvStockCountService.SaveAsync</code>/<code>UpdateAsync</code> call <code>ValidateCountDate</code>, which rejects future drafts and dates beyond seven days; <code>GenerateAsync</code> reads a candidate query based on current <code>IvBalLoc.StdQty</code>, and Preview/Post calculate variance from live quantity. <code>PostWithinTransactionAsync</code> creates no V2 posting for zero-variance counts and rollback follows original <code>PostedBatchNo</code>. These paths cannot implement a historical absolute count. Sources: <code>ErpWeb.Core/Inventory/IvStockCountService.cs</code>, <code>ErpWeb.Model/Repositories/Inventory/IvStockCommonRepository.cs</code>.</li>
+<li><code>StockPostingCoordinator.ExecuteAsync</code> and <code>BeginInTransactionAsync</code> acquire the branch lock before their callbacks; <code>CompleteInTransactionAsync</code> always runs normal valuation. Therefore impact planning must be at the caller entry seam, and replay needs a separate completion operation. Source: <code>ErpWeb.Core/StockLedger/StockPostingCoordinator.cs</code>.</li>
+<li>Production readers filter <code>ReversesAllocationId == null</code> or <code>ReversesDependencyId == null</code>, which retains reversed originals. FG trace also equates dependency and movement <code>StockPostingId</code>; a foreign correction written under the replay root violates that assumption. PADJ and WO Transfer assert no Inventory facts under their root posting, although a replay of their root can legitimately correct foreign Inventory facts. Sources: <code>ProductionOutputService.SharedWip.cs</code>, <code>ProductionFinishedGoodReceiptService.CostTrace.cs</code>, <code>ProductionPoolValuationService.cs</code>, <code>ProductionStockAdjustmentService.cs</code>, <code>ProductionWorkOrderTransferService.cs</code>.</li>
+<li><code>PurchaseReceiptCostSettlementService</code> requires sealed GR candidates. The current late GR is still unsealed when PI replay must see it. Its proven allocation order is <code>BusinessDate</code>, <code>PostingSequence</code>, <code>FactId</code>.</li>
+<li><code>StockValuationSnapshotBuilder</code> treats a FIFO receipt reversal as an issue candidate from direction alone. Receipt reversals have no issue-consumption evidence. Fix its active-issue classification before replay can be enabled.</li>
+</ol>
+<h2 id="3-authority-chronology-and-transaction-route">3. Authority, chronology, and transaction route</h2>
+<ul>
+<li>Company Business Date is the authority for future POST, using <code>StockBusinessTime.NowAsync</code> and the shared future-date guard; compare dates, not server-local wall time. A future draft may be saved only when its selected period is OPEN. POST and rollback must recheck period state under the branch lock. Audit action time remains UTC/current time.</li>
+<li>Move existing SAVE-time future-date refusals in <code>ProductionFinishedGoodReceiptService</code>, <code>ProductionMaterialIssueService.Draft</code>, <code>ProductionStockReturnService</code> and <code>ProductionStockAdjustmentService</code> to POST-time Business Date validation while retaining their other draft checks. Add the missing explicit future-POST guard in <code>ProductionOutputService.Posting</code>; audit Inventory, Sales and Procurement stock/value entrypoints for the same date contract. The rollout flag is <code>OpenPeriodBackdatedReplayEnabled</code>: it may be ON in Development/Test/UAT for validation but remains OFF in Production until the readiness report is signed.</li>
+<li>Use one ordered replay event key for physical stock, valuation, dependency traversal and historical rollback: <code>(EffectiveAt, ClassPriority, OriginalPostingSequence, LineIdentity, AttachedSuborder)</code>. <code>ClassPriority = 0</code> for ordinary physical/value-only events and <code>1</code> for a stock-count reset; <code>AttachedSuborder = 0</code> for the base event and then increasing values for its cost deltas/corrections. A restatement inherits its owner's effective time, sequence and line and is applied immediately after that owner, before the next ordinary event. Preserve this original position after restatement; the trigger posting sequence is audit/write ownership only. At equal time a newly posted ordinary event follows existing ordinary events. PI receipt allocation retains its separate proven Business Date → Posting Sequence → Fact ID order.</li>
+<li><strong>Stock Count is a date-only, end-of-day event.</strong> Its canonical logical <code>EffectiveAt</code> is <code>CountDate.Date.AddDays(1).AddTicks(-1)</code> in <code>StockPosting</code>, valuation facts and count-generation metadata, all configured as <code>datetime2(7)</code>, with <code>ClassPriority = 1</code> after every ordinary movement on <code>CountDate</code>, including an ordinary event at that same final tick. Multiple counts on one pile/day follow their original posting sequences. <code>CountDate</code> remains the displayed business date. Keep legacy <code>IvTrxBatch.TrxDtTime</code>/<code>IvTrxHistory.TrxDtTime</code> at <code>CountDate.Date</code> for their existing storage contract; their raw timestamp is <strong>not</strong> the replay key for a count-owned adjustment. Physical/as-of and financial readers must map those rows through the count generation to the canonical logical key. A later entered same-day ordinary movement precedes the count and triggers replay of its adjustment.</li>
+<li>Select the existing fast path only when no affected later active event or cost dependency exists. For a true historical dependency, plan a bounded tail from the candidate key through later affected OPEN-period events. Reconstruct strict historical quantities by exact company, branch, item, warehouse, location, lot, status and pile identity. Never use <code>IvBalLoc.TransDate</code> or clamped as-of output as historical authority. Every intermediate slice quantity and final live quantity must be nonnegative.</li>
+<li>Route into the historical path <strong>before</strong> old <code>ValidateBalanceStockDate</code>, <code>ValidateNoLaterDayMovementsAsync</code>, <code>RejectBackdatedPoolsAsync</code> and analogous module blockers reject a valid candidate. Keep those checks on the fast/legacy path. The historical writer receives an internal permit created only after the under-lock plan and strict simulation pass; it reuses existing document/detail/history and lock conventions but replaces the old <code>TransDate</code> and live-only chronology decisions with the proven replay result. Do not expose a public or generic <code>skipChronologyChecks</code> switch.</li>
+<li>Reconstruct each candidate-time pile from current <code>IvBalLoc.StdQty</code> by undoing <strong>active</strong> later inbound/outbound movements newest to oldest, apply the candidate, then replay the tail oldest to newest. For an outbound event prove both historical source availability and a valid final current balance. Report the first event that would make a slice negative. For a count, recompute its reset delta inside this simulation; the ordinary <code>old current + fixed candidate delta</code> shortcut does not apply. After commit <code>IvBalLoc.TransDate</code> is the latest active physical movement date for that pile, never an earlier backdate; after rollback use the latest remaining active movement or the existing opening-balance rule. Replace date-only <code>TransDate</code> eligibility checks in Inventory source selection, shipment pile discovery, and stock-count candidates with strict as-of logic.</li>
+<li>Preserve the one-root V2 SQL session context <code>STOCK_LEDGER_V2_POSTING_ID</code> through all guarded writes. A root replay may write corrections whose business owner is another document. <code>StockPostingId</code> identifies the writer; source identity, original history/fact/movement IDs, and normalized replay-effect linkage identify the owner. Refactor owner-specific invariants and readers; never infer business owner solely from root posting ID. No nested V2 posting context without a proven SQL session-context push/restore implementation.</li>
+<li>Every active chronological query must order a correction by the linked <strong>business owner's original posting sequence</strong>, not by the later replay root's sequence. Resolve that owner from the normalized effect link or original fact/history/movement lineage. A missing, ambiguous or cyclic owner link is a reconciliation failure. Keep the writer posting ID visible for audit.</li>
+<li>Before acquiring the branch lock, each POST/rollback entry builds an immutable, read-only impact plan and captures the V2 epoch, branch sequence watermark, root rowversion, affected live rowversions, policy revisions, and plan hash. Begin the existing transaction and coordinator entry; it acquires the branch lock. Under that lock, recheck those tokens, period/freeze guards and idempotency, then lock source header/lines and stock rows in the repository's consistent order. Do not hold a count header/stock row lock before the branch lock. On staleness, roll back and replan outside the lock for at most two retries; then return a retryable stale/busy error with no changes. The count service’s outer transaction follows this same order.</li>
+<li>Under the single locked root transaction: apply the candidate at its historical position; simulate the full affected physical tail; persist the candidate and append-only physical corrections; replay WAC/FIFO/Standard, procurement, production and sales costs in event order; run all reconciliation gates; call a <strong>proposed</strong> <code>CompleteReplayInTransactionAsync</code> that verifies every required history has a complete active valuation generation and seals without valuing it again; commit. Any failure rolls back status, balances, facts, correction chains and the root posting together. Add an idempotent coordinator abort/cleanup seam for caller-owned transactions so <code>STOCK_LEDGER_V2_POSTING_ID</code> is cleared after failed replay as well as success; prove the next pooled-connection post succeeds. Keep normal completion unchanged for normal posts.</li>
+</ul>
+<h2 id="4-stock-count-exact-behavior-and-proposed-data-changes">4. Stock Count: exact behavior and proposed data changes</h2>
+<h3 id="draft-count-preview-post">Draft, count, preview, post</h3>
+<ul>
+<li><code>SaveAsync</code>/<code>UpdateAsync</code>: permit a future OPEN-period <code>CountDate</code>. Remove <code>IvStockCountLimits.MaxBackdateDays</code> from the date policy. Preserve scope, rowversion, permission and period checks.</li>
+<li><code>GenerateAsync</code>, <code>SaveCountsAsync</code>, <code>SetItemCountAsync</code>, <code>PreviewPostAsync</code> and <code>PostAsync</code>: require <code>CountDate &lt;= company Business Date</code> and OPEN period. Generate line <code>SystemQty</code> from strict active historical quantity immediately before the count’s end-of-day key, not current <code>IvBalLoc.StdQty</code>; a new count is provisionally ordered after existing counts of the same pile/day. Include historically eligible piles even when live quantity is zero; apply scope, zero-quantity option and line limit only after historical candidate enumeration. <code>SystemQty</code> and <code>SnapshotUnitPrice</code> remain audit/display evidence.</li>
+<li>A posted line’s <code>PhysicalQty</code> is the immutable absolute quantity authority. Once a line has a posted generation, <code>SaveCountsAsync</code> and <code>SetItemCountAsync</code> must reject edits even when the header is later <code>ROLLED_BACK</code>; a changed physical observation requires a new sheet. The active adjustment is <code>Round(PhysicalQty - historical pre-count slice quantity, 4)</code>: positive means ADJ inbound, negative ADJ outbound. Preview shows this historical pre-count quantity, projected adjustment and downstream effect. Preserve a separate live-quantity column for information. <code>PostedStaleLines</code> compares generated evidence with current historical pre-count quantity, not unrelated later live changes.</li>
+<li>Every successful post, including all-zero variance, creates one sealed V2 count anchor with source document type <code>IV_STOCK_COUNT</code>, count ID/number, canonical end-of-day <code>EffectiveAt</code>, unique request fingerprint and posting sequence. Use <code>DocumentRevision = 0</code> on first post and <code>max(sealed count posting DocumentRevision) + 1</code> for a permitted repost after rollback, under the branch lock; derive <code>RequestId</code> deterministically from tenant, count ID, revision and role, and fingerprint the frozen count quantities/date/cost evidence. A current-date count with no later dependency may use the existing ADJ core inside that root. A historical count uses the replay-specific ADJ write seam because <code>PostInventoryADJCoreAsync</code> currently calls <code>ValidateBalanceStockDate</code> and live-balance checks before replay; do not call it blindly. A zero adjustment creates no ADJ batch/history and is an intentional zero-effect posting, not an orphan. <code>IvStockCountHdr.PostedBatchNo</code> remains the <strong>first</strong> post’s batch pointer or null, never the active-correction/repost pointer. Generic ADJ edit/rollback must reject count-owned original and correction batches and direct the operator to the count workflow.</li>
+<li>A late prior movement recomputes the signed adjustment at the original count event, preserving <code>PhysicalQty</code> and its posting sequence. A <strong>proposed replay-aware ADJ history writer</strong> creates a correction batch/detail and <code>EntryRole = REVERSAL</code> history with <code>ReversesHistoryId</code> for each nonzero prior generation, including a change to zero; it appends <code>EntryRole = ORIGINAL</code> replacement history/valuation only when the new delta is nonzero. The active zero replacement has no adjustment history/batch even though reversal evidence has a correction batch. A direction change is reversal plus opposite-direction replacement. Use the replay root write context and preserve count ownership through generation lineage. Later events start from the frozen physical count and are then replayed.</li>
+<li>Count rollback removes the active count reset at its original business position, reverses the active generation and replays later events. Reject it atomically if removing the reset would create a negative intermediate slice, cross a CLOSED period, or break a financial dependency. Append a removal generation, set <code>ROLLED_BACK</code>, and retain earlier evidence. <code>RecoverAsync</code> may repair legacy status only after lineage reconciliation; it must not revive an obsolete batch as active. Reposting a rolled-back V2 count uses a new posting revision/anchor and the same frozen physical quantities; a changed count requires a new sheet.</li>
+</ul>
+<h3 id="approved-cost-basis">Approved cost basis</h3>
+<ul>
+<li>At initial POST, freeze a traceable cost basis for <strong>every counted line with <code>PhysicalQty &gt; 0</code></strong>, including zero-variance lines. For WAC/FIFO, capture a unit cost from the active approved V2 historical valuation state at the count position, together with its branch watermark and deterministic evidence hash. If no approved V2 cost exists, require <code>MANUAL_APPROVED</code> with a positive base-currency unit cost or <code>ZERO_COST_APPROVED</code> with zero unit cost and a reason. Follow the existing Stock Adjustment evidence validation and require <code>InventoryStockCount</code> <code>PriceOverride</code> permission for explicit approval; add that permission to the count-menu setup script. Do not use <code>SnapshotUnitPrice</code>, purchase price or mutable <code>IvBalLoc.UnitPrice</code> as authority.</li>
+<li>During replay, a positive adjustment uses the newly replayed historical WAC/FIFO cost when valid on-hand stock exists. If pre-count on-hand becomes zero, use the frozen approved fallback. Standard Cost uses the revision effective at the count event. If cost provenance is missing or invalid, reject the triggering replay atomically with the count number and line. Never silently book a zero or stale display cost.</li>
+<li>The existing <code>InventoryValuationService.AppendReceipt</code> and <code>ResolveFifoReceiptUnitCost</code> reject no-evidence ADJ inbound when on-hand is zero. Add <strong>proposed</strong> <code>InventoryCostEvidenceTypes.CountFrozenV2 = &quot;COUNT_FROZEN_V2&quot;</code>, valid only for a count-owned positive ADJ history linked to an immutable <code>StockCountCostBasis</code> with <code>LEDGER_WAC</code> or <code>LEDGER_FIFO</code> provenance. Extend those valuation paths to validate the basis tenant, item, count line, exact frozen unit cost, and original watermark/hash against the immutable V2 evidence captured at the initial post; do not compare that hash to the newly replayed state. Read the <code>decimal(19,6)</code> unit cost directly from the basis when creating the valuation fact, rather than round-tripping through the ADJ detail's four-decimal display price. An approved zero-cost V2 basis is valid. For an explicit count approval, carry the existing <code>MANUAL_APPROVED</code> or <code>ZERO_COST_APPROVED</code> type, price, reason and approver from the frozen basis into the correction detail/history and use existing validation. The ordinary ADJ cost policy remains unchanged.</li>
+</ul>
+<h3 id="schema-and-compatibility-all-additions-here-are-proposed-new-elements">Schema and compatibility (all additions here are <strong>proposed new</strong> elements)</h3>
+<ul>
+<li>Add append-only <code>StockCountCostBasis</code>: <code>Id bigint identity</code> primary key; tenant keys <code>CompanyCode/BranchCode nvarchar(5)</code>; <code>StockCountLineId int</code> FK and unique; <code>FrozenFallbackUnitCost decimal(19,6)</code> to match V2 <code>StockCostState</code>/<code>StockValuationFact</code> unit-cost precision; <code>CostBasisKind nvarchar(30)</code> (<code>LEDGER_WAC</code>, <code>LEDGER_FIFO</code>, <code>STANDARD_REVISION</code>, <code>MANUAL_APPROVED</code>, <code>ZERO_COST_APPROVED</code>); <code>StandardCostRevisionId bigint NULL</code> FK; <code>CostBasisWatermark bigint NULL</code>; <code>CostBasisHash char(64) NULL</code>; <code>CostEvidenceType nvarchar(30) NULL</code>; <code>CostOverrideReason nvarchar(250) NULL</code>; <code>CostApprovedBy nvarchar(100) NULL</code>; <code>CostApprovedAtUtc datetime2(7) NULL</code>; <code>CreatedAtUtc datetime2(7) NOT NULL</code>. For WAC/FIFO ledger kinds require watermark/hash; for Standard require the approved effective revision ID; for explicit kinds require matching type, actor/time and ADJ-equivalent price/reason validation. The initial POST creates this record for each positive physical count in the same root transaction. Legacy backfill may create it only from V2 or approval evidence retained at the original posting; it never edits the posted count line. <code>IvStockCountLine</code> currently has no tenant keys, so the line FK is by ID and the service/preflight must validate its header tenant; posting FKs use tenant-matching composite keys. Extend <code>IIvStockCountService</code> requests/DTOs, Preview and the count UI to capture manual evidence before POST and display the frozen basis and active adjustment. The frozen record is never updated or deleted.</li>
+<li>Add <code>StockCountReplayGeneration</code>: <code>Id bigint identity</code> primary key; tenant keys <code>CompanyCode/BranchCode nvarchar(5)</code>; <code>StockCountLineId int</code> FK; <code>AnchorPostingId bigint</code> tenant-matching FK; <code>WritePostingId bigint</code> tenant-matching FK; <code>PreviousGenerationId bigint NULL</code> self-FK; <code>EffectiveAt datetime2(7)</code>; <code>AnchorPostingSequence bigint</code>; <code>SignedAdjustmentQty decimal(18,4)</code>; <code>AdjustmentBatchNo int NULL</code>; <code>AdjustmentHistoryId int NULL</code> FK; <code>ReversalBatchNo int NULL</code>; <code>ReversalHistoryId int NULL</code> FK; <code>IsRemoval bit NOT NULL DEFAULT 0</code>; <code>CreatedAtUtc datetime2(7)</code>. Require one initial generation per line, one child per prior generation, unique non-null adjustment/reversal history IDs, same-line parent linkage, and one active leaf or an explicit corruption error. The active leaf is a row with no child; reversal histories themselves are never active adjustments. A removal leaf makes the count inactive.</li>
+<li>Add nullable <code>StockCountCostBasisId bigint</code> FK to <code>IvTrxBatchDetail</code> and <code>IvTrxHistory</code>; the history writer copies it from count-owned batch detail. Populate it only when a positive count adjustment uses frozen fallback evidence. Valuation verifies the linked basis rather than trusting free-text <code>PriceEvidence</code> or a batch remark. Include the FK and <code>COUNT_FROZEN_V2</code> check in SQL upgrade/fresh-install scripts and EF configuration.</li>
+<li>Count POST order inside the locked root transaction: recheck header/line rowversions, period and historical plan; create the count V2 anchor; create and flush required immutable cost-basis rows so their IDs are available; create any ADJ batch/detail/history using the typed fast or historical writer; create one initial generation row per counted line linked to its adjustment history or to null for zero; value the active adjustment and all affected descendants; reconcile; seal; commit. A replay correction uses the triggering root context, appends reversal/replacement batch/history and generation rows, then follows the same financial reconciliation/seal path. Never start a second V2 posting just for a count correction.</li>
+<li>Add append-only <code>StockReplayRun</code>: <code>Id bigint identity</code> primary key; <code>CompanyCode/BranchCode nvarchar(5)</code>; unique <code>RootStockPostingId bigint</code> tenant-matching FK; <code>RootRequestId uniqueidentifier</code>; <code>RootDocumentType nvarchar(40)</code>; <code>RootDocumentId nvarchar(64)</code>; <code>EarliestEffectiveAt/LatestEffectiveAt datetime2(7)</code>; <code>PlanWatermark bigint</code>; <code>PlanHash char(64)</code>; affected history/item/production-movement counts <code>int</code>; <code>CreatedAtUtc datetime2(7)</code>; <code>CreatedBy nvarchar(100)</code>. Add normalized append-only <code>StockReplayEffect</code>: <code>Id bigint identity</code>; tenant keys; <code>ReplayRunId bigint</code> FK; <code>RootStockPostingId/BusinessOwnerPostingId bigint</code> tenant-matching FKs; <code>EffectKind/AffectedEntityType nvarchar(40)</code>; <code>AffectedEntityId bigint</code>; <code>OriginalEntityId bigint NULL</code>; <code>CreatedAtUtc datetime2(7)</code>; unique <code>(ReplayRunId, EffectKind, AffectedEntityType, AffectedEntityId)</code> and owner-lookup index <code>(CompanyCode, BranchCode, BusinessOwnerPostingId, EffectKind)</code>. Use existing source document and original-fact/movement links where present; never replace them with a JSON-only graph.</li>
+<li>Add or verify indexes for <code>(CompanyCode,BranchCode,FromBalLocId,TrxDtTime,Id)</code> and the matching To-pile form on <code>IvTrxHistory</code>; <code>(CompanyCode,BranchCode,EffectiveAt,AnchorPostingSequence,StockCountLineId)</code> on <code>StockCountReplayGeneration</code>; <code>(CompanyCode,BranchCode,EffectiveAt,PostingSequence)</code> on <code>StockPosting</code>; owner document/no/line/item on <code>StockValuationFact</code>; original sale owner/fact on return allocation; contributor→consumer on Production dependency; receipt and outbound movement IDs on Production allocation; tenant/history ID on Production material movement; movement/restatement and reversal-parent on Production cost restatement. Query ordinary history legs and active count generations as separate indexed sets, then merge by the logical event key; never use the count history's midnight timestamp as the range key. Retain the existing item/effective-date valuation and receipt/invoice/reversal settlement indexes. Add no duplicate useful-prefix index. SQL Server plans and logical reads determine INCLUDE columns and whether procurement adjustment lookup needs an additional index.</li>
+<li>Update EF entities/configuration and <code>AppDbContext</code>; ship an idempotent <code>scripts/alter-open-period-backdated-replay.sql</code> and <code>scripts/preflight-open-period-backdated-replay.sql</code> (both proposed), and update <code>scripts/create-iv-stock-count.sql</code>, <code>scripts/alter-stock-ledger-p2.sql</code>, <code>scripts/create-stock-ledger-write-guard.sql</code> and <code>scripts/init-inv-stock-count-menu.sql</code>. Deploy schema and indexes before code; keep the feature OFF during mixed-version deployment. The new count-basis/generation and replay-run/effect tables accept application writes only in the active unsealed root SQL session context; privileged migration backfill is separately audited. Draft count-line edits remain subject to existing service authorization and rowversion rules. Update the count entity comments that currently describe the seven-day cap and midnight ADJ posting.</li>
+<li>Preflight every posted OPEN-period count before branch enablement. For a legacy nonzero count, backfill an anchor/generation only when <code>PostedBatchNo</code> leads unambiguously to a sealed tenant-matching V2 posting and history; use its original sequence with the count's canonical end-of-day event key in <strong>all</strong> physical/as-of and financial replay readers, without rewriting sealed rows or relying on their raw midnight <code>TrxDtTime</code>. A legacy zero-variance count has no trustworthy posting sequence: do not infer it from <code>PostedOn</code>. If ordering or approved cost basis cannot be proved, report the exact count/line and block replay enablement for that branch until formal reconciliation. Do not guess a historical order.</li>
+</ul>
+<h2 id="5-financial-and-cross-module-replay-rules">5. Financial and cross-module replay rules</h2>
+<ul>
+<li>A logical <code>IvTrxHistory</code> may own a <strong>set</strong> of active valuation facts: WAC transfer OUT+IN and FIFO issue/transfer splits. Resolve the complete active generation, not one leaf fact. Exact reversal of every old split/consumption precedes a complete corrected generation. Allocate unique <code>(StockPostingId, PostingLineNo, SplitOrdinal)</code> identities under the root; do not reuse foreign source line numbers. All correction facts use the corrected event’s <code>EffectiveAt</code>, <code>BusinessDate</code> and <code>PeriodKey</code>, while <code>CreatedAtUtc</code> records actual action time.</li>
+<li>An unchanged physical receipt retains its identity. Cost-only correction is an append-only value delta immediately after the receipt; WAC changes the later average, FIFO adjusts layer accumulated/remaining value and consumed variance, and Standard records its required variance. Do not fabricate a duplicate physical receipt or rewrite sealed facts. Replay must assert one cost method over the affected OPEN-period tail; a corrupt cutover fails closed.</li>
+<li><strong>WAC algorithm:</strong> rewind the active later receipt/issue/value effects by their signed quantity and value, then reapply authoritative receipts, issues at the immediately preceding moving average, and value-only adjustments at their own event keys. Final <code>StockCostState</code> quantity, value and average/current unit cost must match active facts; zero quantity has no unexplained residual value.</li>
+<li><strong>FIFO algorithm:</strong> clone affected live layer state; undo later issue consumptions, receipts and value adjustments newest first without changing audit rows; then allocate forward by receipt effective key and stable origin/layer identity. Reverse every superseded issue split and its consumption rows; append the complete corrected split/consumption generation. Preserve a receipt's history, valuation origin and layer when only its cost changes. Apply its value delta to <code>AccumulatedAdjustment</code>, remaining value and current unit cost; pass the consumed portion into later issues/COGS. Do not rewrite <code>OriginalValue</code> as a shortcut. Open layer quantity/value and every active issue's consumption must exactly reconcile with <code>StockCostState</code> at repository precision.</li>
+<li><strong>Standard algorithm:</strong> use the approved <code>ItemStandardCostRevision</code> effective at each event's business date, include value-only Standard revaluations and Production/Sales-return Standard variances, and leave approved frozen manual costs unchanged. A cost-method cutover inside the OPEN replay tail is unsupported state and blocks the root transaction.</li>
+<li>PI settlement replay rebuilds active receipt candidates in the proven <code>(BusinessDate, PostingSequence, FactId)</code> order. Include the current transaction’s unsealed late-GR receipt <strong>only for its own root posting</strong>; exclude every other unsealed receipt. Reverse old active settlement/adjustment generations and append replacements, including PPV and FIFO inventory/consumed split. PI/CN rollback resolves the active generation rather than assuming original roots are unreversed.</li>
+<li>Introduce one central active resolver for Production movement allocations and pool dependencies: an ordinary row is active only if it has no reversal child; a reversal row is never an active edge. Use it in Shared WIP, pool valuation, transfer/rollback, FG cost trace and dependent detection. Trace corrected edges by movement/business-owner lineage, not equality of correction root posting ID and original movement posting ID. Keep immutable posted Production facts and frozen conversion evidence; append effective-cost restatements. Prove RM→WIP→FG conservation and WO Transfer OUT=IN.</li>
+<li>Add proposed append-only <code>ProductionCostRestatementFact</code> only for the logical target <code>ProductionBalLotMovementId</code>: <code>Id bigint identity</code>; tenant keys <code>nvarchar(5)</code>; <code>ReplayRequestId uniqueidentifier</code>; <code>ReplayStockPostingId bigint</code> tenant-matching FK; <code>ProductionBalLotMovementId bigint</code> FK; <code>EffectiveAt datetime2(7)</code>; <code>PriorEffectiveTotalCost</code>, <code>CorrectedEffectiveTotalCost</code>, <code>CorrectedUnitCost</code>, <code>DeltaCost decimal(19,6)</code>; <code>ReversesRestatementFactId bigint NULL</code> self-FK unique when non-null; <code>CreatedAtUtc datetime2(7)</code>; <code>CreatedBy nvarchar(100)</code>. A proposed batch <code>IProductionEffectiveCostResolver</code> selects the active restatement or the immutable original movement cost. Guard restatements against update/delete and index by movement and replay root. Do not duplicate one logical correction across every Production evidence table.</li>
+<li>Rewind each affected Production pool using <strong>effective</strong> costs, replay active quantities/allocations/dependencies forward, append restatements only when value changes, and update live pool quantities/value and <code>ProductionPoolValuation</code> together. Detect a dependency cycle and roll back with identifying IDs. IP replacement valuation keeps its material/WO/operation identity and flows to WIP without modifying sealed <code>ProductionMaterialMovement</code>. Daily Production output equals corrected consumed material/WIP cost plus its originally approved frozen conversion cost. Stock Return preserves exact source-issue and slice identity and uses corrected source contribution cost; never restore an old price cache over later activity.</li>
+<li>Preserve PADJ cost authority by type: <code>CURRENT_PRODUCTION_POOL_COST</code> resolves corrected pool cost at the adjustment key; <code>ORIGINAL_ISSUE_COST</code> resolves corrected source-issue cost; <code>STANDARD_COST</code> uses its event-date approved revision; <code>MANUAL_APPROVED</code> and <code>ZERO_COST_APPROVED</code> stay frozen. PADJ and WO Transfer do not acquire Inventory movements of their own merely because their root writes foreign replay corrections. For WO Transfer restate OUT and IN atomically to identical effective value. For FG restate source WIP, Production effective cost and the <strong>existing</strong> Inventory receipt value, then propagate FIFO consumption/Standard variance and Sales COGS without a second physical FG receipt.</li>
+<li>Recalculate downstream DO/direct-Invoice COGS, linked-DO ownership, stock-return CDN allocations and GP from active outbound generations. A return never allocates more active quantity/value than the original sale. Financial-only CDN does not gain stock movement. Rollback reverses the current active generation and replays its historical removal, not stale original facts.</li>
+<li>Fix <code>StockValuationSnapshotBuilder</code> so FIFO consumption completeness applies to active valued issues only; reversal facts do not require issue consumption rows. Month-end signed snapshots include original, reversal and replacement facts in their corrected business periods. Never move a CLOSED-period correction into the current month.</li>
+</ul>
+<h2 id="6-files-and-implementation-order">6. Files and implementation order</h2>
+<p><strong>Confirmed existing files to change or inspect:</strong> <code>ErpWeb.Core/Inventory/IvStockCountService.cs</code>, <code>IvStockCountService.Variance.cs</code>, <code>IIvStockCountService.cs</code>, <code>InventoryAsOfStockService.cs</code>, <code>IvInventoryPostingService.cs</code>, <code>IvPeriodCloseService.cs</code>, <code>ErpWeb.Model/Repositories/Inventory/IvStockCommonRepository.cs</code>, <code>ErpWeb.Core/StockLedger/StockPostingCoordinator.cs</code>, <code>InventoryValuationService.cs</code>, <code>StockValuationSnapshotBuilder.cs</code>, <code>ErpWeb.Core/Purchase/PurchaseReceiptCostSettlementService.cs</code>, <code>PurchaseCostAdjustmentPostingService.cs</code>, <code>PurchaseCdnCostAdjustmentService.cs</code>, <code>PoInvoiceService.cs</code>, <code>PoCdnService.cs</code>, <code>ErpWeb.Core/Production/ProductionOutputService.SharedWip.cs</code>, <code>ProductionFinishedGoodReceiptService.CostTrace.cs</code>, <code>ProductionPoolValuationService.cs</code>, <code>ProductionStockAdjustmentService.cs</code>, <code>ProductionWorkOrderTransferService.cs</code>, <code>ErpWeb.Core/Sales/SaDoService.cs</code>, <code>SaInvoiceService.cs</code>, <code>SaCdnService.cs</code>, <code>SalesGrossProfitInquiryService.cs</code>, <code>ErpWeb.UI/Inventory/Transactions/IvStockCount.razor</code> and <code>.razor.cs</code>, <code>ErpWeb.Model/Entities/Inventory/IvStockCountHdr.cs</code> and <code>IvStockCountLine.cs</code>, their EF configurations, and <code>ErpWeb.Model/Data/AppDbContext.cs</code>. Phase 0 must also identify all other stock-writing entrypoints and active-cost/rollback readers in these modules; the scope matrix in §1 is the completeness criterion. All replay services/entities/scripts named above are proposed additions, not claims that they exist.</p>
+<ol>
+<li>Add failing focused tests and produce a complete entrypoint/reader/rollback impact manifest. Fix FIFO month-end issue classification and prove current behavior before enabling replay.</li>
+<li>Add schema, immutable lineage, active-generation resolvers, indexes and preflight. Keep the feature OFF.</li>
+<li>Add the common event key, service-entry planning seam, strict physical replay and count end-of-day anchor/generation path. Keep financial backdate blockers until financial replay is complete.</li>
+<li>Add replay-specific V2 completion and WAC/FIFO/Standard financial replay; then procurement settlement/value replay, Production propagation, Sales propagation and replay-aware rollback.</li>
+<li>Run focused tests, SQL Server concurrency/failure tests, full regression suites, period close/reopen, performance certification and manual UAT. Enable Development/Test/UAT for validation; enable Production only from the readiness report.</li>
+</ol>
+<h2 id="7-tests-invariants-and-acceptance-criteria">7. Tests, invariants and acceptance criteria</h2>
+<p><strong>Stock Count mandatory tests:</strong> future OPEN-period Save succeeds; future Generate/Count/Preview/Post fail; old OPEN-period count is allowed; CLOSED period fails; historical Generate includes currently zero but historically positive piles; same-day ordinary movement precedes count, including at the final tick, while count-owned batch/history can remain midnight; Preview/Post use historical pre-count quantity; late receipt and issue preserve physical count and final later balance; initial zero variance has a sealed anchor; replay produces zero→positive, positive→zero and direction-change generations; missing cost evidence fails atomically; frozen V2/manual/zero cost basis retains six-decimal V2 unit cost and is audited; rollback removes the reset at its original position; generic ADJ rollback cannot bypass count lineage; Recover rejects stale batches; count and replay concurrency are idempotent. Update <code>IvStockCountServiceTests</code>, <code>IvStockCountLedgerAuthorityTests</code>, <code>IvStockCountSqlServerConcurrencyTests</code> and variance tests.</p>
+<p><strong>Other mandatory tests:</strong> WAC, FIFO multi-layer transfer/issue and Standard revision; late GR before PI settlement while GR root is unsealed; PI/CN rollback after remap; PADJ and WO root replay with foreign Inventory corrections; active Production allocation/dependency supersession; IP→WIP→FG→Sales cost conservation; DO/direct Invoice/linked-DO/CDN ownership; historical rollback that would create negative stock; closed-period dependency; month-end FIFO receipt reversal classification; SQL Server session-context cleanup after each injected failure; watermark/rowversion races; duplicate request retry; period close/reopen/reclose. Run the full <code>ErpWeb.Tests</code> suite, including existing Inventory posting/valuation/as-of/period-close, Production issue/output/FG/adjustment/transfer, Sales DO/Invoice/CDN, and Procurement Invoice/CN suites. Do not weaken existing tests when replacing old backdate-blocker assertions.</p>
+<p><strong>Pre-commit invariants:</strong> every replayed physical slice closes to the target <code>IvBalLoc</code> quantity; no intermediate slice is negative; every required history has exactly one complete active valuation generation; active fact quantity/value reconcile to <code>StockCostState</code>; FIFO layer quantity/value and active consumption reconcile; Production movement/pool quantity and effective value reconcile; transfer OUT=IN; FG/PRTN effective value reconciles to Inventory except documented Standard variance; active COGS and return allocations reconcile; active procurement settlement equals its value adjustments. A mismatch throws and rolls back the entire root transaction.</p>
+<p><strong>Production readiness checklist:</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">Source pin and impact manifest reviewed; no stock-driving entrypoint, count path or foreign-owner reader omitted.</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1">V2 ACTIVE epoch, compatibility, baseline reconciliation and legacy count preflight pass per branch.</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">Schema deployment, fresh-install scripts, SQL write guard and measured indexes pass.</label></li>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">All focused and existing regression tests pass, including SQL Server concurrency and failure injection.</label></li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">CLOSED period and future POST guards pass; every count and physical tail remains nonnegative.</label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">WAC/FIFO/Standard, procurement, Production, Sales and month-end reconciliation pass.</label></li>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">Replay query plans seek/range-scan the affected tail, without lifetime scans or N+1 traversal; benchmark against 5–10 million unrelated history/fact rows and 100/1,000/10,000 affected events plus a 50,000-event stress case.</label></li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">Record <code>PlanningMs</code>, <code>LockedExecutionMs</code>, logical reads, query count, memory and competing-writer timeout rate. Certify an online envelope that leaves headroom below the existing 15-second <strong>lock acquisition wait</strong>; fail oversized plans before mutation. Do not raise the timeout as a performance fix.</label></li>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Manual UAT and <code>BackdatedReplayReadinessReport.md</code> record build/database, reviewer, scenarios, defects and <code>FINAL RESULT: SAFE TO ENABLE</code>; zero Critical/High findings remain.</label></li>
+</ul>
+<p><strong>Do not:</strong> delete chronology guards without replacing their safety proof; run normal POST then recost later; clamp negative quantities; stamp corrections with root business date; mutate sealed history/facts or posted count observations; use mutable/display prices as cost authority; treat reversal edges/facts as active; skip valuation through a generic flag; open nested posting contexts; enable Inventory replay before dependent Procurement/Production/Sales support; commit a partial replay; or enable Production from a plan approval alone.</p>
+<h2 id="8-approval-status">8. Approval status</h2>
+<p><strong>APPROVED FOR IMPLEMENTATION</strong> for the pinned source tree and the explicit design above. This resolves the v4 blockers concerning stock count, one-root ownership, active Production edges, late-GR settlement and lock order. The implementation is <strong>NOT APPROVED FOR PRODUCTION ENABLEMENT</strong> until every readiness checkbox passes. Any source drift or implementation deviation affecting these invariants requires another review.</p>
+
+</body>
+</html>

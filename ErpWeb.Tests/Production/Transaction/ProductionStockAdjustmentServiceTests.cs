@@ -170,6 +170,41 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Future_adjustment_is_saved_as_draft_and_post_is_blocked()
+    {
+        var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync();
+        var service = CreateService();
+        var saved = await service.SaveAsync(new ProductionStockAdjustmentSaveRequest
+        {
+            WorkOrderId = workOrderId,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('A', 64),
+            EffectiveDate = EffectiveAt.AddDays(2),
+            Lines = [new ProductionStockAdjustmentLineInput
+            {
+                ProductionBalLotId = poolId,
+                AdjustmentQty = 3m,
+                Reason = ProductionStockAdjustmentReasons.Count,
+                CostEvidenceType = InventoryCostEvidenceTypes.ManualApproved,
+                ProposedUnitCost = 1m,
+                CostOverrideReason = "Approved future receipt",
+            }],
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+        await SetSqliteRowVersionAsync(saved.Data!.Id);
+        var draft = await service.GetAsync(saved.Data.Id);
+        Assert.True(draft.Succeeded, draft.Message);
+
+        var post = await service.PostAsync(new(saved.Data.Id, draft.Data!.RowVersion, Guid.NewGuid()));
+        Assert.False(post.Succeeded);
+        Assert.Contains("after the business date", post.Message, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ProductionBalLotMovements.ToListAsync());
+        Assert.Equal(0m, (await db.ProductionBalLots.SingleAsync(x => x.Uid == poolId)).BaseQty);
+    }
+
+    [Fact]
     public async Task Failure_after_production_writer_rolls_back_the_complete_adjustment_transaction()
     {
         var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync();
@@ -206,7 +241,10 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         Assert.Equal(0m, pool.TotalCost);
         Assert.Empty(await db.ProductionBalLotMovements.ToListAsync());
         Assert.Empty(await db.ProductionStockAdjustmentFacts.ToListAsync());
-        Assert.Empty(await db.ProductionPostingLinks.Where(x => x.WorkOrderId == workOrderId).ToListAsync());
+        var savedDraftLink = Assert.Single(await db.ProductionPostingLinks
+            .Where(x => x.WorkOrderId == workOrderId).ToListAsync());
+        Assert.Equal(ProductionPostingLinkStatuses.Draft, savedDraftLink.Status);
+        Assert.NotEqual(request.RequestId.ToString("N"), savedDraftLink.PostingRequestId);
         Assert.Empty(await db.StockPostings.Where(x => x.RequestId == request.RequestId).ToListAsync());
         Assert.Empty(await db.IvTrxHistories.ToListAsync());
         Assert.Empty(await db.StockValuationFacts.ToListAsync());

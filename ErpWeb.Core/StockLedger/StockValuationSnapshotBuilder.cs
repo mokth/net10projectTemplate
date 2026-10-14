@@ -154,6 +154,10 @@ public static class StockValuationSnapshotBuilder
                 {
                     var activeIssueFacts = await db.StockValuationFacts.AsNoTracking()
                         .Where(x => fifoIssueFacts.Contains(x.Id)
+                                    // A reversed receipt has an outbound direction, but it is not an
+                                    // issue and never consumes a FIFO layer. Only original active
+                                    // issue generations require consumption evidence.
+                                    && x.ReversesValuationFactId == null
                                     && !db.StockValuationFacts.Any(reversal =>
                                         reversal.ReversesValuationFactId == x.Id))
                         .Select(x => new { x.Id, x.BaseQty, x.CostAmount })

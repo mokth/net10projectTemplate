@@ -190,12 +190,14 @@ public static class ProductionPoolValuationService
 
             if (movement.OriginalMovementId is long reversedId)
             {
-                var allocations = await db.ProductionMovementAllocations.Where(x => x.OutboundMovementId == reversedId && x.ReversesAllocationId == null).ToListAsync(ct);
+                var allocations = await ProductionActiveEdgeResolver.Allocations(db)
+                    .Where(x => x.OutboundMovementId == reversedId).ToListAsync(ct);
                 foreach (var a in allocations)
                     db.ProductionMovementAllocations.Add(new() { CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
                         StockPostingId = context.Posting.Id, ReceiptMovementId = a.ReceiptMovementId, OutboundMovementId = movement.Uid,
                         BaseQty = a.BaseQty, ReversesAllocationId = a.Id, CreatedAtUtc = context.Posting.PostedAtUtc });
-                var edges = await db.ProductionPoolDependencyRows.Where(x => x.ConsumerMovementId == reversedId && x.ReversesDependencyId == null).ToListAsync(ct);
+                var edges = await ProductionActiveEdgeResolver.Dependencies(db)
+                    .Where(x => x.ConsumerMovementId == reversedId).ToListAsync(ct);
                 foreach (var edge in edges)
                 {
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = edge.ContributorMovementId,
@@ -388,7 +390,8 @@ public static class ProductionPoolValuationService
         var frontier = movementIds.ToArray();
         while (frontier.Length > 0)
         {
-            var edges = await db.ProductionPoolDependencyRows.Where(x => frontier.Contains(x.ContributorMovementId)).ToListAsync(ct);
+            var edges = await ProductionActiveEdgeResolver.Dependencies(db)
+                .Where(x => frontier.Contains(x.ContributorMovementId)).ToListAsync(ct);
             var consumers = edges.Select(x => x.ConsumerMovementId).Where(x => !visited.Contains(x)).Distinct().ToArray();
             if (consumers.Length == 0) break;
             var active = await (from m in db.ProductionBalLotMovements join p in db.StockPostings on m.StockPostingId equals p.Id

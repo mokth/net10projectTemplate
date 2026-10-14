@@ -157,8 +157,7 @@ public sealed partial class ProductionMaterialIssueService
     {
         if (productionQtyThisIssue <= 0m)
             return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(IvMasterErrorCode.Validation, "Desired output quantity must be greater than zero.");
-        if (trxDateTime > _clock.Now)
-            return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(IvMasterErrorCode.Validation, "Transaction time cannot be in the future.");
+        var candidateDate = trxDateTime > _clock.Now ? _clock.Now : trxDateTime;
         var scope = _tenant.TryBranchScope();
         if (scope is null || string.IsNullOrWhiteSpace(scope.BranchCode))
             return IvMasterOperationResult<ProductionMaterialIssueBomPreview>.Fail(IvMasterErrorCode.InvalidScope, "A company and branch scope is required.");
@@ -190,7 +189,7 @@ public sealed partial class ProductionMaterialIssueService
             var availableForDate = 0m;
             if (material.CanManualIssue && material.ConversionFactorToBase > 0m)
             {
-                var candidates = await _allocation.GetStockCandidatesAsync(material.WorkOrderMaterialId, trxDateTime,
+                var candidates = await _allocation.GetStockCandidatesAsync(material.WorkOrderMaterialId, candidateDate,
                     cancellationToken, excludeInventoryBatchNo: excludeBatchNo);
                 if (candidates.Succeeded)
                     availableForDate = ProductionMaterialExecutionCalc.IssueQtyForBaseQty(

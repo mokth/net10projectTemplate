@@ -99,6 +99,27 @@ public sealed class ProductionOutputEntryServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Future_dated_daily_production_stays_a_draft_until_business_date()
+    {
+        var graph = await SeedGraphAsync("WO-FUTURE-POST");
+        var sut = CreateService();
+        var request = Request(graph.OperationId, Guid.NewGuid().ToString("N"));
+        request.ProductionDate = new DateTime(2026, 10, 2, 8, 0, 0);
+
+        var created = await sut.CreateAsync(request);
+        Assert.True(created.Succeeded, created.Message);
+
+        var posted = await sut.PostAsync(created.Data!.Uid);
+        Assert.False(posted.Succeeded);
+        Assert.Contains("after the business date", posted.Message, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(ProductionOutputStatuses.New,
+            (await db.ProductionOutputs.SingleAsync()).Status);
+        Assert.Empty(await db.ProductionBalLotMovements.ToListAsync());
+    }
+
+    [Fact]
     public async Task Create_blank_output_lot_uses_document_number()
     {
         var graph = await SeedGraphAsync("WO-BLANK-LOT");

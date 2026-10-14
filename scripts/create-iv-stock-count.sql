@@ -7,8 +7,9 @@
 -- WHAT THIS CREATES
 --   dbo.IvStockCountHdr  — the physical-count sheet header (one row per count document).
 --   dbo.IvStockCountLine — one row per countable pile (IvBalLoc) on that sheet.
---   Nothing else. A count posts through the EXISTING ADJ engine, so there is no new posting table
---   and no new transaction type: the generated IvTrxBatch has TrxType = 'ADJ' and RefNo = CountNo.
+--   Replay lineage and immutable count cost basis are installed separately by
+--   alter-open-period-backdated-replay.sql after the V2 stock-ledger schema.
+--   Operational adjustment batches retain TrxType = 'ADJ' and RefNo = CountNo.
 --
 -- BATCHING RULES (learned the hard way in this repo)
 --   * CREATE TABLE and each CREATE INDEX live in SEPARATE batches: SQL Server compiles a whole batch
@@ -33,7 +34,7 @@ BEGIN
         CompanyCode       nvarchar(5)   NOT NULL,
         BranchCode        nvarchar(5)   NOT NULL,
         CountNo           nvarchar(30)  NOT NULL,   -- 'CC000001' (never an SC… prefix: SC is IvTrxTypes.Scrap)
-        CountDate         datetime2     NOT NULL,   -- the physical-count business date; becomes the ADJ batch TrxDtTime
+        CountDate         datetime2     NOT NULL,   -- business date; replay key is its end-of-day tick
         Status            nvarchar(20)  NOT NULL,   -- DRAFT / COUNTED / POSTED / ROLLED_BACK / CANCELLED
 
         -- Generate scope stamps, so a sheet can be re-edited and re-printed.
@@ -106,9 +107,9 @@ BEGIN
         StdUom             nvarchar(10)  NULL,
         ExpiryDate         datetime2     NULL,
 
-        SystemQty          decimal(18,4) NOT NULL,  -- live qty at Generate: EVIDENCE, never a posting input
+        SystemQty          decimal(18,4) NOT NULL,  -- Generate-time evidence, never posting authority
         PhysicalQty        decimal(18,4) NULL,      -- NULL = not counted => excluded from posting
-        SnapshotUnitPrice  decimal(18,4) NULL,      -- EVIDENCE ONLY: posting prices from the locked balance
+        SnapshotUnitPrice  decimal(18,4) NULL,      -- display evidence, never approved cost authority
 
         RecountCount       smallint      NOT NULL CONSTRAINT DF_IvStockCountLine_RecountCount DEFAULT (0),
         CountedBy          nvarchar(10)  NULL,

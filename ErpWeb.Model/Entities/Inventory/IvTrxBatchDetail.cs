@@ -9,6 +9,7 @@ public class IvTrxBatchDetail
     public string? CostOverrideReason { get; set; }
     public string? CostApprovedBy { get; set; }
     public DateTime? CostApprovedAtUtc { get; set; }
+    public long? StockCountCostBasisId { get; set; }
     public int Id { get; set; }
     public int BatchId { get; set; }
     public int? FromBalLocId { get; set; }

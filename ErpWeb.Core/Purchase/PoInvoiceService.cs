@@ -350,6 +350,13 @@ public sealed class PoInvoiceService : IPoInvoiceService
             }
 
             var docDate = request.DocDate == default ? _dates.Today.Date : request.DocDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, write.CompanyCode, write.BranchCode, docDate, cancellationToken)
+                is string draftPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoiceOperationResult.FailValidation(draftPeriodError);
+            }
             DocumentNumberResult issued;
             try
             {
@@ -493,6 +500,15 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoiceOperationResult.FailValidation(
                     prepared.ErrorMessage ?? "Validation failed.",
                     prepared.Errors);
+            }
+
+            var updatedDocDate = request.DocDate == default ? _dates.Today.Date : request.DocDate.Date;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, write.CompanyCode, write.BranchCode, updatedDocDate, cancellationToken)
+                is string draftPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoiceOperationResult.FailValidation(draftPeriodError);
             }
 
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -995,6 +1011,20 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, "Document is not NEW.");
             }
 
+            if (TransactionPostingDateGuard.FutureDateError(invoice.DocDate, _dates.Today)
+                is string futureDateError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(docNo, futureDateError);
+            }
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, write.CompanyCode, write.BranchCode, invoice.DocDate, cancellationToken)
+                is string postPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoInvoicePostingItemResult.Failed(docNo, postPeriodError);
+            }
+
             if (item.RowVersion is { Length: > 0 })
             {
                 if (!RowVersionsEqual(invoice.RowVersion, item.RowVersion))
@@ -1128,6 +1158,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
             return null;
 
+        var completed = false;
         try
         {
             var costingEffectiveAt = referencedInvoice?.DocDate ?? invoice.DocDate;
@@ -1157,11 +1188,17 @@ public sealed class PoInvoiceService : IPoInvoiceService
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, settlement.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            completed = true;
             return null;
         }
         catch (StockLedgerException ex)
         {
             return ex.Error.Message;
+        }
+        finally
+        {
+            if (!completed)
+                await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
     }
 
@@ -1388,6 +1425,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
             return null;
 
+        var completed = false;
         try
         {
             var costingEffectiveAt = referencedInvoice?.DocDate ?? original.EffectiveAt;
@@ -1415,11 +1453,17 @@ public sealed class PoInvoiceService : IPoInvoiceService
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            completed = true;
             return null;
         }
         catch (StockLedgerException ex)
         {
             return ex.Error.Message;
+        }
+        finally
+        {
+            if (!completed)
+                await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
     }
 

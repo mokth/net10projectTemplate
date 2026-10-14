@@ -41,5 +41,9 @@ public sealed class ProductionMovementAllocationConfiguration : IEntityTypeConfi
         builder.HasIndex(x => x.ReversesAllocationId)
             .IsUnique().HasFilter("[ReversesAllocationId] IS NOT NULL")
             .HasDatabaseName("UQ_PrProductionMovementAllocation_Reversal");
+        builder.HasIndex(x => new { x.ReceiptMovementId, x.OutboundMovementId })
+            .HasDatabaseName("IX_PrProductionMovementAllocation_ReceiptOutbound");
+        builder.HasIndex(x => new { x.OutboundMovementId, x.ReceiptMovementId })
+            .HasDatabaseName("IX_PrProductionMovementAllocation_OutboundReceipt");
     }
 }

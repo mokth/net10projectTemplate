@@ -360,6 +360,38 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Fifo_snapshot_does_not_require_issue_consumption_for_receipt_reversal()
+    {
+        await SetCostMethodAsync(StockCostMethods.Fifo);
+        var receiptPostingId = await PostReceiptAsync(10m, 3m, new DateTime(2026, 10, 1, 8, 0, 0));
+        int receiptHistoryId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            receiptHistoryId = await db.IvTrxHistories
+                .Where(x => x.StockPostingId == receiptPostingId)
+                .Select(x => x.Id).SingleAsync();
+
+        await ExecuteAsync(new DateTime(2026, 10, 2, 8, 0, 0), "MR_REVERSAL",
+            async (context, writer) =>
+            {
+                var original = await context.Db.IvTrxHistories.SingleAsync(x => x.Id == receiptHistoryId);
+                writer.AppendReversal(context, [original], 1);
+            }, receiptPostingId);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var reversal = await verify.StockValuationFacts.SingleAsync(x => x.ReversesValuationFactId != null);
+        Assert.Equal(-1, reversal.Direction);
+        Assert.Empty(await verify.StockFifoLayerConsumptions.ToListAsync());
+
+        var error = await StockValuationSnapshotBuilder.AppendAsync(
+            verify, "DEMO", "HQ", new DateTime(2026, 10, 1), new DateTime(2026, 10, 31),
+            "tester", CancellationToken.None);
+        Assert.Null(error);
+        var line = Assert.Single(Assert.Single(verify.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>()).Entity.Lines);
+        Assert.Equal(0m, line.ClosingQty);
+        Assert.Equal(0m, line.ClosingValue);
+    }
+
+    [Fact]
     public async Task Mixed_invoice_resolves_linked_do_and_direct_invoice_cogs_without_duplication()
     {
         await PostReceiptAsync(10m, 5m, new DateTime(2026, 10, 1, 8, 0, 0));

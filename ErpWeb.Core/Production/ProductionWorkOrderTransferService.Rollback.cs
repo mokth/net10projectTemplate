@@ -209,6 +209,7 @@ public sealed partial class ProductionWorkOrderTransferService
             if (begin.WasReplay)
                 throw new TransferException("A prior Work Order Transfer rollback exists without matching NEW document evidence. Reconcile before retrying.");
             var context = begin.Context;
+            await using var postingScope = new StockPostingAbortScope(coordinator, context);
             context.Posting.ProductionPostingLinkId = postingLink.Uid;
 
             var legs = new[]
@@ -327,6 +328,7 @@ public sealed partial class ProductionWorkOrderTransferService
             transfer.PostingRequestId = nextDraftLink.PostingRequestId;
             await db.SaveChangesAsync(ct);
             await coordinator.CompleteInTransactionAsync(context, ct);
+            postingScope.MarkCompleted();
             if (context.Posting.SealedAtUtc is null)
                 throw new TransferException("The Work Order Transfer reversal was not sealed.");
             var document = await MapAsync(db, transfer, scope, ct);

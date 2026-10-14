@@ -350,13 +350,14 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             var scope = await ScopeAsync(request.Id == 0 ? PermissionCodes.Add : PermissionCodes.Edit, ct);
             if (request.Lines.Count == 0 || request.Lines.Count > 200) throw new FgException("Enter between one and 200 source lines.");
             var date = request.EffectiveDate == default ? clock.Now : request.EffectiveDate;
-            if (date > clock.Now) throw new FgException("Future receipt dates are not allowed.");
             var requestedRefNo = request.RefNo?.Trim();
             if (requestedRefNo?.Length > 30 || request.Remarks?.Length > 200) throw new FgException("Reference is limited to 30 and remarks to 200 characters.");
             await using var db = await factory.CreateDbContextAsync(ct);
             db.FinishedGoodReceiptWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, date, ct)
+                is string periodError) throw new FgException(periodError);
             var order = await db.ProductionWorkOrders.SingleOrDefaultAsync(x => x.Uid == request.WorkOrderId && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode, ct)
                 ?? throw new FgException("Work Order was not found.");
             if (order.Status == ProductionWorkOrderStatuses.Cancelled) throw new FgException("Cancelled Work Orders cannot be received.");

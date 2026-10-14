@@ -383,7 +383,7 @@ public sealed partial class ProductionOutputService
                     && db.ProductionValuationEvidenceRows.Any(outEvidence =>
                         outEvidence.MovementId == outbound.Uid
                         && outEvidence.Status == ProductionPoolValuationService.Verified)
-                    && db.ProductionPoolDependencyRows.Any(edge =>
+                    && ProductionActiveEdgeResolver.Dependencies(db).Any(edge =>
                         edge.ContributorMovementId == outbound.Uid
                         && edge.ConsumerMovementId == m.Uid
                         && edge.StockPostingId == m.StockPostingId))
@@ -597,11 +597,10 @@ public sealed partial class ProductionOutputService
         List<ProductionMovementAllocation> allocations = [];
         if (consumeIds.Length > 0)
         {
-            allocations = await db.ProductionMovementAllocations.AsNoTracking()
+            allocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode
                     && x.BranchCode == scope.BranchCode
                     && consumeIds.Contains(x.OutboundMovementId)
-                    && x.ReversesAllocationId == null
                     && db.StockPostings.Any(posting =>
                         posting.Id == x.StockPostingId
                         && posting.CompanyCode == scope.CompanyCode

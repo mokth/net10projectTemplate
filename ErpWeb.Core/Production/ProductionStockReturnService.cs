@@ -453,7 +453,6 @@ public sealed partial class ProductionStockReturnService(
             var scope = await ScopeAsync(request.Id == 0 ? PermissionCodes.Add : PermissionCodes.Edit, ct);
             if (request.Lines.Count is < 1 or > 100) throw new ReturnException("Enter between one and 100 return lines.");
             var date = request.EffectiveDate == default ? clock.Now : request.EffectiveDate;
-            if (date > clock.Now) throw new ReturnException("Future Production Stock Return dates are not allowed.");
             if (request.RefNo?.Length > 30 || request.Remarks?.Length > 200) throw new ReturnException("Reference is limited to 30 characters and remarks to 200 characters.");
             if (request.Lines.Select(x => x.ProductionBalLotId).Distinct().Count() != request.Lines.Count)
                 throw new ReturnException("A Production balance may appear only once in a return document.");
@@ -468,6 +467,8 @@ public sealed partial class ProductionStockReturnService(
             db.ProductionStockReturnWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, date, ct)
+                is string periodError) throw new ReturnException(periodError);
             var order = await LockWorkOrderAsync(db, scope.CompanyCode, scope.BranchCode!, request.WorkOrderId, ct);
             if (WorkOrderError(order, request.SnapshotRevision, request.SnapshotHash) is { } snapshotError)
                 throw new ReturnException(snapshotError, IvMasterErrorCode.Concurrency);

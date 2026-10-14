@@ -103,6 +103,7 @@ public sealed class IvInventoryHistoryWriter : IIvInventoryHistoryWriter
                 CostOverrideReason = source.CostOverrideReason,
                 CostApprovedBy = source.CostApprovedBy,
                 CostApprovedAtUtc = source.CostApprovedAtUtc,
+                StockCountCostBasisId = source.StockCountCostBasisId,
                 Cost = source.Cost,
                 CostPrice = source.CostPrice,
                 AsNowCost = source.AsNowCost,

@@ -3,13 +3,11 @@ namespace ErpWeb.Model.Entities.Inventory;
 /// <summary>
 /// One countable pile (<see cref="IvBalLoc"/>) on a stock-count sheet.
 ///
-/// <see cref="SystemQty"/> is the on-hand quantity at Generate time and is EVIDENCE ONLY: the
-/// adjustment delta is computed at post against the live <c>IvBalLoc.StdQty</c>, never against
-/// this column. <see cref="SnapshotUnitPrice"/> is evidence for the same reason — posting resolves
-/// its own price from the locked balance.
+/// <see cref="SystemQty"/> and <see cref="SnapshotUnitPrice"/> are display evidence, not cost or
+/// adjustment authority. A replay-aware count derives its adjustment from the historical slice
+/// immediately before the end-of-day count event.
 ///
-/// Immutability: <see cref="PhysicalQty"/> may be written only while the header is DRAFT or
-/// ROLLED_BACK. After POSTED nothing on this row is mutated — not by rollback, not by Recover.
+/// Once any posted generation exists, <see cref="PhysicalQty"/> is immutable even after rollback.
 /// </summary>
 public class IvStockCountLine
 {
@@ -35,7 +33,7 @@ public class IvStockCountLine
     public string? StdUom { get; set; }
     public DateTime? ExpiryDate { get; set; }
 
-    /// <summary>Live quantity at Generate — evidence, never a posting input.</summary>
+    /// <summary>Quantity at Generate — evidence, never a posting input.</summary>
     public decimal SystemQty { get; set; }
 
     /// <summary>Counted quantity. NULL = not counted, which excludes the line from posting.</summary>

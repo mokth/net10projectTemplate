@@ -29,6 +29,8 @@ public sealed partial class ProductionMaterialIssueService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        ErpWeb.Core.StockLedger.StockPostingContext? activePosting = null;
+        var postingCompleted = false;
         try
         {
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
@@ -88,6 +90,7 @@ public sealed partial class ProductionMaterialIssueService
             if (ledger.WasReplay)
                 return RollbackFail(IvMasterErrorCode.Concurrency, "A sealed V2 rollback already exists for this generation, but the document is still POSTED. Run posting reconciliation.");
             var ledgerContext = ledger.Context;
+            activePosting = ledgerContext;
 
             var order = await LockWorkOrderByIdAsync(db, originalLink.WorkOrderId, cancellationToken);
             if (order is null)
@@ -304,6 +307,10 @@ public sealed partial class ProductionMaterialIssueService
                 pile.LastMovementDate = original.MovementDate;
             }
 
+            // Inventory rollback advances detail revisions on tracked entities. Persist them
+            // inside this root transaction before querying the next generation; an EF SQL
+            // aggregate otherwise reads the old database revision and falsely rejects rollback.
+            await db.SaveChangesAsync(cancellationToken);
             var nextRevision = await db.IvTrxBatchDetails
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
                     && x.BatchId == batch.Id && x.TrxType == IvTrxTypes.IssueToProduction)
@@ -367,14 +374,19 @@ public sealed partial class ProductionMaterialIssueService
             await ProductionPoolValuationService.RecordAsync(ledgerContext, balanceReversals, cancellationToken);
             ledgerContext.Posting.ProductionPostingLinkId = rollbackLink.Uid;
             await _inventoryPosting.CompletePostingInTransactionAsync(ledgerContext, cancellationToken);
+            postingCompleted = true;
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Ok(
                 await BuildRollbackResultAsync(db, rollbackLink, cancellationToken));
         }
         catch (DbUpdateException)
         {
-            await tx.RollbackAsync(cancellationToken);
             return RollbackFail(IvMasterErrorCode.Concurrency, "The rollback conflicted with another request; retry with the same PostingRequestId.");
+        }
+        finally
+        {
+            if (!postingCompleted)
+                await _inventoryPosting.AbortPostingInTransactionAsync(activePosting, CancellationToken.None);
         }
     }
 

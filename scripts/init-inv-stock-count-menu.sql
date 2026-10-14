@@ -9,7 +9,7 @@
 --   INV_STOCK_COUNT row in menus.xml and this script must therefore ship together, or
 --   AccessRightService (which filters menu.IsActive) locks the screen out.
 --   MenuSyncService auto-creates only the ACCESS grant for a menu it inserts; ADD / EDIT / DELETE /
---   POST / ROLLBACK / CANCEL must come from this script or no grant can ever be effective.
+--   POST / ROLLBACK / CANCEL / PRICE_OVERRIDE must come from this script or no grant can ever be effective.
 --
 -- Run order: create-iv-stock-count.sql -> init-inv-stock-count-menu.sql
 --   (init-menu-access.sql must have been run first: it creates the INV_TRANSACTIONS parent menu.)
@@ -42,13 +42,12 @@ ELSE
 GO
 
 -- ── Menu permissions ─────────────────────────────────────────────────────────────────────────────
--- The document lifecycle needs all seven: ACCESS to open, ADD to create, EDIT for scope/count entry,
--- DELETE for a DRAFT sheet, POST to post the adjustment, ROLLBACK to restore it, CANCEL to abandon it.
+-- PRICE_OVERRIDE grants an authorized operator the option to approve explicit count cost evidence.
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)
 SELECT m.MenuId, p.PermissionId, p.SortOrder, 1
 FROM dbo.Menu m
 INNER JOIN dbo.Permission p
-    ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CANCEL')
+    ON p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CANCEL', N'PRICE_OVERRIDE')
 WHERE m.MenuCode = N'INV_STOCK_COUNT'
   AND NOT EXISTS (
       SELECT 1 FROM dbo.MenuPermission mp
@@ -64,7 +63,7 @@ FROM dbo.MenuPermission mp
 INNER JOIN dbo.Menu m ON m.MenuId = mp.MenuId
 INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
 WHERE m.MenuCode = N'INV_STOCK_COUNT'
-  AND p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CANCEL')
+  AND p.PermissionCode IN (N'ACCESS', N'ADD', N'EDIT', N'DELETE', N'POST', N'ROLLBACK', N'CANCEL', N'PRICE_OVERRIDE')
   AND mp.IsActive <> 1;
 GO
 
@@ -79,5 +78,5 @@ INNER JOIN dbo.Permission p ON p.PermissionId = mp.PermissionId
 WHERE m.MenuCode = N'INV_STOCK_COUNT'
 ORDER BY p.PermissionCode;
 
-PRINT N'init-inv-stock-count-menu.sql: 7 ACTIVE MenuPermission rows expected above.';
+PRINT N'init-inv-stock-count-menu.sql: 8 ACTIVE MenuPermission rows expected above when PRICE_OVERRIDE exists.';
 GO

@@ -89,7 +89,8 @@ public sealed partial class ProductionStockReturnService
             if (postLink is null)
                 throw new ReturnException("The current Production Stock Return posting generation link is missing.");
             var date = reversal ? clock.Now : r.Batch.TrxDtTime;
-            if (date > clock.Now) throw new ReturnException("Future Production Stock Return dates are not allowed.");
+            if (TransactionPostingDateGuard.FutureDateError(date, clock.Today) is string futureDateError)
+                throw new ReturnException(futureDateError);
             if (r.Lines.Count == 0) throw new ReturnException("The return has no lines.");
 
             var order = await LockWorkOrderAsync(db, scope.CompanyCode, scope.BranchCode!, r.WorkOrderId, ct);
@@ -146,6 +147,7 @@ public sealed partial class ProductionStockReturnService
             if (!begin.LedgerEnabled || begin.Context is null)
                 throw new ReturnException("An active V2 stock ledger is required. No legacy Production Stock Return is permitted.");
             var context = begin.Context;
+            await using var postingScope = new StockPostingAbortScope(coordinator, context);
             ProductionPostingLink link;
             if (reversal)
             {
@@ -223,6 +225,7 @@ public sealed partial class ProductionStockReturnService
             }
             await db.SaveChangesAsync(ct);
             await coordinator.CompleteInTransactionAsync(context, ct);
+            postingScope.MarkCompleted();
             if (context.Posting.SealedAtUtc is null) throw new ProductionPostingInvariantException("The PRTN posting was not sealed.");
             await tx.CommitAsync(ct);
             return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, scope, ct));

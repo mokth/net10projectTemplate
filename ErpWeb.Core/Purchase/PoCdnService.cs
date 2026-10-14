@@ -561,11 +561,12 @@ public sealed class PoCdnService : IPoCdnService
         {
             var docDate = request.DocDate == default ? _dates.Today.Date : request.DocDate.Date;
 
-            // C12: no future-dated documents, and not before the company's earliest permitted date.
-            if (docDate > _dates.Today.Date)
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, docDate, cancellationToken)
+                is string draftPeriodError)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoCdnOperationResult.FailValidation("Document date cannot be in the future.");
+                return PoCdnOperationResult.FailValidation(draftPeriodError);
             }
 
             var invNo = PoCdnCalc.NormalizeSupplierDocNo(request.InvNo);
@@ -703,10 +704,12 @@ public sealed class PoCdnService : IPoCdnService
         try
         {
             var docDate = request.DocDate == default ? _dates.Today.Date : request.DocDate.Date;
-            if (docDate > _dates.Today.Date)
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, docDate, cancellationToken)
+                is string draftPeriodError)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoCdnOperationResult.FailValidation("Document date cannot be in the future.");
+                return PoCdnOperationResult.FailValidation(draftPeriodError);
             }
 
             var invNo = PoCdnCalc.NormalizeSupplierDocNo(request.InvNo);
@@ -1928,6 +1931,8 @@ public sealed class PoCdnService : IPoCdnService
         var no = (item.DocNo ?? string.Empty).Trim();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        StockPostingContext? activePosting = null;
+        var postingCompleted = false;
         try
         {
             var cdn = await _cdns.LockForUpdateAsync(
@@ -1944,6 +1949,20 @@ public sealed class PoCdnService : IPoCdnService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoCdnPostingItemResult.Failed(no, PoCdnReasonCodes.StatusConflict, gate);
+            }
+
+            if (TransactionPostingDateGuard.FutureDateError(cdn.DocDate, _dates.Today)
+                is string futureDateError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoCdnPostingItemResult.Failed(no, futureDateError);
+            }
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, write.CompanyCode!, write.BranchCode!, cdn.DocDate, cancellationToken)
+                is string postPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoCdnPostingItemResult.Failed(no, postPeriodError);
             }
 
             if (!await CanAsync(cdn.Type, PermissionCodes.Post, cancellationToken))
@@ -2084,6 +2103,7 @@ public sealed class PoCdnService : IPoCdnService
                     vrBatch.TrxDtTime, cancellationToken);
                 if (ledger.Error is not null)
                     return PoCdnPostingItemResult.Failed(no, ledger.Error.Message);
+                activePosting = ledger.Context;
                 var core = await _posting.PostStockOutInTransactionAsync(
                     ledger.Context,
                     db, write.CompanyCode!, write.BranchCode!, write.UserId!, vrBatch.BatchNo,
@@ -2147,6 +2167,7 @@ public sealed class PoCdnService : IPoCdnService
             {
                 await _posting.CompletePostingInTransactionAsync(
                     vendorReturnLedgerContext, cancellationToken);
+                postingCompleted = true;
                 TestHookAfterStockOut?.Invoke();
             }
 
@@ -2172,6 +2193,11 @@ public sealed class PoCdnService : IPoCdnService
             _logger.LogError(ex, "PoCdnPostFailed {DocNo}", no);
             await tx.RollbackAsync(cancellationToken);
             return PoCdnPostingItemResult.Failed(no, "Unable to post the document.");
+        }
+        finally
+        {
+            if (!postingCompleted)
+                await _posting.AbortPostingInTransactionAsync(activePosting, CancellationToken.None);
         }
     }
 
@@ -2263,19 +2289,25 @@ public sealed class PoCdnService : IPoCdnService
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
             return null;
 
-        var error = await AppendCdnCostingAsync(
-            db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
-        if (error is not null)
-            return error;
-
+        var completed = false;
         try
         {
+            var error = await AppendCdnCostingAsync(
+                db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
+            if (error is not null)
+                return error;
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            completed = true;
             return null;
         }
         catch (StockLedgerException ex)
         {
             return ex.Error.Message;
+        }
+        finally
+        {
+            if (!completed)
+                await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
     }
 
@@ -2348,6 +2380,7 @@ public sealed class PoCdnService : IPoCdnService
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
             return null;
 
+        var completed = false;
         try
         {
             begin.Context.CostMethod = await _costMethods.ResolveAsync(
@@ -2359,11 +2392,17 @@ public sealed class PoCdnService : IPoCdnService
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            completed = true;
             return null;
         }
         catch (StockLedgerException ex)
         {
             return ex.Error.Message;
+        }
+        finally
+        {
+            if (!completed)
+                await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
     }
 
@@ -2419,6 +2458,8 @@ public sealed class PoCdnService : IPoCdnService
         var no = (item.DocNo ?? string.Empty).Trim();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        StockPostingContext? activePosting = null;
+        var postingCompleted = false;
         try
         {
             var cdn = await _cdns.LockForUpdateAsync(
@@ -2474,6 +2515,7 @@ public sealed class PoCdnService : IPoCdnService
                     effectiveAt, cancellationToken);
                 if (ledger.Error is not null)
                     return PoCdnPostingItemResult.Failed(no, ledger.Error.Message);
+                activePosting = ledger.Context;
                 var core = await _posting.RollBackStockOutInTransactionAsync(
                     ledger.Context,
                     db, write.CompanyCode!, write.BranchCode!, write.UserId!, vrBatch.BatchNo,
@@ -2516,6 +2558,7 @@ public sealed class PoCdnService : IPoCdnService
                     }
 
                     await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    postingCompleted = true;
                     costingHandled = true;
                 }
 
@@ -2571,6 +2614,11 @@ public sealed class PoCdnService : IPoCdnService
             _logger.LogError(ex, "PoCdnRollbackFailed {DocNo}", no);
             await tx.RollbackAsync(cancellationToken);
             return PoCdnPostingItemResult.Failed(no, "Unable to roll back the document.");
+        }
+        finally
+        {
+            if (!postingCompleted)
+                await _posting.AbortPostingInTransactionAsync(activePosting, CancellationToken.None);
         }
     }
 

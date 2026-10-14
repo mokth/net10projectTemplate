@@ -53,6 +53,8 @@ public sealed class StockPostingConfiguration : IEntityTypeConfiguration<StockPo
 
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.PostingSequence })
             .IsUnique().HasDatabaseName("UQ_StockPosting_BranchSequence");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.EffectiveAt, x.PostingSequence })
+            .HasDatabaseName("IX_StockPosting_ReplayChronology");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CommandType, x.RequestId })
             .IsUnique().HasDatabaseName("UQ_StockPosting_Request");
         builder.HasIndex(x => new

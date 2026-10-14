@@ -57,6 +57,10 @@ public interface IIvInventoryPostingService
         StockPostingContext? context, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
+    Task AbortPostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
     Task ValuePostingInTransactionAsync(
         StockPostingContext? context, CancellationToken cancellationToken = default);
 

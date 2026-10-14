@@ -848,8 +848,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 ];
             }
 
-            var edges = await _db.ProductionPoolDependencyRows.AsNoTracking()
-                .Where(x => x.ConsumerMovementId == movement.Uid && x.ReversesDependencyId == null)
+            var edges = await ProductionActiveEdgeResolver.Dependencies(_db).AsNoTracking()
+                .Where(x => x.ConsumerMovementId == movement.Uid)
                 .OrderBy(x => x.Id)
                 .ToListAsync(ct);
             var inputAtoms = new List<TraceAtom>();

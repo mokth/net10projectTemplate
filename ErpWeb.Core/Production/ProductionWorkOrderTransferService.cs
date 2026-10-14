@@ -1000,6 +1000,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             if (begin.WasReplay || begin.Context is null)
                 throw new TransferException("A prior Work Order Transfer posting exists without matching POSTED document evidence. Reconcile before retrying.");
             var context = begin.Context;
+            await using var postingScope = new StockPostingAbortScope(coordinator, context);
             link.Status = ProductionPostingLinkStatuses.Pending;
             link.PostingOperationId = request.RequestId.ToString("N");
 
@@ -1083,8 +1084,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                     || x.Contribution.AvailableBaseQty < 0m)
                 || IvQty.Round(sourceAvailability.Sum(x => x.Contribution.AvailableBaseQty)) != 0m)
                 throw new TransferException("Source WIP contribution availability did not clear with the full-balance transfer.");
-            var sourceAllocations = await db.ProductionMovementAllocations.AsNoTracking()
-                .Where(x => x.OutboundMovementId == outbound.Uid && x.ReversesAllocationId == null)
+            var sourceAllocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
+                .Where(x => x.OutboundMovementId == outbound.Uid)
                 .SumAsync(x => (decimal?)x.BaseQty, ct) ?? 0m;
             if (IvQty.Round(sourceAllocations) != IvQty.Round(outbound.BaseQty))
                 throw new TransferException("Work Order Transfer source contribution allocations do not cover the full outbound quantity.");
@@ -1137,6 +1138,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             link.CompletedDate = transfer.PostedDate;
             await db.SaveChangesAsync(ct);
             await coordinator.CompleteInTransactionAsync(context, ct);
+            postingScope.MarkCompleted();
             if (context.Posting.SealedAtUtc is null)
                 throw new TransferException("The Work Order Transfer stock posting was not sealed.");
             var document = await MapAsync(db, transfer, scope, ct);

@@ -27,8 +27,9 @@ public class IvStockCountHdr
     /// <summary>
     /// The physical-count business date (legacy <c>StartCount</c>). Becomes the ADJ batch
     /// <c>TrxDtTime</c> at post, so it is also the date written into <c>IvBalLoc.TransDate</c>
-    /// by the stock-move helpers. Interpreted in company-local time and bounded by
-    /// <c>IvStockCountLimits.MaxBackdateDays</c> at post time.
+    /// by the current stock-move helpers. Interpreted in company-local time. A future
+    /// OPEN-period draft is allowed; the legacy Generate/Post path remains bounded by
+    /// <c>IvStockCountLimits.MaxBackdateDays</c> until historical replay is implemented.
     /// </summary>
     public DateTime CountDate { get; set; }
 

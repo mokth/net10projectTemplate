@@ -833,8 +833,11 @@ public sealed class SaDoService : ISaDoService
                 cancellationToken);
             if (decision.Mode == TransactionDeleteMode.Block)
             {
+                var statusReason = deliveryOrder.Status == SaDoStatuses.New
+                    ? string.Empty
+                    : "Delivery order is not NEW. ";
                 return SaDoOperationResult.Fail(
-                    $"Delivery order {item.DoNo}: {decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus}");
+                    $"Delivery order {item.DoNo}: {statusReason}{decision.BlockingReason ?? TransactionDeleteMessages.NotDeletableStatus}");
             }
 
             var doRef = SaDoSpRefs.ToRefNo(item.DoNo);
@@ -1700,6 +1703,13 @@ public sealed class SaDoService : ISaDoService
                 await tx.RollbackAsync(cancellationToken);
                 return SaDoPostingItemResult.Failed(doNo, futureDateError);
             }
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(
+                    db, context.CompanyCode!, context.BranchCode!, deliveryOrder.DoDate, cancellationToken)
+                is string postPeriodError)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SaDoPostingItemResult.Failed(doNo, postPeriodError);
+            }
 
             await db.Entry(deliveryOrder).Collection(x => x.Details).LoadAsync(cancellationToken);
 
@@ -1838,21 +1848,28 @@ public sealed class SaDoService : ISaDoService
                     batch.TrxDtTime, cancellationToken);
                 if (ledger.Error is not null)
                     return SaDoPostingItemResult.Failed(doNo, ledger.Error.Message);
-                var core = await _posting.PostStockOutInTransactionAsync(
-                    ledger.Context,
-                    db,
-                    context.CompanyCode!,
-                    context.BranchCode!,
-                    context.UserId!,
-                    batch.BatchNo,
-                    IvTrxTypes.SalesOut,
-                    cancellationToken);
-                if (!core.Succeeded)
+                var completed = false;
+                try
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock post failed.");
+                    var core = await _posting.PostStockOutInTransactionAsync(
+                        ledger.Context,
+                        db,
+                        context.CompanyCode!,
+                        context.BranchCode!,
+                        context.UserId!,
+                        batch.BatchNo,
+                        IvTrxTypes.SalesOut,
+                        cancellationToken);
+                    if (!core.Succeeded)
+                        return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock post failed.");
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    completed = true;
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                finally
+                {
+                    if (!completed)
+                        await _posting.AbortPostingInTransactionAsync(ledger.Context, CancellationToken.None);
+                }
             }
 
             var now = DateTime.UtcNow;
@@ -1960,21 +1977,28 @@ public sealed class SaDoService : ISaDoService
                     effectiveAt, cancellationToken);
                 if (ledger.Error is not null)
                     return SaDoPostingItemResult.Failed(doNo, ledger.Error.Message);
-                var core = await _posting.RollBackStockOutInTransactionAsync(
-                    ledger.Context,
-                    db,
-                    context.CompanyCode!,
-                    context.BranchCode!,
-                    context.UserId!,
-                    batch.BatchNo,
-                    IvTrxTypes.SalesOut,
-                    cancellationToken);
-                if (!core.Succeeded)
+                var completed = false;
+                try
                 {
-                    await tx.RollbackAsync(cancellationToken);
-                    return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock rollback failed.");
+                    var core = await _posting.RollBackStockOutInTransactionAsync(
+                        ledger.Context,
+                        db,
+                        context.CompanyCode!,
+                        context.BranchCode!,
+                        context.UserId!,
+                        batch.BatchNo,
+                        IvTrxTypes.SalesOut,
+                        cancellationToken);
+                    if (!core.Succeeded)
+                        return SaDoPostingItemResult.Failed(doNo, core.ErrorMessage ?? "Stock rollback failed.");
+                    await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                    completed = true;
                 }
-                await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+                finally
+                {
+                    if (!completed)
+                        await _posting.AbortPostingInTransactionAsync(ledger.Context, CancellationToken.None);
+                }
             }
             // SP batch is kept (not deleted) — status reverts to NEW by the posting service.
 

@@ -159,6 +159,7 @@ public sealed partial class ProductionOutputService
             if (!ledger.LedgerEnabled || ledger.Context is null)
                 return Fail("Daily Production rollback requires an active V2 stock ledger.");
             ledgerContext = ledger.Context;
+            await using var postingScope = new StockPostingAbortScope(_stockCoordinator, ledger.Context);
 
             // Prefix-balance guard for PRODUCE before mutating.
             var produceMovements = await db.ProductionBalLotMovements
@@ -545,6 +546,7 @@ public sealed partial class ProductionOutputService
                 await ProductionPostingInvariant.AssertOutputRollbackVerifiedAsync(
                     ledgerContext, output.Uid, postLink.Uid, rollbackLink.Uid, cancellationToken);
                 await _stockCoordinator.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+                postingScope.MarkCompleted();
             }
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));

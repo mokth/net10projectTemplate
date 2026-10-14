@@ -2,6 +2,7 @@ using System.Globalization;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
@@ -14,12 +15,10 @@ namespace ErpWeb.Core.Inventory;
 /// <summary>
 /// Physical stock-count (cycle count) document.
 ///
-/// The design in one paragraph: Generate snapshots the live <c>IvBalLoc</c> piles into
-/// <c>IvStockCountLine</c>; the operator records a physical quantity per pile; POST computes each
-/// variance against the LIVE balance and generates a normal <c>ADJ</c> batch that is posted through
-/// the EXISTING <see cref="IIvInventoryPostingService"/> — in one transaction with the batch insert
-/// and the header stamp, via <c>PostStockAdjustmentInTransactionAsync</c>. There is no second posting
-/// engine, no new posting table and no new transaction type.
+/// The current, conservative POST route snapshots and adjusts the live balance through
+/// <see cref="IIvInventoryPostingService"/> in one transaction. Historical count replay uses the
+/// separate anchor/generation model; until its writer and valuation are complete, the current
+/// Generate and POST routes retain their chronology limit and do not claim historical authority.
 ///
 /// Semantic departure from the legacy cycle count (deliberate): the adjustment delta is computed at
 /// POST against live stock, never frozen at Generate. <c>SystemQty</c> is evidence and is displayed in
@@ -266,12 +265,6 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
 
-        var dateError = ValidateCountDate(request.CountDate);
-        if (dateError is not null)
-        {
-            return IvStockCountOperationResult.Fail(dateError);
-        }
-
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -328,12 +321,6 @@ public sealed partial class IvStockCountService : IIvStockCountService
         if (!await _accessRights.CanAsync(MenuCodes.InventoryStockCount, PermissionCodes.Edit, cancellationToken))
         {
             return IvStockCountOperationResult.Fail("Not authorized.");
-        }
-
-        var dateError = ValidateCountDate(request.CountDate);
-        if (dateError is not null)
-        {
-            return IvStockCountOperationResult.Fail(dateError);
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -524,6 +511,11 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 $"A stock count can only be generated in DRAFT (status: {header.Status}). "
                 + "Use Cancel and create a new count, or re-count this one.");
         }
+        if (ValidateCountDate(header.CountDate) is string dateError)
+            return IvStockCountOperationResult.Fail(dateError);
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
+                header.CountDate, cancellationToken) is string periodError)
+            return IvStockCountOperationResult.Fail(periodError);
 
         var existing = await db.IvStockCountLines
             .Where(l => l.StockCountId == header.Id)
@@ -631,20 +623,21 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("Stock count was not found.");
         }
 
-        // I2 (revised 2026-09-24): PhysicalQty is writable until the sheet is POSTED. COUNTED only means
-        // "at least one line has been counted so far" — a working state, NOT evidence, because nothing
-        // has been posted from it yet. Freezing here made SAVE and SIGN the same act, which is unusable
-        // for the normal case: a long sheet keyed in over several days. Only POSTED (frozen evidence)
-        // and CANCELLED (terminal) refuse a write; a POSTED sheet is corrected with Rollback + re-count.
+        // A posted generation freezes that line's physical observation even after rollback.
+        // Unposted COUNTED sheets remain editable while the operator finishes the count.
         if (header.Status is not (IvStockCountStatuses.Draft
             or IvStockCountStatuses.Counted
             or IvStockCountStatuses.RolledBack))
         {
             return IvStockCountOperationResult.Fail(header.Status == IvStockCountStatuses.Cancelled
                 ? $"Stock count {header.CountNo} was cancelled and is kept as evidence. Create a new count."
-                : $"Stock count {header.CountNo} is POSTED, so its counted quantities are frozen. "
-                  + "Roll the sheet back first if it needs re-counting.");
+                : $"Stock count {header.CountNo} is POSTED, so its counted quantities are frozen.");
         }
+        if (ValidateCountDate(header.CountDate) is string dateError)
+            return IvStockCountOperationResult.Fail(dateError);
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
+                header.CountDate, cancellationToken) is string periodError)
+            return IvStockCountOperationResult.Fail(periodError);
 
         // Optional here (unlike Update): the count screen round-trips the token, and the in-transaction
         // item-level entry path reads it itself. A token that IS supplied must still match.
@@ -659,6 +652,16 @@ public sealed partial class IvStockCountService : IIvStockCountService
         var sheetLines = await db.IvStockCountLines
             .Where(l => l.StockCountId == header.Id)
             .ToListAsync(cancellationToken);
+
+        var requestedBalLocIds = lines.Select(l => l.BalLocId).Distinct().ToHashSet();
+        var requestedLineIds = sheetLines.Where(l => requestedBalLocIds.Contains(l.BalLocId))
+            .Select(l => l.Id).ToArray();
+        if (await db.StockCountReplayGenerations.AsNoTracking()
+            .AnyAsync(g => requestedLineIds.Contains(g.StockCountLineId), cancellationToken))
+        {
+            return IvStockCountOperationResult.Fail(
+                $"Stock count {header.CountNo} has posted count evidence. Create a new sheet for a changed observation.");
+        }
 
         var byBalLoc = sheetLines.ToDictionary(l => l.BalLocId);
         var now = _currentDate.Now;
@@ -770,6 +773,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Stock count was not found.");
         }
+        if (ValidateCountDate(header.CountDate) is string dateError)
+            return IvStockCountOperationResult.Fail(dateError);
 
         var itemLines = await db.IvStockCountLines
             .AsNoTracking()
@@ -852,6 +857,11 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Stock count was not found.");
         }
+        if (header.CountDate.Date > _currentDate.Today)
+            return IvStockCountOperationResult.Fail(ValidateCountDate(header.CountDate)!);
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
+                header.CountDate, cancellationToken) is string periodError)
+            return IvStockCountOperationResult.Fail(periodError);
 
         var lines = await db.IvStockCountLines
             .AsNoTracking()
@@ -971,8 +981,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
     }
 
     /// <summary>
-    /// Posts the count as one transaction: batch insert + stock move + history + header stamp, or
-    /// nothing at all. The adjustment delta is computed here against the LIVE balance (D1).
+    /// Posts through the guarded live-balance route. Historical count reset posting must use the
+    /// replay planner/writer once its financial and downstream reconciliation is complete.
     /// </summary>
     public async Task<IvStockCountOperationResult> PostAsync(
         int id,
@@ -1056,13 +1066,16 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
         }
 
-        // D9: the batch carries TrxDtTime = CountDate and the stock-move helpers write that into
-        // IvBalLoc.TransDate, so an unbounded back-date would re-order piles for FIFO allocation.
+        // The guarded live route still stamps CountDate onto IvBalLoc.TransDate. Keep its
+        // chronology limit until historical physical and financial replay replace this route.
         var dateError = ValidateCountDate(header.CountDate);
         if (dateError is not null)
         {
             return IvStockCountOperationResult.Fail(dateError);
         }
+        if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
+                header.CountDate, cancellationToken) is string periodError)
+            return IvStockCountOperationResult.Fail(periodError);
 
         var lines = await db.IvStockCountLines
             .Where(l => l.StockCountId == header.Id)
@@ -1230,6 +1243,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
         // Losing the race is a normal outcome, not an exception: a second post of the same sheet (or a
         // concurrent scope edit) fails the header's rowversion check here and must report the house
         // concurrency message instead of surfacing DbUpdateConcurrencyException to the caller.
+        StockPostingContext? postingContext = null;
+        var postingContextCleared = false;
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -1239,28 +1254,34 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 batch.TrxDtTime, cancellationToken);
             if (ledger.Error is not null)
                 return IvStockCountOperationResult.Fail(ledger.Error.Message);
+            postingContext = ledger.Context;
             var result = await _posting.PostStockAdjustmentInTransactionAsync(
-                ledger.Context,
+                postingContext,
                 db, context.CompanyCode!, context.BranchCode!, uid, batchNo, cancellationToken);
             if (!result.Succeeded)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvStockCountOperationResult.Fail(result.ErrorMessage ?? "Stock post failed.");
             }
-            await _posting.CompletePostingInTransactionAsync(ledger.Context, cancellationToken);
+            await _posting.CompletePostingInTransactionAsync(postingContext, cancellationToken);
+            postingContextCleared = true;
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvStockCountOperationResult.Fail(ConcurrencyMessage);
         }
         catch (DbUpdateException ex) when (SqlErrorClassifier.IsSerializationConflict(ex))
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvStockCountOperationResult.Fail(ConcurrencyMessage);
+        }
+        finally
+        {
+            // SQL SESSION_CONTEXT outlives a failed caller-owned transaction. Complete clears it
+            // on success; failed and incomplete posts must clear it before connection reuse.
+            if (!postingContextCleared)
+                await _posting.AbortPostingInTransactionAsync(postingContext, CancellationToken.None);
         }
 
         _logger.LogInformation(
@@ -1445,8 +1466,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         CountNoPrefix + sequence.ToString("D6", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// D9: the physical-count business date must be a real, recent business date. One definition, used
-    /// by Save / Update / Preview / Post so the screen and the server can never disagree.
+    /// Legacy count execution remains bounded until historical count generation and
+    /// replay replace the live-balance ADJ path. Draft headers may be future dated
+    /// within an OPEN period; Generate, count entry, Preview and Post use this gate.
     /// </summary>
     private string? ValidateCountDate(DateTime countDate)
     {

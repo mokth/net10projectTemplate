@@ -230,6 +230,25 @@ public class PoInvoiceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Future_purchase_invoice_stays_draft_until_business_date()
+    {
+        var sut = CreateSut();
+        var request = InvRequest(qty: 10m, price: 10m);
+        request.DocDate = FixedToday.AddDays(1);
+
+        var save = await sut.SaveNewAsync(request);
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var post = await sut.PostAsync([Keyed(save)]);
+        Assert.False(post.Succeeded);
+        Assert.Contains("business date", post.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(PoInvoiceStatuses.New,
+            (await db.PoInvoices.SingleAsync(x => x.DocNo == save.DocNo)).Status);
+    }
+
+    [Fact]
     public async Task Invoice_above_net_received_rejected()
     {
         var sut = CreateSut();

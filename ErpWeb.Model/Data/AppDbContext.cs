@@ -44,7 +44,9 @@ public class AppDbContext : DbContext
                     or SalesReturnCostAllocation or SalesReturnStandardCostVariance
                     or StockFifoLayerConsumption
                     or ProductionStandardCostVariance
-                    or ProductionConversionCostFact))
+                    or ProductionConversionCostFact
+                    or StockCountCostBasis or StockCountReplayGeneration
+                    or StockReplayRun or StockReplayEffect or ProductionCostRestatementFact))
                 throw new InvalidOperationException("Valuation facts, financial snapshots, and costing evidence are immutable; append a linked reversal or a new revision.");
             if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
                 or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
@@ -149,6 +151,11 @@ public class AppDbContext : DbContext
     public DbSet<IvTrxHistory> IvTrxHistories => Set<IvTrxHistory>();
     public DbSet<IvStockCountHdr> IvStockCountHdrs => Set<IvStockCountHdr>();
     public DbSet<IvStockCountLine> IvStockCountLines => Set<IvStockCountLine>();
+    public DbSet<StockCountCostBasis> StockCountCostBases => Set<StockCountCostBasis>();
+    public DbSet<StockCountReplayGeneration> StockCountReplayGenerations => Set<StockCountReplayGeneration>();
+    public DbSet<StockReplayRun> StockReplayRuns => Set<StockReplayRun>();
+    public DbSet<StockReplayEffect> StockReplayEffects => Set<StockReplayEffect>();
+    public DbSet<ProductionCostRestatementFact> ProductionCostRestatementFacts => Set<ProductionCostRestatementFact>();
     public DbSet<IvPeriodCloseHdr> IvPeriodCloseHdrs => Set<IvPeriodCloseHdr>();
     public DbSet<IvPeriodCloseBal> IvPeriodCloseBals => Set<IvPeriodCloseBal>();
     public DbSet<StockLedgerEpoch> StockLedgerEpochs => Set<StockLedgerEpoch>();

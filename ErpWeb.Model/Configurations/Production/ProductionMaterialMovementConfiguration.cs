@@ -81,6 +81,8 @@ public sealed class ProductionMaterialMovementConfiguration : IEntityTypeConfigu
         builder.HasIndex(x => new { x.WorkOrderMaterialId, x.MovementType }).HasDatabaseName("IX_PrMaterialMovement_Material_Type");
         builder.HasIndex(x => new { x.WorkOrderOperationId, x.MovementDate }).HasDatabaseName("IX_PrMaterialMovement_Operation_Date");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.InventoryBatchNo }).HasDatabaseName("IX_PrMaterialMovement_InventoryBatch");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.InventoryHistoryId })
+            .HasDatabaseName("IX_PrMaterialMovement_InventoryHistory");
         builder.HasIndex(x => x.OriginalMovementId).HasDatabaseName("IX_PrMaterialMovement_OriginalMovement");
         builder.HasIndex(x => new { x.PostingLinkId, x.InventoryBatchDetailId, x.MovementType })
             .IsUnique()

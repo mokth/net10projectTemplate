@@ -342,13 +342,14 @@ public sealed class ProductionStockAdjustmentService(
             var scope = await ScopeAsync(request.Id == 0 ? PermissionCodes.Add : PermissionCodes.Edit, ct);
             if (request.Lines.Count is < 1 or > 100) throw new AdjustmentException("Enter between one and 100 adjustment lines.");
             var date = request.EffectiveDate == default ? clock.Now : request.EffectiveDate;
-            if (date > clock.Now) throw new AdjustmentException("Future Production Stock Adjustment dates are not allowed.");
             if (request.RefNo?.Length > 30 || request.Remarks?.Length > 200) throw new AdjustmentException("Reference is limited to 30 characters and remarks to 200 characters.");
             if (request.Lines.Select(x => x.ProductionBalLotId).Distinct().Count() != request.Lines.Count) throw new AdjustmentException("A Production pool may appear only once in an adjustment.");
             var hasOverride = request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.CostEvidenceType) || x.ProposedUnitCost.HasValue || !string.IsNullOrWhiteSpace(x.CostOverrideReason));
             if (hasOverride && !await access.CanAsync(Menu, PermissionCodes.PriceOverride, ct)) throw new AdjustmentException("Price Override permission is required for manual or zero cost approval.", IvMasterErrorCode.AccessDenied);
             await using var db = await factory.CreateDbContextAsync(ct); db.ProductionStockAdjustmentWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct); await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, date, ct)
+                is string periodError) throw new AdjustmentException(periodError);
             var order = await LockWorkOrderAsync(db, scope.CompanyCode, scope.BranchCode!, request.WorkOrderId, ct);
             if (WorkOrderError(order, request.SnapshotRevision, request.SnapshotHash) is { } snapshotError) throw new AdjustmentException(snapshotError, IvMasterErrorCode.Concurrency);
             ProductionStockAdjustment doc;
@@ -516,7 +517,9 @@ public sealed class ProductionStockAdjustmentService(
             }
             if (postLink is null) throw new AdjustmentException("The current PADJ posting generation link is missing.");
             if (doc.Lines.Count == 0) throw new AdjustmentException("The adjustment has no lines.");
-            var date = reversal ? clock.Now : doc.Batch.TrxDtTime; if (date > clock.Now) throw new AdjustmentException("Future adjustment dates are not allowed.");
+            var date = reversal ? clock.Now : doc.Batch.TrxDtTime;
+            if (TransactionPostingDateGuard.FutureDateError(date, clock.Today) is string futureDateError)
+                throw new AdjustmentException(futureDateError);
             var order = await LockWorkOrderAsync(db, scope.CompanyCode, scope.BranchCode!, doc.WorkOrderId, ct);
             if (!reversal && WorkOrderError(order, doc.SnapshotRevision, doc.SnapshotHash) is { } error) throw new AdjustmentException(error, IvMasterErrorCode.Concurrency);
             var pools = new Dictionary<long, ProductionBalLot>(); var sourceIssues = new Dictionary<long, ProductionMaterialMovement?>();
@@ -544,6 +547,7 @@ public sealed class ProductionStockAdjustmentService(
             if (begin.Error is not null) throw new AdjustmentException(begin.Error.Message);
             if (!begin.LedgerEnabled || begin.Context is null) throw new AdjustmentException("An active V2 stock ledger is required. No legacy PADJ posting is permitted.");
             var context = begin.Context;
+            await using var postingScope = new StockPostingAbortScope(coordinator, context);
             ProductionPostingLink link;
             if (reversal)
             {
@@ -645,6 +649,7 @@ public sealed class ProductionStockAdjustmentService(
                 SnapshotRevision = order.SnapshotRevision, Reason = reversal ? request.Reason!.Trim() : $"Production Stock Adjustment batch {doc.Batch.BatchNo}",
                 DetailsJson = $"{{\"batchId\":{doc.BatchId},\"postingId\":{context.Posting.Id}}}", OccurredDate = date, ActorUserId = User(scope) });
             await db.SaveChangesAsync(ct); await coordinator.CompleteInTransactionAsync(context, ct);
+            postingScope.MarkCompleted();
             if (context.Posting.SealedAtUtc is null) throw new ProductionPostingInvariantException("The PADJ posting was not sealed.");
             await tx.CommitAsync(ct); return IvMasterOperationResult<ProductionStockAdjustmentDocument>.Ok(await MapAsync(db, doc, ct));
         }

@@ -75,7 +75,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             }
             if (postLink is null) throw new FgException("The current FG posting generation link is missing.");
             var date = reversal ? clock.Now : r.Batch.TrxDtTime;
-            if (date > clock.Now) throw new FgException("Future receipt dates are not allowed.");
+            if (TransactionPostingDateGuard.FutureDateError(date, clock.Today) is string futureDateError)
+                throw new FgException(futureDateError);
             if (db.Database.IsSqlServer())
                 await db.ProductionWorkOrders.FromSqlInterpolated($"SELECT * FROM dbo.PrWorkOrder WITH (UPDLOCK,HOLDLOCK) WHERE UID={r.WorkOrderId}").SingleAsync(ct);
             var pools = new Dictionary<long, ProductionBalLot>();
@@ -108,6 +109,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             if (begin.Error is not null) throw new FgException(begin.Error.Message);
             if (!begin.LedgerEnabled || begin.Context is null) throw new FgException("A compatible active V2 stock ledger is required. No legacy FG posting is permitted.");
             var context = begin.Context;
+            await using var postingScope = new StockPostingAbortScope(coordinator, context);
             ProductionPostingLink link;
             if (reversal)
             {
@@ -171,7 +173,9 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 r.Batch.PostedBy = User(scope); r.Batch.PostedCount++; r.Batch.PostingOperationId = request.RequestId;
             }
             await db.SaveChangesAsync(ct);
-            await coordinator.CompleteInTransactionAsync(context, ct); await tx.CommitAsync(ct);
+            await coordinator.CompleteInTransactionAsync(context, ct);
+            postingScope.MarkCompleted();
+            await tx.CommitAsync(ct);
 
             // DR synchronization deliberately runs after the financial/stock transaction has
             // committed. A sync failure must leave the FG posting successful and retryable.

@@ -93,6 +93,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             ? Task.CompletedTask
             : _coordinator.CompleteInTransactionAsync(context, cancellationToken);
 
+    public Task AbortPostingInTransactionAsync(
+        StockPostingContext? context, CancellationToken cancellationToken = default) =>
+        context is null || _coordinator is null
+            ? Task.CompletedTask
+            : _coordinator.AbortInTransactionAsync(context, cancellationToken);
+
     public Task ValuePostingInTransactionAsync(
         StockPostingContext? context, CancellationToken cancellationToken = default)
     {
@@ -389,6 +395,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -404,6 +411,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -712,6 +720,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -728,6 +737,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -928,6 +938,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -945,6 +956,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -989,6 +1001,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1008,6 +1021,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         await ApplyGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, -1, snapshot.Batch!.TrxDtTime, userId, cancellationToken);
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1172,6 +1186,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1187,6 +1202,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1406,6 +1422,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 CostOverrideReason = detail.CostOverrideReason,
                 CostApprovedBy = detail.CostApprovedBy,
                 CostApprovedAtUtc = detail.CostApprovedAtUtc,
+                StockCountCostBasisId = isIncrease ? detail.StockCountCostBasisId : null,
                 UnitPrice = detail.UnitPrice,
                 Cost = detail.Cost,
                 CostPrice = detail.CostPrice,
@@ -1466,6 +1483,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1625,6 +1643,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.ModifiedBy = uid;
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1948,6 +1967,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1978,6 +1998,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -2210,6 +2231,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -2239,6 +2261,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -2441,6 +2464,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -2836,6 +2860,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         TestHookAfterTrHistory?.Invoke();
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
 
         batch.BatchStatus = IvBatchStatuses.Posted;
         batch.PostedDate = now;
@@ -2884,6 +2909,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
+        await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -3079,6 +3105,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.ModifiedBy = uid;
 
         await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 

@@ -82,6 +82,9 @@ public sealed class StockValuationFactConfiguration : IEntityTypeConfiguration<S
             .HasDatabaseName("IX_StockValuationFact_History");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.SourceDocumentType, x.SourceDocumentId })
             .HasDatabaseName("IX_StockValuationFact_Source");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.SourceDocumentType,
+                x.SourceDocumentNo, x.SourceDocumentLine, x.ItemCode })
+            .HasDatabaseName("IX_StockValuationFact_ReplayOwnerLine");
         builder.HasIndex(x => x.OriginalValuationFactId)
             .HasDatabaseName("IX_StockValuationFact_Original");
         builder.HasIndex(x => x.ReversesValuationFactId)

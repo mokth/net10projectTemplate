@@ -86,6 +86,36 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     }
 
     [Fact]
+    public async Task Future_issue_can_be_saved_but_cannot_post_before_business_date()
+    {
+        var graph = await SeedTwoProcessWithMaterialAsync("WO-IP-FUTURE");
+        await SeedBalanceAsync(57, 20m);
+        var output = CreateOutputService();
+        var predecessor = await output.CreateAsync(OutputRequest(
+            graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(predecessor.Succeeded, predecessor.Message);
+        Assert.True((await output.PostAsync(predecessor.Data!.Uid)).Succeeded);
+
+        var issues = CreateIssueService();
+        var request = await CreateIssueSaveAsync(graph, 57, 1m);
+        request.TrxDateTime = new DateTime(2026, 10, 2, 8, 0, 0);
+        var saved = await issues.CreateAsync(request);
+        Assert.True(saved.Succeeded, saved.Message);
+
+        var post = await issues.PostAsync([saved.Data!.BatchNo]);
+        Assert.True(post.Succeeded, post.Message);
+        Assert.Equal(0, post.Data!.SucceededCount);
+        Assert.Contains("after the business date", post.Data.Batches[0].Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(IvBatchStatuses.New,
+            (await db.IvTrxBatches.SingleAsync(x => x.BatchNo == saved.Data.BatchNo)).BatchStatus);
+        Assert.Empty(await db.ProductionMaterialMovements
+            .Where(x => x.MovementType == ProductionMaterialMovementTypes.Issue).ToListAsync());
+    }
+
+    [Fact]
     public async Task Stale_next_process_issue_draft_is_rejected_after_predecessor_good_returns_to_zero()
     {
         var graph = await SeedTwoProcessWithMaterialAsync("WO-IP-STALE");

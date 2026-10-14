@@ -39,7 +39,7 @@ public sealed partial class ProductionMaterialIssueService
         if (!await _access.CanAsync(MenuCodes.PlanningMaterialIssue, PermissionCodes.Access, ct)
             || !await _access.CanAsync(MenuCodes.PlanningMaterialIssue, permission, ct))
             return DraftFail(IvMasterErrorCode.AccessDenied, "Access denied.");
-        var errors = ValidateSaveRequest(request, _clock.Now);
+        var errors = ValidateSaveRequest(request);
         if (errors.Count > 0)
             return IvMasterOperationResult<ProductionMaterialIssueSaveResult>.Fail(IvMasterErrorCode.Validation, "The draft is invalid.", errors);
         var scope = _tenant.TryWriteScope();
@@ -152,7 +152,9 @@ public sealed partial class ProductionMaterialIssueService
             .Include(x => x.StockMaster).Include(x => x.Lot).ToDictionaryAsync(x => x.Id, ct);
         if (balances.Count != allocationIds.Length)
             return DraftFail(IvMasterErrorCode.Validation, "A selected stock balance was not found.");
-        var asOf = await new InventoryAsOfStockService().GetAsync(db, scope.CompanyCode, scope.BranchCode!, allocationIds, request.TrxDateTime, ct);
+        var candidateDate = request.TrxDateTime > _clock.Now
+            ? _clock.Now : request.TrxDateTime;
+        var asOf = await new InventoryAsOfStockService().GetAsync(db, scope.CompanyCode, scope.BranchCode!, allocationIds, candidateDate, ct);
         foreach (var line in request.Lines)
         foreach (var allocation in line.Allocations)
         {
@@ -172,10 +174,12 @@ public sealed partial class ProductionMaterialIssueService
         foreach (var used in request.Lines.SelectMany(x => x.Allocations).GroupBy(x => x.FromBalLocId))
             if (!asOf.TryGetValue(used.Key, out var stock) || IvQty.Round(used.Sum(x => x.BaseQty)) > stock.UsableBaseQty)
                 return DraftFail(IvMasterErrorCode.Validation, $"Insufficient current/as-of stock on balance {used.Key}.");
+        // A future draft reserves against stock available now. POST rechecks the actual
+        // transaction date and all allocations under the branch lock.
         foreach (var used in request.Lines.SelectMany(x => x.Allocations).GroupBy(x => x.FromBalLocId))
         {
             var materialId = request.Lines.First(x => x.Allocations.Any(a => a.FromBalLocId == used.Key)).WorkOrderMaterialId;
-            var candidates = await _allocation.GetStockCandidatesAsync(materialId, request.TrxDateTime, ct,
+            var candidates = await _allocation.GetStockCandidatesAsync(materialId, candidateDate, ct,
                 excludeInventoryBatchNo: existingBatchNo);
             var available = candidates.Data?.SingleOrDefault(x => x.FromBalLocId == used.Key)?.AvailableToAllocateBaseQty ?? 0m;
             if (!candidates.Succeeded || IvQty.Round(used.Sum(x => x.BaseQty)) > available)
@@ -334,7 +338,7 @@ public sealed partial class ProductionMaterialIssueService
         detail.LocationCode = locationCode;
     }
 
-    private static IReadOnlyDictionary<string, string> ValidateSaveRequest(ProductionMaterialIssueSaveRequest? request, DateTime now)
+    private static IReadOnlyDictionary<string, string> ValidateSaveRequest(ProductionMaterialIssueSaveRequest? request)
     {
         var errors = new Dictionary<string, string>();
         if (request is null) { errors["Request"] = "Save request is required."; return errors; }
@@ -342,7 +346,7 @@ public sealed partial class ProductionMaterialIssueService
         if (request.WorkOrderOperationId <= 0) errors[nameof(request.WorkOrderOperationId)] = "Operation is required.";
         if (request.SnapshotRevision <= 0 || string.IsNullOrWhiteSpace(request.SnapshotHash)) errors["Snapshot"] = "Snapshot fingerprint is required.";
         if (request.ProductionQtyThisIssue <= 0m) errors[nameof(request.ProductionQtyThisIssue)] = "Desired output quantity must be greater than zero.";
-        if (request.TrxDateTime == default || request.TrxDateTime > now) errors[nameof(request.TrxDateTime)] = "Transaction date/time is required and cannot be in the future.";
+        if (request.TrxDateTime == default) errors[nameof(request.TrxDateTime)] = "Transaction date/time is required.";
         if (request.Lines.Count == 0 || request.Lines.Count > ProductionMaterialIssuePostValidator.MaxMaterialLines) errors[nameof(request.Lines)] = "Provide at least one valid material line.";
         if (request.Lines.GroupBy(x => x.WorkOrderMaterialId).Any(x => x.Count() > 1)) errors[nameof(request.Lines)] = "A Work Order material may appear only once.";
         if (request.Lines.SelectMany(x => x.Allocations).Count() > short.MaxValue) errors["Allocations"] = "Too many allocation rows.";

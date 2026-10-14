@@ -22,6 +22,9 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
         builder.Property(x => x.CostEvidenceType).HasMaxLength(30);
         builder.Property(x => x.CostOverrideReason).HasMaxLength(250);
         builder.Property(x => x.CostApprovedBy).HasMaxLength(100);
+        builder.HasOne<ErpWeb.Model.Entities.StockLedger.StockCountCostBasis>()
+            .WithMany().HasForeignKey(x => x.StockCountCostBasisId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasKey(e => e.Id);
 
         builder.Property(e => e.Id).HasColumnName("ID").ValueGeneratedOnAdd();
@@ -126,9 +129,13 @@ public class IvTrxHistoryConfiguration : IEntityTypeConfiguration<IvTrxHistory>
 
         builder.HasIndex(e => e.FromBalLocId)
             .HasDatabaseName("IX_IvTrxHistory_FromBalLocId");
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.FromBalLocId, e.TrxDtTime, e.Id })
+            .HasDatabaseName("IX_IvTrxHistory_ReplayFromPile");
 
         builder.HasIndex(e => e.ToBalLocId)
             .HasDatabaseName("IX_IvTrxHistory_ToBalLocId");
+        builder.HasIndex(e => new { e.CompanyCode, e.BranchCode, e.ToBalLocId, e.TrxDtTime, e.Id })
+            .HasDatabaseName("IX_IvTrxHistory_ReplayToPile");
 
         builder.HasIndex(e => e.FromLotId)
             .HasDatabaseName("IX_IvTrxHistory_FromLotId");

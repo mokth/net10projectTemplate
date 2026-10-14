@@ -646,19 +646,28 @@ public class IvStockCountServiceTests : IAsyncLifetime
     // ── Dates (D9) ───────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CountDate_in_the_future_is_refused()
+    public async Task Future_count_date_can_be_saved_but_cannot_be_generated()
     {
         await SeedBalLocAsync("A100", 100m);
         var svc = CreateService();
 
-        var result = await svc.SaveAsync(Scope(date: Today.AddDays(1)));
+        var saved = await svc.SaveAsync(Scope(date: Today.AddDays(1)));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
 
-        Assert.False(result.Succeeded);
-        Assert.Contains("future", result.ErrorMessage);
+        var generated = await svc.GenerateAsync(saved.Id, discardCounts: false);
+        Assert.False(generated.Succeeded);
+        Assert.Contains("future", generated.ErrorMessage);
+        var counted = await svc.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = 1, PhysicalQty = 1m }], null);
+        Assert.False(counted.Succeeded);
+        Assert.Contains("future", counted.ErrorMessage);
+        var preview = await svc.PreviewPostAsync(saved.Id);
+        Assert.False(preview.Succeeded);
+        Assert.Contains("future", preview.ErrorMessage);
     }
 
     [Fact]
-    public async Task CountDate_beyond_the_backdate_window_is_refused()
+    public async Task Older_open_period_count_can_be_saved_but_legacy_generate_stays_blocked()
     {
         await SeedBalLocAsync("A100", 100m);
         var svc = CreateService();
@@ -666,9 +675,11 @@ public class IvStockCountServiceTests : IAsyncLifetime
         var save = await svc.SaveAsync(Scope(date: Today.AddDays(-7)));
         Assert.True(save.Succeeded, save.ErrorMessage);
 
-        var tooOld = await svc.SaveAsync(Scope(date: Today.AddDays(-(IvStockCountLimits.MaxBackdateDays + 1))));
-        Assert.False(tooOld.Succeeded);
-        Assert.Contains("older than the allowed", tooOld.ErrorMessage);
+        var older = await svc.SaveAsync(Scope(date: Today.AddDays(-(IvStockCountLimits.MaxBackdateDays + 1))));
+        Assert.True(older.Succeeded, older.ErrorMessage);
+        var generate = await svc.GenerateAsync(older.Id, discardCounts: false);
+        Assert.False(generate.Succeeded);
+        Assert.Contains("older than the allowed", generate.ErrorMessage);
     }
 
     [Fact]

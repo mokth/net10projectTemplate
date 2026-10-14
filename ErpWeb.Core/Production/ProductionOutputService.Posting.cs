@@ -43,6 +43,9 @@ public sealed partial class ProductionOutputService
                 return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
             if (output.Status != ProductionOutputStatuses.New)
                 return Fail("Only NEW drafts can be posted.");
+            if (TransactionPostingDateGuard.FutureDateError(output.ProductionDate, _clock.Today)
+                is string futureDateError)
+                return Fail(futureDateError);
             var wipConsumptionPolicy = ProductionWipConsumptionPolicies.NormalizeOrStrict(output.WipConsumptionPolicy);
 
             var link = await LockOutputPostLinkAsync(db, scope.CompanyCode, scope.BranchCode!, output.Uid, output.DocumentRevision, cancellationToken);
@@ -101,6 +104,7 @@ public sealed partial class ProductionOutputService
             if (!ledger.LedgerEnabled || ledger.Context is null)
                 return Fail("Daily Production requires an active V2 stock ledger for this company/branch.");
             var ledgerContext = ledger.Context;
+            await using var postingScope = new StockPostingAbortScope(_stockCoordinator, ledgerContext);
 
             var siblings = await db.ProductionWorkOrderOperations
                 .Where(x => x.RouteStepId == routeStep.Uid)
@@ -618,6 +622,7 @@ public sealed partial class ProductionOutputService
 
             await db.SaveChangesAsync(cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(ledgerContext, cancellationToken);
+            postingScope.MarkCompleted();
             ProductionPostingInvariant.AssertSealed(ledgerContext);
             await tx.CommitAsync(cancellationToken);
             return Ok(await MapDetailAsync(db, scope, output.Uid, cancellationToken));
