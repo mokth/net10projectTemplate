@@ -10,6 +10,9 @@ public static class InventoryCostEvidenceTypes
     public const string ManualApproved = "MANUAL_APPROVED";
     public const string ZeroCostApproved = "ZERO_COST_APPROVED";
     public const string OpeningApproved = "OPENING_APPROVED";
+    // Internal count writer evidence. Intentionally excluded from All/Normalize so
+    // a generic Stock Adjustment request cannot select it as an override.
+    public const string CountFrozenV2 = "COUNT_FROZEN_V2";
 
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {

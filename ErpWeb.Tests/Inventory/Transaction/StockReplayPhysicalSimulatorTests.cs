@@ -1,4 +1,5 @@
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Model.Entities.StockLedger;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
 
@@ -47,6 +48,49 @@ public sealed class StockReplayPhysicalSimulatorTests
         Assert.Equal(-5m, result.LaterSteps[0].SignedDelta);
         Assert.Equal(8m, result.LaterSteps[0].QuantityAfter);
         Assert.Equal(4m, result.FinalQuantity);
+    }
+
+    [Theory]
+    [InlineData(0, -2)]
+    [InlineData(2, 0)]
+    [InlineData(2, -3)]
+    public void Count_replay_generation_handles_zero_and_direction_changes(
+        decimal oldDelta, decimal expectedNewDelta)
+    {
+        var countAt = StockReplayEventKey.CountEndOfDay(new DateTime(2026, 10, 2));
+        var candidateDelta = oldDelta - expectedNewDelta;
+        var candidate = new StockReplayPhysicalEvent(9,
+            Key(countAt.AddDays(-1), 3), candidateDelta);
+        var count = new StockReplayPhysicalEvent(-100,
+            new StockReplayEventKey(countAt, StockReplayEventKey.CountClass,
+                2, "C0000000001", 0), oldDelta, 10m);
+        var projection = StockReplayPhysicalSimulator.Simulate(10m, candidate, [count]);
+        Assert.Equal(expectedNewDelta, Assert.Single(projection.LaterSteps).SignedDelta);
+        Assert.Equal(10m, projection.FinalQuantity);
+
+        var initial = new StockCountReplayGeneration
+        {
+            Id = 100, CompanyCode = "DEMO", BranchCode = "HQ",
+            StockCountLineId = 1, AnchorPostingId = 1,
+            WritePostingId = 1, AnchorPostingSequence = 2,
+            EffectiveAt = countAt, SignedAdjustmentQty = oldDelta,
+            AdjustmentBatchNo = oldDelta == 0m ? null : 40,
+            AdjustmentHistoryId = oldDelta == 0m ? null : 400
+        };
+        var corrected = new StockCountReplayGeneration
+        {
+            Id = 101, CompanyCode = "DEMO", BranchCode = "HQ",
+            StockCountLineId = 1, AnchorPostingId = 1,
+            WritePostingId = 3, AnchorPostingSequence = 2,
+            PreviousGenerationId = initial.Id, EffectiveAt = countAt,
+            SignedAdjustmentQty = expectedNewDelta,
+            ReversalBatchNo = oldDelta == 0m ? null : 41,
+            ReversalHistoryId = oldDelta == 0m ? null : 401,
+            AdjustmentBatchNo = expectedNewDelta == 0m ? null : 42,
+            AdjustmentHistoryId = expectedNewDelta == 0m ? null : 402
+        };
+        var active = StockCountGenerationResolver.ResolveActive([initial, corrected]);
+        Assert.Same(corrected, active[1]);
     }
 
     [Fact]

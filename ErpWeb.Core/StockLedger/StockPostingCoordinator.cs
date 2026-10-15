@@ -22,6 +22,11 @@ public interface IStockPostingCoordinator
         StockPostingContext context,
         CancellationToken cancellationToken = default);
 
+    Task CompleteReplayInTransactionAsync(
+        StockPostingContext context,
+        IReadOnlyCollection<int> requiredActiveHistoryIds,
+        CancellationToken cancellationToken = default);
+
     Task AbortInTransactionAsync(
         StockPostingContext context,
         CancellationToken cancellationToken = default);
@@ -321,6 +326,151 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
         context.Posting.SealedAtUtc = DateTime.UtcNow;
         await context.Db.SaveChangesAsync(cancellationToken);
         await ClearDatabaseWriteContextAsync(context.Db, cancellationToken);
+    }
+
+    /// <summary>
+    /// Replay has already valued its affected chronology. Verify complete active
+    /// Inventory generations and exact root reversals, then seal without invoking
+    /// normal live-state valuation a second time.
+    /// </summary>
+    public async Task CompleteReplayInTransactionAsync(
+        StockPostingContext context,
+        IReadOnlyCollection<int> requiredActiveHistoryIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(requiredActiveHistoryIds);
+        context.EnsureUnsealed();
+        if (_valuation is null)
+            throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
+                "V2 valuation is required before replay can be sealed."));
+
+        var ids = requiredActiveHistoryIds.Distinct().ToArray();
+        if (ids.Length != requiredActiveHistoryIds.Count || ids.Any(id => id <= 0))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.InvalidStockIdentity,
+                "Replay valuation history IDs must be unique and positive."));
+        var db = context.Db;
+        await db.SaveChangesAsync(cancellationToken);
+
+        var rootHistories = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2)
+            .ToArrayAsync(cancellationToken);
+        if (rootHistories.Any(h => h.CompanyCode != context.CompanyCode
+                || h.BranchCode != context.BranchCode
+                || h.EntryRole is not ("ORIGINAL" or "REVERSAL")))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                "Replay root contains an invalid Inventory history identity."));
+        var countWrites = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == context.CompanyCode
+                && g.BranchCode == context.BranchCode
+                && g.WritePostingId == context.Posting.Id)
+            .Select(g => new { g.AdjustmentHistoryId, g.ReversalHistoryId })
+            .ToArrayAsync(cancellationToken);
+        var linkedCountIds = countWrites
+            .SelectMany(g => new[] { g.AdjustmentHistoryId, g.ReversalHistoryId })
+            .Where(id => id.HasValue).Select(id => id!.Value).ToArray();
+        var rootHistoryIds = rootHistories.Select(h => h.Id).ToHashSet();
+        var reversedOriginalIds = rootHistories
+            .Where(h => h.EntryRole == "REVERSAL" && h.ReversesHistoryId.HasValue)
+            .Select(h => h.ReversesHistoryId!.Value).Distinct().ToArray();
+        var countOriginalIds = reversedOriginalIds.Length == 0
+            ? []
+            : await db.StockCountReplayGenerations.AsNoTracking()
+                .Where(g => g.CompanyCode == context.CompanyCode
+                    && g.BranchCode == context.BranchCode
+                    && g.AdjustmentHistoryId.HasValue
+                    && reversedOriginalIds.Contains(g.AdjustmentHistoryId.Value))
+                .Select(g => g.AdjustmentHistoryId!.Value)
+                .ToArrayAsync(cancellationToken);
+        var countOriginalSet = countOriginalIds.ToHashSet();
+        var linkedCountSet = linkedCountIds.ToHashSet();
+        if (linkedCountIds.Length != linkedCountSet.Count
+            || linkedCountIds.Any(id => !rootHistoryIds.Contains(id))
+            || rootHistories.Any(h =>
+                (h.StockCountCostBasisId.HasValue
+                    || h.EntryRole == "REVERSAL"
+                    && h.ReversesHistoryId is int reversedId
+                    && countOriginalSet.Contains(reversedId))
+                && !linkedCountSet.Contains(h.Id)))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                "A replay root count history lacks exact generation ownership."));
+        var requiredIds = ids.ToHashSet();
+        if (rootHistories.Any(h => h.EntryRole == "ORIGINAL" && !requiredIds.Contains(h.Id)))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
+                "A replay root Inventory history was omitted from valuation verification."));
+
+        var active = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => ids.Contains(h.Id) && h.CompanyCode == context.CompanyCode
+                && h.BranchCode == context.BranchCode && h.LedgerVersion == 2
+                && h.EntryRole == "ORIGINAL")
+            .ToArrayAsync(cancellationToken);
+        if (active.Length != ids.Length
+            || active.Any(h => h.ValuationStatus != StockValuationStatuses.Valued))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
+                "A required active replay history is missing or has invalid lineage."));
+        await StockReplayValuationGenerationResolver.ResolveAsync(
+            db, context.CompanyCode, context.BranchCode, active, cancellationToken);
+
+        var rootReversals = rootHistories.Where(h => h.EntryRole == "REVERSAL").ToArray();
+        if (rootReversals.Length > 0)
+        {
+            var reversalIds = rootReversals.Select(h => h.Id).ToArray();
+            var originalIds = rootReversals.Select(h => h.ReversesHistoryId)
+                .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToArray();
+            if (originalIds.Length != rootReversals.Length)
+                throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                    "Replay root has an incomplete or duplicate Inventory reversal lineage."));
+            if (rootReversals.Any(h => h.ValuationStatus != StockValuationStatuses.Reversed))
+                throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
+                    "A replay root Inventory reversal has not been valued."));
+            var originalFacts = await db.StockValuationFacts.AsNoTracking()
+                .Where(f => f.InventoryHistoryId.HasValue
+                    && originalIds.Contains(f.InventoryHistoryId.Value)
+                    && f.ReversesValuationFactId == null
+                    && f.StockPostingId != context.Posting.Id)
+                .ToArrayAsync(cancellationToken);
+            var originalFactIds = originalFacts.Select(f => f.Id).ToArray();
+            var previouslyReversedIds = (await db.StockValuationFacts.AsNoTracking()
+                    .Where(f => f.ReversesValuationFactId.HasValue
+                        && originalFactIds.Contains(f.ReversesValuationFactId.Value)
+                        && f.StockPostingId != context.Posting.Id)
+                    .Select(f => f.ReversesValuationFactId!.Value)
+                    .ToArrayAsync(cancellationToken))
+                .ToHashSet();
+            var activeOriginalFacts = originalFacts
+                .Where(f => !previouslyReversedIds.Contains(f.Id)).ToArray();
+            var reversalFacts = await db.StockValuationFacts.AsNoTracking()
+                .Where(f => f.InventoryHistoryId.HasValue
+                    && reversalIds.Contains(f.InventoryHistoryId.Value))
+                .ToArrayAsync(cancellationToken);
+            var originalsById = activeOriginalFacts.ToDictionary(f => f.Id);
+            foreach (var history in rootReversals)
+            {
+                var originals = activeOriginalFacts.Where(f =>
+                    f.InventoryHistoryId == history.ReversesHistoryId).ToArray();
+                var reversals = reversalFacts.Where(f => f.InventoryHistoryId == history.Id).ToArray();
+                if (originals.Length == 0 || originals.Length != reversals.Length
+                    || reversals.Select(f => f.ReversesValuationFactId).Distinct().Count()
+                        != reversals.Length
+                    || reversals.Any(f => f.ReversesValuationFactId is not long originalId
+                        || !originalsById.TryGetValue(originalId, out var original)
+                        || original.InventoryHistoryId != history.ReversesHistoryId
+                        || f.CompanyCode != context.CompanyCode
+                        || f.BranchCode != context.BranchCode
+                        || f.ValuationStatus != StockValuationStatuses.Reversed
+                        || f.ItemCode != original.ItemCode
+                        || f.CostMethod != original.CostMethod
+                        || f.Direction != -original.Direction
+                        || f.BaseQty != original.BaseQty
+                        || f.CostAmount != original.CostAmount))
+                    throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
+                        $"Inventory reversal history {history.Id} lacks exact valuation reversal facts."));
+            }
+        }
+
+        context.Posting.SealedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        await ClearDatabaseWriteContextAsync(db, cancellationToken);
     }
 
     public Task AbortInTransactionAsync(

@@ -114,6 +114,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
             await RejectBackdatedPoolsAsync(context, itemCodes, cancellationToken);
 
         var detailEvidence = await LoadDetailEvidenceAsync(context, histories, cancellationToken);
+        var countFrozenCosts = await LoadCountFrozenCostsAsync(
+            context, histories, detailEvidence, cancellationToken);
         var baseCurrency = await db.Companies.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
             .Select(x => x.CurrencyCode)
@@ -153,7 +155,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
             else if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
             {
                 await AppendReceiptWithResolvedCostAsync(
-                    context, history, detail, states, result, baseCurrency, cancellationToken);
+                    context, history, detail, states, result, baseCurrency, cancellationToken,
+                    countFrozenCosts.GetValueOrDefault(history.Id));
             }
 
             history.ValuationStatus = StockValuationStatuses.Valued;
@@ -216,6 +219,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
             await RejectBackdatedPoolsAsync(context, itemCodes, cancellationToken);
 
         var detailEvidence = await LoadDetailEvidenceAsync(context, histories, cancellationToken);
+        await LoadCountFrozenCostsAsync(context, histories, detailEvidence, cancellationToken);
         var baseCurrency = await db.Companies.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
             .Select(x => x.CurrencyCode)
@@ -585,6 +589,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
         foreach (var itemCode in itemCodes)
             layersByItem.TryAdd(itemCode, []);
         var detailEvidence = await LoadDetailEvidenceAsync(context, histories, cancellationToken);
+        var countFrozenCosts = await LoadCountFrozenCostsAsync(
+            context, histories, detailEvidence, cancellationToken);
         var baseCurrency = await db.Companies.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode)
             .Select(x => x.CurrencyCode)
@@ -647,9 +653,17 @@ public sealed class InventoryValuationService : IInventoryValuationService
                     }
                     else
                     {
-                        var unitCost = ResolveFifoReceiptUnitCost(history, detail, states);
+                        var fallback = countFrozenCosts.GetValueOrDefault(history.Id);
+                        var useFallback = fallback is not null
+                            && (!states.TryGetValue(history.ICode, out var countState)
+                                || countState.OnHandBaseQty <= 0m);
+                        var unitCost = useFallback
+                            ? fallback!.UnitCost
+                            : ResolveFifoReceiptUnitCost(history, detail, states);
                         forcedAmount = RoundMoney(quantity * unitCost);
                         forcedUnitCost = unitCost;
+                        if (useFallback)
+                            source = fallback!.Source;
                     }
                     var fact = AppendReceipt(
                         context, history, detail, states, splitOrdinal: 0,
@@ -1145,21 +1159,215 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var batchNos = histories.Select(x => x.BatchNo).Distinct().ToArray();
         if (batchNos.Length == 0)
             return [];
+        var revisionByLine = histories
+            .GroupBy(h => (h.BatchNo, h.TrxLineNo))
+            .ToDictionary(g => g.Key, g => g.Max(h => h.DocumentRevision));
 
         var rows = await context.Db.IvTrxBatchDetails.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode
-                        && batchNos.Contains(x.BatchNo)
-                        && x.DocumentRevision <= context.Posting.DocumentRevision)
+                        && batchNos.Contains(x.BatchNo))
             .Select(x => new DetailEvidence(
                 x.BatchNo, x.TrxLineNo, x.DocumentRevision,
                 x.Currency, x.UnitPrice, x.BaseUnitPrices, x.CostPrice, x.Cost,
                 x.PriceEvidence, x.CostEvidenceType, x.CostOverrideReason,
-                x.InvNo, x.DoNo, x.SoLineNo))
+                x.CostApprovedBy, x.CostApprovedAtUtc,
+                x.InvNo, x.DoNo, x.SoLineNo, x.StockCountCostBasisId))
             .ToListAsync(cancellationToken);
 
         return rows.GroupBy(x => (x.BatchNo, x.LineNo))
-            .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.Revision).First());
+            .Where(g => revisionByLine.ContainsKey(g.Key)
+                && g.Any(x => x.Revision <= revisionByLine[g.Key]))
+            .ToDictionary(g => g.Key, g => g.Where(x => x.Revision <= revisionByLine[g.Key])
+                .OrderByDescending(y => y.Revision).First());
+    }
+
+    private async Task<Dictionary<int, CountFallbackCost>> LoadCountFrozenCostsAsync(
+        StockPostingContext context,
+        IReadOnlyCollection<IvTrxHistory> histories,
+        IReadOnlyDictionary<(int BatchNo, short LineNo), DetailEvidence> details,
+        CancellationToken cancellationToken)
+    {
+        var candidates = histories.Where(h =>
+        {
+            var detail = details.GetValueOrDefault((h.BatchNo, h.TrxLineNo));
+            return h.CostEvidenceType == InventoryCostEvidenceTypes.CountFrozenV2
+                || h.StockCountCostBasisId.HasValue
+                || detail?.CostEvidenceType == InventoryCostEvidenceTypes.CountFrozenV2
+                || detail?.StockCountCostBasisId.HasValue == true;
+        }).ToArray();
+        if (candidates.Length == 0)
+            return [];
+        if (context.CostMethod is not (StockCostMethods.MovingAverage
+            or StockCostMethods.Fifo or StockCostMethods.Standard))
+            throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                "Count cost basis requires a verified original cost method.");
+
+        var basisIds = candidates.Where(h => h.StockCountCostBasisId.HasValue)
+            .Select(h => h.StockCountCostBasisId!.Value).Distinct().ToArray();
+        var bases = await context.Db.StockCountCostBases.AsNoTracking()
+            .Where(b => basisIds.Contains(b.Id))
+            .ToDictionaryAsync(b => b.Id, cancellationToken);
+        var lineIds = bases.Values.Select(b => b.StockCountLineId).Distinct().ToArray();
+        var lines = await context.Db.IvStockCountLines.AsNoTracking()
+            .Where(l => lineIds.Contains(l.Id))
+            .Select(l => new
+            {
+                l.Id, l.StockCountId, l.BalLocId, l.ICode, l.IStatus, l.PhysicalQty,
+                l.Header.CompanyCode, l.Header.BranchCode,
+                l.Header.CountDate, l.Header.Status
+            })
+            .ToDictionaryAsync(l => l.Id, cancellationToken);
+        var balanceIds = lines.Values.Select(l => l.BalLocId).Distinct().ToArray();
+        var balances = await context.Db.IvBalLocs.AsNoTracking()
+            .Where(b => balanceIds.Contains(b.Id))
+            .Select(b => new { b.Id, b.CompanyCode, b.BranchCode, b.ICode, b.IStatus })
+            .ToDictionaryAsync(b => b.Id, cancellationToken);
+        var historyIds = candidates.Select(h => h.Id).ToArray();
+        var generations = await context.Db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.AdjustmentHistoryId.HasValue
+                && historyIds.Contains(g.AdjustmentHistoryId.Value))
+            .ToArrayAsync(cancellationToken);
+        var byHistory = generations.GroupBy(g => g.AdjustmentHistoryId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        var anchorIds = generations.Select(g => g.AnchorPostingId).Distinct().ToArray();
+        var anchors = await context.Db.StockPostings.AsNoTracking()
+            .Where(p => anchorIds.Contains(p.Id))
+            .Select(p => new
+            {
+                p.Id, p.CompanyCode, p.BranchCode, p.PostingSequence,
+                p.SourceDocumentType, p.SourceDocumentId, p.EffectiveAt
+            })
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+        var result = new Dictionary<int, CountFallbackCost>();
+        foreach (var history in candidates)
+        {
+            var detail = details.GetValueOrDefault((history.BatchNo, history.TrxLineNo));
+            if (history.Id <= 0 || history.StockCountCostBasisId is not long basisId
+                || detail?.StockCountCostBasisId != basisId
+                || history.TrxType != IvTrxTypes.StockAdjustment
+                || history.EntryRole != "ORIGINAL" || history.StockPostingId != context.Posting.Id
+                || history.FromBalLocId is not null || history.ToBalLocId is null
+                || history.ToStdQty is not > 0m
+                || !bases.TryGetValue(basisId, out var basis)
+                || !lines.TryGetValue(basis.StockCountLineId, out var line)
+                || !balances.TryGetValue(line.BalLocId, out var balance)
+                || !byHistory.TryGetValue(history.Id, out var linked)
+                || linked.Length != 1)
+                throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                    $"Inventory history {history.Id} has no proven frozen count cost basis.");
+
+            var generation = linked[0];
+            if (basis.CompanyCode != context.CompanyCode || basis.BranchCode != context.BranchCode
+                || line.CompanyCode != context.CompanyCode || line.BranchCode != context.BranchCode
+                || balance.CompanyCode != context.CompanyCode
+                || balance.BranchCode != context.BranchCode
+                || balance.ICode != line.ICode || balance.IStatus != line.IStatus
+                || line.ICode != history.ICode || line.BalLocId != history.ToBalLocId
+                || line.PhysicalQty is not > 0m || line.Status != "POSTED"
+                || !anchors.TryGetValue(generation.AnchorPostingId, out var anchor)
+                || anchor.CompanyCode != context.CompanyCode
+                || anchor.BranchCode != context.BranchCode
+                || anchor.SourceDocumentType != "IV_STOCK_COUNT"
+                || anchor.SourceDocumentId != line.StockCountId.ToString(CultureInfo.InvariantCulture)
+                || anchor.PostingSequence != generation.AnchorPostingSequence
+                || anchor.EffectiveAt != generation.EffectiveAt
+                || basis.FrozenFallbackUnitCost < 0m
+                || basis.FrozenFallbackUnitCost != RoundMoney(basis.FrozenFallbackUnitCost)
+                || generation.CompanyCode != context.CompanyCode
+                || generation.BranchCode != context.BranchCode
+                || generation.StockCountLineId != line.Id
+                || generation.WritePostingId != context.Posting.Id
+                || generation.IsRemoval || generation.SignedAdjustmentQty != history.ToStdQty
+                || generation.AdjustmentBatchNo != history.BatchNo
+                || history.TrxDtTime != line.CountDate.Date
+                || generation.EffectiveAt != StockReplayEventKey.CountEndOfDay(line.CountDate))
+                throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                    $"Inventory history {history.Id} has invalid frozen count cost provenance.");
+
+            if (context.CostMethod == StockCostMethods.Standard)
+            {
+                if (basis.CostBasisKind != StockCountCostBasisKinds.StandardRevision
+                    || basis.StandardCostRevisionId is not > 0
+                    || basis.CostBasisWatermark is not null
+                    || basis.CostBasisHash is not null
+                    || basis.CostEvidenceType is not null
+                    || basis.CostOverrideReason is not null
+                    || basis.CostApprovedBy is not null
+                    || basis.CostApprovedAtUtc is not null
+                    || history.CostEvidenceType is not null
+                    || detail.CostEvidenceType is not null)
+                    throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                        $"Inventory history {history.Id} has invalid Standard count cost evidence.");
+                var standard = await _standardCostResolver.ResolveAsync(
+                    context.Db, context.CompanyCode, context.BranchCode,
+                    line.ICode, generation.EffectiveAt, cancellationToken);
+                if (standard.Id != basis.StandardCostRevisionId
+                    || standard.TotalStandardCost != basis.FrozenFallbackUnitCost)
+                    throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                        $"Inventory history {history.Id} Standard count basis differs from its approved revision.");
+                result.Add(history.Id, new CountFallbackCost(
+                    standard.TotalStandardCost, StockValuationSources.Standard));
+                continue;
+            }
+
+            if (basis.CostBasisKind == StockCountCostBasisKinds.LedgerWac)
+            {
+                if (context.CostMethod != StockCostMethods.MovingAverage
+                    || history.CostEvidenceType != InventoryCostEvidenceTypes.CountFrozenV2
+                    || detail.CostEvidenceType != InventoryCostEvidenceTypes.CountFrozenV2
+                    || basis.CostBasisWatermark is not > 0
+                    || basis.CostBasisWatermark != generation.AnchorPostingSequence - 1
+                    || basis.CostBasisHash is not { Length: 64 } hash
+                    || !hash.All(Uri.IsHexDigit)
+                    || basis.CostEvidenceType is not null
+                    || basis.CostOverrideReason is not null
+                    || basis.CostApprovedBy is not null
+                    || basis.CostApprovedAtUtc is not null)
+                    throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                        $"Inventory history {history.Id} has incomplete original WAC evidence.");
+                var captured = await StockCountLedgerCostEvidence.CaptureWacAsync(
+                    context.Db, context.CompanyCode, context.BranchCode,
+                    line.Id, line.ICode, generation.EffectiveAt,
+                    basis.CostBasisWatermark.Value, cancellationToken);
+                if (captured.UnitCost != basis.FrozenFallbackUnitCost
+                    || !StringComparer.Ordinal.Equals(captured.Hash, basis.CostBasisHash))
+                    throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                        $"Inventory history {history.Id} frozen count cost differs from its original V2 evidence.");
+                result.Add(history.Id, new CountFallbackCost(
+                    basis.FrozenFallbackUnitCost, StockValuationSources.CountFrozenV2));
+                continue;
+            }
+
+            var manual = basis.CostBasisKind == StockCountCostBasisKinds.ManualApproved;
+            var zero = basis.CostBasisKind == StockCountCostBasisKinds.ZeroCostApproved;
+            if (!manual && !zero
+                || basis.CostEvidenceType != basis.CostBasisKind
+                || history.CostEvidenceType != basis.CostBasisKind
+                || detail.CostEvidenceType != basis.CostBasisKind
+                || basis.CostBasisWatermark is not null
+                || basis.CostBasisHash is not null
+                || basis.StandardCostRevisionId is not null
+                || manual && basis.FrozenFallbackUnitCost <= 0m
+                || zero && basis.FrozenFallbackUnitCost != 0m
+                || string.IsNullOrWhiteSpace(basis.CostOverrideReason)
+                || string.IsNullOrWhiteSpace(basis.CostApprovedBy)
+                || basis.CostApprovedAtUtc is null
+                || history.CostOverrideReason != basis.CostOverrideReason
+                || detail.CostOverrideReason != basis.CostOverrideReason
+                || history.CostApprovedBy != basis.CostApprovedBy
+                || detail.CostApprovedBy != basis.CostApprovedBy
+                || history.CostApprovedAtUtc != basis.CostApprovedAtUtc
+                || detail.CostApprovedAtUtc != basis.CostApprovedAtUtc
+                || history.UnitPrice != decimal.Round(basis.FrozenFallbackUnitCost, 4)
+                || detail.UnitPrice != decimal.Round(basis.FrozenFallbackUnitCost, 4))
+                throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
+                    $"Inventory history {history.Id} has invalid approved count fallback evidence.");
+            result.Add(history.Id, new CountFallbackCost(
+                basis.FrozenFallbackUnitCost, StockValuationSources.ManualApproved));
+        }
+        return result;
     }
 
     private static async Task AppendReceiptWithResolvedCostAsync(
@@ -1169,13 +1377,21 @@ public sealed class InventoryValuationService : IInventoryValuationService
         IDictionary<string, StockCostState> states,
         ICollection<StockValuationFact> result,
         string? baseCurrency,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CountFallbackCost? countFrozenFallback)
     {
         var quantity = Positive(history.ToStdQty, "receipt quantity");
         decimal? forcedAmount = null;
         decimal? forcedUnit = null;
         long? originalFactId = null;
         var source = ResolveReceiptSource(history);
+        if (countFrozenFallback is CountFallbackCost fallback
+            && (!states.TryGetValue(history.ICode, out var countState)
+                || countState.OnHandBaseQty <= 0m))
+        {
+            forcedUnit = fallback.UnitCost;
+            source = fallback.Source;
+        }
 
         if (string.Equals(history.TrxType, IvTrxTypes.CustomerReturn, StringComparison.OrdinalIgnoreCase))
         {
@@ -1885,6 +2101,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
 
     private static string? ResolveCostEvidenceType(IvTrxHistory history, DetailEvidence? detail)
     {
+        // A count-owned fallback is validated against its immutable basis before
+        // receipt valuation. Generic approval rules must not override a newly
+        // replayed on-hand WAC cost merely because the frozen fallback is zero.
+        if (history.StockCountCostBasisId is > 0
+            && detail?.StockCountCostBasisId == history.StockCountCostBasisId)
+            return null;
         var explicitType = InventoryCostEvidenceTypes.Normalize(
             detail?.CostEvidenceType ?? history.CostEvidenceType);
         if (explicitType is not null)
@@ -2018,9 +2240,14 @@ public sealed class InventoryValuationService : IInventoryValuationService
         string? PriceEvidence,
         string? CostEvidenceType,
         string? CostOverrideReason,
+        string? CostApprovedBy,
+        DateTime? CostApprovedAtUtc,
         string? InvNo,
         string? DoNo,
-        short? SoLineNo);
+        short? SoLineNo,
+        long? StockCountCostBasisId);
+
+    private sealed record CountFallbackCost(decimal UnitCost, string Source);
 
     private sealed record SaleReturnCostResolution(
         decimal TotalCost,

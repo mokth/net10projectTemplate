@@ -104,6 +104,7 @@ public static class StockCountGenerationResolver
                     || adjustment.CompanyCode != companyCode || adjustment.BranchCode != branchCode
                     || adjustment.StockPostingId != row.WritePostingId
                     || adjustment.BatchNo != row.AdjustmentBatchNo
+                    || adjustment.TrxDtTime != line.CountDate.Date
                     || adjustment.LedgerVersion != 2
                     || adjustment.TrxType != "ADJ"
                     || adjustment.BatchStatus != "POSTED"
@@ -127,6 +128,7 @@ public static class StockCountGenerationResolver
                     || reversal.CompanyCode != companyCode || reversal.BranchCode != branchCode
                     || reversal.StockPostingId != row.WritePostingId
                     || reversal.BatchNo != row.ReversalBatchNo
+                    || reversal.TrxDtTime != line.CountDate.Date
                     || reversal.LedgerVersion != 2
                     || reversal.TrxType != "ADJ"
                     || reversal.BatchStatus != "POSTED"

@@ -462,6 +462,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 return IvStockCountOperationResult.Fail(
                     $"Stock count {header.CountNo} cannot be cancelled (status: {header.Status}).");
             }
+            if (await HasV2CountGenerationsAsync(db, header, cancellationToken))
+                return IvStockCountOperationResult.Fail(
+                    $"Stock count {header.CountNo} has V2 count generations and cannot be cancelled through the legacy workflow.");
 
             header.Status = IvStockCountStatuses.Cancelled;
             if (!string.IsNullOrWhiteSpace(reason))
@@ -653,11 +656,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
             .Where(l => l.StockCountId == header.Id)
             .ToListAsync(cancellationToken);
 
-        var requestedBalLocIds = lines.Select(l => l.BalLocId).Distinct().ToHashSet();
-        var requestedLineIds = sheetLines.Where(l => requestedBalLocIds.Contains(l.BalLocId))
-            .Select(l => l.Id).ToArray();
-        if (await db.StockCountReplayGenerations.AsNoTracking()
-            .AnyAsync(g => requestedLineIds.Contains(g.StockCountLineId), cancellationToken))
+        if (await HasV2CountGenerationsAsync(db, header, cancellationToken))
         {
             return IvStockCountOperationResult.Fail(
                 $"Stock count {header.CountNo} has posted count evidence. Create a new sheet for a changed observation.");
@@ -1044,6 +1043,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail(
                 $"Only a COUNTED or ROLLED_BACK stock count can be posted (status: {header.Status}).");
         }
+        if (await HasV2CountGenerationsAsync(db, header, cancellationToken))
+            return IvStockCountOperationResult.Fail(
+                $"Stock count {header.CountNo} has V2 count generations. Replay-aware repost is required.");
 
         // I1: at most one live batch. COUNTED ⇒ no batch linked yet.
         if (header.Status == IvStockCountStatuses.Counted && header.PostedBatchNo is not null)
@@ -1325,6 +1327,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail(
                 $"Only a POSTED stock count can be rolled back (status: {header.Status}).");
         }
+        if (await HasV2CountGenerationsAsync(db, header, cancellationToken))
+            return IvStockCountOperationResult.Fail(
+                $"Stock count {header.CountNo} has V2 count generations. Replay-aware rollback is required.");
 
         // Deliberately NOT wrapped in a local transaction: the posting service owns its own, and a
         // nested transaction is unsupported (and pointless) here. If the header stamp below somehow
@@ -1366,6 +1371,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
     /// Adjustment list can roll the same batch back under its own menu permission (D8). When that
     /// happens the header still says POSTED while its batch is NEW; this resets the header to COUNTED
     /// and stamps the reason. Status only — the frozen evidence is never touched (I3).
+    /// A sheet with V2 generations cannot use this legacy repair path.
     /// </summary>
     public async Task<IvStockCountOperationResult> RecoverAsync(
         int id,
@@ -1396,6 +1402,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail(
                 $"Recover only applies to a POSTED stock count (status: {header.Status}).");
         }
+        if (await HasV2CountGenerationsAsync(db, header, cancellationToken))
+            return IvStockCountOperationResult.Fail(
+                $"Stock count {header.CountNo} has V2 count generations. Reconcile active lineage through the count workflow.");
 
         if (header.PostedBatchNo is not int batchNo)
         {
@@ -1443,6 +1452,15 @@ public sealed partial class IvStockCountService : IIvStockCountService
 
     private const string ConcurrencyMessage =
         "This stock count was changed by another user. Reload and try again.";
+
+    private static Task<bool> HasV2CountGenerationsAsync(
+        AppDbContext db, IvStockCountHdr header,
+        CancellationToken cancellationToken) =>
+        db.StockCountReplayGenerations.AsNoTracking().AnyAsync(g =>
+            g.CompanyCode == header.CompanyCode
+            && g.BranchCode == header.BranchCode
+            && db.IvStockCountLines.Any(l => l.Id == g.StockCountLineId
+                && l.StockCountId == header.Id), cancellationToken);
 
     /// <summary>
     /// Rolls back without masking the original failure: if the transaction already completed (or the

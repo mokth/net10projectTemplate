@@ -30,7 +30,9 @@ public static class StockReplayPhysicalTimelineReader
         // The latter are removed by generation linkage before ordinary events are built.
         var histories = await db.IvTrxHistories.AsNoTracking()
             .Where(h => h.CompanyCode == companyCode && h.BranchCode == branchCode
-                && h.TrxDtTime >= after.EffectiveAt
+                // Count-owned ADJ history remains at midnight. Include the whole
+                // candidate day, then compare canonical logical keys below.
+                && h.TrxDtTime >= after.EffectiveAt.Date
                 && (h.FromBalLocId == balLocId || h.ToBalLocId == balLocId))
             .ToArrayAsync(cancellationToken);
         var historyIds = histories.Select(h => h.Id).ToArray();
@@ -83,6 +85,36 @@ public static class StockReplayPhysicalTimelineReader
         var activeOrdinary = ordinary.Where(h => h.EntryRole == "ORIGINAL"
             && !reversedIds.Contains(h.Id)).ToArray();
 
+        var activeIds = activeOrdinary.Select(h => (long)h.Id).ToArray();
+        var effects = activeIds.Length == 0
+            ? []
+            : await db.StockReplayEffects.AsNoTracking()
+                .Where(e => e.CompanyCode == companyCode && e.BranchCode == branchCode
+                    && e.EffectKind == StockReplayEffectTypes.PhysicalReplacement
+                    && e.AffectedEntityType == StockReplayEffectTypes.InventoryHistory
+                    && activeIds.Contains(e.AffectedEntityId))
+                .ToArrayAsync(cancellationToken);
+        if (effects.GroupBy(e => e.AffectedEntityId).Any(g => g.Count() != 1))
+            throw Corrupt("An Inventory correction has ambiguous business-owner effects.");
+        var effectByHistory = effects.ToDictionary(e => checked((int)e.AffectedEntityId));
+        if (effects.Any(e => e.OriginalEntityId is not long id
+                || id <= 0 || id > int.MaxValue))
+            throw Corrupt("An Inventory correction has no valid original history identity.");
+        var originalEffectIds = effects.Select(e => (int)e.OriginalEntityId!.Value)
+            .Distinct().ToArray();
+        var originals = originalEffectIds.Length == 0
+            ? new Dictionary<int, IvTrxHistory>()
+            : await db.IvTrxHistories.AsNoTracking()
+                .Where(h => originalEffectIds.Contains(h.Id))
+                .ToDictionaryAsync(h => h.Id, cancellationToken);
+        var runIds = effects.Select(e => e.ReplayRunId).Distinct().ToArray();
+        var runs = runIds.Length == 0
+            ? []
+            : await db.StockReplayRuns.AsNoTracking()
+                .Where(r => runIds.Contains(r.Id))
+                .ToArrayAsync(cancellationToken);
+        var runsById = runs.ToDictionary(r => r.Id);
+
         // Include a count on the candidate date even if its stored ADJ history is
         // at midnight. The key comparison below handles the final-tick tie.
         var countDateBound = after.EffectiveAt.Date;
@@ -101,6 +133,7 @@ public static class StockReplayPhysicalTimelineReader
 
         var postingIds = activeOrdinary.Select(h => h.StockPostingId!.Value)
             .Concat(reversing.Select(h => h.StockPostingId!.Value))
+            .Concat(effects.Select(e => e.BusinessOwnerPostingId))
             .Distinct().ToArray();
         var postings = await db.StockPostings.AsNoTracking()
             .Where(p => postingIds.Contains(p.Id))
@@ -117,17 +150,42 @@ public static class StockReplayPhysicalTimelineReader
                 throw Corrupt($"Inventory history {history.Id} is not posted.");
             if (!postings.TryGetValue(history.StockPostingId!.Value, out var posting)
                 || posting.CompanyCode != companyCode || posting.BranchCode != branchCode
-                || posting.SealedAtUtc is null || posting.PostingSequence <= 0
-                || posting.EffectiveAt != history.TrxDtTime)
+                || posting.SealedAtUtc is null || posting.PostingSequence <= 0)
                 throw Corrupt($"Inventory history {history.Id} lacks a sealed chronological owner.");
+            var owner = posting;
+            var lineIdentityId = history.Id;
+            if (effectByHistory.TryGetValue(history.Id, out var effect))
+            {
+                if (effect.RootStockPostingId != posting.Id
+                    || !runsById.TryGetValue(effect.ReplayRunId, out var run)
+                    || run.CompanyCode != companyCode || run.BranchCode != branchCode
+                    || run.RootStockPostingId != posting.Id
+                    || run.RootRequestId != posting.RequestId
+                    || effect.OriginalEntityId is not long originalId
+                    || originalId <= 0 || originalId == history.Id
+                    || !originals.TryGetValue((int)originalId, out var original)
+                    || original.CompanyCode != companyCode || original.BranchCode != branchCode
+                    || original.EntryRole != "ORIGINAL" || original.ICode != history.ICode
+                    || original.FromBalLocId != balLocId && original.ToBalLocId != balLocId
+                    || !postings.TryGetValue(effect.BusinessOwnerPostingId, out owner)
+                    || owner.CompanyCode != companyCode || owner.BranchCode != branchCode
+                    || owner.SealedAtUtc is null || owner.PostingSequence <= 0
+                    || original.StockPostingId != owner.Id
+                    || original.TrxDtTime != owner.EffectiveAt
+                    || history.TrxDtTime != owner.EffectiveAt)
+                    throw Corrupt($"Inventory correction {history.Id} has invalid business-owner lineage.");
+                lineIdentityId = original.Id;
+            }
+            else if (posting.EffectiveAt != history.TrxDtTime)
+                throw Corrupt($"Inventory history {history.Id} has a different effective time than its owner.");
             var delta = IvQty.Round((history.ToBalLocId == balLocId ? history.ToStdQty ?? 0m : 0m)
                 - (history.FromBalLocId == balLocId ? history.FrStdQty ?? 0m : 0m));
             if (delta == 0m || history.ToBalLocId == balLocId && history.ToStdQty is not > 0m
                 || history.FromBalLocId == balLocId && history.FrStdQty is not > 0m)
                 throw Corrupt($"Inventory history {history.Id} has no valid physical leg for pile {balLocId}.");
-            var key = new StockReplayEventKey(history.TrxDtTime,
-                StockReplayEventKey.OrdinaryClass, posting.PostingSequence,
-                $"H{history.Id:D10}", 0);
+            var key = new StockReplayEventKey(owner.EffectiveAt,
+                StockReplayEventKey.OrdinaryClass, owner.PostingSequence,
+                $"H{lineIdentityId:D10}", 0);
             if (key.CompareTo(after) > 0)
                 events.Add(new StockReplayPhysicalEvent(history.Id, key, delta));
         }

@@ -135,6 +135,7 @@ public static class StockValuationSources
     public const string ManualApproved = "MANUAL_APPROVED";
     public const string OpeningApproved = "OPENING_APPROVED";
     public const string BackfillVerified = "BACKFILL_VERIFIED";
+    public const string CountFrozenV2 = "COUNT_FROZEN_V2";
     public const string Fifo = "FIFO";
     public const string Standard = "STANDARD";
     public const string StandardRevaluation = "STANDARD_REVALUATION";

@@ -1184,6 +1184,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
 
+        if (await db.StockCountReplayGenerations.AsNoTracking()
+            .AnyAsync(g => g.CompanyCode == companyCode && g.BranchCode == branchCode
+                && (g.AdjustmentBatchNo == batchNo || g.ReversalBatchNo == batchNo),
+                cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This adjustment belongs to a V2 Stock Count. Use the Stock Count workflow.");
+
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
         await using var postingScope = new StockPostingAbortScope(_coordinator, ledger.Context);
@@ -1480,6 +1487,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+
+        if (await db.StockCountReplayGenerations.AsNoTracking()
+            .AnyAsync(g => g.CompanyCode == companyCode && g.BranchCode == branchCode
+                && (g.AdjustmentBatchNo == batchNo || g.ReversalBatchNo == batchNo),
+                cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This adjustment belongs to a V2 Stock Count. Use the Stock Count workflow.");
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -1804,6 +1818,37 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var result = await PostInventoryADJCoreAsync(
             db, companyCode, branchCode, userId, batchNo, cancellationToken);
         StampNewHistory(postingContext, db);
+        return result;
+    }
+
+    public async Task<IvInventoryPostingBatchResult> PostStockCountAdjustmentInTransactionAsync(
+        StockPostingContext context, AppDbContext db,
+        string companyCode, string branchCode, string userId,
+        int batchNo, DateTime countDate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.EnsureUnsealed();
+        if (!ReferenceEquals(context.Db, db)
+            || context.CompanyCode != companyCode || context.BranchCode != branchCode
+            || context.Posting.SourceModule != "INVENTORY"
+            || context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
+            || context.Posting.EffectiveAt != StockReplayEventKey.CountEndOfDay(countDate))
+            throw new InvalidOperationException("The count ADJ must share its date-only V2 anchor transaction.");
+        if (_historyWriter is null)
+            throw new InvalidOperationException("The V2 count history writer is required.");
+
+        var result = await PostInventoryADJCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, cancellationToken);
+        if (!result.Succeeded) return result;
+        var added = db.ChangeTracker.Entries<IvTrxHistory>()
+            .Where(x => x.State == EntityState.Added
+                && x.Entity.BatchNo == batchNo && x.Entity.LedgerVersion is null)
+            .Select(x => x.Entity).ToArray();
+        if (added.Length == 0)
+            throw new InvalidOperationException("A count ADJ produced no history for its V2 anchor.");
+        _historyWriter.StampCountGeneration(context, added,
+            context.Posting.DocumentRevision, countDate);
         return result;
     }
 

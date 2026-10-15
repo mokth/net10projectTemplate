@@ -64,6 +64,11 @@ public sealed record StockReplayPhysicalRemovalResult(
     IReadOnlyList<StockReplayPhysicalStep> LaterSteps,
     decimal FinalQuantity);
 
+public sealed record StockReplayPhysicalTailResult(
+    decimal HistoricalQuantityBeforeTail,
+    IReadOnlyList<StockReplayPhysicalStep> LaterSteps,
+    decimal FinalQuantity);
+
 /// <summary>
 /// Rewinds active later deltas from the current pile, inserts one candidate at
 /// its original position, and replays the tail. It is read-only; callers still
@@ -72,6 +77,36 @@ public sealed record StockReplayPhysicalRemovalResult(
 /// </summary>
 public static class StockReplayPhysicalSimulator
 {
+    /// <summary>Projects a later pile tail when the inserted event affects another pile.</summary>
+    public static StockReplayPhysicalTailResult ProjectUnchangedTail(
+        decimal currentQuantity,
+        StockReplayEventKey after,
+        IReadOnlyCollection<StockReplayPhysicalEvent> laterActiveEvents)
+    {
+        ArgumentNullException.ThrowIfNull(laterActiveEvents);
+        if (currentQuantity < 0m || IvQty.Round(currentQuantity) != currentQuantity)
+            throw new ArgumentOutOfRangeException(nameof(currentQuantity));
+        var later = laterActiveEvents.OrderBy(x => x.Key).ThenBy(x => x.EventId)
+            .ToArray();
+        for (var i = 0; i < later.Length; i++)
+        {
+            ValidateEvent(later[i]);
+            if (later[i].Key.CompareTo(after) <= 0
+                || i > 0 && later[i].Key.CompareTo(later[i - 1].Key) == 0)
+                throw new ArgumentException("The physical tail has duplicate or earlier keys.",
+                    nameof(laterActiveEvents));
+        }
+        var quantity = Rewind(currentQuantity, later);
+        var historical = quantity;
+        var steps = new List<StockReplayPhysicalStep>(later.Length);
+        foreach (var movement in later)
+            steps.Add(Apply(movement, ref quantity));
+        if (quantity != currentQuantity)
+            throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                "The unchanged physical tail does not reconcile to its current pile."));
+        return new(historical, steps, quantity);
+    }
+
     /// <summary>
     /// Removes an active event at its original key, then replays later events. For a
     /// count this removes the reset itself, so later quantities may become invalid.

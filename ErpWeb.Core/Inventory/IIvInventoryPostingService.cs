@@ -181,4 +181,15 @@ public interface IIvInventoryPostingService
         AppDbContext db, string companyCode, string branchCode, string userId,
         int batchNo, CancellationToken cancellationToken = default) =>
         PostStockAdjustmentInTransactionAsync(db, companyCode, branchCode, userId, batchNo, cancellationToken);
+
+    /// <summary>
+    /// The guarded fast path for a count-owned ADJ inside its end-of-day anchor.
+    /// Historical physical corrections use the separate replay writer.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> PostStockCountAdjustmentInTransactionAsync(
+        StockPostingContext context, AppDbContext db,
+        string companyCode, string branchCode, string userId,
+        int batchNo, DateTime countDate,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This posting service does not support V2 stock-count anchors.");
 }

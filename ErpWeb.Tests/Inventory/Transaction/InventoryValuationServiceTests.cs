@@ -120,6 +120,235 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Count_fallback_evidence_recomputes_original_six_decimal_WAC_from_sealed_facts()
+    {
+        await PostReceiptAsync(2m, 1m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostReceiptAsync(1m, 2m, new DateTime(2026, 10, 2, 8, 0, 0));
+        await using var db = await _factory.CreateDbContextAsync();
+        var countAt = StockReplayEventKey.CountEndOfDay(new DateTime(2026, 10, 3));
+
+        var frozen = await StockCountLedgerCostEvidence.CaptureWacAsync(
+            db, "DEMO", "HQ", 101, "ITEM-1", countAt, 2);
+        var earlier = await StockCountLedgerCostEvidence.CaptureWacAsync(
+            db, "DEMO", "HQ", 101, "ITEM-1", countAt, 1);
+
+        Assert.Equal(1.333333m, frozen.UnitCost);
+        Assert.Equal(1m, earlier.UnitCost);
+        Assert.NotEqual(earlier.Hash, frozen.Hash);
+        Assert.Equal(64, frozen.Hash.Length);
+
+        await PostReceiptAsync(1m, 9m, new DateTime(2026, 10, 3, 9, 0, 0));
+        await using var laterDb = await _factory.CreateDbContextAsync();
+        var unchanged = await StockCountLedgerCostEvidence.CaptureWacAsync(
+            laterDb, "DEMO", "HQ", 101, "ITEM-1", countAt, 2);
+        Assert.Equal(frozen, unchanged);
+    }
+
+    [Theory]
+    [InlineData(StockCountCostBasisKinds.LedgerWac, false, false)]
+    [InlineData(StockCountCostBasisKinds.LedgerWac, true, false)]
+    [InlineData(StockCountCostBasisKinds.ManualApproved, false, false)]
+    [InlineData(StockCountCostBasisKinds.ManualApproved, true, false)]
+    [InlineData(StockCountCostBasisKinds.ZeroCostApproved, false, false)]
+    [InlineData(StockCountCostBasisKinds.ZeroCostApproved, true, false)]
+    [InlineData(StockCountCostBasisKinds.ManualApproved, false, true)]
+    [InlineData(StockCountCostBasisKinds.ManualApproved, true, true)]
+    [InlineData(StockCountCostBasisKinds.ZeroCostApproved, false, true)]
+    [InlineData(StockCountCostBasisKinds.ZeroCostApproved, true, true)]
+    public async Task Count_fallback_requires_verified_six_decimal_basis_when_pool_is_empty(
+        string basisKind, bool corruptEvidence, bool fifo)
+    {
+        var ledgerBasis = basisKind == StockCountCostBasisKinds.LedgerWac;
+        if (fifo)
+            await SetCostMethodAsync(StockCostMethods.Fifo);
+        if (ledgerBasis)
+        {
+            await PostReceiptAsync(2m, 1m, new DateTime(2026, 10, 1, 8, 0, 0));
+            await PostReceiptAsync(1m, 2m, new DateTime(2026, 10, 2, 8, 0, 0));
+        }
+        var countDate = new DateTime(2026, 10, 3);
+        var effectiveAt = StockReplayEventKey.CountEndOfDay(countDate);
+        var balanceId = (await BalanceIdsAsync())[0];
+        var approvedAt = DateTime.UtcNow;
+        var frozenUnit = ledgerBasis ? 1.333333m
+            : basisKind == StockCountCostBasisKinds.ManualApproved ? 3.123457m : 0m;
+        var evidenceType = ledgerBasis
+            ? InventoryCostEvidenceTypes.CountFrozenV2 : basisKind;
+        var approvalReason = ledgerBasis ? null : "Count fallback approved";
+        var approvalUser = ledgerBasis ? null : "tester";
+        int lineId;
+        int headerId;
+        long basisId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            // SQLite compares its decimal text to the SQL Server decimal CHECK incorrectly.
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            var header = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "CC-WAC-1",
+                CountDate = countDate, Status = IvStockCountStatuses.Posted
+            };
+            var line = new IvStockCountLine
+            {
+                Header = header, LineNumber = 1, BalLocId = balanceId,
+                ICode = "ITEM-1", IStatus = "ACTIVE", PhysicalQty = 1m
+            };
+            db.IvStockCountLines.Add(line);
+            await db.SaveChangesAsync();
+            var frozen = ledgerBasis
+                ? await StockCountLedgerCostEvidence.CaptureWacAsync(
+                    db, "DEMO", "HQ", line.Id, line.ICode, effectiveAt, 2)
+                : null;
+            var basis = new StockCountCostBasis
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", StockCountLineId = line.Id,
+                CostBasisKind = basisKind,
+                FrozenFallbackUnitCost = frozenUnit,
+                CostBasisWatermark = ledgerBasis ? 2 : null,
+                CostBasisHash = ledgerBasis
+                    ? corruptEvidence ? new string('0', 64) : frozen!.Hash : null,
+                CostEvidenceType = ledgerBasis ? null : basisKind,
+                CostOverrideReason = approvalReason,
+                CostApprovedBy = approvalUser,
+                CostApprovedAtUtc = ledgerBasis ? null : approvedAt,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.StockCountCostBases.Add(basis);
+            // This represents the pool after the financial replay has rewound its later
+            // events to an empty pre-count state. The original count evidence remains sealed.
+            if (ledgerBasis)
+            {
+                var state = await db.StockCostStates.SingleAsync();
+                state.OnHandBaseQty = 0m;
+                state.InventoryValue = 0m;
+                state.AverageUnitCost = 0m;
+                state.CurrentUnitCost = 0m;
+            }
+            await db.SaveChangesAsync();
+            lineId = line.Id;
+            headerId = header.Id;
+            basisId = basis.Id;
+        }
+
+        var result = await ExecuteResultAsync(effectiveAt, "IV_STOCK_COUNT", async (context, writer) =>
+        {
+            var batchNo = ++_batchNo;
+            var batch = new IvTrxBatch
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", BatchNo = batchNo,
+                TrxType = IvTrxTypes.StockAdjustment, TrxDtTime = countDate,
+                BatchStatus = IvBatchStatuses.Posted, RefNo = "CC-WAC-1"
+            };
+            batch.Details.Add(new IvTrxBatchDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", BatchNo = batchNo,
+                TrxLineNo = 1, DocumentRevision = 2,
+                TrxType = IvTrxTypes.StockAdjustment,
+                ICode = "ITEM-1", IStatus = "ACTIVE", ToBalLocId = balanceId,
+                ToStdQty = 1m, ToStdUom = "EA", UnitPrice = decimal.Round(frozenUnit, 4),
+                CostEvidenceType = evidenceType,
+                CostOverrideReason = corruptEvidence && !ledgerBasis
+                    ? "Changed approval" : approvalReason,
+                CostApprovedBy = approvalUser,
+                CostApprovedAtUtc = ledgerBasis ? null : approvedAt,
+                StockCountCostBasisId = basisId
+            });
+            context.Db.IvTrxBatches.Add(batch);
+            var history = History(IvTrxTypes.StockAdjustment);
+            history.BatchNo = batchNo;
+            history.TrxDtTime = countDate;
+            history.ToBalLocId = balanceId;
+            history.ToStdQty = 1m;
+            history.ToStdUom = "EA";
+            history.UnitPrice = decimal.Round(frozenUnit, 4);
+            history.CostEvidenceType = evidenceType;
+            history.CostOverrideReason = approvalReason;
+            history.CostApprovedBy = approvalUser;
+            history.CostApprovedAtUtc = ledgerBasis ? null : approvedAt;
+            history.StockCountCostBasisId = basisId;
+            context.Db.IvTrxHistories.Add(history);
+            writer.StampCountGeneration(context, [history], 2, countDate);
+            await context.Db.SaveChangesAsync();
+            context.Db.StockCountReplayGenerations.Add(new StockCountReplayGeneration
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", StockCountLineId = lineId,
+                AnchorPostingId = context.Posting.Id, WritePostingId = context.Posting.Id,
+                AnchorPostingSequence = context.Posting.PostingSequence,
+                EffectiveAt = effectiveAt, SignedAdjustmentQty = 1m,
+                AdjustmentBatchNo = batchNo, AdjustmentHistoryId = history.Id,
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await context.Db.SaveChangesAsync();
+        }, sourceDocumentId: headerId.ToString());
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        if (corruptEvidence)
+        {
+            Assert.False(result.Succeeded);
+            Assert.Equal(StockLedgerErrorCodes.ValuationRequired, result.Error?.Code);
+            Assert.False(await verify.StockValuationFacts
+                .AnyAsync(f => f.SourceDocumentType == "IV_STOCK_COUNT"));
+            Assert.False(await verify.StockCountReplayGenerations.AnyAsync());
+            return;
+        }
+        Assert.True(result.Succeeded, result.Error?.Message);
+        var countFact = await verify.StockValuationFacts
+            .SingleAsync(f => f.SourceDocumentType == "IV_STOCK_COUNT");
+        Assert.Equal(frozenUnit, countFact.UnitCost);
+        Assert.Equal(ledgerBasis ? StockValuationSources.CountFrozenV2
+            : StockValuationSources.ManualApproved, countFact.ValuationSource);
+        Assert.Equal(frozenUnit, countFact.CostAmount);
+        var countHistory = await verify.IvTrxHistories
+            .SingleAsync(h => h.StockPostingId == result.StockPostingId);
+        Assert.Equal(countDate, countHistory.TrxDtTime);
+        var countPosting = await verify.StockPostings.SingleAsync(p => p.Id == result.StockPostingId);
+        Assert.Equal(effectiveAt, countPosting.EffectiveAt);
+    }
+
+    [Fact]
+    public async Task Count_anchor_rejects_a_forged_original_wac_basis_before_the_root()
+    {
+        await PostReceiptAsync(2m, 1m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostReceiptAsync(1m, 2m, new DateTime(2026, 10, 2, 8, 0, 0));
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        var countDate = new DateTime(2026, 10, 3);
+        var line = new IvStockCountLine
+        {
+            Header = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "CC-WAC-ANCHOR",
+                CountDate = countDate, Status = IvStockCountStatuses.Counted
+            },
+            LineNumber = 1, BalLocId = (await BalanceIdsAsync())[0],
+            ICode = "ITEM-1", IStatus = "ACTIVE", PhysicalQty = 3m
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        var captured = await StockCountLedgerCostEvidence.CaptureWacAsync(
+            db, "DEMO", "HQ", line.Id, line.ICode,
+            StockReplayEventKey.CountEndOfDay(countDate), 2);
+        var basis = new StockCountCostBasis
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            StockCountLineId = line.Id,
+            CostBasisKind = StockCountCostBasisKinds.LedgerWac,
+            FrozenFallbackUnitCost = captured.UnitCost,
+            CostBasisWatermark = 2,
+            CostBasisHash = captured.Hash
+        };
+        var command = await StockCountAnchorCommandFactory.CreateAsync(
+            db, "DEMO", "HQ", line.StockCountId, [basis]);
+        Assert.Equal(StockReplayEventKey.CountEndOfDay(countDate), command.EffectiveAt);
+
+        basis.CostBasisHash = new string('0', 64);
+        var forged = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockCountAnchorCommandFactory.CreateAsync(
+                db, "DEMO", "HQ", line.StockCountId, [basis]));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, forged.Error.Code);
+    }
+
+    [Fact]
     public async Task Fifo_issue_splits_layers_and_aggregates_the_production_grain()
     {
         await SetCostMethodAsync(StockCostMethods.Fifo);
@@ -165,7 +394,7 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Preseal_valuation_then_complete_is_idempotent()
+    public async Task Preseal_valuation_then_replay_completion_does_not_revalue()
     {
         var balanceId = (await BalanceIdsAsync())[0];
         var effectiveAt = new DateTime(2026, 10, 2, 8, 0, 0);
@@ -206,8 +435,12 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             new IvInventoryHistoryWriter().StampGeneration(context, [history], 1);
             await db.SaveChangesAsync();
 
+            var incomplete = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                coordinator.CompleteReplayInTransactionAsync(context, [history.Id]));
+            Assert.Equal(StockLedgerErrorCodes.ValuationRequired, incomplete.Error.Code);
+            Assert.Null(context.Posting.SealedAtUtc);
             await coordinator.ValuePendingInTransactionAsync(context);
-            await coordinator.CompleteInTransactionAsync(context);
+            await coordinator.CompleteReplayInTransactionAsync(context, [history.Id]);
             await transaction.CommitAsync();
         }
 
@@ -262,14 +495,38 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
             historyId = await db.IvTrxHistories.Select(x => x.Id).SingleAsync();
 
-        await ExecuteAsync(
-            new DateTime(2026, 10, 2, 8, 0, 0), "MR_REVERSAL",
-            async (context, writer) =>
-            {
-                var original = await context.Db.IvTrxHistories.SingleAsync(x => x.Id == historyId);
-                writer.AppendReversal(context, [original], 1);
-            },
-            postingId);
+        var reversalAt = new DateTime(2026, 10, 2, 8, 0, 0);
+        var sourceId = (++_batchNo).ToString();
+        var command = new StockPostingCommand
+        {
+            RequestId = Guid.NewGuid(), CommandType = "MR_REVERSAL_TEST",
+            SourceModule = "INVENTORY", SourceDocumentType = "MR_REVERSAL",
+            SourceDocumentId = sourceId, SourceDocumentNo = sourceId,
+            DocumentRevision = 1, PostingRole = "REVERSAL",
+            EffectiveAt = reversalAt, ReversesPostingId = postingId,
+            Evidence = StockPostingFingerprint.Create(new { sourceId }, new { reversalAt })
+        };
+        var coordinator = new StockPostingCoordinator(
+            _factory, new Tenant(), new BranchStockTransactionLock(),
+            new StockPeriodGuard(), new NoActiveStockFreezeGuard(),
+            new InventoryValuationService());
+        await using (var db = await _factory.CreateDbContextAsync())
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            var begin = await coordinator.BeginInTransactionAsync(db, command);
+            Assert.True(begin.LedgerEnabled, begin.Error?.Message);
+            var context = begin.Context!;
+            var original = await db.IvTrxHistories.SingleAsync(x => x.Id == historyId);
+            new IvInventoryHistoryWriter().AppendReversal(context, [original], 1);
+            await db.SaveChangesAsync();
+            var missing = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                coordinator.CompleteReplayInTransactionAsync(context, []));
+            Assert.Equal(StockLedgerErrorCodes.ValuationRequired, missing.Error.Code);
+            Assert.Null(context.Posting.SealedAtUtc);
+            await coordinator.ValuePendingInTransactionAsync(context);
+            await coordinator.CompleteReplayInTransactionAsync(context, []);
+            await transaction.CommitAsync();
+        }
 
         await using var verify = await _factory.CreateDbContextAsync();
         var facts = await verify.StockValuationFacts.OrderBy(x => x.Id).ToListAsync();
@@ -646,9 +903,11 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         DateTime effectiveAt,
         string documentType,
         Func<StockPostingContext, IvInventoryHistoryWriter, Task> handler,
-        long? reversesPostingId = null)
+        long? reversesPostingId = null,
+        string? sourceDocumentId = null)
     {
-        var result = await ExecuteResultAsync(effectiveAt, documentType, handler, reversesPostingId);
+        var result = await ExecuteResultAsync(
+            effectiveAt, documentType, handler, reversesPostingId, sourceDocumentId);
         Assert.True(result.Succeeded, result.Error?.Message);
         return result.StockPostingId!.Value;
     }
@@ -657,16 +916,19 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         DateTime effectiveAt,
         string documentType,
         Func<StockPostingContext, IvInventoryHistoryWriter, Task> handler,
-        long? reversesPostingId = null)
+        long? reversesPostingId = null,
+        string? sourceDocumentId = null)
     {
+        var commandNumber = (++_batchNo).ToString();
+        var documentId = sourceDocumentId ?? commandNumber;
         var command = new StockPostingCommand
         {
             RequestId = Guid.NewGuid(),
             CommandType = documentType + "_TEST",
             SourceModule = "INVENTORY",
             SourceDocumentType = documentType,
-            SourceDocumentId = (++_batchNo).ToString(),
-            SourceDocumentNo = _batchNo.ToString(),
+            SourceDocumentId = documentId,
+            SourceDocumentNo = documentId,
             DocumentRevision = 1,
             PostingRole = reversesPostingId is null ? "PRIMARY" : "REVERSAL",
             EffectiveAt = effectiveAt,
