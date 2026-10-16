@@ -41,7 +41,11 @@ public static class StockReplayValuationGenerationResolver
                 && x.ReversesValuationFactId.HasValue
                 && factIds.Contains(x.ReversesValuationFactId.Value))
             .ToArrayAsync(cancellationToken);
-        return ResolveActive(activeHistories, facts.Concat(reversals).ToArray());
+        // A cost-only reversal can stay on the original Inventory history.
+        // In that case it appears in both queries; the database fact identity
+        // is unique, so pass it to the lineage resolver only once.
+        return ResolveActive(activeHistories, facts.Concat(reversals)
+            .DistinctBy(f => f.Id).ToArray());
     }
 
     public static IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>> ResolveActive(

@@ -107,6 +107,17 @@ public static class StockReplayWacFinancialTailReader
         var activeFacts = await StockReplayValuationGenerationResolver.ResolveAsync(
             db, companyCode, branchCode,
             histories.Concat(countHistories).ToArray(), cancellationToken);
+        var correctedCountHistoryIds = generations
+            .Where(g => g.AdjustmentHistoryId is int historyId
+                && activeFacts[historyId].Count == 1
+                && activeFacts[historyId][0].StockPostingId != g.WritePostingId)
+            .Select(g => g.AdjustmentHistoryId!.Value).Distinct().ToArray();
+        var originalCountFacts = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.InventoryHistoryId.HasValue
+                && correctedCountHistoryIds.Contains(f.InventoryHistoryId.Value)
+                && f.OriginalValuationFactId == null
+                && f.ReversesValuationFactId == null)
+            .ToArrayAsync(cancellationToken);
         var activeFactRows = activeFacts.Values.SelectMany(f => f).ToArray();
         var factPostingIds = activeFactRows.Select(f => f.StockPostingId)
             .Distinct().ToArray();
@@ -149,9 +160,20 @@ public static class StockReplayWacFinancialTailReader
                     throw Corrupt($"Count event {group.Key} is not on the counted item pile.");
                 var facts = generation.AdjustmentHistoryId is int countHistoryId
                     ? activeFacts[countHistoryId] : [];
+                StockValuationFact? originalCountFact = null;
+                if (facts.Count == 1
+                    && facts[0].StockPostingId != generation.WritePostingId)
+                {
+                    var matches = originalCountFacts.Where(f =>
+                        f.InventoryHistoryId == generation.AdjustmentHistoryId
+                        && f.StockPostingId == generation.WritePostingId).ToArray();
+                    if (matches.Length != 1)
+                        throw Corrupt($"Count generation {generation.Id} has no unique original valuation fact.");
+                    originalCountFact = matches[0];
+                }
                 events.Add(StockReplayWacCountEventFactory.Create(
                     legs[0].Event, generation, facts,
-                    basisByLine.GetValueOrDefault(line.Id)));
+                    basisByLine.GetValueOrDefault(line.Id), originalCountFact));
             }
         }
 
@@ -189,11 +211,66 @@ public static class StockReplayWacFinancialTailReader
         var postings = await db.StockPostings.AsNoTracking()
             .Where(p => postingIds.Contains(p.Id))
             .ToDictionaryAsync(p => p.Id, cancellationToken);
+        var originalValueIds = activeValues
+            .Where(f => f.OriginalValuationFactId.HasValue)
+            .Select(f => f.OriginalValuationFactId!.Value).Distinct().ToArray();
+        var originalValueFacts = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => originalValueIds.Contains(f.Id))
+            .ToDictionaryAsync(f => f.Id, cancellationToken);
+        var originalPostingIds = originalValueFacts.Values
+            .Select(f => f.StockPostingId).Distinct().ToArray();
+        var originalPostings = await db.StockPostings.AsNoTracking()
+            .Where(p => originalPostingIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        var receiptOrigins = originalValueFacts.Values
+            .Where(f => f.InventoryHistoryId.HasValue).ToArray();
+        var receiptOriginIds = receiptOrigins.Select(f => f.Id).ToArray();
+        var receiptHistoryIds = receiptOrigins
+            .Select(f => f.InventoryHistoryId!.Value).Distinct().ToArray();
+        var receiptHistories = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => receiptHistoryIds.Contains(h.Id))
+            .ToDictionaryAsync(h => h.Id, cancellationToken);
+        var reversedReceipts = (await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.ReversesValuationFactId.HasValue
+                && receiptOriginIds.Contains(f.ReversesValuationFactId.Value))
+            .Select(f => f.ReversesValuationFactId!.Value)
+            .ToArrayAsync(cancellationToken)).ToHashSet();
+        var reversedReceiptHistories = (await db.IvTrxHistories.AsNoTracking()
+            .Where(h => h.ReversesHistoryId.HasValue
+                && receiptHistoryIds.Contains(h.ReversesHistoryId.Value))
+            .Select(h => h.ReversesHistoryId!.Value)
+            .ToArrayAsync(cancellationToken)).ToHashSet();
         foreach (var fact in activeValues)
         {
             if (!postings.TryGetValue(fact.StockPostingId, out var owner))
                 throw Corrupt($"Value fact {fact.Id} has no sealed posting.");
-            var valueEvent = StockReplayWacValueEventFactory.Create(fact, owner);
+            StockReplayWacEvent valueEvent;
+            if (fact.OriginalValuationFactId is long originalId)
+            {
+                if (!originalValueFacts.TryGetValue(originalId, out var original)
+                    || !originalPostings.TryGetValue(original.StockPostingId,
+                        out var originalOwner))
+                    throw Corrupt($"Value fact {fact.Id} has no original WAC owner.");
+                if (original.InventoryHistoryId is int receiptHistoryId)
+                {
+                    if (reversedReceipts.Contains(originalId)
+                        || reversedReceiptHistories.Contains(receiptHistoryId)
+                        || !receiptHistories.TryGetValue(receiptHistoryId,
+                            out var receiptHistory))
+                        throw Corrupt($"Value fact {fact.Id} has no active receipt origin.");
+                    valueEvent = StockReplayWacValueEventFactory.CreateReceiptRestatement(
+                        fact, original, receiptHistory, originalOwner, owner);
+                }
+                else
+                {
+                    if (!reversedIds.Contains(originalId))
+                        throw Corrupt($"Value fact {fact.Id} has no reversed original adjustment.");
+                    valueEvent = StockReplayWacValueEventFactory.CreateCorrected(
+                        fact, original, originalOwner, owner);
+                }
+            }
+            else
+                valueEvent = StockReplayWacValueEventFactory.Create(fact, owner);
             if (valueEvent.Key.CompareTo(after) > 0)
                 events.Add(valueEvent);
         }

@@ -121,6 +121,114 @@ public sealed class StockReplayWacSimulatorTests
     }
 
     [Fact]
+    public void Two_counted_piles_share_one_WAC_pool_before_later_receipt_and_issue()
+    {
+        var countAt = StockReplayEventKey.CountEndOfDay(
+            new DateTime(2026, 10, 1));
+        var firstKey = new StockReplayEventKey(countAt,
+            StockReplayEventKey.CountClass, 3, "C0000000001", 0);
+        var secondKey = firstKey with { LineIdentity = "C0000000002" };
+        var receiptKey = Key(new DateTime(2026, 10, 2, 9, 0, 0), 1);
+        var issueKey = Key(new DateTime(2026, 10, 3, 9, 0, 0), 2);
+        var firstCount = new StockReplayPhysicalEvent(
+            -long.MaxValue + 1, firstKey, 0m, 10m);
+        var secondCount = new StockReplayPhysicalEvent(
+            -long.MaxValue + 2, secondKey, 0m, 5m);
+        var receipt = new StockReplayPhysicalEvent(100, receiptKey, 10m);
+        var issue = new StockReplayPhysicalEvent(101, issueKey, -5m);
+        var firstPlan = new StockReplayPhysicalPlan(
+            "DEMO", "HQ", 1, 1, 2, 5m, [], firstCount,
+            [receipt, issue], StockReplayPhysicalSimulator.Simulate(
+                5m, firstCount, [receipt, issue]), "first")
+        {
+            CountHeaderId = 1, CountLineId = 1, CountStatus = "COUNTED"
+        };
+        var secondPlan = new StockReplayPhysicalPlan(
+            "DEMO", "HQ", 2, 1, 2, 0m, [], secondCount,
+            [], StockReplayPhysicalSimulator.Simulate(
+                0m, secondCount, []), "second")
+        {
+            CountHeaderId = 1, CountLineId = 2, CountStatus = "COUNTED"
+        };
+        var financialTail = new StockReplayWacFinancialTail(
+            5m, 10m,
+            [new StockReplayWacEvent(100, receiptKey,
+                10m, 20m, 10m, FixedSignedValue: 20m),
+             new StockReplayWacEvent(101, issueKey,
+                -5m, -10m, -5m)],
+            new Dictionary<int, IReadOnlyList<StockReplayPhysicalEvent>>
+            {
+                [1] = [receipt, issue], [2] = []
+            },
+            new Dictionary<int, decimal> { [1] = 5m, [2] = 0m });
+        var firstWac = new StockReplayWacEvent(firstCount.EventId,
+            firstKey, 0m, 0m, 10m,
+            AbsoluteCountQty: 10m, CountFallbackUnitCost: 4m);
+        var secondWac = new StockReplayWacEvent(secondCount.EventId,
+            secondKey, 0m, 0m, 5m,
+            AbsoluteCountQty: 5m, CountFallbackUnitCost: 2m);
+
+        var projected = StockReplayWacTailProjector.SimulateCountSheetInsertion(
+            financialTail, [secondPlan, firstPlan], [secondWac, firstWac]);
+
+        Assert.Equal(0m, projected.HistoricalQuantityBeforeCandidate);
+        Assert.Equal(40m, projected.Candidate.SignedValue);
+        Assert.Equal(new[] { 20m, 20m, -16m },
+            projected.LaterSteps.Select(s => s.SignedValue));
+        Assert.Equal(20m, projected.FinalQuantity);
+        Assert.Equal(64m, projected.FinalValue);
+
+        var laterCountKey = new StockReplayEventKey(
+            StockReplayEventKey.CountEndOfDay(new DateTime(2026, 10, 4)),
+            StockReplayEventKey.CountClass, 4, "C0000000010", 0);
+        var laterCount = new StockReplayPhysicalEvent(
+            -10, laterCountKey, 3m, 3m);
+        var secondWithLaterCount = secondPlan with
+        {
+            CurrentQuantity = 3m,
+            LaterEvents = [laterCount],
+            Projection = StockReplayPhysicalSimulator.Simulate(
+                3m, secondCount, [laterCount])
+        };
+        var extendedTail = financialTail with
+        {
+            CurrentQuantity = 8m,
+            CurrentValue = 16m,
+            LaterEvents = financialTail.LaterEvents.Concat(
+                [new StockReplayWacEvent(-10, laterCountKey,
+                    3m, 6m, 3m, AbsoluteCountQty: 3m,
+                    CountFallbackUnitCost: 2m)]).ToArray(),
+            PhysicalByPile = new Dictionary<int,
+                IReadOnlyList<StockReplayPhysicalEvent>>
+            {
+                [1] = [receipt, issue], [2] = [laterCount]
+            },
+            CurrentQuantityByPile = new Dictionary<int, decimal>
+            {
+                [1] = 5m, [2] = 3m
+            }
+        };
+        var withLaterCount = StockReplayWacTailProjector
+            .SimulateCountSheetInsertion(extendedTail,
+                [firstPlan, secondWithLaterCount], [firstWac, secondWac]);
+        Assert.Equal(new[] { 20m, 20m, -16m, -6.4m },
+            withLaterCount.LaterSteps.Select(s => s.SignedValue));
+        Assert.Equal(-2m, withLaterCount.LaterSteps[^1].SignedQuantity);
+        Assert.Equal(18m, withLaterCount.FinalQuantity);
+        Assert.Equal(57.6m, withLaterCount.FinalValue);
+
+        Assert.Throws<StockLedgerException>(() =>
+            StockReplayWacTailProjector.SimulateCountSheetInsertion(
+                financialTail with
+                {
+                    CurrentQuantityByPile = new Dictionary<int, decimal>
+                    {
+                        [1] = 5m, [2] = 1m
+                    }
+                }, [firstPlan, secondPlan], [firstWac, secondWac]));
+    }
+
+    [Fact]
     public void Item_tail_projector_binds_a_count_on_an_unchanged_pile()
     {
         var at = new DateTime(2026, 10, 1, 8, 0, 0);
@@ -332,6 +440,7 @@ public sealed class StockReplayWacSimulatorTests
         };
         var fact = new StockValuationFact
         {
+            Id = 100,
             CompanyCode = "DEMO", BranchCode = "HQ",
             StockPostingId = 3, EffectiveAt = countAt,
             InventoryHistoryId = 5,
@@ -352,6 +461,30 @@ public sealed class StockReplayWacSimulatorTests
             StockReplayWacCountEventFactory.Create(
                 physical, generation, [fact], basis));
         Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, mismatch.Error.Code);
+
+        fact.BaseQty = 2m;
+        var corrected = new StockValuationFact
+        {
+            Id = 101, CompanyCode = "DEMO", BranchCode = "HQ",
+            StockPostingId = 4, EffectiveAt = countAt,
+            InventoryHistoryId = 5,
+            CostMethod = StockCostMethods.MovingAverage,
+            ValuationStatus = StockValuationStatuses.Valued,
+            Direction = 1, BaseQty = 2m, CostAmount = 6m,
+            OriginalValuationFactId = fact.Id
+        };
+        var correction = StockReplayWacCountEventFactory.Create(
+            physical, generation, [corrected], basis, fact);
+        Assert.Equal(6m, correction.OldSignedValue);
+        var missingOrigin = Assert.Throws<StockLedgerException>(() =>
+            StockReplayWacCountEventFactory.Create(
+                physical, generation, [corrected], basis));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, missingOrigin.Error.Code);
+        fact.BaseQty = 3m;
+        var alteredOrigin = Assert.Throws<StockLedgerException>(() =>
+            StockReplayWacCountEventFactory.Create(
+                physical, generation, [corrected], basis, fact));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, alteredOrigin.Error.Code);
     }
 
     [Fact]
@@ -481,6 +614,81 @@ public sealed class StockReplayWacSimulatorTests
         fact.OriginalValuationFactId = 1;
         Assert.Throws<StockLedgerException>(() =>
             StockReplayWacValueEventFactory.Create(fact, owner));
+        fact.OriginalValuationFactId = null;
+        var correctionOwner = new StockPosting
+        {
+            Id = 5, CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = 2, PostingSequence = 6,
+            EffectiveAt = at.AddDays(-1), BusinessDate = at.AddDays(-1).Date,
+            PeriodKey = "2026-10", SealedAtUtc = DateTime.UtcNow
+        };
+        var corrected = new StockValuationFact
+        {
+            Id = 31, CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = 2, StockPostingId = correctionOwner.Id,
+            EffectiveAt = at, BusinessDate = at.Date,
+            PeriodKey = "2026-10", ItemCode = "ITEM",
+            BaseQty = 0m, Direction = 1, CostAmount = 3m,
+            CostMethod = StockCostMethods.MovingAverage,
+            ValuationStatus = StockValuationStatuses.Valued,
+            OriginalValuationFactId = fact.Id
+        };
+        var replacement = StockReplayWacValueEventFactory.CreateCorrected(
+            corrected, fact, owner, correctionOwner);
+        Assert.Equal(valueEvent.EventId, replacement.EventId);
+        Assert.Equal(valueEvent.Key, replacement.Key);
+        Assert.Equal(3m, replacement.FixedSignedValue);
+        corrected.BusinessDate = corrected.BusinessDate.AddDays(1);
+        Assert.Throws<StockLedgerException>(() =>
+            StockReplayWacValueEventFactory.CreateCorrected(
+                corrected, fact, owner, correctionOwner));
+    }
+
+    [Fact]
+    public void Receipt_cost_delta_follows_the_unchanged_physical_receipt()
+    {
+        var at = new DateTime(2026, 10, 2, 8, 0, 0);
+        var history = History(10, at, 0m, 5m);
+        var owner = new StockPosting
+        {
+            Id = 2, CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = 2, PostingSequence = 4,
+            EffectiveAt = at, BusinessDate = at.Date,
+            PeriodKey = "2026-10", SealedAtUtc = DateTime.UtcNow
+        };
+        var receipt = FactFor(history, 20, 1, 5m, 10m);
+        receipt.BusinessDate = at.Date;
+        receipt.PeriodKey = "2026-10";
+        var correctionOwner = new StockPosting
+        {
+            Id = 3, CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = 2, PostingSequence = 5,
+            EffectiveAt = at.AddDays(-1), BusinessDate = at.AddDays(-1).Date,
+            PeriodKey = "2026-10", SealedAtUtc = DateTime.UtcNow
+        };
+        var delta = new StockValuationFact
+        {
+            Id = 21, CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = 2, StockPostingId = correctionOwner.Id,
+            OriginalValuationFactId = receipt.Id,
+            EffectiveAt = at, BusinessDate = at.Date,
+            PeriodKey = "2026-10", ItemCode = "ITEM",
+            CostMethod = StockCostMethods.MovingAverage,
+            ValuationStatus = StockValuationStatuses.Valued,
+            Direction = 1, BaseQty = 0m, CostAmount = 3m
+        };
+
+        var valueEvent = StockReplayWacValueEventFactory.CreateReceiptRestatement(
+            delta, receipt, history, owner, correctionOwner);
+        Assert.Equal(at, valueEvent.Key.EffectiveAt);
+        Assert.Equal(owner.PostingSequence, valueEvent.Key.OriginalPostingSequence);
+        Assert.Equal($"H{history.Id:D10}", valueEvent.Key.LineIdentity);
+        Assert.Equal(1, valueEvent.Key.AttachedSuborder);
+        Assert.Equal(3m, valueEvent.FixedSignedValue);
+        delta.OriginalValuationFactId = 999;
+        Assert.Throws<StockLedgerException>(() =>
+            StockReplayWacValueEventFactory.CreateReceiptRestatement(
+                delta, receipt, history, owner, correctionOwner));
     }
 
     private static StockReplayEventKey HistoryKey(DateTime at, long sequence, int historyId) =>

@@ -43,20 +43,65 @@ public static class StockCountCorrectionGenerationWriter
             .SingleOrDefaultAsync(cancellationToken);
         if (balance != permit.FinalQuantity)
             throw Invalid("The replayed pile does not close to its projected live quantity.");
-        var candidateHistories = await db.IvTrxHistories.AsNoTracking()
-            .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2
-                && h.EntryRole == "ORIGINAL"
-                && h.TrxDtTime == permit.Candidate.Key.EffectiveAt
-                && (h.FromBalLocId == permit.BalLocId
-                    || h.ToBalLocId == permit.BalLocId))
-            .ToArrayAsync(cancellationToken);
-        if (candidateHistories.Length != 1
-            || IvQty.Round((candidateHistories[0].ToBalLocId == permit.BalLocId
-                    ? candidateHistories[0].ToStdQty ?? 0m : 0m)
-                - (candidateHistories[0].FromBalLocId == permit.BalLocId
-                    ? candidateHistories[0].FrStdQty ?? 0m : 0m))
-                != permit.Candidate.SignedDelta)
-            throw Invalid("The triggering physical event was not persisted in this replay root.");
+        if (permit.Candidate.Key.ClassPriority == StockReplayEventKey.CountClass)
+        {
+            var identity = permit.Candidate.Key.LineIdentity;
+            if (identity.Length < 2 || identity[0] != 'C'
+                || !int.TryParse(identity.AsSpan(1), out var candidateLineId)
+                || candidateLineId <= 0
+                || identity != $"C{candidateLineId:D10}")
+                throw Invalid("The triggering count has no exact line identity.");
+            var initial = await db.StockCountReplayGenerations.AsNoTracking()
+                .Where(g => g.StockCountLineId == candidateLineId
+                    && g.AnchorPostingId == context.Posting.Id)
+                .ToArrayAsync(cancellationToken);
+            if (initial.Length != 1 || initial[0].PreviousGenerationId is not null
+                || initial[0].WritePostingId != context.Posting.Id
+                || initial[0].CompanyCode != context.CompanyCode
+                || initial[0].BranchCode != context.BranchCode
+                || initial[0].AnchorPostingSequence
+                    != context.Posting.PostingSequence
+                || initial[0].EffectiveAt != permit.Candidate.Key.EffectiveAt
+                || initial[0].SignedAdjustmentQty != permit.Candidate.SignedDelta
+                || initial[0].AdjustmentHistoryId.HasValue
+                    != (permit.Candidate.SignedDelta != 0m))
+                throw Invalid("The triggering count generation was not persisted in this root.");
+            if (initial[0].AdjustmentHistoryId is int candidateHistoryId)
+            {
+                var candidateHistory = await db.IvTrxHistories.AsNoTracking()
+                    .SingleOrDefaultAsync(h => h.Id == candidateHistoryId,
+                        cancellationToken);
+                if (candidateHistory is null
+                    || candidateHistory.StockPostingId != context.Posting.Id
+                    || candidateHistory.LedgerVersion != 2
+                    || candidateHistory.LedgerEpochId != context.Epoch.Id
+                    || candidateHistory.EntryRole != "ORIGINAL"
+                    || candidateHistory.TrxDtTime != permit.Candidate.Key.EffectiveAt.Date
+                    || IvQty.Round((candidateHistory.ToBalLocId == permit.BalLocId
+                            ? candidateHistory.ToStdQty ?? 0m : 0m)
+                        - (candidateHistory.FromBalLocId == permit.BalLocId
+                            ? candidateHistory.FrStdQty ?? 0m : 0m))
+                        != permit.Candidate.SignedDelta)
+                    throw Invalid("The triggering count ADJ was not persisted in this root.");
+            }
+        }
+        else
+        {
+            var candidateHistories = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2
+                    && h.EntryRole == "ORIGINAL"
+                    && h.TrxDtTime == permit.Candidate.Key.EffectiveAt
+                    && (h.FromBalLocId == permit.BalLocId
+                        || h.ToBalLocId == permit.BalLocId))
+                .ToArrayAsync(cancellationToken);
+            if (candidateHistories.Length != 1
+                || IvQty.Round((candidateHistories[0].ToBalLocId == permit.BalLocId
+                        ? candidateHistories[0].ToStdQty ?? 0m : 0m)
+                    - (candidateHistories[0].FromBalLocId == permit.BalLocId
+                        ? candidateHistories[0].FrStdQty ?? 0m : 0m))
+                    != permit.Candidate.SignedDelta)
+                throw Invalid("The triggering physical event was not persisted in this replay root.");
+        }
         var rootPostingLines = await db.IvTrxHistories.AsNoTracking()
             .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2)
             .Select(h => h.PostingLineNo).ToArrayAsync(cancellationToken);
@@ -77,7 +122,9 @@ public static class StockCountCorrectionGenerationWriter
         var bases = await db.StockCountCostBases.AsNoTracking()
             .Where(b => lineIds.Contains(b.StockCountLineId))
             .ToArrayAsync(cancellationToken);
-        if (bases.GroupBy(b => b.StockCountLineId).Any(g => g.Count() != 1))
+        if (bases.Any(b => b.CompanyCode != permit.CompanyCode
+                || b.BranchCode != permit.BranchCode)
+            || bases.GroupBy(b => b.StockCountLineId).Any(g => g.Count() != 1))
             throw Invalid("A corrected count has ambiguous frozen cost basis.");
         var basisByLine = bases.ToDictionary(b => b.StockCountLineId);
         var evidenceByLine = evidence.ToDictionary(e => e.CountLineId);
@@ -95,7 +142,8 @@ public static class StockCountCorrectionGenerationWriter
                 || StockReplayEventKey.CountEndOfDay(line.CountDate) != p.EffectiveAt
                 || p.NewSignedAdjustmentQty == p.OldSignedAdjustmentQty
                 || IvQty.Round(p.NewSignedAdjustmentQty) != p.NewSignedAdjustmentQty
-                || line.PhysicalQty > 0m && !basisByLine.ContainsKey(p.LineId)))
+                || line.PhysicalQty > 0m && !basisByLine.ContainsKey(p.LineId)
+                || line.PhysicalQty == 0m && basisByLine.ContainsKey(p.LineId)))
             throw Invalid("Count correction no longer matches its sealed active observation.");
 
         var historyIds = evidence.SelectMany(e => new[]
@@ -166,8 +214,23 @@ public static class StockCountCorrectionGenerationWriter
                 if (reversal.StockCountCostBasisId != original.StockCountCostBasisId
                     || reversal.FromBalLocId != original.ToBalLocId
                     || reversal.ToBalLocId != original.FromBalLocId
+                    || reversal.FromLotId != original.ToLotId
+                    || reversal.ToLotId != original.FromLotId
+                    || reversal.FrWarehouse != original.ToWarehouse
+                    || reversal.ToWarehouse != original.FrWarehouse
+                    || reversal.FrLocation != original.ToLocation
+                    || reversal.ToLocation != original.FrLocation
+                    || reversal.FrLotNo != original.ToLotNo
+                    || reversal.ToLotNo != original.FrLotNo
                     || reversal.FrStdQty != original.ToStdQty
-                    || reversal.ToStdQty != original.FrStdQty)
+                    || reversal.ToStdQty != original.FrStdQty
+                    || reversal.FrStdUom != original.ToStdUom
+                    || reversal.ToStdUom != original.FrStdUom
+                    || reversal.FrPurQty != original.ToPurQty
+                    || reversal.ToPurQty != original.FrPurQty
+                    || reversal.FrPurUom != original.ToPurUom
+                    || reversal.ToPurUom != original.FrPurUom
+                    || reversal.IStatus != original.IStatus)
                     throw Invalid($"Count line {line.Id} does not exactly reverse its active ADJ.");
             }
             IvTrxHistory? replacement = null;
@@ -178,9 +241,9 @@ public static class StockCountCorrectionGenerationWriter
                         line.CountNo, line.CountDate, permit.BalLocId,
                         projection.NewSignedAdjustmentQty, "ORIGINAL")
                     || replacement.ReversesHistoryId is not null
-                    || replacement.StockCountCostBasisId is long basisId
-                        && (!basisByLine.TryGetValue(line.Id, out var basis)
-                            || basis.Id != basisId))
+                    || replacement.StockCountCostBasisId !=
+                        (projection.NewSignedAdjustmentQty > 0m
+                            ? basisByLine[line.Id].Id : null))
                     throw Invalid($"Count line {line.Id} has an invalid replacement ADJ.");
             }
             result.Add(new StockCountReplayGeneration

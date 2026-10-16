@@ -10,8 +10,9 @@ namespace ErpWeb.Model.Repositories.Inventory;
 ///  • <see cref="IncludeInactive"/> = false drops items whose <c>IvStockMaster</c> is not active.
 ///    <c>StockControl = false</c> items are excluded unconditionally.
 ///  • Status 'SCRAPS' is excluded by default (legacy parity); an explicit status scope adds it back.
-///  • Caller supplies CountDate as as-of: only piles with TransDate on or before CountDate are
-///    eligible (INV-03). Null TransDate is never eligible.
+///  • The legacy candidate repository applies CountDate through TransDate. The V2 historical
+///    reader instead reconstructs every scoped pile at the count's end-of-day position, then
+///    applies IncludeZeroQty and paging to those historical quantities.
 /// </summary>
 public sealed class IvStockCountScope
 {

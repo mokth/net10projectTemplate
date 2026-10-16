@@ -124,7 +124,12 @@ public sealed class StockCountCorrectionWritePermit
         LedgerEpochId = plan.LedgerEpochId;
         RootPostingId = rootPostingId;
         PlanHash = plan.PlanHash;
-        Candidate = plan.Candidate;
+        Candidate = plan.Candidate.Key.ClassPriority == StockReplayEventKey.CountClass
+            ? plan.Candidate with
+            {
+                SignedDelta = plan.Projection.Candidate.SignedDelta
+            }
+            : plan.Candidate;
         FinalQuantity = plan.Projection.FinalQuantity;
         Lines = lines;
     }
@@ -259,28 +264,32 @@ public static class StockReplayPhysicalPlanner
     {
         ArgumentNullException.ThrowIfNull(db);
         var line = await db.IvStockCountLines.AsNoTracking()
+            .Include(l => l.Header)
             .Where(l => l.Id == countLineId
                 && l.Header.CompanyCode == companyCode
                 && l.Header.BranchCode == branchCode)
-            .Select(l => new
-            {
-                l.Id, l.StockCountId, l.BalLocId, l.PhysicalQty, l.RowVersion,
-                l.Header.CountDate, l.Header.Status,
-                HeaderRowVersion = l.Header.RowVersion
-            })
             .SingleOrDefaultAsync(cancellationToken);
         if (line is null || line.BalLocId <= 0
             || line.PhysicalQty is not decimal physical || physical < 0m
             || IvQty.Round(physical) != physical
-            || line.Status is not ("COUNTED" or "ROLLED_BACK"))
+            || line.Header.CountDate != line.Header.CountDate.Date
+            || line.Header.Status is not ("COUNTED" or "ROLLED_BACK"))
             throw new StockLedgerException(new(StockLedgerErrorCodes.InvalidStockIdentity,
                 $"Count line {countLineId} is not an eligible frozen physical observation."));
-        if (line.Status == "COUNTED"
+        var countedBalance = await db.IvBalLocs.AsNoTracking()
+            .SingleOrDefaultAsync(b => b.Id == line.BalLocId
+                && b.CompanyCode == companyCode && b.BranchCode == branchCode,
+                cancellationToken);
+        if (countedBalance is null
+            || !StockReplayCountSheetPreviewReader.Matches(line, countedBalance))
+            throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                $"Count line {countLineId} no longer matches its counted stock pile."));
+        if (line.Header.Status == "COUNTED"
             && await db.StockCountReplayGenerations.AsNoTracking()
                 .AnyAsync(g => g.StockCountLineId == line.Id, cancellationToken))
             throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
                 $"Count line {countLineId} is COUNTED but already has posted lineage."));
-        if (line.Status == "ROLLED_BACK")
+        if (line.Header.Status == "ROLLED_BACK")
         {
             var active = await StockCountGenerationResolver.ResolveActiveAsync(
                 db, companyCode, branchCode, [line.Id], cancellationToken);
@@ -295,7 +304,7 @@ public static class StockReplayPhysicalPlanner
             .SingleOrDefaultAsync(cancellationToken) ?? 0L;
         var candidate = new StockReplayPhysicalEvent(
             -long.MaxValue + line.Id,
-            new StockReplayEventKey(StockReplayEventKey.CountEndOfDay(line.CountDate),
+            new StockReplayEventKey(StockReplayEventKey.CountEndOfDay(line.Header.CountDate),
                 StockReplayEventKey.CountClass, checked(watermark + 1),
                 $"C{line.Id:D10}", 0),
             SignedDelta: 0m,
@@ -306,8 +315,8 @@ public static class StockReplayPhysicalPlanner
         {
             CountHeaderId = line.StockCountId,
             CountLineId = line.Id,
-            CountStatus = line.Status,
-            CountHeaderRowVersion = line.HeaderRowVersion.ToArray(),
+            CountStatus = line.Header.Status,
+            CountHeaderRowVersion = line.Header.RowVersion.ToArray(),
             CountLineRowVersion = line.RowVersion.ToArray()
         };
     }
@@ -365,6 +374,36 @@ public static class StockReplayPhysicalPlanner
             watermark, balance.StdQty, rowVersion, candidate, tail);
         return new(companyCode, branchCode, balLocId, epochs[0].Id,
             watermark, balance.StdQty, rowVersion, candidate, tail, projection, hash);
+    }
+
+    /// <summary>Checks that a previously prepared insertion plan was not edited in memory.</summary>
+    public static void ValidatePreparedInsertionPlan(StockReplayPhysicalPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        StockReplayPhysicalResult projection;
+        try
+        {
+            projection = StockReplayPhysicalSimulator.Simulate(
+                plan.CurrentQuantity, plan.Candidate, plan.LaterEvents);
+        }
+        catch (ArgumentException)
+        {
+            throw Stale("The prepared physical insertion plan changed.");
+        }
+        catch (StockLedgerException)
+        {
+            throw Stale("The prepared physical insertion plan changed.");
+        }
+        if (plan.PlanHash != Hash(plan.CompanyCode, plan.BranchCode,
+                plan.BalLocId, plan.LedgerEpochId, plan.BranchWatermark,
+                plan.CurrentQuantity, plan.BalanceRowVersion,
+                plan.Candidate, plan.LaterEvents)
+            || plan.Projection.HistoricalQuantityBeforeCandidate
+                != projection.HistoricalQuantityBeforeCandidate
+            || plan.Projection.Candidate != projection.Candidate
+            || !plan.Projection.LaterSteps.SequenceEqual(projection.LaterSteps)
+            || plan.Projection.FinalQuantity != projection.FinalQuantity)
+            throw Stale("The prepared physical insertion plan changed.");
     }
 
     /// <summary>
@@ -439,6 +478,7 @@ public static class StockReplayPhysicalPlanner
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         context.EnsureUnsealed();
+        ValidatePreparedInsertionPlan(plan);
         if (context.CompanyCode != plan.CompanyCode
             || context.BranchCode != plan.BranchCode
             || context.Epoch.Id != plan.LedgerEpochId
@@ -451,7 +491,6 @@ public static class StockReplayPhysicalPlanner
         var balance = await db.IvBalLocs.AsNoTracking()
             .Where(x => x.CompanyCode == plan.CompanyCode && x.BranchCode == plan.BranchCode
                 && x.Id == plan.BalLocId)
-            .Select(x => new { x.StdQty, x.RowVersion })
             .SingleOrDefaultAsync(cancellationToken);
         if (balance is null || balance.StdQty != plan.CurrentQuantity
             || !balance.RowVersion.SequenceEqual(plan.BalanceRowVersion))
@@ -460,26 +499,22 @@ public static class StockReplayPhysicalPlanner
         if (plan.CountLineId is int countLineId)
         {
             var observation = await db.IvStockCountLines.AsNoTracking()
+                .Include(l => l.Header)
                 .Where(l => l.Id == countLineId
                     && l.Header.CompanyCode == plan.CompanyCode
                     && l.Header.BranchCode == plan.BranchCode)
-                .Select(l => new
-                {
-                    l.StockCountId, l.BalLocId, l.PhysicalQty, l.RowVersion,
-                    l.Header.CountDate, l.Header.Status,
-                    HeaderRowVersion = l.Header.RowVersion
-                })
                 .SingleOrDefaultAsync(cancellationToken);
             if (observation is null
                 || observation.StockCountId != plan.CountHeaderId
                 || observation.BalLocId != plan.BalLocId
                 || observation.PhysicalQty != plan.Candidate.AbsoluteCountQty
-                || observation.CountDate != plan.Candidate.Key.EffectiveAt.Date
-                || observation.Status != plan.CountStatus
+                || observation.Header.CountDate != plan.Candidate.Key.EffectiveAt.Date
+                || observation.Header.Status != plan.CountStatus
                 || plan.CountLineRowVersion is null
                 || plan.CountHeaderRowVersion is null
                 || !observation.RowVersion.SequenceEqual(plan.CountLineRowVersion)
-                || !observation.HeaderRowVersion.SequenceEqual(plan.CountHeaderRowVersion))
+                || !observation.Header.RowVersion.SequenceEqual(plan.CountHeaderRowVersion)
+                || !StockReplayCountSheetPreviewReader.Matches(observation, balance))
                 throw Stale($"Count line {countLineId} changed after replay planning.");
         }
 
@@ -502,9 +537,16 @@ public static class StockReplayPhysicalPlanner
         CancellationToken cancellationToken = default)
     {
         await ValidateWithinRootAsync(context, plan, cancellationToken);
-        if (plan.Candidate.Key.ClassPriority != StockReplayEventKey.OrdinaryClass
-            || plan.Candidate.AbsoluteCountQty is not null)
-            throw Stale("Count correction preparation requires an ordinary physical insertion.");
+        var ordinary = plan.Candidate.Key.ClassPriority
+            == StockReplayEventKey.OrdinaryClass
+            && plan.Candidate.AbsoluteCountQty is null;
+        var initialCount = plan.Candidate.Key.ClassPriority
+            == StockReplayEventKey.CountClass
+            && plan.CountStatus == IvStockCountStatuses.Counted
+            && plan.CountLineId is > 0
+            && plan.Candidate.AbsoluteCountQty is not null;
+        if (!ordinary && !initialCount)
+            throw Stale("Count correction preparation requires a supported physical insertion.");
         var steps = plan.Projection.LaterSteps.ToDictionary(s => s.EventId);
         if (steps.Count != plan.LaterEvents.Count)
             throw Stale("The replay projection has ambiguous descendant identities.");

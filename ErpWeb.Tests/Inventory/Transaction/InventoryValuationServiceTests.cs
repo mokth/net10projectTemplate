@@ -376,6 +376,72 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         Assert.Equal(0m, layers[0].RemainingQty);
         Assert.Equal(3m, layers[1].RemainingQty);
         Assert.Equal(9m, layers[1].RemainingValue);
+        // This valuation-only fixture does not apply physical movements.
+        var livePile = await verify.IvBalLocs.OrderBy(b => b.Id).FirstAsync();
+        livePile.StdQty = state.OnHandBaseQty;
+        await verify.SaveChangesAsync();
+        var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+            verify, "DEMO", "HQ", "ITEM-1");
+        Assert.Equal(3m, snapshot.CurrentQuantity);
+        Assert.Equal(9m, snapshot.CurrentValue);
+        Assert.Equal(2, snapshot.Layers.Count);
+        Assert.Equal(2, snapshot.ActiveConsumptions.Count);
+        Assert.Equal(snapshot.SnapshotHash,
+            (await StockReplayFifoActiveLayerReader.ReadAsync(
+                verify, "DEMO", "HQ", "ITEM-1")).SnapshotHash);
+        var beforeIssue = StockReplayFifoLayerRewinder.RewindBefore(
+            snapshot, snapshot.ActiveConsumptions[0].IssueKey);
+        Assert.Equal(7m, beforeIssue.Quantity);
+        Assert.Equal(19m, beforeIssue.Value);
+        Assert.Equal(new[] { 2m, 5m },
+            beforeIssue.Layers.Select(l => l.RemainingQuantity));
+        var beforeSecondReceipt = StockReplayFifoLayerRewinder.RewindBefore(
+            snapshot, snapshot.Layers[1].ReceiptKey!.Value);
+        Assert.Equal(2m, beforeSecondReceipt.Quantity);
+        Assert.Equal(4m, beforeSecondReceipt.Value);
+        Assert.Single(beforeSecondReceipt.LaterReceipts);
+        var inserted = StockReplayFifoTailProjector.InsertIssue(
+            snapshot, new StockReplayEventKey(
+                new DateTime(2026, 10, 1, 12, 0, 0),
+                StockReplayEventKey.OrdinaryClass,
+                snapshot.Layers.Max(l => l.OriginPostingSequence) + 1,
+                "H9999999999", 0), 1m);
+        Assert.Equal(2m, inserted.FinalQuantity);
+        Assert.Equal(6m, inserted.FinalValue);
+        Assert.Equal(new[] { 2m, 11m },
+            inserted.Issues.Select(i => i.Value));
+        var insertedReceipt = StockReplayFifoTailProjector.InsertReceipt(
+            snapshot, new StockReplayEventKey(
+                new DateTime(2026, 10, 1, 12, 0, 0),
+                StockReplayEventKey.OrdinaryClass,
+                snapshot.Layers.Max(l => l.OriginPostingSequence) + 1,
+                "H9999999998", 0), 1m, 1m, "EA");
+        Assert.Equal(4m, insertedReceipt.FinalQuantity);
+        Assert.Equal(12m, insertedReceipt.FinalValue);
+        Assert.Equal(8m, Assert.Single(insertedReceipt.Issues).Value);
+        var removedReceipt = StockReplayFifoTailProjector.RemoveReceipt(
+            snapshot, snapshot.Layers[0].LayerId);
+        Assert.True(removedReceipt.IsRemoval);
+        Assert.Equal(1m, removedReceipt.FinalQuantity);
+        Assert.Equal(3m, removedReceipt.FinalValue);
+        Assert.Equal(12m, Assert.Single(removedReceipt.Issues).Value);
+        var removedIssue = StockReplayFifoTailProjector.RemoveIssue(
+            snapshot, snapshot.ActiveConsumptions[0].IssueKey);
+        Assert.True(removedIssue.IsRemoval);
+        Assert.Equal(7m, removedIssue.FinalQuantity);
+        Assert.Equal(19m, removedIssue.FinalValue);
+        Assert.Empty(removedIssue.Issues);
+
+        var damagedId = await verify.StockFifoLayerConsumptions
+            .OrderBy(c => c.Id).Select(c => c.Id).FirstAsync();
+        // Simulate persisted corruption; normal EF writes forbid mutation.
+        await verify.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE StockFifoLayerConsumption SET ConsumedValue = ConsumedValue + 1 WHERE Id = {damagedId}");
+        var refusal = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayFifoActiveLayerReader.ReadAsync(
+                verify, "DEMO", "HQ", "ITEM-1"));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            refusal.Error.Code);
     }
 
     [Fact]
@@ -387,6 +453,14 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
         await using var verify = await _factory.CreateDbContextAsync();
         var fact = await verify.StockValuationFacts.SingleAsync(x => x.Direction == 1);
         var layer = await verify.StockFifoLayers.SingleAsync();
+        // This valuation-only fixture does not apply physical movements.
+        var livePile = await verify.IvBalLocs.OrderBy(b => b.Id).FirstAsync();
+        livePile.StdQty = (await verify.StockCostStates.SingleAsync()).OnHandBaseQty;
+        await verify.SaveChangesAsync();
+        var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+            verify, "DEMO", "HQ", "ITEM-1");
+        Assert.Single(snapshot.Layers);
+        Assert.Empty(snapshot.ActiveConsumptions);
         Assert.Equal(1.000001m, fact.CostAmount);
         Assert.Equal(StockValuationSources.ProductionActual, fact.ValuationSource);
         Assert.Equal(1.000001m, layer.OriginalValue);

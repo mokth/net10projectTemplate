@@ -20,6 +20,32 @@ public sealed record StockReplayWacInsertionPlan(
 /// </summary>
 public static class StockReplayWacInsertionPlanner
 {
+    /// <summary>Checks a pre-mutation plan before prepared writers consume it.</summary>
+    public static void ValidatePreparedPlan(StockReplayWacInsertionPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        StockReplayPhysicalPlanner.ValidatePreparedInsertionPlan(
+            plan.PhysicalPlan);
+        if (!StringComparer.Ordinal.Equals(plan.PlanHash,
+                Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
+                    plan.PhysicalPlan, plan.Candidate,
+                    plan.Tail, plan.Projection)))
+            throw Stale("The prepared WAC insertion plan changed.");
+    }
+
+    public static async Task<StockReplayWacWritePermit> PrepareWithinRootAsync(
+        StockPostingContext context,
+        StockReplayWacInsertionPlan plan,
+        CancellationToken cancellationToken = default)
+    {
+        await ValidateWithinRootAsync(context, plan, cancellationToken);
+        return new StockReplayWacWritePermit(context, plan.ItemCode,
+            plan.PlanHash, plan.Tail.CurrentQuantity, plan.Tail.CurrentValue,
+            plan.Projection.FinalQuantity, plan.Projection.FinalValue,
+            plan.PhysicalPlan.BalLocId,
+            plan.PhysicalPlan.Projection.FinalQuantity);
+    }
+
     public static async Task<StockReplayWacInsertionPlan> BuildAsync(
         AppDbContext db,
         string companyCode,
@@ -61,6 +87,7 @@ public static class StockReplayWacInsertionPlanner
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         context.EnsureUnsealed();
+        ValidatePreparedPlan(plan);
         if (context.CompanyCode != plan.CompanyCode
             || context.BranchCode != plan.BranchCode
             || context.Epoch.Id != plan.PhysicalPlan.LedgerEpochId

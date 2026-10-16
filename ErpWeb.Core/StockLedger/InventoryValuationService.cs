@@ -630,6 +630,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
                         result, baseCurrency);
                     // Transfers are value-neutral in the branch/item financial pool. The receipt
                     // fact restores quantity/value but deliberately does not create a new layer.
+                    EnsureFifoStateReconciles(history.ICode,
+                        states[history.ICode], layersByItem[history.ICode]);
                 }
             }
             else if (history.ToBalLocId is not null && (history.ToStdQty ?? 0m) > 0m)
@@ -710,6 +712,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var remaining = quantity;
         var ordinal = 0;
         var facts = new List<StockValuationFact>();
+        var isTransfer = history.ToBalLocId is not null
+            && (history.ToStdQty ?? 0m) > 0m;
+        var layerBeforeTransfer = isTransfer
+            ? layers.Select(l => (Layer: l, l.RemainingQty,
+                l.RemainingValue, l.CurrentUnitCost, l.Status)).ToArray()
+            : [];
         foreach (var layer in layers
                      .Where(x => x.Status == StockFifoLayerStatuses.Open && x.RemainingQty > Epsilon)
                      .OrderBy(x => x.ReceiptEffectiveAt)
@@ -760,6 +768,19 @@ public sealed class InventoryValuationService : IInventoryValuationService
 
         var amount = RoundMoney(facts.Sum(x => x.CostAmount));
         ApplyOutbound(state, quantity, amount, facts[^1], context.Posting.PostingSequence);
+        if (isTransfer)
+        {
+            // The OUT split records which layers funded the transfer. Its IN
+            // fact restores the same item pool, so these allocations do not
+            // deplete financial layers. Keep the immutable consumption audit.
+            foreach (var prior in layerBeforeTransfer)
+            {
+                prior.Layer.RemainingQty = prior.RemainingQty;
+                prior.Layer.RemainingValue = prior.RemainingValue;
+                prior.Layer.CurrentUnitCost = prior.CurrentUnitCost;
+                prior.Layer.Status = prior.Status;
+            }
+        }
         await Task.CompletedTask;
         return facts;
     }
@@ -878,12 +899,15 @@ public sealed class InventoryValuationService : IInventoryValuationService
                     if (layer is null)
                         throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                             $"FIFO layer {consumption.FifoLayerId} was not found for issue fact {original.Id}.");
-                    layer.RemainingQty = RoundQuantity(layer.RemainingQty + consumption.ConsumedQty);
-                    layer.RemainingValue = RoundMoney(layer.RemainingValue + consumption.ConsumedValue);
-                    layer.CurrentUnitCost = layer.RemainingQty <= Epsilon
-                        ? 0m
-                        : RoundMoney(layer.RemainingValue / layer.RemainingQty);
-                    layer.Status = StockFifoLayerStatuses.Open;
+                    if (original.MovementCode != "TRANSFER_OUT")
+                    {
+                        layer.RemainingQty = RoundQuantity(layer.RemainingQty + consumption.ConsumedQty);
+                        layer.RemainingValue = RoundMoney(layer.RemainingValue + consumption.ConsumedValue);
+                        layer.CurrentUnitCost = layer.RemainingQty <= Epsilon
+                            ? 0m
+                            : RoundMoney(layer.RemainingValue / layer.RemainingQty);
+                        layer.Status = StockFifoLayerStatuses.Open;
+                    }
                     context.Db.StockFifoLayerConsumptions.Add(new StockFifoLayerConsumption
                     {
                         CompanyCode = context.CompanyCode,

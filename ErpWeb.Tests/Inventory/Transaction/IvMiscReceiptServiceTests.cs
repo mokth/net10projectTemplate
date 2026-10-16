@@ -358,6 +358,27 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         var createdOnDateSnapshot = await ReadCostingSnapshotAsync("B100");
         Assert.Equal(preparedEarlySnapshot.State, createdOnDateSnapshot.State);
         Assert.Equal(preparedEarlySnapshot.FifoLayers, createdOnDateSnapshot.FifoLayers);
+        if (costMethod == StockCostMethods.Fifo)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var history = await db.IvTrxHistories
+                .SingleAsync(h => h.ICode == "A100");
+            var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+                db, "DEMO", "HQ", "A100");
+            var origin = Assert.Single(snapshot.Layers);
+            var balLocId = await db.IvBalLocs
+                .Where(b => b.ICode == "A100")
+                .Select(b => b.Id).SingleAsync();
+            var physicalPlan = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+                db, "DEMO", "HQ", balLocId,
+                new StockReplayPhysicalEvent(history.Id,
+                    origin.ReceiptKey!.Value, 10m));
+            var fifoPlan = await StockReplayFifoRemovalPlanner.BuildAsync(
+                db, "DEMO", "HQ", "A100", physicalPlan);
+            StockReplayFifoRemovalPlanner.ValidatePreparedPlan(fifoPlan);
+            Assert.Equal(0m, fifoPlan.Projection.FinalQuantity);
+            Assert.Equal(0m, fifoPlan.Projection.FinalValue);
+        }
     }
 
     [Fact]
